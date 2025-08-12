@@ -1,101 +1,30 @@
-//! Advanced window manager watcher with real-time IPC and caching
+//! Window manager watcher with sensd source material capture
 //!
-//! Monitors window manager events with:
-//! - Real-time Hyprland IPC integration
-//! - Intelligent hyprctl result caching
-//! - Focus history tracking
-//! - Window state augmentation
-//! - Exponential backoff for connection recovery
+//! Monitors window manager events (focus, open, close, move) and captures them as source
+//! material for later event creation with proper provenance tracking.
 //!
-//! ## Hyprland IPC Interface (TIM-HyprlandIPCInterface)
+//! ## Architecture
 //!
-//! ### Socket Locations
-//! - Base path: `$XDG_RUNTIME_DIR/hypr/`
-//! - Instance directory: `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/`
-//! - Command socket (`.socket.sock`): Query state via hyprctl
-//! - Event socket (`.socket2.sock`): Real-time event stream
+//! This module follows the sensd pattern:
+//! 1. **Source Material Capture**: Window manager events → raw.source_material_registry
+//! 2. **Temporal Ledger**: Precise timing → raw.temporal_ledger
+//! 3. **Event Generation**: Material processing → events with Provenance::Material
 //!
-//! ### Event Types
-//! - `activewindow>>`: Window focus changes
-//! - `workspace>>`: Workspace switches
-//! - `createworkspace>>`: New workspace creation
-//! - `destroyworkspace>>`: Workspace removal
-//! - `openwindow>>`: Window creation
-//! - `closewindow>>`: Window destruction
-//! - `monitoradded>>`: Monitor connection
+//! ## Hyprland Integration
 //!
-//! ### State Augmentation
-//! Events from socket2 are augmented with full window state from hyprctl:
-//! - Window geometry and position
-//! - Workspace assignments
-//! - Monitor associations
-//! - Floating/fullscreen state
-//!
-//! ### Connection Recovery
-//! - Exponential backoff (1s → 2s → 4s → ... → 60s)
-//! - State snapshot on reconnection
-//! - Missed event detection via state comparison
-//!
-//! ## Architectural Decision: IPC-First Implementation (ADR-003)
-//!
-//! We implemented IPC sockets first (before considering a native plugin) because:
-//! - **Easier implementation**: External process parsing text/JSON streams
-//! - **Lower stability risk**: Bugs won't crash the compositor
-//! - **Good event coverage**: ~47 event types available via socket2
-//! - **Language flexibility**: Can use Rust instead of C++
-//!
-//! Current limitations that a future plugin could address:
-//! - Limited data fidelity (summary events require hyprctl queries)
-//! - No access to internal metrics or window textures
-//! - Potential for missed events under high load
-//! - Query overhead for detailed state
-//!
-//! ## Future Enhancements (Not Yet Implemented)
-//!
-//! ### Additional Event Types
-//! The current implementation handles core events but doesn't capture:
-//!
-//! **Window State Events:**
-//! - `fullscreen>>STATE` - Fullscreen mode changes
-//! - `changefloatingmode>>` - Float state changes
-//! - `minimize>>` - Window minimize/restore (v0.33.0+)
-//! - `urgent>>` - Window urgency hints
-//! - `windowtitle>>` - Title changes (requires hyprctl query)
-//!
-//! **Monitor Events:**
-//! - `focusedmon>>` - Monitor focus changes
-//! - `monitorremoved>>` - Monitor disconnect
-//!
-//! **Layer Shell Events:**
-//! - `openlayer>>` - Panel/notification layers
-//! - `closelayer>>` - Layer removal
-//!
-//! **Input Events:**
-//! - `submap>>` - Keybinding mode changes (e.g., "resize" mode)
-//!
-//! **System Events:**
-//! - `screencast>>` - Screen recording status
-//!
-//! ### Event Augmentation Strategy
-//! Many events only provide `WINDOWADDRESS`. Full implementation would:
-//! 1. Maintain local window state cache
-//! 2. Query `hyprctl -j clients` for missing details
-//! 3. Merge event data with cached/queried state
-//! 4. Update cache on state changes
-//!
-//! ### Performance Optimizations
-//! - Cache hyprctl results to avoid redundant queries
-//! - Batch queries when multiple events arrive
-//! - Use async queries to avoid blocking event stream
+//! - Real-time IPC via socket2 for event stream
+//! - State augmentation via hyprctl queries
+//! - Automatic reconnection with exponential backoff
+//! - Comprehensive window and workspace metadata capture
 
 // Use local facade for common types
 use crate::common::*;
 
 // Window manager specific imports
-use parking_lot::Mutex;
 use serde_json::Value;
+use sinex_core::types::Ulid;
+use sqlx::PgPool;
 use std::{
-    collections::VecDeque,
     fmt,
     str::FromStr,
     sync::Arc,
@@ -104,9 +33,6 @@ use std::{
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
-
-const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60;
-const CACHE_ENTRY_MAX_AGE_SECS: u64 = 30;
 
 /// Supported window manager types
 #[derive(Debug, Clone, PartialEq)]
@@ -134,29 +60,19 @@ impl FromStr for WindowManagerType {
 }
 
 /// Enhanced window information with metadata
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct WindowInfo {
     address: String,
     class: String,
     title: String,
     workspace_id: String,
     last_seen: SystemTime,
-    geometry: Option<WindowGeometry>,
     floating: bool,
     fullscreen: bool,
 }
 
-/// Window geometry
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
-struct WindowGeometry {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-}
-
 /// Enhanced workspace information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct WorkspaceInfo {
     id: String,
     name: String,
@@ -166,90 +82,40 @@ struct WorkspaceInfo {
     last_switched: SystemTime,
 }
 
-/// Enhanced monitor information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
-struct MonitorInfo {
-    name: String,
-    width: u32,
-    height: u32,
-    refresh_rate: f32,
-    focused: bool,
-    scale: f32,
-    transform: u32,
-}
-
-/// Cache entry for hyprctl results
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    timestamp: Instant,
-}
-
-/// Focus history entry  
-#[derive(Debug, Clone, bon::Builder)]
-struct FocusHistoryEntry {
-    timestamp: chrono::DateTime<Utc>,
-    window_address: String,
-    window_class: Option<String>,
-    window_title: Option<String>,
-}
-
-/// Window augmentation level
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-enum WindowAugmentation {
-    None,
-    Basic,
-    Full,
-}
-
-/// Workspace tracking mode
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-enum WorkspaceTracking {
-    Events,
-    WithState,
-}
-
-/// Advanced window manager watcher with caching and history
-#[derive(bon::Builder)]
+/// Window manager watcher with sensd source material capture
 pub struct WindowManagerWatcher {
     wm_type: WindowManagerType,
     socket_path: Option<String>,
     command_socket_path: Option<String>,
     windows: HashMap<String, WindowInfo>,
     workspaces: HashMap<String, WorkspaceInfo>,
-    monitors: HashMap<String, MonitorInfo>,
     current_focused_window: Option<String>,
     current_workspace: Option<String>,
     current_monitor: Option<String>,
-    state_capture_interval: Duration,
-    last_state_capture: SystemTime,
-    // Advanced features
-    hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
+    // sensd integration
+    db_pool: Option<PgPool>,
+    source_identifier: String,
 }
 
 impl WindowManagerWatcher {
-    /// Create new advanced window manager watcher
-    pub async fn new(wm_type: WindowManagerType) -> SatelliteResult<Self> {
+    /// Create new window manager watcher with sensd integration
+    pub async fn new(wm_type: WindowManagerType, db_pool: Option<PgPool>) -> SatelliteResult<Self> {
         let mut watcher = Self {
             wm_type,
             socket_path: None,
             command_socket_path: None,
             windows: HashMap::new(),
             workspaces: HashMap::new(),
-            monitors: HashMap::new(),
             current_focused_window: None,
             current_workspace: None,
             current_monitor: None,
-            state_capture_interval: Duration::from_secs(300),
-            last_state_capture: SystemTime::UNIX_EPOCH,
-            hyprctl_cache: Arc::new(Mutex::new(HashMap::new())),
+            db_pool,
+            source_identifier: "desktop_window_manager".to_string(),
         };
 
         // Discover socket paths based on WM type
         if wm_type == WindowManagerType::Hyprland {
             watcher.discover_hyprland_sockets().await?;
-            watcher.spawn_cache_cleanup_task();
         } else {
             return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Unsupported window manager: {}",
@@ -258,35 +124,10 @@ impl WindowManagerWatcher {
         }
 
         info!(
-            "Advanced window manager watcher initialized for {}",
+            "Window manager watcher initialized for {} (sensd mode)",
             wm_type
         );
         Ok(watcher)
-    }
-
-    /// Spawn cache cleanup task for hyprctl results
-    fn spawn_cache_cleanup_task(&self) {
-        let cache = Arc::clone(&self.hyprctl_cache);
-
-        tokio::spawn(async move {
-            let mut cleanup_interval = interval(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
-
-            loop {
-                cleanup_interval.tick().await;
-
-                let mut cache_guard = cache.lock();
-                cache_guard.retain(|_, entry| {
-                    entry.timestamp.elapsed() < Duration::from_secs(CACHE_ENTRY_MAX_AGE_SECS)
-                });
-
-                if !cache_guard.is_empty() {
-                    debug!(
-                        "Cleaned up hyprctl cache, {} entries remaining",
-                        cache_guard.len()
-                    );
-                }
-            }
-        });
     }
 
     /// Discover Hyprland socket paths (both event and command)
@@ -333,98 +174,98 @@ impl WindowManagerWatcher {
         Ok(())
     }
 
-    /// Get data from hyprctl with intelligent caching
-    async fn _get_hyprctl_data(
+    /// Store window manager event as source material in sensd
+    async fn store_window_manager_source_material(
         &self,
-        command: &str,
-        filter: Option<&str>,
-    ) -> Result<Value, String> {
-        let cache_key = format!("{}:{}", command, filter.unwrap_or(""));
+        event_type: &str,
+        event_data: &str,
+        metadata: serde_json::Value,
+    ) -> SatelliteResult<Option<Ulid>> {
+        let Some(db_pool) = &self.db_pool else {
+            warn!("No database pool available for source material storage");
+            return Ok(None);
+        };
 
-        // Check cache first
-        {
-            let cache = self.hyprctl_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
-                if entry.timestamp.elapsed() < Duration::from_secs(5) {
-                    return Ok(entry._data.clone());
-                }
-            }
-        }
+        let material_id = Ulid::new();
+        let now = Utc::now();
 
-        // Execute hyprctl command
-        let output = Command::new("hyprctl")
-            .arg(command)
-            .arg("-j")
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute hyprctl: {}", e))?;
+        // Prepare complete metadata
+        let complete_metadata = serde_json::json!({
+            "event_type": event_type,
+            "event_data": event_data,
+            "wm_type": self.wm_type.to_string(),
+            "current_focused_window": self.current_focused_window,
+            "current_workspace": self.current_workspace,
+            "current_monitor": self.current_monitor,
+            "window_count": self.windows.len(),
+            "workspace_count": self.workspaces.len(),
+            "additional_metadata": metadata,
+        });
 
-        if !output.status.success() {
-            return Err(format!(
-                "hyprctl {} failed: {}",
-                command,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        // Create structured event data for source material
+        let structured_data = serde_json::json!({
+            "event_type": event_type,
+            "data": event_data,
+            "timestamp": now,
+            "metadata": complete_metadata,
+        });
 
-        let data: Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("Failed to parse hyprctl output: {}", e))?;
+        let data_bytes = structured_data.to_string().as_bytes().to_vec();
 
-        // Update cache
-        {
-            let mut cache = self.hyprctl_cache.lock();
-            cache.insert(
-                cache_key,
-                CacheEntry {
-                    timestamp: Instant::now(),
-                },
-            );
-        }
+        // Store in source_material_registry
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                source_material_id, source_identifier, acquired_at,
+                data, size_bytes, mime_type, metadata
+            )
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7)
+            "#,
+            material_id as Ulid,
+            self.source_identifier,
+            now,
+            &data_bytes,
+            data_bytes.len() as i64,
+            "application/json",
+            complete_metadata.to_string(),
+        )
+        .execute(db_pool)
+        .await?;
 
-        Ok(data)
-    }
+        // Create temporal ledger entry
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.temporal_ledger (
+                material_id, offset_start, offset_end, 
+                offset_kind, proximity_hint, temporal_hint, timing_source,
+                ts_capture, note
+            )
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+            material_id as Ulid,
+            0i64,
+            data_bytes.len() as i64,
+            "byte",
+            "exact",
+            "wall",
+            "realtime_capture",
+            now,
+            complete_metadata.to_string(),
+        )
+        .execute(db_pool)
+        .await?;
 
-    /// Get window data from hyprctl
-    async fn _get_window_data(&self, address: &str) -> Result<Value, String> {
-        self._get_hyprctl_data("clients", Some(address)).await
-    }
+        info!(
+            "Stored window manager {} source material: {} bytes",
+            event_type,
+            data_bytes.len()
+        );
 
-    /// Get workspace data from hyprctl
-    async fn _get_workspace_data(&self) -> Result<Value, String> {
-        self._get_hyprctl_data("workspaces", None).await
-    }
-
-    // Note: Focus history functionality removed as it referenced non-existent struct fields
-
-    /// Augment window event with additional data
-    async fn _augment_window_event(&self, payload: &mut Value) {
-        if self._window_augmentation == WindowAugmentation::None {
-            return;
-        }
-
-        if let Some(address) = payload.get("window_address").and_then(|v| v.as_str()) {
-            if self._window_augmentation == WindowAugmentation::Full {
-                if let Ok(window_data) = self._get_window_data(address).await {
-                    payload["augmented_data"] = window_data;
-                }
-            }
-        }
-    }
-
-    /// Augment workspace event with additional data
-    async fn _augment_workspace_event(&self, payload: &mut Value) {
-        if self._workspace_tracking != WorkspaceTracking::WithState {
-            return;
-        }
-
-        if let Ok(workspace_data) = self._get_workspace_data().await {
-            payload["augmented_data"] = workspace_data;
-        }
+        Ok(Some(material_id))
     }
 
     /// Connect to Hyprland event socket
     async fn connect_to_hyprland_events(&self) -> SatelliteResult<UnixStream> {
-        // For Hyprland, socket2 is the event socket
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
             sinex_satellite_sdk::SatelliteError::Processing(
                 "No Hyprland socket configured".to_string(),
@@ -439,53 +280,6 @@ impl WindowManagerWatcher {
         })
     }
 
-    /// Send command to Hyprland (using socket1 for commands)
-    async fn _send_hyprland_command(&self, command: &str) -> SatelliteResult<String> {
-        let socket_path = self
-            .socket_path
-            .as_ref()
-            .ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::Processing("No socket path".to_string())
-            })?
-            .replace(".socket2.sock", ".socket.sock"); // Use command socket
-
-        let mut stream = UnixStream::connect(&socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Failed to connect to command socket: {}",
-                e
-            ))
-        })?;
-
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        stream.write_all(command.as_bytes()).await?;
-
-        let mut response = String::new();
-        stream.read_to_string(&mut response).await?;
-
-        Ok(response)
-    }
-
-    /// Send event or warn if channel closed, returning whether to continue
-    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
-        if tx.send(event).is_err() {
-            warn!("Event channel closed");
-            false
-        } else {
-            true
-        }
-    }
-
-    /// Serialize values to JSON, handling errors gracefully
-    fn serialize_values<T: serde::Serialize>(
-        &self,
-        values: impl Iterator<Item = T>,
-    ) -> Vec<serde_json::Value> {
-        values
-            .filter_map(|v| serde_json::to_value(v).ok())
-            .collect()
-    }
-
     /// Parse ID string to integer with fallback and warning
     fn parse_id(&self, id_str: &str, context: &str) -> i32 {
         id_str.parse().unwrap_or_else(|_| {
@@ -495,11 +289,7 @@ impl WindowManagerWatcher {
     }
 
     /// Process Hyprland event line
-    async fn process_hyprland_event(
-        &mut self,
-        line: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn process_hyprland_event(&mut self, line: &str) -> SatelliteResult<()> {
         if line.is_empty() {
             return Ok(());
         }
@@ -510,25 +300,29 @@ impl WindowManagerWatcher {
         if let Some((event_type, event_data)) = line.split_once(">>") {
             match event_type {
                 "focusedwindow" => {
-                    self.handle_window_focused(event_data, tx).await?;
+                    self.handle_window_focused(event_data).await?;
                 }
                 "openwindow" => {
-                    self.handle_window_opened(event_data, tx).await?;
+                    self.handle_window_opened(event_data).await?;
                 }
                 "closewindow" => {
-                    self.handle_window_closed(event_data, tx).await?;
+                    self.handle_window_closed(event_data).await?;
                 }
                 "movewindow" => {
-                    self.handle_window_moved(event_data, tx).await?;
+                    self.handle_window_moved(event_data).await?;
                 }
                 "workspace" => {
-                    self.handle_workspace_changed(event_data, tx).await?;
+                    self.handle_workspace_changed(event_data).await?;
                 }
                 "focusedmon" => {
-                    self.handle_monitor_focused(event_data, tx).await?;
+                    self.handle_monitor_focused(event_data).await?;
                 }
                 _ => {
                     debug!("Unhandled Hyprland event: {}", event_type);
+                    // Store unhandled events as source material too
+                    let metadata = serde_json::json!({"unhandled": true});
+                    self.store_window_manager_source_material(event_type, event_data, metadata)
+                        .await?;
                 }
             }
         }
@@ -537,42 +331,30 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window focused event
-    async fn handle_window_focused(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn handle_window_focused(&mut self, data: &str) -> SatelliteResult<()> {
         // Format: "class,title"
         if let Some((class, title)) = data.split_once(',') {
-            // Get window address - would need to query Hyprland for this
             let window_address = format!("0x{:x}", data.len()); // Placeholder
 
-            // Create window focused event
+            let metadata = serde_json::json!({
+                "window_class": class,
+                "window_title": title,
+                "window_id": window_address,
+                "previous_window_id": self.current_focused_window,
+            });
 
-            let event: RawEvent =
-                Event::new(sinex_core::types::events::HyprlandWindowFocusedPayload {
-                    window_id: window_address.to_string(),
-                    window_class: class.to_string(),
-                    window_title: title.to_string(),
-                    workspace_id: 0, // TODO(desktop-satellite): Get actual workspace ID from Hyprland IPC
-                    previous_window_id: self.current_focused_window.clone(),
-                })
-                .into();
+            // Store as source material (not event!)
+            self.store_window_manager_source_material("focusedwindow", data, metadata)
+                .await?;
 
-            self.send_event_or_warn(tx, event);
-
-            self.current_focused_window = Some(window_address.clone());
+            self.current_focused_window = Some(window_address);
         }
 
         Ok(())
     }
 
-    /// Handle window opened event  
-    async fn handle_window_opened(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    /// Handle window opened event
+    async fn handle_window_opened(&mut self, data: &str) -> SatelliteResult<()> {
         // Format: "address,workspace,class,title"
         let parts: Vec<&str> = data.split(',').collect();
         if parts.len() >= 4 {
@@ -581,26 +363,16 @@ impl WindowManagerWatcher {
             let window_class = parts[2].to_string();
             let window_title = parts[3..].join(","); // Title might contain commas
 
-            // Create window opened event
+            let metadata = serde_json::json!({
+                "window_id": window_address,
+                "window_class": window_class,
+                "window_title": window_title,
+                "workspace_id": self.parse_id(&workspace_id, "workspace_id"),
+            });
 
-            let event: RawEvent =
-                Event::new(sinex_core::types::events::HyprlandWindowOpenedPayload {
-                    window_id: window_address.to_string(),
-                    window_class: window_class.to_string(),
-                    window_title: window_title.to_string(),
-                    workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-                    monitor_id: 0, // TODO(desktop-satellite): Get actual monitor ID from Hyprland IPC
-                    geometry: sinex_core::types::events::WindowGeometry {
-                        x: 0,
-                        y: 0,
-                        width: 0,
-                        height: 0,
-                    }, // TODO(desktop-satellite): Get actual geometry from window info
-                    floating: false, // TODO(desktop-satellite): Get actual floating state from window info
-                })
-                .into();
-
-            self.send_event_or_warn(tx, event);
+            // Store as source material (not event!)
+            self.store_window_manager_source_material("openwindow", data, metadata)
+                .await?;
 
             // Store window info
             self.windows.insert(
@@ -611,7 +383,6 @@ impl WindowManagerWatcher {
                     title: window_title,
                     workspace_id,
                     last_seen: SystemTime::now(),
-                    geometry: None,
                     floating: false,
                     fullscreen: false,
                 },
@@ -622,27 +393,17 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window closed event
-    async fn handle_window_closed(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn handle_window_closed(&mut self, data: &str) -> SatelliteResult<()> {
         let window_address = data.trim().to_string();
 
-        // Create window closed event
+        let metadata = serde_json::json!({
+            "window_id": window_address,
+            "was_tracked": self.windows.contains_key(&window_address),
+        });
 
-        let event: RawEvent = Event::new(sinex_core::types::events::HyprlandWindowClosedPayload {
-            window_id: window_address.to_string(),
-            window_class: String::new(), // TODO(desktop-satellite): Get from cached window info
-            window_title: String::new(), // TODO(desktop-satellite): Get from cached window info
-            workspace_id: 0,             // TODO(desktop-satellite): Get from cached workspace info
-            close_reason: None,
-        })
-        .into();
-
-        if tx.send(event).is_err() {
-            warn!("Event channel closed");
-        }
+        // Store as source material (not event!)
+        self.store_window_manager_source_material("closewindow", data, metadata)
+            .await?;
 
         // Remove from tracking
         self.windows.remove(&window_address);
@@ -651,24 +412,17 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window moved event
-    async fn handle_window_moved(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn handle_window_moved(&mut self, data: &str) -> SatelliteResult<()> {
         // Format: "address,workspace"
         if let Some((address, workspace)) = data.split_once(',') {
-            // Create window moved event
+            let metadata = serde_json::json!({
+                "window_address": address,
+                "new_workspace_id": self.parse_id(workspace, "workspace_id"),
+            });
 
-            let event: RawEvent =
-                Event::new(sinex_core::types::events::HyprlandWindowMovedPayload {
-                    window_address: address.to_string(),
-                    new_workspace_id: self.parse_id(workspace, "workspace_id"),
-                    moved_at: chrono::Utc::now().to_rfc3339(),
-                })
-                .into();
-
-            self.send_event_or_warn(tx, event);
+            // Store as source material (not event!)
+            self.store_window_manager_source_material("movewindow", data, metadata)
+                .await?;
 
             // Update window workspace
             if let Some(window) = self.windows.get_mut(address) {
@@ -680,32 +434,19 @@ impl WindowManagerWatcher {
     }
 
     /// Handle workspace changed event
-    async fn handle_workspace_changed(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn handle_workspace_changed(&mut self, data: &str) -> SatelliteResult<()> {
         let workspace_id = data.trim().to_string();
 
-        // Create workspace switched event
+        let metadata = serde_json::json!({
+            "from_workspace_id": self.current_workspace.as_ref()
+                .map(|w| self.parse_id(w, "current_workspace_id"))
+                .unwrap_or(0),
+            "to_workspace_id": self.parse_id(&workspace_id, "workspace_id"),
+        });
 
-        let event: RawEvent = Event::new(
-            sinex_core::types::events::HyprlandWorkspaceSwitchedPayload {
-                from_workspace_id: self
-                    .current_workspace
-                    .as_ref()
-                    .map(|w| self.parse_id(w, "current_workspace_id"))
-                    .unwrap_or(0),
-                to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-                monitor_id: 0, // TODO(desktop-satellite): Get actual monitor ID from Hyprland
-                active_window_id: None, // TODO(desktop-satellite): Get active window from workspace state
-            },
-        )
-        .into();
-
-        if tx.send(event).is_err() {
-            warn!("Event channel closed");
-        }
+        // Store as source material (not event!)
+        self.store_window_manager_source_material("workspace", data, metadata)
+            .await?;
 
         self.current_workspace = Some(workspace_id);
 
@@ -713,24 +454,18 @@ impl WindowManagerWatcher {
     }
 
     /// Handle monitor focused event
-    async fn handle_monitor_focused(
-        &mut self,
-        data: &str,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn handle_monitor_focused(&mut self, data: &str) -> SatelliteResult<()> {
         // Format: "monitor,workspace"
         if let Some((monitor, workspace)) = data.split_once(',') {
-            // Create monitor focused event
+            let metadata = serde_json::json!({
+                "monitor_id": self.parse_id(monitor, "monitor_id"),
+                "workspace_id": self.parse_id(workspace, "workspace_id"),
+                "previous_monitor": self.current_monitor,
+            });
 
-            let event = Event::new(sinex_core::types::events::HyprlandMonitorFocusedPayload {
-                monitor_id: self.parse_id(monitor, "monitor_id"),
-                workspace_id: self.parse_id(workspace, "workspace_id"),
-                previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
-                focused_at: chrono::Utc::now().to_rfc3339(),
-            })
-            .into();
-
-            self.send_event_or_warn(tx, event);
+            // Store as source material (not event!)
+            self.store_window_manager_source_material("focusedmon", data, metadata)
+                .await?;
 
             self.current_monitor = Some(monitor.to_string());
         }
@@ -738,64 +473,15 @@ impl WindowManagerWatcher {
         Ok(())
     }
 
-    /// Capture periodic state snapshot
-    async fn capture_state_snapshot(
-        &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
-        let now = SystemTime::now();
-
-        if now
-            .duration_since(self.last_state_capture)
-            .unwrap_or(Duration::ZERO)
-            < self.state_capture_interval
-        {
-            return Ok(());
-        }
-
-        debug!("Capturing window manager state snapshot");
-
-        // Create state captured event
-
-        let event: RawEvent = Event::new(sinex_core::types::events::HyprlandStateCapturedPayload {
-            windows: self.serialize_values(self.windows.values()),
-            workspaces: self.serialize_values(self.workspaces.values()),
-            monitors: self.serialize_values(self.monitors.values()),
-            current_workspace: self
-                .current_workspace
-                .as_ref()
-                .map(|w| self.parse_id(w, "current_workspace_id"))
-                .unwrap_or(0),
-            current_monitor: self
-                .current_monitor
-                .as_ref()
-                .map(|m| self.parse_id(m, "current_monitor_id"))
-                .unwrap_or(0),
-            captured_at: chrono::Utc::now().to_rfc3339(),
-        })
-        .into();
-
-        if tx.send(event).is_err() {
-            warn!("Event channel closed");
-        }
-
-        self.last_state_capture = now;
-
-        Ok(())
-    }
-
-    /// Start streaming events
-    pub async fn start_streaming(
-        &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    /// Start monitoring window manager events (sensd mode)
+    pub async fn start_monitoring(&mut self) -> SatelliteResult<()> {
         info!(
-            "Starting window manager event streaming for {}",
+            "Starting window manager event monitoring for {} (sensd mode)",
             self.wm_type
         );
 
         if self.wm_type == WindowManagerType::Hyprland {
-            self.stream_hyprland_events(tx).await
+            self.stream_hyprland_events().await
         } else {
             Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                 "Unsupported window manager: {}",
@@ -805,10 +491,7 @@ impl WindowManagerWatcher {
     }
 
     /// Stream Hyprland events
-    async fn stream_hyprland_events(
-        &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn stream_hyprland_events(&mut self) -> SatelliteResult<()> {
         loop {
             match self.connect_to_hyprland_events().await {
                 Ok(stream) => {
@@ -823,7 +506,7 @@ impl WindowManagerWatcher {
                             line_result = lines.next_line() => {
                                 match line_result {
                                     Ok(Some(line)) => {
-                                        if let Err(e) = self.process_hyprland_event(&line, &tx).await {
+                                        if let Err(e) = self.process_hyprland_event(&line).await {
                                             error!("Error processing Hyprland event: {}", e);
                                         }
                                     }
@@ -839,8 +522,8 @@ impl WindowManagerWatcher {
                             }
 
                             // Periodic state capture
-                            _ = sleep(Duration::from_secs(60)) => {
-                                if let Err(e) = self.capture_state_snapshot(&tx).await {
+                            _ = sleep(Duration::from_secs(300)) => {
+                                if let Err(e) = self.capture_state_snapshot().await {
                                     error!("Error capturing state snapshot: {}", e);
                                 }
                             }
@@ -857,5 +540,28 @@ impl WindowManagerWatcher {
             warn!("Hyprland connection lost, reconnecting in 5 seconds...");
             sleep(Duration::from_secs(5)).await;
         }
+    }
+
+    /// Capture periodic state snapshot
+    async fn capture_state_snapshot(&mut self) -> SatelliteResult<()> {
+        debug!("Capturing window manager state snapshot");
+
+        let snapshot_data = serde_json::json!({
+            "windows": self.windows.values().collect::<Vec<_>>(),
+            "workspaces": self.workspaces.values().collect::<Vec<_>>(),
+            "current_workspace": self.current_workspace,
+            "current_monitor": self.current_monitor,
+            "current_focused_window": self.current_focused_window,
+        });
+
+        // Store as source material (not event!)
+        self.store_window_manager_source_material(
+            "state_snapshot",
+            &snapshot_data.to_string(),
+            serde_json::json!({"snapshot": true}),
+        )
+        .await?;
+
+        Ok(())
     }
 }

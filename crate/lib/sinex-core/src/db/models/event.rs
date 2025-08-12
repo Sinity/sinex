@@ -29,7 +29,10 @@ pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 /// - The id field determines if this is a new event or a persisted one
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event<T = JsonValue> {
-    /// Event ID - None when creating, Some when from DB
+    /// Event ID - elegant distinction between new and persisted events
+    /// - None: New event to be inserted (builder pattern)
+    /// - Some(id): Persisted event retrieved from database
+    /// This pattern avoids separate NewEvent/PersistedEvent types
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Id<Event<T>>>,
 

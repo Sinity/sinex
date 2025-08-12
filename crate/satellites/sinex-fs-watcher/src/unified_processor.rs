@@ -1,109 +1,22 @@
-//! Unified filesystem processor implementing StatefulStreamProcessor from Part 16
+//! Unified filesystem processor using sensd MaterialSliceStream
 //!
-//! This module contains the new implementation that replaces the old EventSource-based
-//! FilesystemWatcher with a unified processor supporting snapshot, historical, and
-//! continuous scanning modes.
-//!
-//! # Technical Implementation Module: Platform-Specific Filesystem Watchers
-//!
-//! **Maturity Level**: L4 - Implemented  
-//! **Implementation**: 90% (Linux inotify fully working, cross-platform abstraction in place)  
-//! **Dependencies**: notify-rs crate, inotify on Linux, FSEvents on macOS  
-//! **Blocks**: Real-time content analysis, PKM document change detection  
-//!
-//! ## Overview
-//!
-//! This module implements efficient, low-overhead filesystem monitoring crucial for
-//! ingesting new or updated user files, PKM notes, downloads, etc. The implementation
-//! uses platform-specific backends for optimal performance.
-//!
-//! ## Content Processing (TIM-FilesystemIngestionLogic)
-//!
-//! ### BLAKE3 Content Hashing
-//!
-//! All file content is hashed using BLAKE3 for:
-//! - Content-addressed storage and deduplication
-//! - Rename/move detection via hash correlation
-//! - Integrity verification
-//!
-//! The streaming implementation in sinex-core-utils::chunking handles large files
-//! efficiently without loading entire contents into memory.
-//!
-//! ### Git-annex Integration
-//!
-//! Large files (>100KB) are managed via git-annex:
-//! - Content stored by hash in `.git/annex/objects/`
-//! - Original paths replaced by symlinks
-//! - Metadata tracked in core.blobs table
-//! - Automatic deduplication for identical content
-//!
-//! See sinex-annex crate for implementation details.
-//!
-//! ### Rename/Move Detection
-//!
-//! Two approaches implemented:
-//! 1. **inotify cookies** (Linux): IN_MOVED_FROM/TO events share a cookie value
-//! 2. **Hash correlation**: Delete+create with same BLAKE3 hash within time window
-//!
-//! Note: Cross-filesystem moves appear as delete+create and rely on hash correlation.
-//!
-//! ## Platform-Specific Implementations
-//!
-//! ### inotify (Linux)
-//!
-//! Linux kernel subsystem for monitoring filesystem events. Key characteristics:
-//!
-//! - **Non-recursive**: Must manually watch subdirectories
-//! - **Event types**: IN_MODIFY, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE, IN_MOVED_FROM/TO
-//! - **System limits**: Configured via `/proc/sys/fs/inotify/max_user_watches`
-//! - **Overflow handling**: IN_Q_OVERFLOW signals dropped events, requires rescan
-//!
-//! The notify-rs crate handles recursive watching by:
-//! 1. Watching root directory
-//! 2. On IN_CREATE | IN_ISDIR, adding new watch for subdirectory
-//! 3. On IN_DELETE | IN_ISDIR, removing watch for subdirectory
-//! 4. Handling IN_MOVED_TO/FROM for directory moves
-//!
-//! ### FSEvents (macOS)
-//!
-//! macOS native API with built-in advantages:
-//!
-//! - **Automatic recursive monitoring**: No manual subdirectory management
-//! - **No per-directory limits**: More scalable for large trees
-//! - **Event coalescing**: Batches rapid changes, configurable latency
-//! - **Historical events**: Can catch up on changes while offline
-//!
-//! ## Implementation Details
-//!
-//! - **Completed write detection**: Uses IN_CLOSE_WRITE on Linux when available
-//! - **Debouncing**: Configurable delay to handle rapid file changes
-//! - **Rename tracking**: Cookie-based correlation for move operations
-//! - **Performance optimization**: Configurable max depth and ignore patterns
-//!
-//! ## System Configuration
-//!
-//! For extensive monitoring on Linux, increase inotify limits:
-//! ```bash
-//! # Temporary
-//! sudo sysctl fs.inotify.max_user_watches=524288
-//!
-//! # Persistent (add to /etc/sysctl.d/99-inotify.conf)
-//! fs.inotify.max_user_watches=524288
-//! ```
+//! This module implements filesystem monitoring through sensd's source material capture system.
+//! Instead of directly monitoring filesystem events, it submits TreeWatch jobs to sensd
+//! and processes the resulting MaterialSliceStream to generate events with proper provenance.
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use color_eyre::eyre::eyre;
-use notify::{Event as NotifyEvent, Watcher};
+use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
-use sinex_core::types::error::with_context;
-use sinex_core::types::events::Event;
-use sinex_core::types::validation::{
-    validate_discovered_file, validate_path, validate_watch_paths, FileWatchingSecurityPolicy,
+use serde_json::json;
+use sinex_core::{
+    db::models::{Provenance, RawEvent},
+    types::{
+        domain::{EventSource, EventType},
+        Id, Ulid,
+    },
 };
-use sinex_core::RawEvent;
-use sinex_core::SanitizedPath;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -117,130 +30,67 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use std::collections::{HashMap, HashSet};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, instrument, warn, Span};
+use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
+use tracing::{debug, error, info, instrument, warn};
 use validator::{Validate, ValidationError};
-use walkdir::WalkDir;
-// use sinex_core::types::events::constants::{sources}; // already imported above
 
 #[cfg(test)]
 mod config_validation_tests;
 
-/// Default debounce interval for filesystem events in milliseconds
-const DEFAULT_DEBOUNCE_MS: u64 = 100;
+/// Material slice from sensd (re-export from sensd crate)
+#[derive(Debug, Clone)]
+pub struct MaterialSlice {
+    pub material_id: Ulid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+    pub ts_capture_start: DateTime<Utc>,
+    pub ts_capture_end: DateTime<Utc>,
+    pub data: Vec<u8>,
+    pub metadata: serde_json::Value,
+}
 
-/// Maximum number of sample file paths for diagnostics
-const MAX_DIAGNOSTIC_SAMPLES: usize = 100;
-
-// Error message constants
-const ERR_DEBOUNCER_CREATION: &str = "Failed to create debouncer";
-const ERR_WATCH_PATH_VALIDATION: &str = "Filesystem watch path validation failed";
-const ERR_CREATE_VALIDATED_DIR: &str = "Failed to create validated directory";
-const ERR_WATCH_VALIDATED_PATH: &str = "Failed to watch validated path";
-const ERR_NO_VALID_WATCH_ROOTS: &str = "No valid watch roots found after security validation";
-const ERR_PARSE_FILESYSTEM_CONFIG: &str = "Failed to parse filesystem config, using defaults";
-const ERR_INVALID_TARGET_PATH: &str = "Invalid target path";
-const MSG_SKIPPING_NON_UTF8_PATH: &str = "Skipping non-UTF8 path in filesystem event";
-const MSG_REJECTING_PATH_OUTSIDE_BOUNDARIES: &str =
-    "Rejecting filesystem event for path outside validated boundaries";
-const MSG_REJECTING_DISCOVERY_OUTSIDE_BOUNDARIES: &str =
-    "Rejecting filesystem discovery event for path outside validated boundaries";
-
-/// Filesystem monitoring configuration
+/// Filesystem monitoring configuration for sensd integration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct FilesystemConfig {
-    /// Glob patterns for files/directories to watch
-    ///
-    /// Examples:
-    /// - `"**/*.rs"` - All Rust files recursively
-    /// - `"/home/user/documents/**"` - Everything under documents
-    /// - `"*.log"` - Log files in watch root only
-    ///
-    /// Performance impact:
-    /// - More specific patterns = fewer watches = better performance
-    /// - `"**/*"` on large trees can hit inotify limits on Linux
-    #[validate(length(min = 1, message = "At least one watch pattern must be specified"))]
-    #[validate(custom(function = "validate_glob_patterns", message = "Invalid glob patterns"))]
-    pub watch_patterns: Vec<String>,
-
-    /// Patterns to explicitly ignore (takes precedence over watch_patterns)
-    ///
-    /// Common ignores:
-    /// - `"**/.git/**"` - Git internals  
-    /// - `"**/target/**"` - Rust build artifacts
-    /// - `"**/node_modules/**"` - Node dependencies
-    /// - `"**/*.tmp"` - Temporary files
-    ///
-    /// System limits (Linux):
-    /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
-    /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
-    #[validate(custom(
-        function = "validate_glob_patterns",
-        message = "Invalid ignore patterns"
-    ))]
-    pub ignore_patterns: Vec<String>,
-
-    /// Debounce delay in milliseconds for rapid file changes
-    ///
-    /// Use cases:
-    /// - 50-100ms: Text editors with auto-save
-    /// - 200-500ms: Build systems with multiple outputs
-    /// - 1000ms+: Batch operations, large file copies
-    ///
-    /// Trade-offs:
-    /// - Lower: More responsive, more events
-    /// - Higher: Fewer events, may miss rapid changes
-    #[validate(range(
-        min = 1,
-        max = 60000,
-        message = "Debounce delay must be between 1ms and 60 seconds"
-    ))]
-    pub debounce_ms: u64,
+    /// Directories to monitor for filesystem changes
+    #[validate(length(min = 1, message = "At least one watch path must be specified"))]
+    pub watch_paths: Vec<String>,
 
     /// Maximum directory traversal depth (None = unlimited)
-    ///
-    /// Guidelines:
-    /// - None: Full recursive monitoring (default)
-    /// - Some(3): Limit to 3 levels deep
-    /// - Some(1): Direct children only
-    ///
-    /// Use depth limits when:
-    /// - Watching user home directories with deep structures
-    /// - Known flat directory structures
-    /// - inotify watch limits are a concern
     #[validate(custom(
         function = "validate_max_depth",
         message = "Max depth must be reasonable (1-100)"
     ))]
     pub max_depth: Option<usize>,
 
-    /// Security policy for file watching operations
-    ///
-    /// Provides comprehensive security controls for filesystem monitoring:
-    /// - Path validation and sanitization
-    /// - Symlink following policies
-    /// - Directory depth limiting
-    /// - Forbidden path detection
-    /// - System directory protection
-    pub security_policy: FileWatchingSecurityPolicy,
+    /// Follow symbolic links during monitoring
+    pub follow_symlinks: bool,
+
+    /// Batch size for processing material slices
+    #[validate(range(min = 1, max = 1000, message = "Batch size must be between 1 and 1000"))]
+    pub batch_size: usize,
+
+    /// Processing interval in milliseconds
+    #[validate(range(
+        min = 100,
+        max = 60000,
+        message = "Processing interval must be between 100ms and 60 seconds"
+    ))]
+    pub processing_interval_ms: u64,
 }
 
 impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
-            watch_patterns: vec!["**/*".to_string()],
-            ignore_patterns: vec![
-                "target/**".to_string(),
-                "**/.git/**".to_string(),
-                "**/node_modules/**".to_string(),
-            ],
-            debounce_ms: DEFAULT_DEBOUNCE_MS,
-            max_depth: None,
-            security_policy: FileWatchingSecurityPolicy::default(),
+            watch_paths: vec![],
+            max_depth: Some(10),
+            follow_symlinks: false,
+            batch_size: 100,
+            processing_interval_ms: 1000,
         }
     }
 }
@@ -250,35 +100,12 @@ impl FilesystemConfig {
     pub fn validate_config(&self) -> Result<(), String> {
         use validator::Validate as ValidateTrait;
 
-        ValidateTrait::validate(self).map_err(|e| {
-            sinex_core::types::validation::validation_chains::format_validation_errors(&e)
-        })
+        ValidateTrait::validate(self)
+            .map_err(|e| format!("Filesystem configuration validation failed: {:?}", e))
     }
 }
 
-// Custom validation functions for FilesystemConfig
-
-/// Validate glob patterns for correctness and safety
-fn validate_glob_patterns(patterns: &[String]) -> Result<(), ValidationError> {
-    for pattern in patterns {
-        if pattern.is_empty() {
-            return Err(ValidationError::new("empty_pattern"));
-        }
-
-        // Check for dangerous patterns that could cause infinite recursion or security issues
-        if pattern == "/" || pattern == "**" {
-            return Err(ValidationError::new("dangerous_pattern"));
-        }
-
-        // Validate glob syntax using the glob crate
-        if let Err(_) = glob::Pattern::new(pattern) {
-            return Err(ValidationError::new("invalid_glob_syntax"));
-        }
-    }
-    Ok(())
-}
-
-/// Validate maximum depth setting
+/// Custom validation functions
 fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
     if let Some(d) = depth {
         if *d == 0 {
@@ -291,52 +118,35 @@ fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Rename operation tracking for enhanced move detection
-#[derive(Debug, Clone)]
-pub struct RenameOperation {
-    pub source_path: Utf8PathBuf,
-    pub timestamp: Instant,
-    pub cookie: Option<u32>,
-}
-
 /// Filesystem state snapshot for exploration and diagnostics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
 
-    /// File count by directory
-    pub file_counts: HashMap<Utf8PathBuf, u64>,
-
-    /// Total files discovered
-    pub total_files: u64,
+    /// Active sensd jobs for filesystem monitoring
+    pub active_jobs: HashMap<Ulid, String>,
 
     /// Directories being monitored
-    pub directories: Vec<Utf8PathBuf>,
+    pub watch_paths: Vec<String>,
 
-    /// Sample file paths for diagnostics (limited to MAX_DIAGNOSTIC_SAMPLES)
-    pub sample_paths: Vec<Utf8PathBuf>,
+    /// Last processed material offsets per job
+    pub job_offsets: HashMap<Ulid, i64>,
 }
 
-/// Unified filesystem processor implementing StatefulStreamProcessor
-///
-/// This replaces the old EventSource-based FilesystemWatcher with a unified
-/// processor that supports snapshot, historical, and continuous scanning modes.
+/// Unified filesystem processor using sensd MaterialSliceStream
 pub struct FilesystemProcessor {
-    /// Current processing context (set during initialization)
+    /// Current processing context
     context: Option<StreamProcessorContext>,
 
     /// Filesystem monitoring configuration
     config: FilesystemConfig,
 
-    /// Root directories being watched for validation
-    watch_roots: Vec<Utf8PathBuf>,
+    /// Database connection pool
+    db_pool: Option<PgPool>,
 
-    /// Validated watch roots for security boundary checking
-    validated_watch_roots: Vec<Utf8PathBuf>,
-
-    /// Rename operation tracking for enhanced move detection
-    rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
+    /// Active sensd jobs
+    active_jobs: HashMap<Ulid, String>,
 
     /// Last captured filesystem state for snapshots
     last_state: Option<FilesystemState>,
@@ -346,6 +156,9 @@ pub struct FilesystemProcessor {
 
     /// Stage-as-you-go context for real-time provenance
     stage_context: Option<StageAsYouGoContext>,
+
+    /// Event channel for sending processed events
+    event_sender: Option<mpsc::Sender<RawEvent>>,
 }
 
 impl FilesystemProcessor {
@@ -354,12 +167,12 @@ impl FilesystemProcessor {
         Self {
             context: None,
             config: FilesystemConfig::default(),
-            watch_roots: Vec::new(),
-            validated_watch_roots: Vec::new(),
-            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            db_pool: None,
+            active_jobs: HashMap::new(),
             last_state: None,
             checkpoint_manager: None,
             stage_context: None,
+            event_sender: None,
         }
     }
 
@@ -368,688 +181,351 @@ impl FilesystemProcessor {
         Self {
             context: None,
             config,
-            watch_roots: Vec::new(),
-            validated_watch_roots: Vec::new(),
-            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            db_pool: None,
+            active_jobs: HashMap::new(),
             last_state: None,
             checkpoint_manager: None,
             stage_context: None,
+            event_sender: None,
         }
     }
 
-    /// Take a snapshot of current filesystem state
-    #[must_use = "Snapshot result should be used or stored"]
-    #[instrument(skip(self), fields(processor = "filesystem", watch_roots_count = self.watch_roots.len()))]
-    #[with_context(
-        operation = "take_filesystem_snapshot",
-        retry_count = 2,
-        timeout_ms = 30000,
-        enable_metrics
-    )]
-    async fn take_snapshot(&mut self) -> SatelliteResult<FilesystemState> {
-        let mut file_counts = HashMap::new();
-        let mut total_files = 0;
-        let mut sample_paths = Vec::new();
+    /// Submit a TreeWatch job to sensd for filesystem monitoring
+    #[instrument(skip(self), fields(processor = "filesystem", path = %path))]
+    async fn submit_tree_watch_job(&mut self, path: &str) -> SatelliteResult<Ulid> {
+        let db_pool = self
+            .db_pool
+            .as_ref()
+            .ok_or_else(|| SatelliteError::General(eyre!("Database pool not initialized")))?;
 
-        for watch_root in &self.watch_roots {
-            if watch_root.exists() {
-                debug!(path = %watch_root.as_str(), "Counting files in watch root");
-                let count = self
-                    .count_files_in_directory(watch_root, &mut sample_paths)
+        let job_id = Ulid::new();
+        let source_identifier = format!("fs-watch:{}", path);
+
+        // Insert TreeWatch job into sensor_jobs table
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.sensor_jobs (
+                job_id, sensor_type, target_uri, source_identifier,
+                acquisition_mode, parameters, status, created_at
+            )
+            VALUES ($1::ulid, 'tree_watch', $2, $3, $4, $5, 'pending', NOW())
+            "#,
+            job_id as Ulid,
+            path,
+            source_identifier,
+            json!({ "mode": "continuous" }),
+            json!({
+                "recursive": true,
+                "follow_symlinks": self.config.follow_symlinks,
+                "max_depth": self.config.max_depth,
+            }),
+        )
+        .execute(db_pool)
+        .await
+        .map_err(|e| SatelliteError::General(eyre!("Failed to submit TreeWatch job: {}", e)))?;
+
+        info!("Submitted TreeWatch job {} for path: {}", job_id, path);
+        self.active_jobs.insert(job_id, path.to_string());
+
+        Ok(job_id)
+    }
+
+    /// Process a material slice from sensd into filesystem events
+    #[instrument(skip(self, slice), fields(processor = "filesystem", material_id = %slice.material_id, offset_start = slice.offset_start, offset_end = slice.offset_end))]
+    async fn process_material_slice(&self, slice: MaterialSlice) -> SatelliteResult<Vec<RawEvent>> {
+        let mut events = Vec::new();
+
+        // Parse metadata from the slice
+        let path = slice
+            .metadata
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let event_kind = slice
+            .metadata
+            .get("event_kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let file_size = slice
+            .metadata
+            .get("size")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let is_directory = slice
+            .metadata
+            .get("is_directory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Determine event type from metadata
+        let event_type = if is_directory {
+            match event_kind {
+                kind if kind.contains("Create") => "filesystem.dir_created",
+                kind if kind.contains("Remove") => "filesystem.dir_deleted",
+                kind if kind.contains("Rename") => "filesystem.dir_moved",
+                _ => "filesystem.dir_discovered",
+            }
+        } else {
+            match event_kind {
+                kind if kind.contains("Create") => "filesystem.file_created",
+                kind if kind.contains("Modify") => "filesystem.file_modified",
+                kind if kind.contains("Remove") => "filesystem.file_deleted",
+                kind if kind.contains("Rename") => "filesystem.file_moved",
+                _ => "filesystem.file_discovered",
+            }
+        };
+
+        // Create event with material provenance
+        let raw_event = RawEvent::builder()
+            .event_type(EventType::from(event_type))
+            .source(EventSource::from("filesystem"))
+            .payload(json!({
+                "path": path,
+                "size": file_size,
+                "is_directory": is_directory,
+                "event_kind": event_kind,
+                "material_id": slice.material_id.to_string(),
+                "offset_range": [slice.offset_start, slice.offset_end],
+            }))
+            .ts_orig(Some(slice.ts_capture_start))
+            .provenance(Provenance::Material {
+                id: Id::from(slice.material_id),
+                anchor_byte: slice.offset_start,
+                offset_kind: "byte".to_string(),
+            })
+            .build();
+
+        events.push(raw_event);
+
+        debug!(
+            "Generated {} event for path: {} (material: {}, offsets: {}-{})",
+            event_type, path, slice.material_id, slice.offset_start, slice.offset_end
+        );
+
+        Ok(events)
+    }
+
+    /// Create material stream for the given material_id
+    async fn create_material_stream(
+        &self,
+        material_id: Ulid,
+    ) -> Result<impl tokio_stream::Stream<Item = Result<MaterialSlice>> + '_> {
+        let db_pool = self
+            .db_pool
+            .as_ref()
+            .ok_or_else(|| eyre!("Database pool not initialized"))?;
+
+        let stream = async_stream::stream! {
+            let mut offset = 0i64;
+
+            loop {
+                let slices = sqlx::query!(
+                    r#"
+                    SELECT 
+                        tl.material_id as "material_id: Ulid",
+                        tl.offset_start,
+                        tl.offset_end,
+                        tl.ts_capture,
+                        tl.note,
+                        sm.data as "inline_data?: Vec<u8>"
+                    FROM raw.temporal_ledger tl
+                    LEFT JOIN raw.source_material_registry sm 
+                        ON sm.blob_id = tl.material_id
+                    WHERE tl.material_id = $1::ulid
+                    AND tl.offset_start >= $2
+                    ORDER BY tl.offset_start
+                    LIMIT $3
+                    "#,
+                    material_id as Ulid,
+                    offset,
+                    self.config.batch_size as i64,
+                )
+                .fetch_all(db_pool)
+                .await;
+
+                match slices {
+                    Ok(records) => {
+                        if records.is_empty() {
+                            break;
+                        }
+
+                        for record in records {
+                            let data = record.inline_data.unwrap_or_default();
+
+                            let slice = MaterialSlice {
+                                material_id: record.material_id,
+                                offset_start: record.offset_start,
+                                offset_end: record.offset_end,
+                                ts_capture_start: record.ts_capture,
+                                ts_capture_end: record.ts_capture,
+                                data,
+                                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
+                            };
+
+                            offset = record.offset_end;
+                            yield Ok(slice);
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(eyre!("Failed to fetch slices: {}", e));
+                        break;
+                    }
+                }
+            }
+        };
+
+        Ok(stream)
+    }
+
+    /// Process completed sensd jobs and generate events from their materials
+    #[instrument(skip(self), fields(processor = "filesystem"))]
+    async fn process_completed_jobs(&mut self) -> SatelliteResult<u64> {
+        let db_pool = self
+            .db_pool
+            .as_ref()
+            .ok_or_else(|| SatelliteError::General(eyre!("Database pool not initialized")))?;
+
+        let mut total_events = 0;
+
+        // Query for completed TreeWatch jobs that haven't been processed yet
+        let completed_jobs = sqlx::query!(
+            r#"
+            SELECT 
+                job_id as "job_id: Ulid",
+                material_id as "material_id: Ulid",
+                target_uri
+            FROM raw.sensor_jobs
+            WHERE status = 'completed'
+            AND sensor_type = 'tree_watch'
+            AND material_id IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM core.events 
+                WHERE provenance->>'id' = material_id::text
+            )
+            ORDER BY completed_at DESC
+            LIMIT 10
+            "#,
+        )
+        .fetch_all(db_pool)
+        .await
+        .map_err(|e| SatelliteError::General(eyre!("Failed to query completed jobs: {}", e)))?;
+
+        for job in completed_jobs {
+            if let Some(material_id) = job.material_id {
+                info!(
+                    "Processing material {} from TreeWatch job {} (path: {})",
+                    material_id, job.job_id, job.target_uri
+                );
+
+                // Create material stream for this job's output
+                let stream = self
+                    .create_material_stream(material_id)
                     .await
-                    .map_err(|e| {
-                        error!(error = %e, path = %watch_root.as_str(), "Failed to count files in directory");
-                        e
-                    })?;
-                file_counts.insert(watch_root.clone(), count);
-                total_files += count;
-                debug!(path = %watch_root.as_str(), file_count = count, "Completed file count for directory");
-            } else {
-                warn!(path = %watch_root.as_str(), "Watch root does not exist, skipping");
+                    .map_err(|e| SatelliteError::General(e))?;
+                let mut stream = stream;
+
+                // Process all slices from this material
+                while let Some(slice_result) = stream.next().await {
+                    match slice_result {
+                        Ok(slice) => {
+                            // Convert slice to filesystem events
+                            let events = self.process_material_slice(slice).await?;
+
+                            // Send events through the context or store them
+                            for event in events {
+                                if let Some(ref context) = self.context {
+                                    context.emit_event(event).await?;
+                                    total_events += 1;
+                                } else if let Some(ref sender) = self.event_sender {
+                                    sender.send(event).await.map_err(|_| {
+                                        SatelliteError::General(eyre!("Failed to send event"))
+                                    })?;
+                                    total_events += 1;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Error processing slice from material {}: {}",
+                                material_id, e
+                            );
+                        }
+                    }
+                }
+
+                info!(
+                    "Completed processing material {} with {} events",
+                    material_id, total_events
+                );
             }
         }
 
+        Ok(total_events)
+    }
+
+    /// Take a snapshot of current filesystem state
+    #[instrument(skip(self), fields(processor = "filesystem", jobs_count = self.active_jobs.len()))]
+    async fn take_snapshot(&mut self) -> SatelliteResult<FilesystemState> {
         let state = FilesystemState {
             captured_at: Utc::now(),
-            file_counts,
-            total_files,
-            directories: self.watch_roots.clone(),
-            sample_paths,
+            active_jobs: self.active_jobs.clone(),
+            watch_paths: self.config.watch_paths.clone(),
+            job_offsets: HashMap::new(), // Would be populated from database in real implementation
         };
 
         self.last_state = Some(state.clone());
         Ok(state)
     }
 
-    /// Count files in a directory and collect samples
-    #[instrument(skip(self, sample_paths), fields(processor = "filesystem", path = %path.as_str(), max_depth = self.config.max_depth))]
-    #[with_context(
-        operation = "count_files_in_directory",
-        timeout_ms = 15000,
-        context = "component=filesystem_scanning"
-    )]
-    async fn count_files_in_directory(
-        &self,
-        path: &Utf8Path,
-        sample_paths: &mut Vec<Utf8PathBuf>,
-    ) -> SatelliteResult<u64> {
-        let mut count = 0;
-        let mut walker = WalkDir::new(path).follow_links(false).into_iter();
+    /// Start continuous monitoring by submitting jobs and processing materials
+    #[instrument(skip(self), fields(processor = "filesystem", paths_count = self.config.watch_paths.len()))]
+    async fn start_continuous_monitoring(&mut self) -> SatelliteResult<()> {
+        info!("Starting continuous filesystem monitoring via sensd");
 
-        if let Some(max_depth) = self.config.max_depth {
-            walker = WalkDir::new(path)
-                .follow_links(false)
-                .max_depth(max_depth)
-                .into_iter();
-        }
-
-        for entry in walker.filter_map(|e| e.ok()) {
-            if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
-                count += 1;
-
-                // Collect samples for diagnostics (limit to MAX_DIAGNOSTIC_SAMPLES)
-                if sample_paths.len() < MAX_DIAGNOSTIC_SAMPLES {
-                    if let Ok(utf8_path) = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()) {
-                        sample_paths.push(utf8_path);
-                    }
+        // Submit TreeWatch jobs for all configured paths
+        for path in &self.config.watch_paths.clone() {
+            match self.submit_tree_watch_job(path).await {
+                Ok(job_id) => {
+                    info!(
+                        "Successfully submitted TreeWatch job {} for path: {}",
+                        job_id, path
+                    );
                 }
-            }
-        }
-
-        Ok(count)
-    }
-
-    /// Scan directory and emit events for discovered files/directories
-    #[instrument(skip(self), fields(processor = "filesystem", path = %path.as_str(), emit_events, checkpoint_desc = %checkpoint.description()))]
-    #[with_context(
-        operation = "scan_directory_with_checkpoint",
-        retry_count = 1,
-        timeout_ms = 60000,
-        enable_metrics,
-        context = "component=directory_scanning"
-    )]
-    async fn scan_directory_with_checkpoint(
-        &self,
-        path: &Utf8Path,
-        checkpoint: &Checkpoint,
-        until: &TimeHorizon,
-        emit_events: bool,
-    ) -> SatelliteResult<u64> {
-        let mut event_count = 0;
-
-        // Determine cutoff time based on checkpoint
-        let cutoff_time = match checkpoint {
-            Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
-            Checkpoint::External { position, .. } => {
-                // Try to parse timestamp from external position
-                serde_json::from_value::<DateTime<Utc>>(position.clone()).ok()
-            }
-            _ => None,
-        };
-
-        // Determine end time for historical scans
-        let end_time = match until {
-            TimeHorizon::Historical { end_time } => Some(*end_time),
-            _ => None,
-        };
-
-        info!(path = %path.as_str(), "Starting directory scan");
-
-        let mut walker = WalkDir::new(path).follow_links(false).into_iter();
-
-        if let Some(max_depth) = self.config.max_depth {
-            walker = WalkDir::new(path)
-                .follow_links(false)
-                .max_depth(max_depth)
-                .into_iter();
-        }
-
-        for entry in walker.filter_map(|e| e.ok()) {
-            let entry_path = entry.path();
-            let utf8_path = match Utf8Path::from_path(entry_path) {
-                Some(p) => p,
-                None => {
-                    debug!("Skipping non-UTF8 path: {:?}", entry_path);
-                    continue;
-                }
-            };
-            let metadata = match entry.metadata() {
-                Ok(meta) => meta,
                 Err(e) => {
-                    debug!("Failed to get metadata for {:?}: {}", entry_path, e);
-                    continue;
-                }
-            };
-
-            // Apply time filtering based on checkpoint and horizon
-            if let Ok(modified) = metadata.modified() {
-                let modified_dt: DateTime<Utc> = modified.into();
-
-                // Skip files older than checkpoint
-                if let Some(cutoff) = cutoff_time {
-                    if modified_dt <= cutoff {
-                        continue;
-                    }
-                }
-
-                // Skip files newer than end time for historical scans
-                if let Some(end) = end_time {
-                    if modified_dt > end {
-                        continue;
-                    }
-                }
-            }
-
-            // Apply pattern filtering
-            let should_process = self.matches_patterns(utf8_path);
-            if !should_process {
-                continue;
-            }
-
-            if emit_events {
-                let events = self.create_discovery_events(utf8_path, &metadata)?;
-
-                if let Some(ref context) = self.context {
-                    for event in events {
-                        context.emit_event(event).await?;
-                        event_count += 1;
-                    }
-                }
-            } else {
-                event_count += 1;
-            }
-        }
-
-        debug!(path = %path.as_str(), events = event_count, "Directory scan completed");
-        Ok(event_count)
-    }
-
-    /// Check if a path matches the configured patterns
-    fn matches_patterns(&self, path: &Utf8Path) -> bool {
-        self.matches_watch_patterns(path) && !self.matches_ignore_patterns(path)
-    }
-
-    /// Check if a path matches any watch pattern
-    fn matches_watch_patterns(&self, path: &Utf8Path) -> bool {
-        let path_str = path.as_str();
-
-        for pattern in &self.config.watch_patterns {
-            let expanded = shellexpand::tilde(pattern);
-            if let Ok(glob_pattern) = glob::Pattern::new(&expanded) {
-                if glob_pattern.matches(&path_str) {
-                    return true;
+                    error!("Failed to submit TreeWatch job for path {}: {}", path, e);
+                    return Err(e);
                 }
             }
         }
 
-        false
-    }
-
-    /// Check if a path matches any ignore pattern
-    fn matches_ignore_patterns(&self, path: &Utf8Path) -> bool {
-        for pattern in &self.config.ignore_patterns {
-            let expanded = shellexpand::tilde(pattern);
-            if let Ok(glob_pattern) = glob::Pattern::new(&expanded) {
-                if self.pattern_matches_path(&glob_pattern, pattern, path) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a pattern matches a path with proper handling of different pattern types
-    fn pattern_matches_path(
-        &self,
-        glob_pattern: &glob::Pattern,
-        pattern: &str,
-        path: &Utf8Path,
-    ) -> bool {
-        let path_str = path.as_str();
-
-        if pattern.contains('/') || pattern.contains("**") {
-            // Pattern contains path separators
-            if pattern.starts_with('/') || pattern.contains("**/") {
-                // Absolute path or contains **/, match against full path
-                glob_pattern.matches(&path_str)
-            } else {
-                // Relative path pattern, check if it matches any suffix of the path
-                let normalized_path = path_str.replace('\\', "/");
-                let path_components: Vec<&str> = normalized_path.split('/').collect();
-
-                // Try matching the pattern against all possible suffixes
-                for i in 0..path_components.len() {
-                    let suffix = path_components[i..].join("/");
-                    if glob_pattern.matches(&suffix) {
-                        return true;
-                    }
-                }
-                false
-            }
-        } else {
-            // Pattern is filename-only, match against just the filename
-            if let Some(filename) = path.file_name() {
-                glob_pattern.matches(filename)
-            } else {
-                false
-            }
-        }
-    }
-
-    /// Create discovery events for a file or directory with security validation
-    fn create_discovery_events(
-        &self,
-        path: &Utf8Path,
-        metadata: &std::fs::Metadata,
-    ) -> SatelliteResult<Vec<RawEvent>> {
-        Self::create_discovery_events_static(
-            path,
-            metadata,
-            &self.validated_watch_roots,
-            &self.config.security_policy,
-        )
-    }
-
-    /// Get file permissions for the current platform
-    #[cfg(unix)]
-    fn get_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
-        Some(metadata.permissions().mode())
-    }
-
-    #[cfg(not(unix))]
-    fn get_permissions(_metadata: &std::fs::Metadata) -> Option<u32> {
-        None
-    }
-
-    /// Start continuous filesystem monitoring
-    #[instrument(skip(self), fields(processor = "filesystem", debounce_ms = self.config.debounce_ms, watch_patterns_count = self.config.watch_patterns.len()))]
-    #[with_context(
-        operation = "start_continuous_filesystem_monitoring",
-        enable_metrics,
-        context = "component=continuous_monitoring"
-    )]
-    async fn start_continuous_monitoring(
-        &mut self,
-        _from_checkpoint: Checkpoint,
-    ) -> SatelliteResult<()> {
-        info!("Starting continuous filesystem monitoring with debouncing");
-
-        // Set up filesystem watcher with debouncing
-        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
-        let mut debouncer = notify_debouncer_full::new_debouncer(
-            std::time::Duration::from_millis(self.config.debounce_ms),
-            None,
-            notify_tx,
-        )
-        .map_err(|e| SatelliteError::General(eyre!("Failed to create debouncer: {}", e)))?;
-
-        // Set up watch paths
-        self.setup_watch_paths(&mut debouncer).await?;
-
-        // Start continuous processing
-        let config = self.config.clone();
-        let watch_roots = self.watch_roots.clone();
-        let rename_tracker = self.rename_tracker.clone();
-
-        if let Some(ref context) = self.context {
-            let host = context.host.clone();
-            let event_sender = context.event_sender.clone();
-
-            // Start the event processing loop
-            let processing_task = tokio::task::spawn_blocking(move || {
-                for result in notify_rx {
-                    match result {
-                        Ok(events) => {
-                            for event in events {
-                                debug!("Processing debounced event: {:?}", event);
-
-                                // Convert the notify event to our Event type
-                                let notify_event = NotifyEvent {
-                                    kind: event.kind,
-                                    paths: event.paths.clone(),
-                                    attrs: Default::default(),
-                                };
-
-                                // Process event directly with borrowed config
-                                match Self::process_fs_event_with_config(
-                                    notify_event,
-                                    &config,
-                                    &watch_roots,
-                                    &host,
-                                ) {
-                                    Ok(raw_events) => {
-                                        for raw_event in raw_events {
-                                            if let Err(e) = event_sender.send(raw_event) {
-                                                error!("Failed to send event: {}", e);
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to convert filesystem event: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                        Err(errors) => {
-                            for error in errors {
-                                error!("Notify error: {:?}", error);
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Start rename cleanup task
-            let cleanup_tracker = self.rename_tracker.clone();
-            let cleanup_task = tokio::task::spawn(async move {
-                let mut cleanup_interval =
-                    tokio::time::interval(sinex_core::types::filesystem::CLEANUP_INTERVAL);
-                loop {
-                    cleanup_interval.tick().await;
-                    Self::cleanup_old_rename_operations(&cleanup_tracker);
-                }
-            });
-
-            // Wait for either task to complete
-            tokio::select! {
-                result = processing_task => {
-                    match result {
-                        Ok(_) => info!("Event processing task completed"),
-                        Err(e) => error!("Event processing task failed: {}", e),
-                    }
-                }
-                _ = cleanup_task => {
-                    info!("Cleanup task completed");
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Set up filesystem watch paths from configuration with security validation
-    #[instrument(skip(self, debouncer), fields(processor = "filesystem", patterns_count = self.config.watch_patterns.len()))]
-    async fn setup_watch_paths(
-        &mut self,
-        debouncer: &mut notify_debouncer_full::Debouncer<
-            notify::RecommendedWatcher,
-            notify_debouncer_full::FileIdMap,
-        >,
-    ) -> SatelliteResult<()> {
-        let mut watched_paths = HashSet::new();
-        self.watch_roots.clear();
-        self.validated_watch_roots.clear();
-
-        // Collect base path strings for validation
-        let mut base_path_strings = Vec::new();
-
-        for pattern in &self.config.watch_patterns {
-            // Expand home directory
-            let expanded = shellexpand::tilde(pattern);
-
-            // Extract the base directory from the pattern
-            let base_path_str = if expanded.contains("**") {
-                // Find the path before the first wildcard
-                expanded
-                    .split("**")
-                    .next()
-                    .unwrap_or(&expanded)
-                    .trim_end_matches('/')
-                    .to_string()
-            } else if expanded.contains('*') {
-                // Find the parent directory of the wildcard
-                camino::Utf8Path::new(expanded.as_ref())
-                    .parent()
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| expanded.to_string())
-            } else {
-                expanded.to_string()
-            };
-
-            base_path_strings.push(base_path_str);
-        }
-
-        // SECURITY: Validate all watch paths before setting up watchers
-        let validated_paths =
-            validate_watch_paths(&base_path_strings, &self.config.security_policy).map_err(
-                |e| {
-                    SatelliteError::General(eyre!("Filesystem watch path validation failed: {}", e))
-                },
-            )?;
+        // Start processing loop
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+            self.config.processing_interval_ms,
+        ));
 
         info!(
-            "Validated {} watch paths for filesystem monitoring",
-            validated_paths.len()
+            "Starting material processing loop (interval: {}ms)",
+            self.config.processing_interval_ms
         );
-        for path in &validated_paths {
-            info!("  - {}", path.as_str());
-        }
 
-        // Set up validated watch paths
-        for base_path in &validated_paths {
-            // Create directory if it doesn't exist (for testing)
-            // Using create_dir_all which is atomic - it either succeeds or fails safely
-            match tokio::fs::create_dir_all(base_path).await {
-                Ok(()) => {
-                    debug!("Ensured directory exists: {}", base_path.as_str());
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Directory already exists, this is fine
-                    debug!("Directory already exists: {}", base_path.as_str());
+        loop {
+            interval.tick().await;
+
+            match self.process_completed_jobs().await {
+                Ok(event_count) => {
+                    if event_count > 0 {
+                        debug!("Processed {} events from completed sensd jobs", event_count);
+                    }
                 }
                 Err(e) => {
-                    return Err(SatelliteError::General(eyre!(
-                        "Failed to create validated directory {}: {}",
-                        base_path.as_str(),
-                        e
-                    )));
-                }
-            }
-
-            // Watch the base directory (no need to check exists() since we just ensured it exists above)
-            if !watched_paths.contains(base_path) {
-                info!("Watching validated directory: {}", base_path.as_str());
-                debouncer
-                    .watcher()
-                    .watch(base_path.as_std_path(), notify::RecursiveMode::Recursive)
-                    .map_err(|e| {
-                        SatelliteError::General(eyre!(
-                            "Failed to watch validated path {}: {}",
-                            base_path,
-                            e
-                        ))
-                    })?;
-                watched_paths.insert(base_path.to_path_buf());
-
-                // Add to watch roots for validation
-                if let Ok(canonical) = base_path.canonicalize() {
-                    if let Ok(utf8_canonical) = Utf8PathBuf::from_path_buf(canonical) {
-                        self.watch_roots.push(utf8_canonical.clone());
-                        self.validated_watch_roots.push(utf8_canonical);
-                    }
+                    error!("Error processing completed jobs: {}", e);
+                    // Continue processing despite errors
                 }
             }
         }
-
-        if self.watch_roots.is_empty() {
-            return Err(SatelliteError::General(eyre!(
-                "No valid watch roots found after security validation"
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Configure default watch patterns if none are specified
-    fn configure_default_watch_patterns(&mut self) {
-        if self.config.watch_patterns.is_empty() {
-            if let Some(home) = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok()) {
-                self.config.watch_patterns = vec![
-                    format!("{}/**/*", home.join("Documents").as_str()),
-                    format!("{}/**/*", home.join("Downloads").as_str()),
-                    format!("{}/**/*", home.join("Desktop").as_str()),
-                ];
-            } else {
-                // Fallback to current directory
-                self.config.watch_patterns = vec!["**/*".to_string()];
-            }
-        }
-    }
-
-    /// Clean up old rename operations that didn't complete
-    fn cleanup_old_rename_operations(rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>) {
-        const RENAME_TIMEOUT: Duration = Duration::from_secs(5);
-
-        if let Ok(mut tracker) = rename_tracker.lock() {
-            let now = Instant::now();
-            let mut to_remove = Vec::new();
-
-            for (cookie, rename_op) in tracker.iter() {
-                if now.duration_since(rename_op.timestamp) > RENAME_TIMEOUT {
-                    debug!(
-                        "Cleaning up orphaned rename operation: cookie {} from {}",
-                        cookie,
-                        rename_op.source_path.as_str()
-                    );
-                    to_remove.push(*cookie);
-                }
-            }
-
-            for cookie in to_remove {
-                tracker.remove(&cookie);
-            }
-        }
-    }
-
-    /// Process filesystem event with provided config (static method to avoid cloning)
-    fn process_fs_event_with_config(
-        event: NotifyEvent,
-        config: &FilesystemConfig,
-        validated_watch_roots: &[Utf8PathBuf],
-        _host: &str,
-    ) -> SatelliteResult<Vec<RawEvent>> {
-        let mut events = Vec::new();
-
-        // Process each path in the notify event
-        for path in event.paths {
-            let utf8_path = match Utf8PathBuf::from_path_buf(path) {
-                Ok(p) => p,
-                Err(_) => {
-                    debug!(MSG_SKIPPING_NON_UTF8_PATH);
-                    continue;
-                }
-            };
-
-            // SECURITY: Validate discovered file against watch roots
-            let mut path_validated = false;
-            for watch_root in validated_watch_roots {
-                match validate_discovered_file(
-                    utf8_path.as_str(),
-                    watch_root.as_str(),
-                    &config.security_policy,
-                ) {
-                    Ok(_) => {
-                        path_validated = true;
-                        break;
-                    }
-                    Err(_) => continue,
-                }
-            }
-
-            if !path_validated {
-                warn!(
-                    "{}: {}",
-                    MSG_REJECTING_PATH_OUTSIDE_BOUNDARIES,
-                    utf8_path.as_str()
-                );
-                continue;
-            }
-
-            // Get file metadata for event creation
-            if let Ok(metadata) = std::fs::metadata(&utf8_path) {
-                match Self::create_discovery_events_static(
-                    &utf8_path,
-                    &metadata,
-                    validated_watch_roots,
-                    &config.security_policy,
-                ) {
-                    Ok(mut file_events) => {
-                        events.append(&mut file_events);
-                    }
-                    Err(e) => {
-                        warn!("Failed to create events for {}: {}", utf8_path, e);
-                    }
-                }
-            }
-        }
-
-        Ok(events)
-    }
-
-    /// Convert filesystem event to RawEvent with security validation (legacy method)
-    fn convert_fs_event(&self, event: NotifyEvent, host: &str) -> SatelliteResult<Vec<RawEvent>> {
-        // Delegate to secure version
-        self.convert_fs_event_secure(event, host)
-    }
-
-    /// Convert filesystem event to RawEvent with comprehensive security validation
-    fn convert_fs_event_secure(
-        &self,
-        event: NotifyEvent,
-        _host: &str,
-    ) -> SatelliteResult<Vec<RawEvent>> {
-        let mut events = Vec::new();
-
-        // Process each path in the notify event
-        for path in event.paths {
-            let utf8_path = match Utf8PathBuf::from_path_buf(path) {
-                Ok(p) => p,
-                Err(_) => {
-                    debug!("Skipping non-UTF8 path in filesystem event");
-                    continue;
-                }
-            };
-
-            // SECURITY: Validate discovered file against watch roots
-            let mut path_validated = false;
-            for watch_root in &self.validated_watch_roots {
-                match validate_discovered_file(
-                    utf8_path.as_str(),
-                    watch_root.as_str(),
-                    &self.config.security_policy,
-                ) {
-                    Ok(_) => {
-                        path_validated = true;
-                        break;
-                    }
-                    Err(_) => continue,
-                }
-            }
-
-            if !path_validated {
-                warn!(
-                    "Rejecting filesystem event for path outside validated boundaries: {}",
-                    utf8_path.as_str()
-                );
-                continue;
-            }
-
-            // Get file metadata for event creation
-            if let Ok(metadata) = std::fs::metadata(&utf8_path) {
-                match self.create_discovery_events(&utf8_path, &metadata) {
-                    Ok(mut file_events) => {
-                        events.append(&mut file_events);
-                    }
-                    Err(e) => {
-                        warn!("Failed to create events for {}: {}", utf8_path, e);
-                    }
-                }
-            }
-        }
-
-        Ok(events)
     }
 }
 
@@ -1059,7 +535,6 @@ impl Default for FilesystemProcessor {
     }
 }
 
-#[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=filesystem"])]
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
@@ -1068,75 +543,56 @@ impl StatefulStreamProcessor for FilesystemProcessor {
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
-        _config: Self::Config,
+        config: Self::Config,
     ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
-            "Initializing filesystem processor"
+            "Initializing filesystem processor with sensd integration"
         );
+
+        // Store configuration
+        self.config = config;
+
+        // Initialize database connection
+        self.db_pool = Some(ctx.db_pool.clone());
 
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
 
-        // Initialize stage-as-you-go context for real-time provenance
+        // Initialize stage-as-you-go context
         self.stage_context = Some(StageAsYouGoContext::new(
             ctx.db_pool.clone(),
             ctx.ingest_client.clone(),
         ));
-        info!("Stage-as-you-go context initialized for filesystem processor");
 
-        // Parse configuration from processor context
-        if let Some(config_json) = ctx.config.get("filesystem") {
-            match serde_json::from_value::<FilesystemConfig>(config_json.clone()) {
-                Ok(config) => {
-                    self.config = config;
-                }
-                Err(e) => {
-                    warn!("Failed to parse filesystem config, using defaults: {}", e);
-                }
+        // Set up default watch paths if none specified
+        if self.config.watch_paths.is_empty() {
+            if let Some(home) = dirs::home_dir() {
+                self.config.watch_paths = vec![
+                    home.join("Documents").to_string_lossy().to_string(),
+                    home.join("Downloads").to_string_lossy().to_string(),
+                    home.join("Desktop").to_string_lossy().to_string(),
+                ];
+                info!("Using default watch paths: {:?}", self.config.watch_paths);
+            } else {
+                return Err(SatelliteError::General(eyre!(
+                    "No watch paths configured and could not determine home directory"
+                )));
             }
         }
 
-        // Override with individual config values if present
-        if let Some(patterns_json) = ctx.config.get("watch_patterns") {
-            if let Ok(patterns) = serde_json::from_value::<Vec<String>>(patterns_json.clone()) {
-                self.config.watch_patterns = patterns;
-            }
-        }
-
-        if let Some(ignore_json) = ctx.config.get("ignore_patterns") {
-            if let Ok(patterns) = serde_json::from_value::<Vec<String>>(ignore_json.clone()) {
-                self.config.ignore_patterns = patterns;
-            }
-        }
-
-        if let Some(debounce_json) = ctx.config.get("debounce_ms") {
-            if let Ok(ms) = serde_json::from_value::<u64>(debounce_json.clone()) {
-                self.config.debounce_ms = ms;
-            }
-        }
-
-        if let Some(depth_json) = ctx.config.get("max_depth") {
-            if let Ok(depth) = serde_json::from_value::<Option<usize>>(depth_json.clone()) {
-                self.config.max_depth = depth;
-            }
-        }
-
-        if let Some(paths_json) = ctx.config.get("watch_paths") {
-            if let Ok(paths) = serde_json::from_value::<Vec<String>>(paths_json.clone()) {
-                self.config.watch_patterns = paths;
-            }
-        }
-
-        // Ensure we have some watch patterns
-        self.configure_default_watch_patterns();
+        // Validate configuration
+        self.config.validate_config().map_err(|e| {
+            SatelliteError::General(eyre!("Configuration validation failed: {}", e))
+        })?;
 
         info!(
-            patterns = ?self.config.watch_patterns,
-            ignore = ?self.config.ignore_patterns,
-            debounce_ms = self.config.debounce_ms,
+            watch_paths = ?self.config.watch_paths,
             max_depth = ?self.config.max_depth,
+            follow_symlinks = self.config.follow_symlinks,
+            batch_size = self.config.batch_size,
+            processing_interval_ms = self.config.processing_interval_ms,
             "Filesystem processor configuration"
         );
 
@@ -1163,7 +619,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             until = ?until,
             targets = args.targets.len(),
             dry_run = args.dry_run,
-            "Starting filesystem scan"
+            "Starting filesystem scan via sensd"
         );
 
         match until {
@@ -1171,95 +627,41 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
 
-                // Scan watch roots or specified targets
-                let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.as_str()).collect()
+                // Process any completed jobs
+                if !args.dry_run {
+                    events_processed = self.process_completed_jobs().await?;
+                }
+
+                successful_targets = if args.targets.is_empty() {
+                    self.config.watch_paths.clone()
                 } else {
                     args.targets.clone()
                 };
-
-                for target in targets {
-                    // Validate target path for security
-                    validate_path(&target).map_err(|e| {
-                        SatelliteError::General(eyre!(
-                            "{} '{}': {}",
-                            ERR_INVALID_TARGET_PATH,
-                            target,
-                            e
-                        ))
-                    })?;
-
-                    let path = camino::Utf8Path::new(&target);
-                    if path.exists() {
-                        match self
-                            .scan_directory_with_checkpoint(path, &from, &until, !args.dry_run)
-                            .await
-                        {
-                            Ok(count) => {
-                                events_processed += count;
-                                successful_targets.push(target);
-                            }
-                            Err(e) => {
-                                failed_targets.push((target, e.to_string()));
-                            }
-                        }
-                    } else {
-                        warnings.push(format!("Path does not exist: {}", target));
-                    }
-                }
             }
 
-            TimeHorizon::Historical { end_time } => {
-                // Historical scan from checkpoint to end_time
+            TimeHorizon::Historical { end_time: _ } => {
                 warnings.push(
-                    "Historical filesystem scanning is limited to modification times".to_string(),
+                    "Historical filesystem scanning via sensd depends on material capture times"
+                        .to_string(),
                 );
 
-                let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.as_str()).collect()
+                // Process any completed jobs within the time range
+                if !args.dry_run {
+                    events_processed = self.process_completed_jobs().await?;
+                }
+
+                successful_targets = if args.targets.is_empty() {
+                    self.config.watch_paths.clone()
                 } else {
                     args.targets.clone()
                 };
-
-                for target in targets {
-                    // Validate target path for security
-                    validate_path(&target).map_err(|e| {
-                        SatelliteError::General(eyre!(
-                            "{} '{}': {}",
-                            ERR_INVALID_TARGET_PATH,
-                            target,
-                            e
-                        ))
-                    })?;
-
-                    let path = camino::Utf8Path::new(&target);
-                    if path.exists() {
-                        match self
-                            .scan_directory_with_checkpoint(path, &from, &until, !args.dry_run)
-                            .await
-                        {
-                            Ok(count) => {
-                                events_processed += count;
-                                successful_targets.push(target);
-                            }
-                            Err(e) => {
-                                failed_targets.push((target, e.to_string()));
-                            }
-                        }
-                    } else {
-                        warnings.push(format!("Path does not exist: {}", target));
-                    }
-                }
-
-                debug!(end_time = %end_time, "Historical scan completed");
             }
 
             TimeHorizon::Continuous => {
                 // Start continuous monitoring
-                info!("Starting continuous filesystem monitoring");
-                self.start_continuous_monitoring(from.clone()).await?;
-                // Continuous monitoring runs indefinitely
-                events_processed = 0; // Can't count events in continuous mode
+                info!("Starting continuous filesystem monitoring via sensd");
+                self.start_continuous_monitoring().await?;
+                events_processed = 0; // Continuous monitoring runs indefinitely
             }
         }
 
@@ -1277,7 +679,11 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 Utc::now(),
             )),
             processor_stats: HashMap::from([
-                ("watch_roots".to_string(), self.watch_roots.len() as u64),
+                ("active_jobs".to_string(), self.active_jobs.len() as u64),
+                (
+                    "watch_paths".to_string(),
+                    self.config.watch_paths.len() as u64,
+                ),
                 (
                     "successful_targets".to_string(),
                     successful_targets.len() as u64,
@@ -1291,7 +697,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
     }
 
     fn processor_name(&self) -> &str {
-        "fs-processor"
+        "fs-processor-sensd"
     }
 
     fn processor_type(&self) -> ProcessorType {
@@ -1304,14 +710,13 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             supports_historical: true,
             supports_snapshot: true,
             supports_interactive: false,
-            max_scan_size: Some(100000), // Limit for very large directories
+            max_scan_size: Some(100000),
             supports_concurrent: false,
         }
     }
 
     #[instrument(skip(self), fields(processor = "filesystem"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
-        // For filesystem monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
 
@@ -1322,50 +727,27 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         until: &TimeHorizon,
         args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
-        let mut estimated_events = 0;
-        let mut warnings = Vec::new();
+        let estimated_events = self.active_jobs.len() as u64 * 100; // Rough estimate
+        let warnings = vec!["Estimates are based on active sensd jobs".to_string()];
 
-        // Estimate based on current directory contents
-        let targets = if args.targets.is_empty() {
-            &self.watch_roots.iter().map(|p| p.as_str()).collect()
-        } else {
-            &args.targets
-        };
-
-        for target in targets {
-            // Validate target path for security
-            if let Err(e) = validate_path(target) {
-                warnings.push(format!("Invalid target path '{}': {}", target, e));
-                continue;
-            }
-
-            let path = camino::Utf8Path::new(target);
-            if path.exists() {
-                // Quick estimate by counting entries
-                if let Ok(mut entries) = tokio::fs::read_dir(path).await {
-                    while let Ok(Some(_)) = entries.next_entry().await {
-                        estimated_events += 1;
-                    }
-                }
-            } else {
-                warnings.push(format!("Cannot access path: {}", target));
-            }
-        }
-
-        // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
-            TimeHorizon::Snapshot => (1.0, 0.9),
-            TimeHorizon::Historical { .. } => (0.3, 0.6), // Fewer files modified recently
-            TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
+            TimeHorizon::Snapshot => (1.0, 0.7),
+            TimeHorizon::Historical { .. } => (0.5, 0.5),
+            TimeHorizon::Continuous => (f64::INFINITY, 0.2),
         };
 
         let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
+        let targets_count = if args.targets.is_empty() {
+            self.config.watch_paths.len()
+        } else {
+            args.targets.len()
+        };
 
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
-            estimated_duration: std::time::Duration::from_millis(adjusted_events * 10), // ~10ms per file
-            estimated_data_size: adjusted_events * 1024, // ~1KB per event
-            estimated_targets: targets.len() as u64,
+            estimated_duration: std::time::Duration::from_millis(adjusted_events * 5),
+            estimated_data_size: adjusted_events * 512,
+            estimated_targets: targets_count as u64,
             warnings,
             confidence,
         })
@@ -1379,9 +761,9 @@ impl ExplorationProvider for FilesystemProcessor {
             vec![ActivityEntry {
                 timestamp: state.captured_at,
                 description: format!(
-                    "Snapshot taken: {} files in {} directories",
-                    state.total_files,
-                    state.directories.len()
+                    "Snapshot taken: {} active jobs for {} watch paths",
+                    state.active_jobs.len(),
+                    state.watch_paths.len()
                 ),
                 data: Some(serde_json::to_value(state)?),
             }]
@@ -1391,36 +773,36 @@ impl ExplorationProvider for FilesystemProcessor {
 
         Ok(SourceState {
             description: format!(
-                "Filesystem processor monitoring {} paths with {} patterns",
-                self.watch_roots.len(),
-                self.config.watch_patterns.len()
+                "Filesystem processor via sensd monitoring {} paths with {} active jobs",
+                self.config.watch_paths.len(),
+                self.active_jobs.len()
             ),
             last_updated: self
                 .last_state
                 .as_ref()
                 .map(|s| s.captured_at)
                 .unwrap_or_else(Utc::now),
-            total_items: self.last_state.as_ref().map(|s| s.total_files),
+            total_items: Some(self.active_jobs.len() as u64),
             metadata: HashMap::from([
                 (
-                    "watch_patterns".to_string(),
-                    serde_json::to_value(&self.config.watch_patterns)?,
-                ),
-                (
-                    "ignore_patterns".to_string(),
-                    serde_json::to_value(&self.config.ignore_patterns)?,
-                ),
-                (
-                    "debounce_ms".to_string(),
-                    serde_json::to_value(self.config.debounce_ms)?,
+                    "watch_paths".to_string(),
+                    serde_json::to_value(&self.config.watch_paths)?,
                 ),
                 (
                     "max_depth".to_string(),
                     serde_json::to_value(self.config.max_depth)?,
                 ),
                 (
+                    "follow_symlinks".to_string(),
+                    serde_json::to_value(self.config.follow_symlinks)?,
+                ),
+                (
+                    "batch_size".to_string(),
+                    serde_json::to_value(self.config.batch_size)?,
+                ),
+                (
                     "processor_type".to_string(),
-                    serde_json::Value::String("ingestor".to_string()),
+                    serde_json::Value::String("sensd-ingestor".to_string()),
                 ),
             ]),
             healthy: true,
@@ -1432,8 +814,7 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         _limit: u64,
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        // In a real implementation, this would query the database for scan history
-        // For now, return empty as this requires database access
+        // Would query database for job completion history
         Ok(vec![])
     }
 
@@ -1441,32 +822,29 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        // In a real implementation, this would compare filesystem state with Sinex events
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
             let hour_ago = now - chrono::Duration::hours(1);
             (hour_ago, now)
         });
 
-        let source_total = self.last_state.as_ref().map(|s| s.total_files).unwrap_or(0);
-
         Ok(CoverageAnalysis {
             time_range: (start_time, end_time),
-            source_total,
+            source_total: self.active_jobs.len() as u64,
             sinex_total: 0, // Would query from database
             coverage_percentage: 0.0,
-            missing_count: source_total,
+            missing_count: self.active_jobs.len() as u64,
             missing_samples: vec![MissingItem {
-                source_id: "filesystem".to_string(),
+                source_id: "sensd".to_string(),
                 timestamp: end_time,
-                description: "Files not yet ingested into Sinex".to_string(),
-                missing_reason: Some("Initial scan required".to_string()),
+                description: "TreeWatch jobs pending completion".to_string(),
+                missing_reason: Some("Waiting for sensd job completion".to_string()),
             }],
             duplicate_count: 0,
             recommendations: vec![
-                "Run a full snapshot scan to capture current state".to_string(),
-                "Enable continuous monitoring for real-time updates".to_string(),
-                "Check watch patterns and ignore patterns configuration".to_string(),
+                "Monitor sensd job status for completion".to_string(),
+                "Check TreeWatch sensor configuration".to_string(),
+                "Verify material processing pipeline".to_string(),
             ],
         })
     }
@@ -1476,32 +854,26 @@ impl ExplorationProvider for FilesystemProcessor {
         path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
-        // Validate export path for security
-        validate_path(path.as_str())
-            .map_err(|e| color_eyre::eyre::eyre!("Invalid export path {}": {}, path, e))?;
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,
                 ExportFormat::Csv => {
-                    // Simple CSV export
-                    let mut csv = "path,file_count\n".to_string();
-                    for (path, count) in &state.file_counts {
-                        csv.push_str(&format!("{},{}\n", path.as_str(), count));
+                    let mut csv = "job_id,target_path\n".to_string();
+                    for (job_id, path) in &state.active_jobs {
+                        csv.push_str(&format!("{},{}\n", job_id, path));
                     }
                     csv
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-
             std::fs::write(path, content)?;
         } else {
-            // Export configuration if no state available
             let config_data = serde_json::json!({
-                "watch_patterns": self.config.watch_patterns,
-                "ignore_patterns": self.config.ignore_patterns,
-                "debounce_ms": self.config.debounce_ms,
+                "watch_paths": self.config.watch_paths,
                 "max_depth": self.config.max_depth,
-                "watch_roots": self.watch_roots
+                "follow_symlinks": self.config.follow_symlinks,
+                "batch_size": self.config.batch_size,
+                "active_jobs": self.active_jobs
             });
 
             let content = match format {
@@ -1521,115 +893,52 @@ impl ExplorationProvider for FilesystemProcessor {
 mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
-    use tempfile::TempDir;
 
     #[sinex_test]
-    async fn test_path_validation_in_create_discovery_events(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    async fn test_processor_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let config = FilesystemConfig {
-            watch_patterns: vec!["**/*.rs".to_string()],
-            ignore_patterns: vec![],
-            debounce_ms: DEFAULT_DEBOUNCE_MS,
-            max_depth: None,
+            watch_paths: vec!["/tmp/test".to_string()],
+            max_depth: Some(5),
+            follow_symlinks: false,
+            batch_size: 50,
+            processing_interval_ms: 500,
         };
 
-        let processor = FilesystemProcessor {
-            config,
-            context: None,
-            stage_context: None,
-            watch_roots: vec![],
-            validated_watch_roots: vec![],
-            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
-            last_state: None,
-            checkpoint_manager: None,
-        };
+        let mut processor = FilesystemProcessor::with_config(config.clone());
 
-        // Test with no validated watch roots (should return empty events)
-        let test_path = Utf8Path::new("test_file.rs");
-        let metadata = tokio::fs::metadata(".").await.unwrap();
-
-        let result = processor.create_discovery_events(test_path, &metadata);
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap().len(),
-            0,
-            "Should return empty events when no validated watch roots"
-        );
-
-        // Test with valid validated watch root
-        let temp_dir = TempDir::new()?;
-        let temp_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
-        let mut processor_with_roots = FilesystemProcessor {
-            config: processor.config.clone(),
-            context: None,
-            stage_context: None,
-            watch_roots: vec![temp_path.clone()],
-            validated_watch_roots: vec![temp_path.clone()],
-            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
-            last_state: None,
-            checkpoint_manager: None,
-        };
-
-        let test_file_in_temp = temp_path.join("test_file.rs");
-        tokio::fs::write(&test_file_in_temp, "// test file").await?;
-        let result = processor_with_roots.create_discovery_events(&test_file_in_temp, &metadata);
-        assert!(result.is_ok());
-        assert!(
-            result.unwrap().len() > 0,
-            "Should create events for files within validated watch roots"
-        );
+        assert_eq!(processor.config.watch_paths, config.watch_paths);
+        assert_eq!(processor.config.max_depth, config.max_depth);
+        assert_eq!(processor.config.follow_symlinks, config.follow_symlinks);
+        assert_eq!(processor.config.batch_size, config.batch_size);
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_watch_path_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new()?;
-        let base_path = temp_dir.path();
-
-        // Create a config with path that will be validated
-        let config = FilesystemConfig {
-            watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
-            ignore_patterns: vec![],
-            debounce_ms: DEFAULT_DEBOUNCE_MS,
-            max_depth: None,
+    async fn test_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        // Valid config
+        let valid_config = FilesystemConfig {
+            watch_paths: vec!["/tmp/test".to_string()],
+            max_depth: Some(10),
+            follow_symlinks: false,
+            batch_size: 100,
+            processing_interval_ms: 1000,
         };
+        assert!(valid_config.validate_config().is_ok());
 
-        let mut processor = FilesystemProcessor {
-            config: config.clone(),
-            context: None,
-            stage_context: None,
-            watch_roots: vec![],
-            validated_watch_roots: vec![],
-            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
-            last_state: None,
-            checkpoint_manager: None,
+        // Invalid config - empty watch paths
+        let invalid_config = FilesystemConfig {
+            watch_paths: vec![],
+            ..valid_config.clone()
         };
+        assert!(invalid_config.validate_config().is_err());
 
-        // Create a mock debouncer - we just need the setup logic to run
-        let (notify_tx, _notify_rx) = std::sync::mpsc::channel();
-        let mut debouncer = notify_debouncer_full::new_debouncer(
-            std::time::Duration::from_millis(100),
-            None,
-            notify_tx,
-        )?;
-
-        // Test setup with valid paths
-        let result = processor.setup_watch_paths(&mut debouncer).await;
-        assert!(result.is_ok());
-        assert!(!processor.watch_roots.is_empty());
-
-        // Test with invalid path pattern containing null bytes
-        processor.config.watch_patterns = vec!["test\0path/**/*.rs".to_string()];
-        processor.watch_roots.clear();
-
-        let result = processor.setup_watch_paths(&mut debouncer).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid watch path"));
+        // Invalid config - batch size too large
+        let invalid_config = FilesystemConfig {
+            batch_size: 2000,
+            ..valid_config.clone()
+        };
+        assert!(invalid_config.validate_config().is_err());
 
         Ok(())
     }

@@ -6,11 +6,9 @@
 // Use local facade for common types
 use crate::common::*;
 
-// Desktop-specific event payloads - now using flattened namespace
-use sinex_core::payloads::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
-    WindowManagerHistoricalPayload,
-};
+// Desktop-specific imports for sensd integration
+use sinex_core::types::Ulid;
+use sqlx::PgPool;
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
 
@@ -73,9 +71,10 @@ pub struct WindowManagerStatus {
     pub total_windows: u32,
 }
 
-/// Unified desktop processor implementing StatefulStreamProcessor
+/// Unified desktop processor implementing StatefulStreamProcessor with sensd integration
 ///
-/// Supports snapshot, historical, and continuous scanning modes for desktop events.
+/// This processor captures desktop activity as source material first, then generates
+/// events with proper provenance tracking via the sensd pattern.
 pub struct DesktopProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
@@ -92,6 +91,9 @@ pub struct DesktopProcessor {
 
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
+
+    /// Database pool for sensd integration
+    db_pool: Option<PgPool>,
 }
 
 impl DesktopProcessor {
@@ -107,6 +109,7 @@ impl DesktopProcessor {
             window_manager_watcher: None,
             last_state: None,
             checkpoint_manager: None,
+            db_pool: None,
         }
     }
 
@@ -119,6 +122,7 @@ impl DesktopProcessor {
             window_manager_watcher: None,
             last_state: None,
             checkpoint_manager: None,
+            db_pool: None,
         }
     }
 

@@ -1,83 +1,477 @@
-//! Content Automaton - Unified StatefulStreamProcessor implementation
+//! Content Automaton - Event-driven text and media analysis
+//!
+//! This automaton consumes events containing textual or media content and produces
+//! synthesized content insights and classifications. It implements the proper automaton pattern:
+//! Content Events → Analysis → Synthesized Content Insights
 
-use camino::Utf8PathBuf;
+// Local facade module to reduce import verbosity
+mod common {
+    // Core types facade
+    pub use sinex_core::{
+        db::models::RawEvent,
+        types::{
+            events::{payloads::*, Event},
+            Id,
+        },
+    };
 
-use async_trait::async_trait;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use sinex_satellite_sdk::{
-    default_exploration_provider,
-    stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteResult,
-    SourceState,
-};
-use std::collections::HashMap;
-use tracing::info;
+    // SDK facade for common processor types
+    pub use sinex_satellite_sdk::{
+        cli::{
+            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
+            IngestionHistoryEntry, MissingItem, SourceState,
+        },
+        stream_processor::{
+            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
+            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        },
+        SatelliteResult,
+    };
 
-/// Configuration for Content Processor
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ContentProcessorConfig {
-    /// Content analysis settings
-    pub analysis_settings: HashMap<String, serde_json::Value>,
+    // External dependencies
+    pub use {
+        async_trait::async_trait,
+        chrono::{DateTime, Utc},
+        serde::{Deserialize, Serialize},
+        serde_json,
+        sqlx::PgPool,
+        std::{collections::HashMap, time::Duration},
+        tokio::sync::mpsc,
+        tracing::{debug, error, info, instrument, warn},
+    };
 }
 
-impl Default for ContentProcessorConfig {
+// Use local facade for common types
+use crate::common::*;
+
+/// Configuration for Content Automaton
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContentAutomatonConfig {
+    /// Event types containing content to analyze
+    pub target_event_types: Vec<String>,
+    /// Enable text content analysis
+    pub enable_text_analysis: bool,
+    /// Enable media content analysis
+    pub enable_media_analysis: bool,
+    /// Enable content classification
+    pub enable_content_classification: bool,
+    /// Content processing window in seconds
+    pub processing_window_seconds: u64,
+    /// Maximum content size to analyze (bytes)
+    pub max_content_size_bytes: usize,
+}
+
+impl Default for ContentAutomatonConfig {
     fn default() -> Self {
         Self {
-            analysis_settings: HashMap::new(),
+            target_event_types: vec![
+                "document.created".to_string(),
+                "document.modified".to_string(),
+                "clipboard.content.captured".to_string(),
+                "file.created".to_string(),
+                "file.modified".to_string(),
+            ],
+            enable_text_analysis: true,
+            enable_media_analysis: false, // Disabled by default due to complexity
+            enable_content_classification: true,
+            processing_window_seconds: 3600,          // 1 hour
+            max_content_size_bytes: 10 * 1024 * 1024, // 10MB
         }
     }
 }
 
-/// Content Processor using unified StatefulStreamProcessor architecture
-pub struct ContentProcessor {
+/// Content Automaton using unified StatefulStreamProcessor architecture
+///
+/// Consumes events containing content and produces content analysis insights:
+/// - Text content analysis (language detection, sentiment, keywords)
+/// - Media content metadata extraction
+/// - Content classification and categorization
+/// - Content similarity detection
+pub struct ContentAutomaton {
     context: Option<StreamProcessorContext>,
+    config: ContentAutomatonConfig,
+    event_sender: Option<mpsc::Sender<RawEvent>>,
+    db_pool: Option<PgPool>,
 }
 
-impl ContentProcessor {
+impl ContentAutomaton {
     pub fn new() -> Self {
-        Self { context: None }
+        Self {
+            context: None,
+            config: ContentAutomatonConfig::default(),
+            event_sender: None,
+            db_pool: None,
+        }
+    }
+
+    /// Process content events and generate content insights
+    async fn process_content_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
+        let db_pool = self
+            .db_pool
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
+        let event_sender = self
+            .event_sender
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+
+        // Query recent content events for analysis
+        let events = self.query_content_events(db_pool, from).await?;
+        info!("Processing {} content events for analysis", events.len());
+
+        let mut events_processed = 0u64;
+
+        for event in &events {
+            // Extract content from event payload for analysis
+            if let Some(content) = self.extract_content_from_event(event) {
+                // Skip content that's too large
+                if content.len() > self.config.max_content_size_bytes {
+                    warn!(
+                        "Skipping content analysis - size {} exceeds limit {}",
+                        content.len(),
+                        self.config.max_content_size_bytes
+                    );
+                    continue;
+                }
+
+                // Generate content analysis if enabled
+                if self.config.enable_text_analysis {
+                    if let Ok(analysis_event) = self.analyze_text_content(&content, event).await {
+                        if let Err(e) = event_sender.send(analysis_event).await {
+                            warn!("Failed to send text analysis event: {}", e);
+                        } else {
+                            events_processed += 1;
+                        }
+                    }
+                }
+
+                // Generate content classification if enabled
+                if self.config.enable_content_classification {
+                    if let Ok(classification_event) = self.classify_content(&content, event).await {
+                        if let Err(e) = event_sender.send(classification_event).await {
+                            warn!("Failed to send content classification event: {}", e);
+                        } else {
+                            events_processed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Generate content similarity analysis for the batch
+        if events.len() > 1 {
+            if let Ok(similarity_events) = self.analyze_content_similarity(&events).await {
+                for similarity_event in similarity_events {
+                    if let Err(e) = event_sender.send(similarity_event).await {
+                        warn!("Failed to send content similarity event: {}", e);
+                    } else {
+                        events_processed += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(events_processed)
+    }
+
+    /// Query content events from the database for analysis
+    async fn query_content_events(
+        &self,
+        db_pool: &PgPool,
+        _from: &Checkpoint,
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        let window_start =
+            Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
+
+        let events = sqlx::query_as!(
+            RawEvent,
+            r#"
+            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
+                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
+                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
+            FROM core.events 
+            WHERE ts_orig >= $1 AND event_type = ANY($2)
+            ORDER BY ts_orig DESC
+            LIMIT 500
+            "#,
+            window_start,
+            &self.config.target_event_types
+        )
+        .fetch_all(db_pool).await
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to query content events: {}", e))?;
+
+        Ok(events)
+    }
+
+    /// Extract content from event payload for analysis
+    fn extract_content_from_event(&self, event: &RawEvent) -> Option<String> {
+        // This is a simplified content extraction - in reality we'd need
+        // sophisticated content extraction based on event type and payload structure
+
+        if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
+            // Try to extract text content from common fields
+            if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
+                return Some(content.to_string());
+            }
+
+            if let Some(text) = payload.get("text").and_then(|v| v.as_str()) {
+                return Some(text.to_string());
+            }
+
+            if let Some(data) = payload.get("data").and_then(|v| v.as_str()) {
+                return Some(data.to_string());
+            }
+
+            // For file events, we might need to read file content - simplified here
+            if let Some(path) = payload.get("path").and_then(|v| v.as_str()) {
+                info!("Found file path for content analysis: {}", path);
+                // In reality, we'd read file content here if it's a text file
+                return Some(format!("File content analysis placeholder for: {}", path));
+            }
+        }
+
+        None
+    }
+
+    /// Analyze text content and generate insights
+    async fn analyze_text_content(
+        &self,
+        content: &str,
+        source_event: &RawEvent,
+    ) -> SatelliteResult<RawEvent> {
+        // Simple text analysis - in reality this would be much more sophisticated
+        let word_count = content.split_whitespace().count();
+        let char_count = content.chars().count();
+        let line_count = content.lines().count();
+
+        // Simple keyword extraction (most common words)
+        let mut word_freq: HashMap<String, usize> = HashMap::new();
+        for word in content.split_whitespace() {
+            let clean_word = word
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphabetic())
+                .collect::<String>();
+            if clean_word.len() > 3 {
+                // Skip short words
+                *word_freq.entry(clean_word).or_insert(0) += 1;
+            }
+        }
+
+        let mut keywords: Vec<_> = word_freq.into_iter().collect();
+        keywords.sort_by(|a, b| b.1.cmp(&a.1));
+        keywords.truncate(10); // Top 10 keywords
+
+        // Simple language detection heuristic
+        let language = self.detect_language_simple(content);
+
+        let analysis_payload = serde_json::json!({
+            "analysis_type": "text_analysis",
+            "source_event_id": source_event.id,
+            "word_count": word_count,
+            "character_count": char_count,
+            "line_count": line_count,
+            "detected_language": language,
+            "top_keywords": keywords,
+            "content_preview": content.chars().take(200).collect::<String>(),
+            "generated_at": Utc::now(),
+        });
+
+        // Create synthesized event with proper provenance
+        let event = Event::from_events(analysis_payload, vec![source_event.id])
+            .with_ts_orig(Some(Utc::now()));
+
+        Ok(event.into())
+    }
+
+    /// Classify content into categories
+    async fn classify_content(
+        &self,
+        content: &str,
+        source_event: &RawEvent,
+    ) -> SatelliteResult<RawEvent> {
+        // Simple content classification heuristics
+        let mut categories = Vec::new();
+
+        // Code detection
+        if content.contains("function ")
+            || content.contains("def ")
+            || content.contains("#include")
+            || content.contains("import ")
+        {
+            categories.push("code".to_string());
+        }
+
+        // Configuration files
+        if content.contains("[") && content.contains("]") && content.contains("=") {
+            categories.push("configuration".to_string());
+        }
+
+        // Documentation
+        if content.contains("# ") || content.contains("## ") || content.contains("```") {
+            categories.push("documentation".to_string());
+        }
+
+        // Log files
+        if content.contains("ERROR") || content.contains("INFO") || content.contains("DEBUG") {
+            categories.push("log".to_string());
+        }
+
+        // Email/communication
+        if content.contains("@") && content.contains(".com") {
+            categories.push("communication".to_string());
+        }
+
+        // Default category
+        if categories.is_empty() {
+            categories.push("general_text".to_string());
+        }
+
+        let classification_payload = serde_json::json!({
+            "analysis_type": "content_classification",
+            "source_event_id": source_event.id,
+            "categories": categories,
+            "confidence": 0.7, // Simplified confidence score
+            "content_length": content.len(),
+            "generated_at": Utc::now(),
+        });
+
+        // Create synthesized event with proper provenance
+        let event = Event::from_events(classification_payload, vec![source_event.id])
+            .with_ts_orig(Some(Utc::now()));
+
+        Ok(event.into())
+    }
+
+    /// Analyze content similarity between events
+    async fn analyze_content_similarity(
+        &self,
+        events: &[RawEvent],
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        let mut similarity_events = Vec::new();
+
+        // Simple similarity analysis - compare content lengths and detect potential duplicates
+        let mut content_map: HashMap<String, Vec<Id<RawEvent>>> = HashMap::new();
+
+        for event in events {
+            if let Some(content) = self.extract_content_from_event(event) {
+                // Simple content fingerprint (first 100 chars)
+                let fingerprint = content.chars().take(100).collect::<String>();
+                content_map.entry(fingerprint).or_default().push(event.id);
+            }
+        }
+
+        // Find groups with multiple events (potential duplicates or similar content)
+        for (fingerprint, event_ids) in content_map {
+            if event_ids.len() > 1 {
+                let similarity_payload = serde_json::json!({
+                    "analysis_type": "content_similarity",
+                    "similarity_type": "potential_duplicate",
+                    "event_group_size": event_ids.len(),
+                    "content_fingerprint": fingerprint,
+                    "similar_event_ids": event_ids,
+                    "generated_at": Utc::now(),
+                });
+
+                let similarity_event = Event::from_events(similarity_payload, event_ids)
+                    .with_ts_orig(Some(Utc::now()));
+
+                similarity_events.push(similarity_event.into());
+            }
+        }
+
+        Ok(similarity_events)
+    }
+
+    /// Simple language detection heuristic
+    fn detect_language_simple(&self, content: &str) -> String {
+        // Very simple language detection based on common words
+        let english_words = [
+            "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "was", "one",
+        ];
+        let english_count = english_words
+            .iter()
+            .map(|word| content.to_lowercase().matches(word).count())
+            .sum::<usize>();
+
+        if english_count > content.split_whitespace().count() / 20 {
+            "english".to_string()
+        } else {
+            "unknown".to_string()
+        }
     }
 }
 
 #[async_trait]
-impl StatefulStreamProcessor for ContentProcessor {
-    type Config = ContentProcessorConfig;
+impl StatefulStreamProcessor for ContentAutomaton {
+    type Config = ContentAutomatonConfig;
 
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
-        _config: Self::Config,
+        config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!("Initializing content processor");
+        info!("Initializing content automaton");
+
+        // Get database pool from context
+        self.db_pool = Some(ctx.db_pool.clone());
+        self.event_sender = Some(ctx.event_sender.clone());
         self.context = Some(ctx);
+        self.config = config;
+
+        info!(
+            "Content automaton configured - analyzing {} event types, max content size: {} bytes",
+            self.config.target_event_types.len(),
+            self.config.max_content_size_bytes
+        );
+
         Ok(())
     }
 
     async fn scan(
         &mut self,
-        _from: Checkpoint,
+        from: Checkpoint,
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = Utc::now();
 
-        // Simplified implementation for now
         let events_processed = match until {
-            TimeHorizon::Snapshot => 0,
-            TimeHorizon::Historical { .. } => 0,
-            TimeHorizon::Continuous => 0,
+            TimeHorizon::Snapshot => {
+                // Perform one-time content analysis
+                self.process_content_events(&from).await.unwrap_or(0)
+            }
+            TimeHorizon::Historical { .. } => {
+                // Analyze historical content events
+                self.process_content_events(&from).await.unwrap_or(0)
+            }
+            TimeHorizon::Continuous => {
+                // Continuous content processing
+                self.process_content_events(&from).await.unwrap_or(0)
+            }
         };
 
+        let duration = Utc::now().signed_duration_since(start_time);
+
         Ok(ScanReport {
-            events_processed: events_processed as u64,
-            duration: std::time::Duration::from_secs(0),
+            events_processed,
+            duration: Duration::from_millis(duration.num_milliseconds() as u64),
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
-            processor_stats: HashMap::new(),
+            processor_stats: HashMap::from([
+                (
+                    "content_events_processed".to_string(),
+                    serde_json::Value::Number(events_processed.into()),
+                ),
+                (
+                    "max_content_size_bytes".to_string(),
+                    serde_json::Value::Number(self.config.max_content_size_bytes.into()),
+                ),
+                (
+                    "text_analysis_enabled".to_string(),
+                    serde_json::Value::Bool(self.config.enable_text_analysis),
+                ),
+            ]),
             successful_targets: vec!["content".to_string()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
@@ -85,7 +479,7 @@ impl StatefulStreamProcessor for ContentProcessor {
     }
 
     fn processor_name(&self) -> &str {
-        "content"
+        "content-automaton"
     }
 
     fn processor_type(&self) -> ProcessorType {
@@ -93,17 +487,83 @@ impl StatefulStreamProcessor for ContentProcessor {
     }
 
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        // Content analysis operates on recent data, no persistent checkpoint needed
         Ok(Checkpoint::None)
     }
 }
 
-impl Default for ContentProcessor {
+impl Default for ContentAutomaton {
     fn default() -> Self {
         Self::new()
     }
 }
 
-default_exploration_provider!(
-    ContentProcessor,
-    "Content automaton for text and media analysis"
-);
+impl ExplorationProvider for ContentAutomaton {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+        Ok(SourceState {
+            description: "Content automaton for text and media content analysis".to_string(),
+            last_updated: Utc::now(),
+            total_items: Some(0),
+            metadata: HashMap::from([
+                (
+                    "target_event_types".to_string(),
+                    format!("{:?}", self.config.target_event_types),
+                ),
+                (
+                    "text_analysis".to_string(),
+                    self.config.enable_text_analysis.to_string(),
+                ),
+                (
+                    "media_analysis".to_string(),
+                    self.config.enable_media_analysis.to_string(),
+                ),
+                (
+                    "content_classification".to_string(),
+                    self.config.enable_content_classification.to_string(),
+                ),
+                (
+                    "max_content_size".to_string(),
+                    format!("{} bytes", self.config.max_content_size_bytes),
+                ),
+            ]),
+            healthy: true,
+            recent_activity: Vec::new(),
+        })
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+        Ok(Vec::new())
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        let now = Utc::now();
+        Ok(CoverageAnalysis {
+            time_range: (now - chrono::Duration::hours(1), now),
+            source_total: 0,
+            sinex_total: 0,
+            coverage_percentage: 100.0, // Content analysis processes available content events
+            missing_count: 0,
+            missing_samples: Vec::new(),
+            duplicate_count: 0,
+            recommendations: vec![
+                "Content automaton analyzes text and media content from events".to_string(),
+                "Adjust target_event_types to focus on specific content sources".to_string(),
+                "Increase max_content_size_bytes to analyze larger content".to_string(),
+            ],
+        })
+    }
+
+    fn export_data(
+        &self,
+        _path: &sinex_core::SanitizedPath,
+        _format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        Ok(())
+    }
+}

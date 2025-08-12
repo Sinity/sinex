@@ -1,16 +1,24 @@
-//! Unified Desktop Satellite
+//! Desktop Satellite with sensd Source Material Capture
 //!
-//! Coordinates multiple desktop event sources:
-//! - Clipboard events (copy/cut/paste)  
-//! - Window manager events (Hyprland focus, movement, workspaces)
+//! Coordinates multiple desktop event sources using the sensd pattern:
+//! - Clipboard events (copy/cut/paste) → source material first
+//! - Window manager events (Hyprland focus, movement, workspaces) → source material first
 //!
-//! This module provides the unified StatefulStreamProcessor architecture from Part 16.
+//! ## Architecture
+//!
+//! This satellite uses the sensd pattern for ALL desktop data:
+//! 1. **Source Material Capture**: Desktop activity → raw.source_material_registry
+//! 2. **Temporal Ledger**: Precise timing → raw.temporal_ledger
+//! 3. **Event Generation**: Material processing → events with Provenance::Material
 
 mod clipboard;
 mod window_manager;
 
 // New unified processor module
 pub mod unified_processor;
+
+// Sensd integration module
+pub mod desktop_sensd_integration;
 
 // Local facade module to reduce import verbosity
 mod common {
