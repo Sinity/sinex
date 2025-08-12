@@ -6,14 +6,10 @@
 
 use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
-use super::events::EventRepository;
 use crate::db::schema::OperationsLog;
-use crate::models::{Provenance, RawEvent};
-use crate::types::domain::{
-    ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName,
-};
+use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use crate::types::error::SinexError;
-use crate::types::Id;
+use crate::{Id, RawEvent};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -32,7 +28,7 @@ pub struct OperationRecord {
     pub approved_by: Option<String>,
     pub approved_at: Option<DateTime<Utc>>,
     pub executor_node: Option<String>,
-    pub started_at: DateTime<Utc>, // Changed to non-optional, as it's NOT NULL in DB
+    pub started_at: Option<DateTime<Utc>>, // Nullable in database
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
@@ -86,24 +82,6 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 // Use the transaction methods directly on StateRepositoryTx instead.
 
 impl<'a> StateRepository<'a> {
-    // ===== Event Emission Helpers =====
-
-    /// Emit an event for state changes to maintain event sourcing integrity
-    async fn emit_state_change_event(&self, event: RawEvent) -> DbResult<RawEvent> {
-        let event_repo = EventRepository::new(self.pool);
-        event_repo.insert(event).await
-    }
-
-    /// Emit an event within a transaction for state changes
-    async fn emit_state_change_event_tx(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        event: RawEvent,
-    ) -> DbResult<RawEvent> {
-        let event_repo = EventRepository::new(self.pool);
-        event_repo.insert_with_tx(tx, event).await
-    }
-
     // ===== Validation Methods =====
 
     /// Validate an operation ID is not null/empty
@@ -195,7 +173,7 @@ impl<'a> StateRepository<'a> {
 
         // Check if this is an update or create operation
         let existing_checkpoint = sqlx::query!(
-            "SELECT id, processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3",
+            r#"SELECT id::uuid as "id!", processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"#,
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref()
@@ -256,30 +234,6 @@ impl<'a> StateRepository<'a> {
         .await
         .map_err(|e| db_error(e, "save checkpoint"))?;
 
-        // Emit checkpoint saved event AFTER the state change (but still in transaction)
-        // This ensures the checkpoint_id is available from the RETURNING clause
-        let checkpoint_saved_event = RawEvent::new(
-            EventSource::new("sinex.state.checkpoint".to_string()),
-            EventType::new("checkpoint.saved".to_string()),
-            serde_json::json!({
-                "processor_name": result.processor_name.as_ref(),
-                "consumer_group": result.consumer_group.as_ref(),
-                "consumer_name": result.consumer_name.as_ref(),
-                "checkpoint_id": result.id.as_ulid().to_string(),
-                "last_processed_id": result.last_processed_id.as_ref().map(|id| id.as_ulid().to_string()),
-                "last_processed_ts": result.last_processed_ts,
-                "processed_count": result.processed_count,
-                "checkpoint_version": result.checkpoint_version,
-                "operation_type": operation_type,
-                "checkpoint_data": result.checkpoint_data,
-                "state_data": result.state_data
-            })
-        )
-        .with_host(HostName::new("sinex.state".to_string()));
-
-        self.emit_state_change_event_tx(&mut tx, checkpoint_saved_event)
-            .await?;
-
         tx.commit()
             .await
             .map_err(|e| db_error(e, "commit checkpoint transaction"))?;
@@ -337,7 +291,7 @@ impl<'a> StateRepository<'a> {
                 updated_at
             FROM core.processor_checkpoints 
             WHERE consumer_group = 'default' AND consumer_name = 'default'
-            ORDER BY name
+            ORDER BY processor_name
             "#
         )
         .fetch_all(self.pool)
@@ -369,7 +323,7 @@ impl<'a> StateRepository<'a> {
         let checkpoint_to_delete = sqlx::query!(
             r#"
             SELECT 
-                id,
+                id as "id: Id<CheckpointRecord>",
                 processed_count,
                 consumer_group,
                 consumer_name
@@ -391,38 +345,44 @@ impl<'a> StateRepository<'a> {
                 .scope(serde_json::json!({
                     "operation_type": "delete_checkpoint",
                     "processor_name": processor_name,
-                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
                     "reason": reason
                 }))
                 .state("completed".to_string())
                 .outcome("success".to_string())
                 .started_at(Utc::now())
                 .finished_at(Utc::now())
-                .created_at(Utc::now())
                 .build();
 
-            let mut repo_tx = StateRepositoryTx { tx: &mut tx };
-            repo_tx.log_operation(deletion_operation).await?;
+            // Log the deletion operation directly
+            let op_id = Id::<Operation>::new();
+            let op_started_at = deletion_operation.started_at.unwrap_or_else(Utc::now);
+            let op_state = deletion_operation
+                .state
+                .unwrap_or_else(|| "completed".to_string());
 
-            // Emit checkpoint deleted event for event sourcing
-            let checkpoint_deleted_event = RawEvent::new(
-                EventSource::new("sinex.state.checkpoint".to_string()),
-                EventType::new("checkpoint.deleted".to_string()),
-                serde_json::json!({
-                    "processor_name": processor_name,
-                    "consumer_group": checkpoint.consumer_group,
-                    "consumer_name": checkpoint.consumer_name,
-                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
-                    "last_processed_count": checkpoint.processed_count,
-                    "deleted_by": actor,
-                    "reason": reason
-                })
+            sqlx::query!(
+                r#"
+                INSERT INTO core.operations_log (
+                    id, actor, scope, state, preview_summary,
+                    started_at, finished_at, outcome, error_details
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9
+                )
+                "#,
+                *op_id.as_ulid() as _,
+                deletion_operation.actor,
+                deletion_operation.scope,
+                op_state,
+                deletion_operation.preview_summary,
+                op_started_at,
+                deletion_operation.finished_at,
+                deletion_operation.outcome,
+                deletion_operation.error_details
             )
-            .with_host(HostName::new("sinex.state".to_string()));
-
-            self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
-                .await
-                .map_err(|e| db_error(e, "emit checkpoint deleted event"))?;
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "log deletion operation"))?;
 
             // Now perform the actual hard deletion
             let result = sqlx::query!(
@@ -457,10 +417,18 @@ impl<'a> StateRepository<'a> {
         // Validate the scope
         Self::validate_replay_scope(&operation.scope)?;
 
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin operation logging transaction"))?;
+
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
         let state = operation.state.unwrap_or_else(|| "planning".to_string());
 
+        // Perform the operation logging
         let result = sqlx::query_as!(
             OperationRecord,
             r#"
@@ -495,9 +463,13 @@ impl<'a> StateRepository<'a> {
             operation.outcome,
             operation.error_details
         )
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| db_error(e, "log operation"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit operation logging transaction"))?;
 
         Ok(result)
     }
@@ -753,33 +725,36 @@ impl<'a> StateRepository<'a> {
         &self,
         processor_name: &ProcessorName,
         processor_type: &str,
-        processor_version: &str,
-        hostname: &str,
+        version: &str,
+        description: Option<&str>,
     ) -> DbResult<ProcessorManifest> {
         sqlx::query_as!(
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                processor_name, processor_version, processor_type, hostname
+                processor_name, version, processor_type, description
             ) VALUES (
                 $1, $2, $3, $4
             )
             RETURNING 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             "#,
             processor_name.as_ref(),
-            processor_version,
+            version,
             processor_type,
-            hostname
+            description
         )
         .fetch_one(self.pool)
         .await
@@ -794,17 +769,20 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             FROM core.processor_manifests
-            WHERE end_time IS NULL
-            ORDER BY processor_name, hostname
+            WHERE deployment_status != 'inactive'
+            ORDER BY processor_name, version
             "#
         )
         .fetch_all(self.pool)
@@ -823,17 +801,20 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             FROM core.processor_manifests
-            WHERE processor_type = $1 AND end_time IS NULL
-            ORDER BY processor_name, hostname
+            WHERE processor_type = $1 AND deployment_status != 'inactive'
+            ORDER BY processor_name, version
             "#,
             processor_type
         )
@@ -842,61 +823,101 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get processors by type"))
     }
 
-    /// Update processor heartbeat by marking the end time and creating a new entry
-    pub async fn update_processor_heartbeat(
+    /// Update processor deployment status
+    pub async fn update_processor_status(
         &self,
         processor_name: &ProcessorName,
-        hostname: &str,
+        version: &str,
+        status: &str,
     ) -> DbResult<bool> {
-        // First, mark the current processor as ended
-        let _ = sqlx::query!(
-            r#"
-            UPDATE core.processor_manifests
-            SET end_time = NOW()
-            WHERE processor_name = $1 AND hostname = $2 AND end_time IS NULL
-            "#,
-            processor_name.as_ref(),
-            hostname
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "end processor manifest"))?;
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin processor status update transaction"))?;
 
-        // Create a new manifest entry to signal the processor is still alive
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO core.processor_manifests (processor_name, processor_version, processor_type, hostname)
-            SELECT processor_name, processor_version, processor_type, hostname
-            FROM core.processor_manifests
-            WHERE processor_name = $1 AND hostname = $2
-            ORDER BY created_at DESC
-            LIMIT 1
-            "#,
+        // Get current processor details for event emission
+        let processor_details = sqlx::query!(
+            "SELECT deployment_status, processor_type, description FROM core.processor_manifests WHERE processor_name = $1 AND version = $2",
             processor_name.as_ref(),
-            hostname
+            version
         )
-        .execute(self.pool)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+        .map_err(|e| db_error(e, "get processor details for status update"))?;
 
-        Ok(result.rows_affected() > 0)
+        if let Some(processor) = processor_details {
+            // Perform the status update
+            let result = sqlx::query!(
+                r#"
+                UPDATE core.processor_manifests
+                SET deployment_status = $1, updated_at = NOW()
+                WHERE processor_name = $2 AND version = $3
+                "#,
+                status,
+                processor_name.as_ref(),
+                version
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "update processor status"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit processor status update transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
-    /// Mark stale processors as ended
+    /// Mark stale processors as inactive
     pub async fn mark_stale_processors(&self, stale_threshold: DateTime<Utc>) -> DbResult<i64> {
-        let result = sqlx::query!(
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin mark stale processors transaction"))?;
+
+        // Get stale processors for event emission
+        let stale_processors = sqlx::query!(
             r#"
-            UPDATE core.processor_manifests
-            SET end_time = NOW()
-            WHERE end_time IS NULL AND start_time < $1
+            SELECT processor_name, version, deployment_status, processor_type, description, updated_at
+            FROM core.processor_manifests 
+            WHERE deployment_status != 'inactive' AND updated_at < $1
             "#,
             stale_threshold
         )
-        .execute(self.pool)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get stale processors"))?;
+
+        // Perform the bulk status update
+        let result = sqlx::query!(
+            r#"
+            UPDATE core.processor_manifests
+            SET deployment_status = 'inactive', updated_at = NOW()
+            WHERE deployment_status != 'inactive' AND updated_at < $1
+            "#,
+            stale_threshold
+        )
+        .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "mark stale processors"))?;
 
-        Ok(result.rows_affected() as i64)
+        let rows_affected = result.rows_affected();
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit mark stale processors transaction"))?;
+
+        Ok(rows_affected as i64)
     }
 
     /// Get processor health status
@@ -904,10 +925,10 @@ impl<'a> StateRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                COUNT(*) FILTER (WHERE end_time IS NULL) as "active_count!",
-                COUNT(*) FILTER (WHERE end_time IS NOT NULL) as "inactive_count!",
+                COUNT(*) FILTER (WHERE deployment_status != 'inactive') as "active_count!",
+                COUNT(*) FILTER (WHERE deployment_status = 'inactive') as "inactive_count!",
                 COUNT(DISTINCT processor_name) as "unique_processors!",
-                MIN(start_time) FILTER (WHERE end_time IS NULL) as oldest_heartbeat
+                MIN(created_at) FILTER (WHERE deployment_status != 'inactive') as oldest_heartbeat
             FROM core.processor_manifests
             "#
         )
@@ -1159,7 +1180,7 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                processor_name as "processor_name!", consumer_group, consumer_name,
+                processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
@@ -1257,14 +1278,17 @@ impl<'a> StateRepositoryTx<'a> {
 pub struct ProcessorManifest {
     pub id: i32,
     pub processor_name: String,
-    pub processor_version: String,
+    pub version: String,
+    pub description: Option<String>,
     pub processor_type: String,
-    pub hostname: String,
-    pub start_time: DateTime<Utc>,
-    pub end_time: Option<DateTime<Utc>>,
-    pub config: Option<JsonValue>,
-    pub metadata: Option<JsonValue>,
+    pub input_schemas: Option<JsonValue>,
+    pub output_schemas: Option<JsonValue>,
+    pub configuration_schema: Option<JsonValue>,
+    pub runtime_requirements: Option<JsonValue>,
+    pub deployment_status: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub build_metadata: Option<JsonValue>,
 }
 
 /// Processor health summary
@@ -1280,7 +1304,7 @@ pub struct ProcessorHealthSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct CheckpointGap {
     pub processor_name: String,
-    pub last_processed_id: Option<Id<RawEvent>>,
+    pub last_processed_id: Option<crate::EventId>,
     pub processed_count: Option<i64>,
     pub last_activity: Option<DateTime<Utc>>,
     pub events_after_checkpoint: Option<i64>,

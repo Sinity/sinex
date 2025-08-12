@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_satellite_sdk::stream_processor::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
+use sinex_satellite_sdk::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 

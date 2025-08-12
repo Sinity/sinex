@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_core::types::Ulid;
 use sqlx::{PgPool, Type};
-use std::sync::Arc;
+use std::{fmt, str::FromStr, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -30,12 +30,40 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// Sensor type enumeration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SensorType {
+    AppendStream,
+    TreeWatch,
+}
+
+impl fmt::Display for SensorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SensorType::AppendStream => write!(f, "append_stream"),
+            SensorType::TreeWatch => write!(f, "tree_watch"),
+        }
+    }
+}
+
+impl FromStr for SensorType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "append_stream" => Ok(SensorType::AppendStream),
+            "tree_watch" => Ok(SensorType::TreeWatch),
+            _ => Err(format!("Unknown sensor type: {}", s)),
+        }
+    }
+}
+
 /// Sensor job record
 #[derive(Debug, Clone)]
 pub struct SensorJob {
     pub job_id: Ulid,
-    pub sensor_type: String,
-    pub target_path: String,
+    pub sensor_type: SensorType,
+    pub target_uri: String,
     pub config: Value,
     pub status: JobStatus,
     pub created_at: DateTime<Utc>,
@@ -46,6 +74,7 @@ pub struct SensorJob {
 }
 
 /// Job manager
+#[derive(Clone)]
 pub struct JobManager {
     db_pool: PgPool,
     temporal_ledger: Arc<TemporalLedger>,
@@ -118,8 +147,8 @@ impl JobManager {
             SELECT 
                 job_id as "job_id: Ulid",
                 sensor_type,
-                target_path,
-                config,
+                target_uri,
+                parameters as config,
                 status as "status: JobStatus",
                 created_at,
                 started_at,
@@ -137,7 +166,7 @@ impl JobManager {
         .await?;
 
         for job in pending_jobs {
-            debug!("Processing job: {} for {}", job.job_id, job.target_path);
+            debug!("Processing job: {} for {}", job.job_id, job.target_uri);
 
             // Mark job as running
             self.update_job_status(&job.job_id, JobStatus::Running, None)
@@ -171,24 +200,23 @@ impl JobManager {
         append_sensor: Option<Arc<AppendStreamSensor>>,
         tree_sensor: Option<Arc<TreeWatchSensor>>,
     ) -> Result<()> {
-        info!("Executing job {} for {}", job.job_id, job.target_path);
+        info!("Executing job {} for {}", job.job_id, job.target_uri);
 
-        let result = match job.sensor_type.as_str() {
-            "append_stream" => {
+        let result = match job.sensor_type {
+            SensorType::AppendStream => {
                 if let Some(sensor) = append_sensor {
                     sensor.process_job(&job, &self.temporal_ledger).await
                 } else {
                     Err(eyre!("append_stream sensor not enabled"))
                 }
             }
-            "tree_watch" => {
+            SensorType::TreeWatch => {
                 if let Some(sensor) = tree_sensor {
                     sensor.process_job(&job, &self.temporal_ledger).await
                 } else {
                     Err(eyre!("tree_watch sensor not enabled"))
                 }
             }
-            _ => Err(eyre!("Unknown sensor type: {}", job.sensor_type)),
         };
 
         // Update job status based on result

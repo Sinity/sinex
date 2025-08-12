@@ -613,6 +613,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Database benchmark with context and args
         if let Some(args_tokens) = args {
             quote! {
+                #[cfg(feature = "bench")]
                 #[divan::bench(#args_tokens)]
                 #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
                     use sinex_test_utils::bench::BENCH_CONTEXT;
@@ -642,6 +643,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else if takes_context {
         // Database benchmark with only context
         quote! {
+            #[cfg(feature = "bench")]
             #[divan::bench]
             #fn_vis fn #fn_name(bencher: divan::Bencher) {
                 use sinex_test_utils::bench::BENCH_CONTEXT;
@@ -663,6 +665,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Simple benchmark with args
         if let Some(args_tokens) = args {
             quote! {
+                #[cfg(feature = "bench")]
                 #[divan::bench(#args_tokens)]
                 #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
                     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -689,6 +692,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         // Simple benchmark without context or args
         quote! {
+            #[cfg(feature = "bench")]
             #[divan::bench]
             #fn_vis fn #fn_name(bencher: divan::Bencher) {
                 let runtime = tokio::runtime::Runtime::new().unwrap();

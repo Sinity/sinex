@@ -3,33 +3,14 @@
 //! This module implements the desktop satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for desktop events.
 
-use async_trait::async_trait;
-use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload, Event,
-    WindowManagerHistoricalPayload,
-};
-use sinex_satellite_sdk::{
-    checkpoint::CheckpointManager,
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
-    error_helpers::{parse_config_value, parse_typed_config},
-    stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteResult,
-};
-use std::collections::HashMap;
-use std::time::Duration;
-use tracing::{debug, error, info, instrument, warn, Span};
+// Use local facade for common types
+use crate::common::*;
 
-use crate::{ClipboardWatcher, WindowManagerWatcher};
+// Desktop-specific imports for sensd integration
+use sinex_core::types::Ulid;
+use sqlx::PgPool;
+
+use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +20,7 @@ pub struct DesktopConfig {
     /// Enable window manager monitoring  
     pub window_manager_enabled: bool,
     /// Window manager type (currently only "hyprland")
-    pub window_manager_type: String,
+    pub window_manager_type: WindowManagerType,
     /// Clipboard monitoring interval (seconds)
     pub clipboard_poll_interval_secs: u64,
 }
@@ -49,7 +30,7 @@ impl Default for DesktopConfig {
         Self {
             clipboard_enabled: true,
             window_manager_enabled: true,
-            window_manager_type: "hyprland".to_string(),
+            window_manager_type: WindowManagerType::Hyprland,
             clipboard_poll_interval_secs: 2,
         }
     }
@@ -90,9 +71,10 @@ pub struct WindowManagerStatus {
     pub total_windows: u32,
 }
 
-/// Unified desktop processor implementing StatefulStreamProcessor
+/// Unified desktop processor implementing StatefulStreamProcessor with sensd integration
 ///
-/// Supports snapshot, historical, and continuous scanning modes for desktop events.
+/// This processor captures desktop activity as source material first, then generates
+/// events with proper provenance tracking via the sensd pattern.
 pub struct DesktopProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
@@ -109,6 +91,9 @@ pub struct DesktopProcessor {
 
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
+
+    /// Database pool for sensd integration
+    db_pool: Option<PgPool>,
 }
 
 impl DesktopProcessor {
@@ -124,6 +109,7 @@ impl DesktopProcessor {
             window_manager_watcher: None,
             last_state: None,
             checkpoint_manager: None,
+            db_pool: None,
         }
     }
 
@@ -136,6 +122,7 @@ impl DesktopProcessor {
             window_manager_watcher: None,
             last_state: None,
             checkpoint_manager: None,
+            db_pool: None,
         }
     }
 
@@ -166,7 +153,7 @@ impl DesktopProcessor {
 
             // Try to get window manager status
             window_manager_status = Some(WindowManagerStatus {
-                wm_type: self.config.window_manager_type.clone(),
+                wm_type: self.config.window_manager_type,
                 connection_active: self.window_manager_watcher.is_some(),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
@@ -224,15 +211,24 @@ impl DesktopProcessor {
         if let Some(ref context) = self.context {
             info!("Desktop monitoring context available");
 
-            // Create a sample event to show the interface works
-            let sample_event: RawEvent = Event::new(DesktopMonitoringStartedPayload {
-                clipboard_enabled: self.config.clipboard_enabled,
-                window_manager_enabled: self.config.window_manager_enabled,
-                start_time: Utc::now(),
-            })
-            .into();
+            // Store monitoring started event as source material
+            if let Some(ref db_pool) = self.db_pool {
+                let monitoring_data = serde_json::json!({
+                    "event_type": "monitoring_started",
+                    "clipboard_enabled": self.config.clipboard_enabled,
+                    "window_manager_enabled": self.config.window_manager_enabled,
+                    "start_time": Utc::now().to_rfc3339()
+                });
 
-            context.emit_event(sample_event).await?;
+                let _ = self
+                    .store_desktop_source_material(
+                        db_pool,
+                        "desktop_monitoring",
+                        &monitoring_data.to_string().into_bytes(),
+                        monitoring_data,
+                    )
+                    .await;
+            }
         }
 
         Ok(())
@@ -253,34 +249,123 @@ impl DesktopProcessor {
         // This would implement any available historical scanning
 
         if let Some(ref context) = self.context {
-            // Example: emit historical desktop state events
-            if self.config.clipboard_enabled && emit_events {
-                let event: RawEvent = Event::new(ClipboardHistoricalPayload {
-                    source: "clipboard".to_string(),
-                    scan_type: "historical".to_string(),
-                    note: "Limited historical data available for desktop events".to_string(),
-                })
-                .into();
+            // Store historical scan attempts as source material
+            if emit_events {
+                if let Some(ref db_pool) = self.db_pool {
+                    if self.config.clipboard_enabled {
+                        let scan_data = serde_json::json!({
+                            "event_type": "historical_scan_attempt",
+                            "source": "clipboard",
+                            "scan_type": "historical",
+                            "scan_time": Utc::now().to_rfc3339(),
+                            "note": "Limited historical data available for desktop events"
+                        });
 
-                context.emit_event(event).await?;
-                event_count += 1;
-            }
+                        let _ = self
+                            .store_desktop_source_material(
+                                db_pool,
+                                "desktop_monitoring",
+                                &scan_data.to_string().into_bytes(),
+                                scan_data,
+                            )
+                            .await;
+                        event_count += 1;
+                    }
 
-            if self.config.window_manager_enabled && emit_events {
-                let event: RawEvent = Event::new(WindowManagerHistoricalPayload {
-                    source: "window_manager".to_string(),
-                    wm_type: self.config.window_manager_type.clone(),
-                    scan_type: "historical".to_string(),
-                    note: "Limited historical data available for window manager events".to_string(),
-                })
-                .into();
+                    if self.config.window_manager_enabled {
+                        let scan_data = serde_json::json!({
+                            "event_type": "historical_scan_attempt",
+                            "source": "window_manager",
+                            "wm_type": self.config.window_manager_type,
+                            "scan_type": "historical",
+                            "scan_time": Utc::now().to_rfc3339(),
+                            "note": "Limited historical data available for window manager events"
+                        });
 
-                context.emit_event(event).await?;
-                event_count += 1;
+                        let _ = self
+                            .store_desktop_source_material(
+                                db_pool,
+                                "desktop_monitoring",
+                                &scan_data.to_string().into_bytes(),
+                                scan_data,
+                            )
+                            .await;
+                        event_count += 1;
+                    }
+                }
             }
         }
 
         Ok(event_count)
+    }
+
+    /// Store desktop data as source material using sensd pattern
+    async fn store_desktop_source_material(
+        &self,
+        db_pool: &PgPool,
+        source_identifier: &str,
+        data: &[u8],
+        metadata: serde_json::Value,
+    ) -> SatelliteResult<Option<Ulid>> {
+        let material_id = Ulid::new();
+        let data_hash = blake3::hash(data);
+        let acquired_at = Utc::now();
+
+        // Store in source material registry
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                source_material_id,
+                source_identifier, 
+                acquired_at,
+                data,
+                size_bytes,
+                mime_type,
+                content_hash_blake3,
+                metadata
+            )
+            VALUES ($1::ulid, $2, $3, $4, $5, 'application/json', $6, $7)
+            "#,
+            material_id as Ulid,
+            source_identifier,
+            acquired_at,
+            data,
+            data.len() as i64,
+            data_hash.as_bytes(),
+            metadata
+        )
+        .execute(db_pool)
+        .await;
+
+        match result {
+            Ok(_) => {
+                // Create temporal ledger entry
+                let _ = sqlx::query!(
+                    r#"
+                    INSERT INTO raw.temporal_ledger (
+                        material_id,
+                        offset_start,
+                        offset_end,
+                        ts_capture,
+                        note
+                    )
+                    VALUES ($1::ulid, 0, $2, $3, $4)
+                    "#,
+                    material_id as Ulid,
+                    data.len() as i64,
+                    acquired_at,
+                    metadata.to_string()
+                )
+                .execute(db_pool)
+                .await;
+
+                Ok(Some(material_id))
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to store desktop source material");
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -324,8 +409,12 @@ impl StatefulStreamProcessor for DesktopProcessor {
             self.config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type) = parse_config_value::<String>("window_manager_type", &ctx) {
-            self.config.window_manager_type = wm_type;
+        if let Some(wm_type_str) = parse_config_value::<String>("window_manager_type", &ctx) {
+            if let Ok(wm_type) = wm_type_str.parse::<WindowManagerType>() {
+                self.config.window_manager_type = wm_type;
+            } else {
+                warn!("Invalid window manager type: {}", wm_type_str);
+            }
         }
 
         if let Some(interval) = parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx) {
@@ -390,20 +479,28 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 successful_targets.push("desktop_state_snapshot".to_string());
 
                 if !args.dry_run {
-                    // Emit a snapshot event
-                    if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = Event::new(DesktopSnapshotPayload {
-                            active_watchers,
-                            clipboard_enabled: self.config.clipboard_enabled,
-                            window_manager_enabled: self.config.window_manager_enabled,
-                            snapshot_time: Utc::now(),
-                        })
-                        .into();
+                    // Store snapshot data as source material
+                    if let Some(ref db_pool) = self.db_pool {
+                        let snapshot_data = serde_json::json!({
+                            "snapshot_type": "desktop_state",
+                            "enabled_sources": [
+                                if self.config.clipboard_enabled { Some("clipboard") } else { None },
+                                if self.config.window_manager_enabled { Some("window_manager") } else { None }
+                            ].into_iter().flatten().collect::<Vec<_>>(),
+                            "source_count": active_watchers,
+                            "clipboard_enabled": self.config.clipboard_enabled,
+                            "window_manager_enabled": self.config.window_manager_enabled,
+                            "snapshot_time": Utc::now().to_rfc3339()
+                        });
 
-                        context.emit_event(snapshot_event).await.map_err(|e| {
-                            error!(error = %e, "Failed to emit desktop snapshot event");
-                            e
-                        })?;
+                        let _ = self
+                            .store_desktop_source_material(
+                                db_pool,
+                                "desktop_snapshot",
+                                &snapshot_data.to_string().into_bytes(),
+                                snapshot_data,
+                            )
+                            .await;
                     }
                 }
             }
@@ -671,7 +768,7 @@ impl ExplorationProvider for DesktopProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {

@@ -1,109 +1,113 @@
-//! Blob model for core.blobs table
-//!
-//! Represents large binary objects stored in git-annex with metadata in PostgreSQL.
+//! Blob model for binary large object storage
 
-use crate::types::{ulid::Ulid, Id};
+use crate::{BlobRecord, Id, Ulid};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-/// Blob metadata stored in core.blobs table
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
+/// Blob represents a binary large object stored in git-annex
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
-    /// Unique identifier for the blob
-    #[builder(skip)]
-    pub id: Option<Id<Blob>>,
-
-    /// Git-annex key for the blob content
+    pub id: Id<Blob>,
     pub annex_key: String,
-
-    /// Original filename when the blob was created
-    pub original_filename: String,
-
-    /// Size of the blob in bytes
+    pub original_filename: Option<String>,
     pub size_bytes: i64,
-
-    /// MIME type of the blob content
     pub mime_type: Option<String>,
-
-    /// SHA256 checksum of the blob content
-    pub checksum_sha256: String,
-
-    /// BLAKE3 checksum of the blob content (for deduplication)
+    pub checksum_sha256: Option<String>,
     pub checksum_blake3: Option<String>,
-
-    /// Storage backend (default: 'git-annex')
-    #[builder(default = "git-annex".to_string())]
     pub storage_backend: String,
-
-    /// Additional metadata as JSON
-    #[builder(default = serde_json::Value::Object(serde_json::Map::new()))]
-    pub metadata: JsonValue,
-
-    /// When the blob was created
-    #[builder(skip)]
+    pub metadata: Option<JsonValue>,
     pub created_at: DateTime<Utc>,
-
-    /// When the blob was last verified
     pub last_verified_at: Option<DateTime<Utc>>,
-
-    /// Verification status
     pub verification_status: Option<String>,
 }
 
 impl Blob {
-    /// Create a new blob with the given ID
-    pub fn with_id(mut self, id: Id<Blob>) -> Self {
-        self.id = Some(id);
+    /// Create a new blob builder
+    pub fn builder() -> BlobBuilder {
+        BlobBuilder::default()
+    }
+}
+
+/// Builder for creating new Blob instances
+#[derive(Default)]
+pub struct BlobBuilder {
+    annex_key: Option<String>,
+    original_filename: Option<String>,
+    size_bytes: Option<i64>,
+    mime_type: Option<String>,
+    checksum_sha256: Option<String>,
+    checksum_blake3: Option<String>,
+    storage_backend: Option<String>,
+    metadata: Option<JsonValue>,
+}
+
+impl BlobBuilder {
+    pub fn annex_key(mut self, key: String) -> Self {
+        self.annex_key = Some(key);
         self
     }
 
-    /// Get the ID as a ULID, panicking if not set
-    pub fn ulid(&self) -> Ulid {
-        *self.id.as_ref().expect("Blob ID not set").as_ulid()
+    pub fn original_filename(mut self, filename: String) -> Self {
+        self.original_filename = Some(filename);
+        self
     }
-}
 
-/// Database representation of a blob record
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct BlobRecord {
-    pub id: Ulid,
-    pub annex_key: String,
-    pub original_filename: String,
-    pub size_bytes: i64,
-    pub mime_type: Option<String>,
-    pub checksum_sha256: String,
-    pub checksum_blake3: Option<String>,
-    pub storage_backend: String,
-    pub metadata: JsonValue,
-    pub created_at: DateTime<Utc>,
-    pub last_verified_at: Option<DateTime<Utc>>,
-    pub verification_status: Option<String>,
-}
+    pub fn size_bytes(mut self, size: i64) -> Self {
+        self.size_bytes = Some(size);
+        self
+    }
 
-impl From<BlobRecord> for Blob {
-    fn from(record: BlobRecord) -> Self {
+    pub fn mime_type(mut self, mime: String) -> Self {
+        self.mime_type = Some(mime);
+        self
+    }
+
+    pub fn checksum_sha256(mut self, checksum: String) -> Self {
+        self.checksum_sha256 = Some(checksum);
+        self
+    }
+
+    pub fn checksum_blake3(mut self, checksum: String) -> Self {
+        self.checksum_blake3 = Some(checksum);
+        self
+    }
+
+    pub fn storage_backend(mut self, backend: String) -> Self {
+        self.storage_backend = Some(backend);
+        self
+    }
+
+    pub fn metadata(mut self, metadata: JsonValue) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn build(self) -> Blob {
         Blob {
-            id: Some(Id::from_ulid(record.id)),
-            annex_key: record.annex_key,
-            original_filename: record.original_filename,
-            size_bytes: record.size_bytes,
-            mime_type: record.mime_type,
-            checksum_sha256: record.checksum_sha256,
-            checksum_blake3: record.checksum_blake3,
-            storage_backend: record.storage_backend,
-            metadata: record.metadata,
-            created_at: record.created_at,
-            last_verified_at: record.last_verified_at,
-            verification_status: record.verification_status,
+            id: Id::new(),
+            annex_key: self.annex_key.unwrap_or_default(),
+            original_filename: self.original_filename,
+            size_bytes: self.size_bytes.unwrap_or(0),
+            mime_type: self.mime_type,
+            checksum_sha256: self.checksum_sha256,
+            checksum_blake3: self.checksum_blake3,
+            storage_backend: self
+                .storage_backend
+                .unwrap_or_else(|| "git-annex".to_string()),
+            metadata: self.metadata,
+            created_at: Utc::now(),
+            last_verified_at: None,
+            verification_status: None,
         }
     }
 }
 
+/// Convert from Blob to BlobRecord for database operations
 impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
-            id: blob.id.map(|id| *id.as_ulid()).unwrap_or_else(Ulid::new),
+            id: blob.id.as_uuid(),
             annex_key: blob.annex_key,
             original_filename: blob.original_filename,
             size_bytes: blob.size_bytes,
@@ -115,6 +119,26 @@ impl From<Blob> for BlobRecord {
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
             verification_status: blob.verification_status,
+        }
+    }
+}
+
+/// Convert from BlobRecord to Blob for domain operations
+impl From<BlobRecord> for Blob {
+    fn from(record: BlobRecord) -> Self {
+        Blob {
+            id: Id::from_uuid(record.id),
+            annex_key: record.annex_key,
+            original_filename: record.original_filename,
+            size_bytes: record.size_bytes,
+            mime_type: record.mime_type,
+            checksum_sha256: record.checksum_sha256,
+            checksum_blake3: record.checksum_blake3,
+            storage_backend: record.storage_backend,
+            metadata: record.metadata,
+            created_at: record.created_at,
+            last_verified_at: record.last_verified_at,
+            verification_status: record.verification_status,
         }
     }
 }

@@ -3,7 +3,10 @@
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
+use sinex_core::{
+    environment::environment,
+    types::{deserialize_validated_utf8_path, validate_path},
+};
 use tracing::{debug, error, info};
 use validator::Validate;
 
@@ -32,7 +35,7 @@ pub struct IngestdConfig {
 
     /// Unix Domain Socket path for gRPC server
     #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
-    #[builder(default = String::from("/run/sinex/ingest.sock"))]
+    #[builder(default = default_socket_path())]
     pub socket_path: String,
 
     /// Batch size for database writes
@@ -70,7 +73,7 @@ pub struct IngestdConfig {
 
     /// NATS stream name for events
     #[validate(length(min = 1, message = "NATS stream name cannot be empty"))]
-    #[builder(default = String::from("EVENTS"))]
+    #[builder(default = default_nats_stream_name())]
     pub nats_stream_name: String,
 
     /// NATS consumer durable name
@@ -234,47 +237,66 @@ impl IngestdConfig {
 
 impl Default for IngestdConfig {
     fn default() -> Self {
+        let env = environment();
         Self {
-            database_url: "postgresql:///sinex_dev?host=/run/postgresql".to_string(),
+            database_url: default_database_url(),
             database_pool_size: 50,
             nats_url: "nats://localhost:4222".to_string(),
-            socket_path: "/run/sinex/ingest.sock".to_string(),
+            socket_path: default_socket_path(),
             batch_size: 1000,
             batch_timeout_secs: 5,
             dry_run: false,
             validate_schemas: true,
-            work_dir: Utf8PathBuf::from("/tmp/sinex/ingestd"),
+            work_dir: default_work_dir(),
             max_message_size: 16 * 1024 * 1024,
-            nats_stream_name: "EVENTS".to_string(),
-            nats_consumer_name: "ingestd".to_string(),
+            nats_stream_name: default_nats_stream_name(),
+            nats_consumer_name: format!("ingestd-{}", env.name()),
         }
     }
 }
 
 // Helper functions
 
-/// Default database URL
+/// Default database URL with environment namespacing
 fn default_database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string())
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let env = environment();
+        let base_name = env.database_name("sinex");
+        format!("postgresql:///{}?host=/run/postgresql", base_name)
+    })
 }
 
-/// Default work directory for ingestd (validated)
+/// Default work directory for ingestd with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
+    let env = environment();
     let base_dir = dirs::cache_dir()
         .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
         .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
 
-    let work_dir = base_dir.join("sinex").join("ingestd");
+    let work_dir = env.work_directory(base_dir.join("sinex").join("ingestd"));
 
     // Validate the default path
     match validate_path(work_dir.as_str()) {
         Ok(validated) => validated,
         Err(_) => {
             // Fallback to a safe default if validation fails
-            Utf8PathBuf::from("/tmp/sinex/ingestd")
+            env.work_directory("/tmp/sinex/ingestd")
         }
     }
+}
+
+/// Default socket path with environment namespacing
+fn default_socket_path() -> String {
+    let env = environment();
+    env.socket_path("/run/sinex/ingest.sock")
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Default NATS stream name with environment namespacing
+fn default_nats_stream_name() -> String {
+    let env = environment();
+    env.nats_stream_name("SINEX_RAW_EVENTS")
 }
 
 // Custom validator functions

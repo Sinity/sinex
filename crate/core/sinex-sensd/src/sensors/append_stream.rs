@@ -4,7 +4,7 @@
 
 use crate::{
     config::SensorConfig,
-    job_manager::SensorJob,
+    job_manager::{SensorJob, SensorType},
     material_rotation::{MaterialRotationManager, RotationPolicy},
     temporal_ledger::{LedgerEntry, TemporalLedger},
 };
@@ -50,7 +50,7 @@ impl AppendStreamSensor {
         let rotation_manager = MaterialRotationManager::new(
             temporal_ledger.clone(),
             rotation_policy,
-            "append_stream".to_string(),
+            SensorType::AppendStream.to_string(),
             job.target_path.clone(),
         );
 

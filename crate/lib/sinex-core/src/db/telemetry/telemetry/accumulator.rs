@@ -631,7 +631,7 @@ impl SystemTelemetryEmitter {
     ///
     /// This collects current system metrics and emits them as a telemetry event.
     pub async fn emit_system_resources(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: Implement actual system resource collection using sysinfo crate
+        // TODO(telemetry): Implement actual system resource collection using sysinfo crate
         // For now, emit placeholder data
         let event: RawEvent = Event::new(SystemResourcesPayload {
             cpu_usage_percent: 0.0,

@@ -161,8 +161,8 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> color_eyre::eyre::Re
     info!("Testing satellite SDK components");
 
     // Test checkpoint manager
-    use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
-    use sinex_satellite_sdk::stream_processor::Checkpoint;
+    use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
+    use sinex_satellite_sdk::Checkpoint;
 
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool.clone(),
@@ -331,7 +331,7 @@ async fn test_phase2_sensd_integration(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Helper function to create test event source configuration
 fn create_test_event_source_config() -> EventSourceConfig {
-    use sinex_satellite_sdk::config::SatelliteConfig;
+    use sinex_satellite_sdk::SatelliteConfig;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -359,8 +359,8 @@ fn create_test_event_source_config() -> EventSourceConfig {
 
 /// Helper function to test checkpoint functionality
 async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> color_eyre::eyre::Result<()> {
-    use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
-    use sinex_satellite_sdk::stream_processor::Checkpoint;
+    use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
+    use sinex_satellite_sdk::Checkpoint;
 
     let manager = CheckpointManager::new(
         pool.clone(),

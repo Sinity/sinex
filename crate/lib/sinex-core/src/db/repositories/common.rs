@@ -1,6 +1,6 @@
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::{Result as SinexResult, SinexError};
-use crate::types::ulid::Ulid;
+use crate::Ulid;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use serde_json::Value as JsonValue;
@@ -75,8 +75,8 @@ pub trait TransactionSupport {
     fn with_tx<'a>(self, tx: &'a mut Transaction<'_, Postgres>) -> Self::Item;
 }
 
-// Re-export TableDef from migration crate
-pub use sinex_migrations::schema::TableDef;
+// Re-export TableDef from schema crate
+pub use sinex_schema::schema::TableDef;
 
 /// Enhanced repository trait with generic operations
 pub trait EnhancedRepository<'a>: Repository<'a> {

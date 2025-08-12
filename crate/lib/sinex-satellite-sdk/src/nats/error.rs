@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum NatsError {
     #[error("NATS connection error: {0}")]
     Connection(String),

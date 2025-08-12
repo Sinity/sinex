@@ -1,5 +1,6 @@
 //! Main ingestion service implementation
 
+// Local crate imports
 use crate::{
     config::IngestdConfig,
     proto::{
@@ -10,15 +11,26 @@ use crate::{
     validator::EventValidator,
     IngestdResult, SinexError,
 };
+
+// External crates
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
-use sinex_core::db::models::{Provenance, RawEvent};
-use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::{Id, Ulid};
+use sinex_core::{
+    db::{
+        models::{Provenance, RawEvent},
+        query_helpers::{ulid_to_uuid, uuid_to_ulid},
+        repositories::DbPoolExt,
+        telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator},
+    },
+    types::{
+        domain::{EventSource, EventType, HostName},
+        Id, Ulid,
+    },
+};
 use sqlx::{PgPool, Postgres, Transaction};
+use tonic::{transport::Server, Request, Response, Status};
+
+// Standard library and common crates
 use std::{
     str::FromStr,
     sync::{
@@ -32,7 +44,6 @@ use tokio::{
     sync::{mpsc, Mutex},
     time::{interval, Duration},
 };
-use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 
 // Shared ingestor version as a compile-time constant
@@ -286,7 +297,7 @@ impl IngestService {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o660);
-            std::fs::set_permissions(&self.config.socket_path, perms)?;
+            tokio::fs::set_permissions(&self.config.socket_path, perms).await?;
         }
 
         // Create gRPC service
@@ -384,6 +395,7 @@ impl IngestService {
                                 db_pool.as_ref(),
                                 jetstream.as_ref(),
                                 &stats,
+                                Some(&*subject_cache),
                                 ).await;
                         }
                     }
@@ -396,6 +408,7 @@ impl IngestService {
                             db_pool.as_ref(),
                             jetstream.as_ref(),
                             &stats,
+                            Some(&*subject_cache),
                         ).await;
                         break;
                     }
@@ -489,10 +502,7 @@ impl IngestService {
         for entry in &pending {
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
-            headers.insert(
-                "Nats-Msg-Id",
-                uuid_to_ulid(entry.event_id).to_string().as_str(),
-            );
+            headers.insert("Nats-Msg-Id", &uuid_to_ulid(entry.event_id).to_string());
 
             let publish_future =
                 js.publish_with_headers(entry.subject.clone(), headers, event_data.into());
@@ -594,6 +604,7 @@ impl IngestService {
         db_pool: Option<&PgPool>,
         _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
+        subject_cache: Option<&SubjectCache>,
     ) {
         // Take events from buffer
         let events = {
@@ -619,7 +630,7 @@ impl IngestService {
         // Write to database with transactional outbox pattern
         // This handles both event insertion and outbox entries for NATS publishing
         if let Some(pool) = db_pool {
-            if let Err(e) = Self::batch_write_to_db(pool, &events).await {
+            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache).await {
                 error!("Failed to write events to database: {}", e);
                 // Note: This is in a static context, so telemetry is not available here
                 // Consider refactoring to pass telemetry if needed
@@ -642,7 +653,11 @@ impl IngestService {
     /// This implements:
     /// - True batch insert using UNNEST instead of N+1 pattern
     /// - Transactional outbox pattern: INSERT events and outbox entries in same transaction
-    async fn batch_write_to_db(pool: &PgPool, events: &[RawEvent]) -> IngestdResult<()> {
+    async fn batch_write_to_db(
+        pool: &PgPool,
+        events: &[RawEvent],
+        subject_cache: Option<&SubjectCache>,
+    ) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
         }
@@ -697,7 +712,7 @@ impl IngestService {
             payload_schema_names.push(Some(schema_name));
 
             // For now, use a placeholder version since we don't have access to the validator here
-            // TODO: Pass validator context to get actual schema version
+            // TODO(schema-validation): Pass validator context to get actual schema version from registry
             payload_schema_versions.push(Some("1.0.0".to_string()));
 
             // Extract provenance into separate database fields
@@ -733,13 +748,19 @@ impl IngestService {
                 .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
             associated_blob_id_arrays.push(blob_uuids);
 
-            // Prepare outbox entry for NATS publishing
-            let subject = format!(
-                "events.{}.{}",
-                event.source.as_str().replace('.', "_"),
-                event.event_type.as_str().replace('.', "_")
-            );
-            outbox_entries.push((event_id, subject, serde_json::to_value(event)?));
+            // Prepare outbox entry for NATS publishing - use cached subject if available
+            let subject = if let Some(cache) = subject_cache {
+                cache
+                    .get_subject(event.source.as_str(), event.event_type.as_str())
+                    .await
+            } else {
+                Arc::new(format!(
+                    "events.{}.{}",
+                    event.source.as_str().replace('.', "_"),
+                    event.event_type.as_str().replace('.', "_")
+                ))
+            };
+            outbox_entries.push((event_id, (*subject).clone(), serde_json::to_value(event)?));
         }
 
         // Batch insert events using UNNEST - use raw query to avoid SQLX type issues
@@ -769,12 +790,12 @@ impl IngestService {
         .bind(&ts_origs)
         .bind(&ingestor_versions)
         .bind(&payload_schema_ids)
-        .bind(serde_json::to_value(&source_event_id_arrays).unwrap())
+        .bind(serde_json::to_value(&source_event_id_arrays)?)
         .bind(&source_material_ids)
         .bind(&source_material_offset_starts)
         .bind(&source_material_offset_ends)
         .bind(&anchor_bytes)
-        .bind(serde_json::to_value(&associated_blob_id_arrays).unwrap())
+        .bind(serde_json::to_value(&associated_blob_id_arrays)?)
         .bind(&payload_schema_names)
         .bind(&payload_schema_versions)
         .bind(&vec![None::<i32>; events.len()]) // processor_manifest_id
@@ -828,7 +849,7 @@ impl IngestService {
                 self.db_pool.as_ref(),
                 self.jetstream.as_ref(),
                 &self.stats,
-                &self.subject_cache,
+                Some(&self.subject_cache),
             )
             .await;
         }
@@ -850,7 +871,7 @@ impl IngestService {
             self.db_pool.as_ref(),
             self.jetstream.as_ref(),
             &self.stats,
-            &self.subject_cache,
+            Some(&self.subject_cache),
         )
         .await;
 

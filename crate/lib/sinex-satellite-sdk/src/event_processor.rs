@@ -3,9 +3,12 @@
 //! This module bridges the gap between the event channel and the actual transport
 //! mechanism (NATS JetStream or gRPC to ingestd).
 
-use crate::{grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteResult};
-use sinex_core::db::models::RawEvent;
+#[cfg(feature = "nats-bypass")]
+use crate::nats::publisher::NatsPublisher;
+use crate::{grpc_client::IngestClient, SatelliteResult};
+use sinex_core::RawEvent;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -13,7 +16,8 @@ use tracing::{debug, error, info, warn};
 /// Event transport mechanism
 #[derive(Debug, Clone)]
 pub enum EventTransport {
-    /// Direct NATS JetStream publishing
+    /// Direct NATS JetStream publishing - DEPRECATED: Bypasses ingestd single-writer principle
+    #[cfg(feature = "nats-bypass")]
     Nats(NatsPublisher),
     /// gRPC to ingestd (which then publishes to NATS)
     Grpc(IngestClient),
@@ -143,6 +147,7 @@ impl EventProcessor {
 
         while retry_count <= self.config.max_retries && !success {
             success = match &mut self.transport {
+                #[cfg(feature = "nats-bypass")]
                 EventTransport::Nats(publisher) => Self::send_batch_nats(publisher, &batch).await,
                 EventTransport::Grpc(client) => Self::send_batch_grpc(client, &batch).await,
             };
@@ -202,7 +207,8 @@ impl EventProcessor {
         Ok(())
     }
 
-    /// Send batch via NATS
+    /// Send batch via NATS - DEPRECATED: Bypasses ingestd single-writer principle
+    #[cfg(feature = "nats-bypass")]
     async fn send_batch_nats(publisher: &NatsPublisher, events: &[RawEvent]) -> bool {
         let mut all_success = true;
 

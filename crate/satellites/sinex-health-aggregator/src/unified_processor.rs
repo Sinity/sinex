@@ -4,27 +4,26 @@
 //! directly and using RedisStreamConsumer for real-time event consumption, without any
 //! HotlogAutomaton layer.
 
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
+// Use local facade for common types
+use crate::common::*;
+
+// Health aggregator specific imports - now using flattened namespace
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::{Id, events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload}};
-use sinex_satellite_sdk::{
-    cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon},
-    SatelliteError, SatelliteResult};
-use std::collections::HashMap;
+use sinex_core::{DbPoolExt, Event, HealthStatus, payloads::ComponentHealth, payloads::SystemHealthSummaryPayload};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
 
 /// Health threshold constants
 const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
 const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
+
+/// Constants for health-related event discrimination
+mod constants {
+    /// Event source for journal/systemd events
+    pub const JOURNALD_SOURCE: &str = "journald";
+    /// Event type for satellite heartbeat events
+    pub const SATELLITE_HEARTBEAT_TYPE: &str = "satellite.heartbeat";
+}
 
 /// Result of batch processing
 #[derive(Debug)]
@@ -73,7 +72,7 @@ impl HealthAggregator {
 
     /// Process a heartbeat event and update component health
     async fn process_heartbeat(&self, event: &RawEvent) -> SatelliteResult<()> {
-        if event.source == "journald" && event.event_type == "satellite.heartbeat" {
+        if event.source == constants::JOURNALD_SOURCE && event.event_type == constants::SATELLITE_HEARTBEAT_TYPE {
             let payload = &event.payload;
             
             let service_name = payload
@@ -196,16 +195,6 @@ impl HealthAggregator {
         Ok(Some(event))
     }
 
-    // TODO: Remove event_filters after NatsStreamConsumer removal
-    // /// Get event filters for this automaton
-    // fn event_filters() -> Vec<NatsEventFilter> {
-    //     vec![
-    //         NatsEventFilter {
-    //             sources: vec!["journald".to_string()],
-    //             event_types: vec!["satellite.heartbeat".to_string()],
-    //         },
-    //     ]
-    // }
 }
 
 

@@ -8,11 +8,11 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
-use sinex_core::db::models::{Provenance, RawEvent};
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::DbPoolExt;
+use sinex_core::{EventSource, EventType, HostName};
+use sinex_core::{Provenance, RawEvent};
 use sinex_satellite_sdk::{
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
@@ -486,7 +486,7 @@ impl ExplorationProvider for TerminalCommandCanonicalizer {
 
     fn export_data(
         &self,
-        _path: &sinex_core::types::domain::SanitizedPath,
+        _path: &sinex_core::SanitizedPath,
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         Err(eyre!("Export not supported for automata"))

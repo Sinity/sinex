@@ -4,16 +4,7 @@
 //! This module contains property-based tests for event validation using the modern
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
-use chrono::{Duration as ChronoDuration, Utc};
-use proptest::prelude::*;
-use serde_json::{json, Value};
-use sinex_core::db::models::RawEvent; // Use the Event type from satellite SDK
-use sinex_core::types::{
-    domain::{EventSource, EventType, HostName},
-    Ulid,
-};
 use sinex_test_utils::prelude::*;
-
 // =============================================================================
 // Property Test Helpers
 // =============================================================================

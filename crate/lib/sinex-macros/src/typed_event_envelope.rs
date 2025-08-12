@@ -105,7 +105,7 @@ fn generate_to_json_event_impl(
                 quote! {
                     #enum_name::#variant_name => {
                         // Generate a placeholder event for unit variants
-                        sinex_events::RawEvent::new(
+                        sinex_events::RawEvent::system_event(
                             "unknown".to_string(),
                             stringify!(#variant_name).to_string(),
                             serde_json::Value::Null,
@@ -118,7 +118,7 @@ fn generate_to_json_event_impl(
                 quote! {
                     #enum_name::#variant_name(..) => {
                         // Default conversion for complex variants
-                        sinex_events::RawEvent::new(
+                        sinex_events::RawEvent::system_event(
                             "unknown".to_string(),
                             stringify!(#variant_name).to_string(),
                             serde_json::Value::Null,

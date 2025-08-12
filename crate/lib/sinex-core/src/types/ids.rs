@@ -1,22 +1,24 @@
-//! Generic strongly-typed ID implementation
+//! Generic strongly-typed ID implementation for domain types
 //!
 //! This module provides a generic Id<T> type that creates strongly-typed
-//! identifiers for any type T, preventing ID mixing at compile time.
+//! identifiers for domain types, preventing ID mixing at compile time.
+//!
+//! This is a domain concept that wraps primitive ULID types from sinex-schema.
 
-use crate::ulid::Ulid;
 use serde::{Deserialize, Serialize};
+use sinex_schema::ulid::Ulid;
 use std::fmt;
 use std::marker::PhantomData;
 
-// Re-export ULID for convenience
-pub use crate::ulid::Ulid as RawUlid;
-
 /// A strongly-typed ID that prevents mixing different ID types
 ///
-/// Use this with any type T to create type-safe identifiers:
+/// Use this with any domain type T to create type-safe identifiers:
 /// - `Id<Event>` for events
 /// - `Id<User>` for users  
-/// - `Id<YourType>` for any custom type
+/// - `Id<YourType>` for any custom domain type
+///
+/// This wraps the primitive Ulid type from sinex-schema to provide
+/// domain-level type safety while keeping schema records primitive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Id<T> {
@@ -76,7 +78,7 @@ impl<T> fmt::Display for Id<T> {
 }
 
 impl<T> std::str::FromStr for Id<T> {
-    type Err = crate::ulid::UlidError;
+    type Err = sinex_schema::ulid::UlidError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from_ulid(s.parse()?))

@@ -5,14 +5,18 @@
 
 pub mod config;
 pub mod figment_config;
+pub mod prelude;
 pub mod schema_sync;
 pub mod service;
 pub mod validator;
 
 pub use config::IngestdConfig;
 pub use figment_config::IngestdFigmentConfig;
-pub use service::IngestService;
-pub use validator::EventValidator;
+pub use schema_sync::SyncResult;
+pub use service::{IngestService, SubjectCache};
+pub use validator::{
+    EventValidator, SchemaCache, SchemaInfo, SchemaLookup, ValidationResult, ValidationStats,
+};
 
 // Re-export proto types
 pub mod proto {

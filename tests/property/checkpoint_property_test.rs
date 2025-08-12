@@ -5,8 +5,8 @@
 
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
-use sinex_satellite_sdk::stream_processor::Checkpoint;
+use sinex_satellite_sdk::Checkpoint;
+use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 

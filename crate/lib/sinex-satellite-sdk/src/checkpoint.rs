@@ -40,8 +40,8 @@
 use crate::{stream_processor::Checkpoint, SatelliteError, SatelliteResult};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
-use sinex_core::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
 use sinex_core::types::ulid::Ulid;
+use sinex_core::{ConsumerGroup, ConsumerName, ProcessorName};
 use tracing::{debug, info, warn};
 
 // Database record structures for query results
@@ -135,6 +135,22 @@ impl CheckpointState {
         }
     }
 
+    /// Update the checkpoint with a new processed ID.
+    ///
+    /// # Complex Invariants
+    ///
+    /// This function implements complex logic to determine checkpoint type based on ID format:
+    /// - **ULID strings**: Parsed and stored as `Checkpoint::Internal` for automata
+    /// - **Other strings**: Stored as `Checkpoint::Stream` for message stream IDs
+    /// - **None**: Resets to `Checkpoint::None` (initial state)
+    ///
+    /// The function maintains important invariants:
+    /// - `processed_count` is preserved when converting checkpoint types
+    /// - Stream checkpoints set `event_id: None` (they don't map to events)
+    /// - Invalid ULIDs gracefully fall back to stream ID interpretation
+    ///
+    /// This design allows the same checkpoint API to work for both ingestors
+    /// (external positions) and automata (event IDs).
     pub fn set_last_processed_id(&mut self, id: Option<String>) {
         self.checkpoint = match id {
             Some(id_str) => {
@@ -205,7 +221,7 @@ impl From<LegacyCheckpointState> for CheckpointState {
 ///
 /// # Usage Pattern
 /// ```rust
-/// use sinex_satellite_sdk::checkpoint::CheckpointManager;
+/// use sinex_satellite_sdk::CheckpointManager;
 ///
 /// let manager = CheckpointManager::new(
 ///     pool,
@@ -380,8 +396,7 @@ impl CheckpointManager {
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                last_processed_id
-                    .map(|id| sinex_core::Id::<sinex_core::db::models::RawEvent>::from_ulid(id)),
+                last_processed_id.map(|id| sinex_core::Id::<sinex_core::RawEvent>::from_ulid(id)),
                 Some(state.last_activity),
                 Some(checkpoint_data),
                 state.data.clone(),

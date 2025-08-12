@@ -456,14 +456,16 @@ async fn verify_event_source_config(source_name: &str, description: &str) -> Res
 
 async fn check_clipboard_availability() -> bool {
     // Check if we can access clipboard tools
-    std::process::Command::new("which")
+    tokio::process::Command::new("which")
         .arg("xclip")
         .output()
+        .await
         .map(|output| output.status.success())
         .unwrap_or(false)
-        || std::process::Command::new("which")
+        || tokio::process::Command::new("which")
             .arg("wl-clipboard")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }
@@ -471,9 +473,10 @@ async fn check_clipboard_availability() -> bool {
 async fn check_kitty_availability() -> bool {
     // Check if Kitty is available and has socket support
     std::env::var("KITTY_LISTEN_ON").is_ok()
-        || std::process::Command::new("which")
+        || tokio::process::Command::new("which")
             .arg("kitty")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }
@@ -481,18 +484,20 @@ async fn check_kitty_availability() -> bool {
 async fn check_hyprland_availability() -> bool {
     // Check if Hyprland is running
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || std::process::Command::new("hyprctl")
+        || tokio::process::Command::new("hyprctl")
             .arg("version")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }
 
 async fn check_atuin_availability() -> bool {
     // Check if Atuin is installed and configured
-    std::process::Command::new("which")
+    tokio::process::Command::new("which")
         .arg("atuin")
         .output()
+        .await
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
@@ -541,9 +546,10 @@ async fn verify_service_configuration_compatibility(messages: &mut Vec<String>) 
 
 async fn check_systemd_compatibility() -> Result<Value> {
     // Check if systemd is available and running
-    let systemd_version = std::process::Command::new("systemctl")
+    let systemd_version = tokio::process::Command::new("systemctl")
         .arg("--version")
         .output()
+        .await
         .wrap_err("Failed to check systemd version")?;
 
     if !systemd_version.status.success() {
@@ -562,8 +568,10 @@ async fn check_systemd_compatibility() -> Result<Value> {
 
 async fn check_nixos_compatibility() -> Result<Value> {
     // Check if we're running on NixOS
-    let nixos_version = std::fs::read_to_string("/etc/NIXOS")
-        .or_else(|_| std::fs::read_to_string("/etc/os-release"));
+    let nixos_version = match tokio::fs::read_to_string("/etc/NIXOS").await {
+        Ok(content) => Ok(content),
+        Err(_) => tokio::fs::read_to_string("/etc/os-release").await,
+    };
 
     match nixos_version {
         Ok(content) => {
@@ -581,12 +589,13 @@ async fn check_nixos_compatibility() -> Result<Value> {
     }
 }
 
-async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
+pub async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
     // Validate path before file operation to prevent path traversal
     let validated_path = validate_path(path.as_str())
         .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;
 
-    let content = std::fs::read_to_string(&validated_path)
+    let content = tokio::fs::read_to_string(&validated_path)
+        .await
         .wrap_err_with(|| format!("Failed to read TOML file: {:?}", validated_path))?;
 
     validate_toml_content(&content)

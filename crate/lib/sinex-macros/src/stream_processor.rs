@@ -229,7 +229,7 @@ impl syn::parse::Parse for StreamProcessorArgs {
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
-            match key.to_string().as_str() {
+            match &*key.to_string() {
                 "processor_type" => {
                     let value: LitStr = input.parse()?;
                     processor_type = Some(match value.value().as_str() {

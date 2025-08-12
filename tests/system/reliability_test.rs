@@ -22,9 +22,9 @@
 
 use color_eyre::eyre::Result;
 use sinex_core::db::models::EventFactory;
-use sinex_test_utils::database_pool::acquire_test_database;
+use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
+
 use sinex_core::types::ulid::Ulid;
 use std::fs;
 

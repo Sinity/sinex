@@ -6,8 +6,8 @@
 //! - Version-based upgrades
 //! - Failure detection and recovery
 
-use sinex_satellite_sdk::coordination::{SatelliteCoordination, InstanceMode};
-use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
+use sinex_satellite_sdk::{InstanceMode, SatelliteCoordination};
+use sinex_satellite_sdk::{SatelliteInstance, SatelliteVersion};
 use sinex_core::db::distributed_locking::DistributedCoordination;
 use sinex_test_utils::TestContext;
 use sinex_test_utils::sinex_test;

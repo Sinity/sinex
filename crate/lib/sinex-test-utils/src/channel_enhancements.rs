@@ -5,8 +5,8 @@
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
 use crate::Result;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::error::SinexError;
+use sinex_core::RawEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -228,16 +228,16 @@ pub struct DiagnosticsReport {
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use sinex_core::db::models::RawEvent;
+    use sinex_core::RawEvent;
 
     #[sinex_test]
     async fn test_enhanced_event_sender() -> color_eyre::eyre::Result<()> {
         let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
-        let event = RawEvent::new(
-            sinex_core::types::domain::EventSource::new("test_source"),
-            sinex_core::types::domain::EventType::new("test_event"),
+        let event = RawEvent::test_event(
+            sinex_core::EventSource::new("test_source"),
+            sinex_core::EventType::new("test_event"),
             serde_json::json!({}),
         );
 
@@ -268,17 +268,17 @@ mod tests {
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
         // Fill the channel
-        let event1 = RawEvent::new(
-            sinex_core::types::domain::EventSource::new("test_source"),
-            sinex_core::types::domain::EventType::new("test_event"),
+        let event1 = RawEvent::test_event(
+            sinex_core::EventSource::new("test_source"),
+            sinex_core::EventType::new("test_event"),
             serde_json::json!({}),
         );
         let _ = sender.send_event(event1, "fill channel").await;
 
         // This should timeout
-        let event2 = RawEvent::new(
-            sinex_core::types::domain::EventSource::new("test_source"),
-            sinex_core::types::domain::EventType::new("test_event"),
+        let event2 = RawEvent::test_event(
+            sinex_core::EventSource::new("test_source"),
+            sinex_core::EventType::new("test_event"),
             serde_json::json!({}),
         );
 

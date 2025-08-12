@@ -14,8 +14,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{DbPoolExt, EventSource};
-use sinex_satellite_sdk::checkpoint::CheckpointManager;
-use sinex_satellite_sdk::stream_processor::Checkpoint;
+use sinex_satellite_sdk::{Checkpoint, CheckpointManager};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use tokio::time::sleep;

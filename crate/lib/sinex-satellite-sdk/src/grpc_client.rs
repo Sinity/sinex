@@ -8,8 +8,11 @@
 //!
 //! ## Usage
 //! ```rust
-//! // Use default configuration (recommended for most cases)
-//! let client = IngestClient::new("/run/sinex/ingest.sock").await?;
+//! // Use environment-namespaced default socket (recommended for most cases)
+//! let client = IngestClient::default().await?;
+//!
+//! // Or connect to explicit path
+//! let client = IngestClient::new("/run/sinex-dev/ingest.sock").await?;
 //!
 //! // Use custom configuration for specific requirements
 //! let config = GrpcClientConfig {
@@ -19,7 +22,8 @@
 //!     circuit_breaker_threshold: 10,
 //!     circuit_breaker_recovery: Duration::from_secs(60),
 //! };
-//! let client = IngestClient::with_config("/run/sinex/ingest.sock", config).await?;
+//! let socket_path = IngestClient::default_socket_path();
+//! let client = IngestClient::with_config(&socket_path, config).await?;
 //! ```
 
 use crate::proto::{
@@ -27,7 +31,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_core::db::models::RawEvent;
+use sinex_core::{environment::environment, RawEvent};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -52,7 +56,7 @@ enum CircuitState {
 }
 
 /// Circuit breaker for gRPC client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CircuitBreaker {
     state: Arc<RwLock<CircuitState>>,
     failure_count: Arc<RwLock<u32>>,
@@ -156,6 +160,20 @@ pub struct IngestClient {
 }
 
 impl IngestClient {
+    /// Get the default environment-namespaced ingest socket path
+    pub fn default_socket_path() -> String {
+        let env = environment();
+        env.socket_path("/run/sinex/ingest.sock")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// Create a new client connected to the environment-namespaced default socket
+    pub async fn default() -> SatelliteResult<Self> {
+        let socket_path = Self::default_socket_path();
+        Self::new(&socket_path).await
+    }
+
     /// Create a new client connected to the specified Unix Domain Socket with default config
     #[instrument(fields(socket_path))]
     pub async fn new(socket_path: &str) -> SatelliteResult<Self> {
@@ -194,14 +212,21 @@ impl IngestClient {
     /// Send a single event to ingestd with retry and circuit breaker
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
+        let event_clone = event.clone();
+        let mut client = self.client.clone();
+        let operation_timeout = self.config.operation_timeout;
+
         self.execute_with_retry_and_circuit_breaker(
-            || async {
-                let proto_event = self.convert_to_proto(event)?;
+            move || {
+                let event = event_clone.clone();
+                let mut client = client.clone();
+                async move {
+                    let proto_event = Self::convert_to_proto_static(&event)?;
                 let request = tonic::Request::new(proto_event);
 
                 let response = tokio::time::timeout(
-                    self.config.operation_timeout,
-                    self.client.ingest_event(request)
+                    operation_timeout,
+                    client.ingest_event(request)
                 )
                 .await
                 .map_err(|_| SatelliteError::Processing("gRPC call timed out".to_string()))?
@@ -225,6 +250,7 @@ impl IngestClient {
                         error_msg
                     )))
                 }
+                }
             }
         ).await
     }
@@ -242,19 +268,26 @@ impl IngestClient {
             });
         }
 
-        self.execute_with_retry_and_circuit_breaker(|| async {
-            let mut proto_events = Vec::with_capacity(events.len());
-            for event in events {
-                proto_events.push(self.convert_to_proto(event)?);
-            }
-            let batch = EventBatch {
-                events: proto_events,
-            };
+        let events_clone = events.to_vec();
+        let mut client = self.client.clone();
+        let operation_timeout = self.config.operation_timeout;
 
-            let request = tonic::Request::new(batch);
-            let response = tokio::time::timeout(
-                self.config.operation_timeout,
-                self.client.ingest_batch(request),
+        self.execute_with_retry_and_circuit_breaker(move || {
+            let events = events_clone.clone();
+            let mut client = client.clone();
+            async move {
+                let mut proto_events = Vec::with_capacity(events.len());
+                for event in &events {
+                    proto_events.push(Self::convert_to_proto_static(event)?);
+                }
+                let batch = EventBatch {
+                    events: proto_events,
+                };
+
+                let request = tonic::Request::new(batch);
+                let response = tokio::time::timeout(
+                operation_timeout,
+                client.ingest_batch(request),
             )
             .await
             .map_err(|_| SatelliteError::Processing("gRPC batch call timed out".to_string()))?
@@ -263,21 +296,22 @@ impl IngestClient {
                 SatelliteError::Processing(format!("gRPC error: {}", e))
             })?;
 
-            let inner = response.into_inner();
-            info!(
-                processed_count = inner.processed_count,
-                failed_count = inner.failed_count,
-                success = inner.success,
-                "Batch ingestion completed"
-            );
+                let inner = response.into_inner();
+                info!(
+                    processed_count = inner.processed_count,
+                    failed_count = inner.failed_count,
+                    success = inner.success,
+                    "Batch ingestion completed"
+                );
 
-            Ok(BatchResult {
-                success: inner.success,
-                event_ids: inner.event_ids,
-                processed_count: inner.processed_count,
-                failed_count: inner.failed_count,
-                error: inner.error,
-            })
+                Ok(BatchResult {
+                    success: inner.success,
+                    event_ids: inner.event_ids,
+                    processed_count: inner.processed_count,
+                    failed_count: inner.failed_count,
+                    error: inner.error,
+                })
+            }
         })
         .await
     }
@@ -358,6 +392,10 @@ impl IngestClient {
 
     /// Convert Event to protobuf format
     fn convert_to_proto(&self, event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
+        Self::convert_to_proto_static(event)
+    }
+
+    fn convert_to_proto_static(event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
         Ok(ProtoRawEvent {

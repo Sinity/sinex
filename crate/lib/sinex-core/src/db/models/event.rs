@@ -1,34 +1,40 @@
-//! Unified RawEvent Type
+//! Unified Event Model
 //!
-//! This module contains the unified RawEvent struct that replaces the old
-//! RawEvent/NewEvent dichotomy. A RawEvent with id: None is a new event
-//! to be inserted, while a RawEvent with id: Some(...) is a persisted event.
+//! This module contains the unified Event<T> structure that replaces the old
+//! RawEvent/Event<T> dichotomy.
+//!
+//! - Event<T> is the generic structure for all events
+//! - RawEvent is an alias for Event<JsonValue>
+//! - All events MUST have provenance (Material or Synthesis)
+//! - anchor_byte is moved into Material provenance where it belongs
 
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::{Id, Ulid};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 // Type aliases for timestamp and JSON handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
-pub type JsonValue = serde_json::Value;
 
-/// Unified event structure for both creation and retrieval
+// JsonValue is already imported above
+
+/// Unified generic event structure
 ///
-/// This is the canonical event structure used throughout the system for both
-/// raw observations and synthesized events. The distinction is made via the
-/// provenance field:
-/// - Raw Event: provenance is None
-/// - Synthesis Event: provenance contains either Events or Material source
+/// This is the canonical event structure used throughout the system.
 ///
-/// The id field determines if this is a new event or a persisted one:
-/// - id: None => New event to be created
-/// - id: Some(id) => RawEvent retrieved from database
+/// - `Event<T>` provides strongly-typed payloads for homogeneous processing
+/// - `Event<JsonValue>` (aka RawEvent) for heterogeneous processing and storage
+/// - ALL events MUST have provenance (Material or Synthesis)
+/// - The id field determines if this is a new event or a persisted one
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RawEvent {
-    /// Event ID - None when creating, Some when from DB
+pub struct Event<T = JsonValue> {
+    /// Event ID - elegant distinction between new and persisted events
+    /// - None: New event to be inserted (builder pattern)
+    /// - Some(id): Persisted event retrieved from database
+    /// This pattern avoids separate NewEvent/PersistedEvent types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Id<RawEvent>>,
+    pub id: Option<Id<Event<T>>>,
 
     /// Event source (e.g., "fs-watcher", "terminal")
     pub source: EventSource,
@@ -36,14 +42,16 @@ pub struct RawEvent {
     /// Event type (e.g., "file.created", "command.executed")
     pub event_type: EventType,
 
-    /// Event payload as JSON
-    pub payload: JsonValue,
+    /// Event payload (typed or JSON)
+    pub payload: T,
 
     /// Original timestamp when the event occurred
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts_orig: OptionalTimestamp,
 
     /// Hostname where the event was generated
+    /// TODO: Consider removing - might be redundant for local-only capture
+    /// Could move to payload for specific event types that need it
     #[serde(default = "get_hostname")]
     pub host: HostName,
 
@@ -53,139 +61,206 @@ pub struct RawEvent {
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Ulid>,
 
-    /// Provenance tracking: either from events or source material
-    pub provenance: Option<Provenance>,
-
-    /// Immutable anchor byte offset within source material
-    pub anchor_byte: Option<i64>,
+    /// REQUIRED: Provenance tracking (Material or Synthesis)
+    pub provenance: Provenance,
 
     /// Array of associated blob IDs (screenshots, recordings, etc.)
     pub associated_blob_ids: Option<Vec<Ulid>>,
 }
+
+/// Type alias for JSON events (the common case)
+pub type RawEvent = Event<JsonValue>;
+
+/// Type alias for event IDs in references (stable across type parameters)
+pub type EventId = Id<Event<JsonValue>>;
 
 /// Marker type for source material IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceMaterial;
 
 /// Provenance type for tracking event lineage
+///
+/// This enum enforces the XOR constraint: every event must have exactly one type of provenance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Provenance {
-    /// Event derived from other events
-    Events(Vec<Id<RawEvent>>),
-    /// Event derived from source material
+    /// Event derived from source material (first-order event)
     Material {
         id: Id<SourceMaterial>,
+        anchor_byte: i64, // MOVED HERE: where it semantically belongs!
         offset_start: Option<i64>,
         offset_end: Option<i64>,
+        offset_kind: OffsetKind,
+    },
+    /// Event derived from other events (synthesized event)  
+    Synthesis {
+        source_event_ids: Vec<EventId>, // Use stable EventId type
+        operation_id: Option<Id<Operation>>,
     },
 }
 
-impl From<Vec<Id<RawEvent>>> for Provenance {
-    fn from(ids: Vec<Id<RawEvent>>) -> Self {
-        Provenance::Events(ids)
+/// Type of offset measurement
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OffsetKind {
+    Byte,
+    Line,
+    Record,
+    Character,
+}
+
+impl Default for OffsetKind {
+    fn default() -> Self {
+        Self::Byte
     }
 }
 
-impl From<&[Id<RawEvent>]> for Provenance {
-    fn from(ids: &[Id<RawEvent>]) -> Self {
-        Provenance::Events(ids.to_vec())
-    }
-}
-
-impl<const N: usize> From<[Id<RawEvent>; N]> for Provenance {
-    fn from(ids: [Id<RawEvent>; N]) -> Self {
-        Provenance::Events(ids.to_vec())
-    }
-}
+/// Marker type for operation IDs  
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Operation;
 
 impl Provenance {
-    /// Create event provenance from a list of event IDs
-    pub fn from_events<I: IntoIterator<Item = Id<RawEvent>>>(ids: I) -> Self {
-        Provenance::Events(ids.into_iter().collect())
-    }
-
-    /// Create material provenance
+    /// Create material provenance from source material
+    ///
+    /// anchor_byte is REQUIRED - this ensures Material events always have valid anchor
     pub fn from_material(
         id: impl Into<Id<SourceMaterial>>,
+        anchor_byte: i64, // Non-optional - enforces invariant at type level
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> Self {
         Provenance::Material {
             id: id.into(),
+            anchor_byte,
             offset_start,
             offset_end,
+            offset_kind: OffsetKind::default(),
+        }
+    }
+
+    /// Create synthesis provenance from parent event IDs
+    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Self {
+        Provenance::Synthesis {
+            source_event_ids: ids.into_iter().collect(),
+            operation_id: None,
         }
     }
 }
 
-impl RawEvent {
-    /// Create a schemaless event with untyped JSON payload
+impl<T> Event<T> {
+    /// Create a first-order event from Source Material
     ///
-    /// This creates a RawEvent that can be chained with `with_*` methods:
-    /// ```ignore
-    /// let event = RawEvent::new(source, event_type, payload)
-    ///     .with_ts_orig(Some(timestamp))
-    ///     .with_provenance(provenance);
-    /// ```
-    pub fn new(
+    /// This ensures the event has proper external provenance from the start.
+    pub fn from_material(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
-        payload: JsonValue,
+        payload: T,
+        material_id: impl Into<Id<SourceMaterial>>,
+        anchor_byte: i64,
     ) -> Self {
-        RawEvent {
+        Self {
             id: None,
             source: source.into(),
             event_type: event_type.into(),
             payload,
             ts_orig: None,
             host: get_hostname(),
-            ingestor_version: None,
+            ingestor_version: get_ingestor_version(),
             payload_schema_id: None,
-            provenance: None,
-            anchor_byte: None,
+            provenance: Provenance::from_material(material_id, anchor_byte, None, None),
             associated_blob_ids: None,
         }
     }
 
-    /// Fluent method to set timestamp origin
-    pub fn with_ts_orig(mut self, ts: Option<Timestamp>) -> Self {
-        self.ts_orig = ts;
+    /// Create a synthesized event from other events
+    ///
+    /// This ensures the event has proper internal provenance from the start.
+    pub fn from_synthesis<I>(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+        parent_ids: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = EventId>,
+    {
+        Self {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: None,
+            host: get_hostname(),
+            ingestor_version: get_ingestor_version(),
+            payload_schema_id: None,
+            provenance: Provenance::from_synthesis(parent_ids),
+            associated_blob_ids: None,
+        }
+    }
+
+    /// Create a system event synthesized from the system bootstrap
+    ///
+    /// This is a transitional method for system events that don't yet have
+    /// proper Source Material integration. System events should eventually
+    /// be derived from a system metrics Source Material stream.
+    pub fn system_event(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+    ) -> Self {
+        // Use a well-known system bootstrap event ID as parent
+        // In practice, this should be replaced with proper sensd integration
+        let system_bootstrap_id = EventId::from_ulid(crate::types::Ulid::from_bytes([
+            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]));
+
+        Self::from_synthesis(source, event_type, payload, vec![system_bootstrap_id])
+    }
+
+    #[cfg(feature = "testing")]
+    /// Create a test event with dummy Material provenance
+    ///
+    /// This is for testing only and creates events with a well-known test
+    /// material ID. In production, all events must have real provenance.
+    pub fn test_event(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+    ) -> Self {
+        let test_material_id = Id::<SourceMaterial>::from_ulid(crate::types::Ulid::from_bytes([
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
+            0x32, 0x10,
+        ]));
+
+        Self::from_material(source, event_type, payload, test_material_id, 0)
+    }
+
+    /// Set the timestamp
+    pub fn with_timestamp(mut self, ts: Timestamp) -> Self {
+        self.ts_orig = Some(ts);
         self
     }
 
-    /// Fluent method to set provenance
-    pub fn with_provenance(mut self, provenance: impl Into<Provenance>) -> Self {
-        self.provenance = Some(provenance.into());
-        self
-    }
-
-    /// Fluent method to set anchor byte
-    pub fn with_anchor_byte(mut self, byte: Option<i64>) -> Self {
-        self.anchor_byte = byte;
-        self
-    }
-
-    /// Fluent method to set associated blob IDs
-    pub fn with_associated_blobs(mut self, blob_ids: Option<Vec<Ulid>>) -> Self {
-        self.associated_blob_ids = blob_ids;
-        self
-    }
-
-    /// Fluent method to set host
+    /// Set the host
     pub fn with_host(mut self, host: HostName) -> Self {
         self.host = host;
         self
     }
 
-    /// Fluent method to set ingestor version
-    pub fn with_ingestor_version(mut self, version: Option<String>) -> Self {
-        self.ingestor_version = version;
+    /// Set the ingestor version
+    pub fn with_ingestor_version(mut self, version: impl Into<String>) -> Self {
+        self.ingestor_version = Some(version.into());
         self
     }
 
-    /// Fluent method to set schema ID
-    pub fn with_schema_id(mut self, schema_id: Option<Ulid>) -> Self {
-        self.payload_schema_id = schema_id;
+    /// Set the schema ID
+    pub fn with_schema_id(mut self, schema_id: Ulid) -> Self {
+        self.payload_schema_id = Some(schema_id);
+        self
+    }
+
+    /// Set associated blob IDs
+    pub fn with_blobs(mut self, blob_ids: Vec<Ulid>) -> Self {
+        self.associated_blob_ids = Some(blob_ids);
         self
     }
 
@@ -194,47 +269,72 @@ impl RawEvent {
         self.id.is_some()
     }
 
-    /// Check if this is a raw event (no provenance)
-    pub fn is_raw_event(&self) -> bool {
-        self.provenance.is_none()
+    /// Check if this is a first-order event (derived from Source Material)
+    pub fn is_first_order_event(&self) -> bool {
+        matches!(self.provenance, Provenance::Material { .. })
     }
 
-    /// Check if this is a synthesis event (has event provenance)
-    pub fn is_synthesis_event(&self) -> bool {
-        matches!(self.provenance, Some(Provenance::Events(_)))
+    /// Check if this is a synthesized event (derived from other events)
+    pub fn is_synthesized_event(&self) -> bool {
+        matches!(self.provenance, Provenance::Synthesis { .. })
     }
 
-    /// Get the source event IDs if this is a synthesis event
-    pub fn get_source_event_ids(&self) -> Option<&[Id<RawEvent>]> {
+    /// Get the anchor byte if this is a Material event
+    pub fn anchor_byte(&self) -> Option<i64> {
         match &self.provenance {
-            Some(Provenance::Events(ids)) => Some(ids),
+            Provenance::Material { anchor_byte, .. } => Some(*anchor_byte),
+            _ => None,
+        }
+    }
+
+    /// Get the source event IDs if this is a Synthesis event
+    pub fn source_event_ids(&self) -> Option<&[EventId]> {
+        match &self.provenance {
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => Some(source_event_ids),
             _ => None,
         }
     }
 }
 
-/// Create RawEvent from typed payload - derives source and event_type automatically
-impl<T> From<T> for RawEvent
-where
-    T: crate::types::events::EventPayload + serde::Serialize,
-{
-    fn from(payload: T) -> Self {
-        let payload_json = serde_json::to_value(&payload)
-            .expect("Failed to serialize EventPayload to JSON - this indicates a bug in the EventPayload implementation");
-
-        RawEvent {
-            id: None,
-            source: T::SOURCE,
-            event_type: T::EVENT_TYPE,
-            payload: payload_json,
-            ts_orig: None,
-            host: get_hostname(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            provenance: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
+impl<T: Serialize> Event<T> {
+    /// Convert to RawEvent (type erasure)
+    pub fn to_raw(self) -> RawEvent {
+        Event {
+            id: None, // New ID for different type
+            source: self.source,
+            event_type: self.event_type,
+            payload: serde_json::to_value(self.payload)
+                .expect("Failed to serialize payload to JSON"),
+            ts_orig: self.ts_orig,
+            host: self.host,
+            ingestor_version: self.ingestor_version,
+            payload_schema_id: self.payload_schema_id,
+            provenance: self.provenance,
+            associated_blob_ids: self.associated_blob_ids,
         }
+    }
+}
+
+impl RawEvent {
+    /// Try to convert to typed event (type recovery)
+    pub fn to_typed<T>(&self) -> Result<Event<T>, serde_json::Error>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        Ok(Event {
+            id: None, // New ID for different type
+            source: self.source.clone(),
+            event_type: self.event_type.clone(),
+            payload: serde_json::from_value(self.payload.clone())?,
+            ts_orig: self.ts_orig,
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            payload_schema_id: self.payload_schema_id,
+            provenance: self.provenance.clone(),
+            associated_blob_ids: self.associated_blob_ids.clone(),
+        })
     }
 }
 
@@ -243,63 +343,83 @@ fn get_hostname() -> HostName {
     HostName::new(gethostname::gethostname().to_string_lossy().to_string())
 }
 
+// Helper function to get ingestor version
+fn get_ingestor_version() -> Option<String> {
+    std::env::var("SINEX_VERSION").ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use color_eyre::eyre::Result;
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
 
-    #[sinex_test]
-    fn test_new_event_constructor() -> Result<()> {
-        let event = RawEvent::new("test", "test.created", json!({"message": "hello"}))
-            .with_host(HostName::new("test-host"));
+    #[test]
+    fn test_material_event_creation() {
+        let event = Event::from_material(
+            "fs-watcher",
+            "file.created",
+            json!({"path": "/test.txt"}),
+            Id::<SourceMaterial>::new(),
+            42,
+        );
 
-        assert_eq!(event.source.as_str(), "test");
-        assert_eq!(event.event_type.as_str(), "test.created");
-        assert_eq!(event.host.as_str(), "test-host");
-        assert!(event.id.is_none());
-        assert!(event.is_raw_event());
-        assert!(!event.is_persisted());
-        Ok(())
+        assert_eq!(event.source.as_str(), "fs-watcher");
+        assert_eq!(event.event_type.as_str(), "file.created");
+        assert!(event.is_first_order_event());
+        assert!(!event.is_synthesized_event());
+        assert_eq!(event.anchor_byte(), Some(42));
+        assert!(event.source_event_ids().is_none());
     }
 
-    #[sinex_test]
-    fn test_from_typed_payload() -> Result<()> {
-        use crate::types::domain::SanitizedPath;
-        use crate::types::events::payloads::filesystem::FileCreatedPayload;
-        use chrono::Utc;
-
-        let payload = FileCreatedPayload {
-            path: SanitizedPath::new_unchecked("/test.txt"),
-            size: 1024,
-            created_at: Utc::now(),
-            permissions: Some(0o644),
-        };
-
-        let event: RawEvent = payload.into();
-
-        assert_eq!(event.source, FileCreatedPayload::SOURCE);
-        assert_eq!(event.event_type, FileCreatedPayload::EVENT_TYPE);
-        assert!(event.id.is_none());
-        assert!(event.is_raw_event());
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_synthesis_event() -> Result<()> {
-        let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
-        let event = RawEvent::new(
-            EventSource::new("processor"),
-            EventType::new("analysis.completed"),
+    #[test]
+    fn test_synthesis_event_creation() {
+        let parent_ids = vec![EventId::new(), EventId::new()];
+        let event = Event::from_synthesis(
+            "processor",
+            "analysis.completed",
             json!({"result": "success"}),
-        )
-        .with_host(HostName::new("test-host"))
-        .with_provenance(Provenance::Events(source_ids.clone()));
+            parent_ids.clone(),
+        );
 
-        assert!(event.is_synthesis_event());
-        assert!(!event.is_raw_event());
-        assert_eq!(event.get_source_event_ids().unwrap(), &source_ids);
-        Ok(())
+        assert_eq!(event.source.as_str(), "processor");
+        assert_eq!(event.event_type.as_str(), "analysis.completed");
+        assert!(!event.is_first_order_event());
+        assert!(event.is_synthesized_event());
+        assert_eq!(event.anchor_byte(), None);
+        assert_eq!(event.source_event_ids(), Some(parent_ids.as_slice()));
+    }
+
+    #[test]
+    fn test_raw_event_alias() {
+        let event: RawEvent = Event::from_material(
+            "test",
+            "test.event",
+            json!({"data": "value"}),
+            Id::<SourceMaterial>::new(),
+            0,
+        );
+
+        // Verify it's the same type
+        let _: Event<JsonValue> = event;
+    }
+
+    #[test]
+    fn test_type_conversions() {
+        let original = Event::from_material(
+            "test",
+            "test.event",
+            json!({"message": "hello"}),
+            Id::<SourceMaterial>::new(),
+            10,
+        );
+
+        // Convert to raw
+        let raw = original.to_raw();
+
+        // Convert back to typed
+        let recovered: Event<JsonValue> = raw.to_typed().unwrap();
+
+        assert_eq!(recovered.payload["message"], "hello");
+        assert_eq!(recovered.anchor_byte(), Some(10));
     }
 }

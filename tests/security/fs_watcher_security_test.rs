@@ -3,11 +3,11 @@
 //! Tests comprehensive security validation for filesystem watching operations,
 //! including path validation, boundary enforcement, symlink protection, and security policy compliance.
 
-use camino::Utf8PathBuf;
+use sinex_test_utils::prelude::*;
+
+// Additional specific imports
 use sinex_core::types::validation::FileWatchingSecurityPolicy;
 use sinex_fs_watcher::unified_processor::{FilesystemConfig, FilesystemProcessor};
-use sinex_test_utils::sinex_test;
-use std::fs;
 use tempfile::TempDir;
 
 #[sinex_test]

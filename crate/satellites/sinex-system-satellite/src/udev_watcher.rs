@@ -2,7 +2,7 @@
 //!
 //! Monitors hardware device events via udev
 
-use sinex_core::db::models::RawEvent;
+use sinex_core::RawEvent;
 
 use sinex_core::types::events::{
     Event, UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,

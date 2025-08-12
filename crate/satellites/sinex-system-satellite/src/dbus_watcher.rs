@@ -8,22 +8,49 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload, Event,
 };
+use sinex_core::RawEvent;
 use sinex_satellite_sdk::SatelliteResult;
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, fmt, str::FromStr, time::Duration};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+
+/// D-Bus bus type enumeration
+#[derive(Debug, Clone, PartialEq)]
+pub enum DBusType {
+    Session,
+    System,
+}
+
+impl fmt::Display for DBusType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DBusType::Session => write!(f, "session"),
+            DBusType::System => write!(f, "system"),
+        }
+    }
+}
+
+impl FromStr for DBusType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "session" => Ok(DBusType::Session),
+            "system" => Ok(DBusType::System),
+            _ => Err(format!("Unsupported DBus type: {}", s)),
+        }
+    }
+}
 
 /// Configuration for monitoring a specific D-Bus bus
 #[derive(Debug, Clone)]
 struct MonitorConfig {
-    bus_type: &'static str,
+    bus_type: DBusType,
     tx: mpsc::UnboundedSender<RawEvent>,
     config: DbusConfig,
 }
@@ -61,7 +88,7 @@ impl DbusWatcher {
         // Monitor session bus if enabled
         if self.config.monitor_session {
             let monitor_config = MonitorConfig {
-                bus_type: "session",
+                bus_type: DBusType::Session,
                 tx: tx.clone(),
                 config: self.config.clone(),
             };
@@ -73,7 +100,7 @@ impl DbusWatcher {
         // Monitor system bus if enabled
         if self.config.monitor_system {
             let monitor_config = MonitorConfig {
-                bus_type: "system",
+                bus_type: DBusType::System,
                 tx: tx.clone(),
                 config: self.config.clone(),
             };
@@ -106,7 +133,7 @@ impl DbusWatcher {
 
     /// Monitor a specific D-Bus bus with real-time signal subscription using tokio-retry
     async fn monitor_bus(
-        bus_type: &str,
+        bus_type: DBusType,
         tx: mpsc::UnboundedSender<RawEvent>,
         config: DbusConfig,
     ) -> SatelliteResult<()> {
@@ -133,19 +160,18 @@ impl DbusWatcher {
 
     /// Inner monitoring loop with proper error handling
     async fn monitor_bus_inner(
-        bus_type: &str,
+        bus_type: DBusType,
         tx: &mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         info!("Connecting to D-Bus {} bus", bus_type);
 
         // Establish D-Bus connection
-        let (resource, conn) = if bus_type == "session" {
-            connection::new_session_sync()
-                .map_err(|e| dbus_error("Failed to connect to session bus", e))?
-        } else {
-            connection::new_system_sync()
-                .map_err(|e| dbus_error("Failed to connect to system bus", e))?
+        let (resource, conn) = match bus_type {
+            DBusType::Session => connection::new_session_sync()
+                .map_err(|e| dbus_error("Failed to connect to session bus", e))?,
+            DBusType::System => connection::new_system_sync()
+                .map_err(|e| dbus_error("Failed to connect to system bus", e))?,
         };
 
         // Spawn the connection resource handler

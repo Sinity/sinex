@@ -6,6 +6,7 @@ use crate::repositories::common::{
 };
 use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
 use crate::types::Id;
+use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -30,51 +31,43 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
     type Table = Events;
 }
 
-/// Database record for events table
-///
-/// This struct matches the database schema exactly and is used for
-/// sqlx query_as! macros. It serves as an intermediate representation
-/// between the database and the domain model.
-#[derive(Debug, FromRow)]
-pub struct EventRecord {
-    pub id: uuid::Uuid,
-    pub source: String,
-    pub event_type: String,
-    pub host: String,
-    pub payload: JsonValue,
-    pub ts_orig: Option<DateTime<Utc>>,
-    pub ts_ingest: DateTime<Utc>,
-    pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<uuid::Uuid>,
-    // Provenance fields - separate in database
-    pub source_event_ids: Option<Vec<uuid::Uuid>>,
-    pub source_material_id: Option<uuid::Uuid>,
-    pub source_material_offset_start: Option<i64>,
-    pub source_material_offset_end: Option<i64>,
-    pub anchor_byte: Option<i64>,
-    pub associated_blob_ids: Option<Vec<uuid::Uuid>>,
-    // Schema fields
-    pub payload_schema_name: Option<String>,
-    pub payload_schema_version: Option<String>,
+// Extension methods for EventRecord from sinex-migrations
+pub(crate) trait EventRecordExt {
+    fn to_event(self) -> RawEvent;
 }
 
-impl EventRecord {
+impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
-    pub fn to_event(self) -> RawEvent {
+    fn to_event(self) -> RawEvent {
+        use crate::db::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
+
         // Reconstruct provenance from separate fields
-        let provenance = match (self.source_event_ids, self.source_material_id) {
-            (Some(event_ids), None) if !event_ids.is_empty() => Some(Provenance::Events(
-                event_ids
+        let provenance = match (
+            self.source_event_ids,
+            self.source_material_id,
+            self.anchor_byte,
+        ) {
+            (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
+                source_event_ids: event_ids
                     .into_iter()
-                    .map(|uuid| Id::<RawEvent>::from(uuid_to_ulid(uuid)))
+                    .map(|uuid| EventId::from(uuid_to_ulid(uuid)))
                     .collect(),
-            )),
-            (None, Some(material_id)) => Some(Provenance::Material {
+                operation_id: None,
+            },
+            (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
                 id: Id::<SourceMaterial>::from(uuid_to_ulid(material_id)),
+                anchor_byte,
                 offset_start: self.source_material_offset_start,
                 offset_end: self.source_material_offset_end,
-            }),
-            _ => None,
+                offset_kind: OffsetKind::default(),
+            },
+            _ => {
+                // Default to empty synthesis if no provenance (shouldn't happen in production)
+                Provenance::Synthesis {
+                    source_event_ids: vec![],
+                    operation_id: None,
+                }
+            }
         };
 
         let associated_blob_ids = self
@@ -82,7 +75,7 @@ impl EventRecord {
             .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
 
         RawEvent {
-            id: Some(Id::<RawEvent>::from_uuid(self.id)),
+            id: Some(EventId::from_uuid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
@@ -91,7 +84,6 @@ impl EventRecord {
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
             provenance,
-            anchor_byte: self.anchor_byte,
             associated_blob_ids,
         }
     }
@@ -105,23 +97,31 @@ fn extract_provenance(
     Option<uuid::Uuid>,      // source_material_id
     Option<i64>,             // source_material_offset_start
     Option<i64>,             // source_material_offset_end
+    Option<i64>,             // anchor_byte
 ) {
     match &event.provenance {
-        Some(Provenance::Events(ids)) => {
-            let uuids = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
-            (Some(uuids), None, None, None)
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            let uuids = source_event_ids
+                .iter()
+                .map(|id| ulid_to_uuid(*id.as_ulid()))
+                .collect();
+            (Some(uuids), None, None, None, None)
         }
-        Some(Provenance::Material {
+        Provenance::Material {
             id,
+            anchor_byte,
             offset_start,
             offset_end,
-        }) => (
+            ..
+        } => (
             None,
             Some(ulid_to_uuid(*id.as_ulid())),
             *offset_start,
             *offset_end,
+            Some(*anchor_byte),
         ),
-        None => (None, None, None, None),
     }
 }
 
@@ -241,6 +241,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
+            anchor_byte,
         ) = extract_provenance(&event);
 
         let associated_blob_ids = event
@@ -295,7 +296,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
-            event.anchor_byte,
+            anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
             None::<String>  // payload_schema_version
@@ -575,7 +576,6 @@ impl<'a> EventRepository<'a> {
 
         Ok(result.unwrap_or(0))
     }
-
 
     pub async fn get_events_by_type_and_time_range(
         &self,
@@ -907,6 +907,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
+            anchor_byte,
         ) = extract_provenance(&event);
 
         let associated_blob_ids = event
@@ -961,7 +962,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
-            event.anchor_byte,
+            anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
             None::<String>  // payload_schema_version
@@ -1093,7 +1094,7 @@ impl<'a> EventRepository<'a> {
                 source_material_id,
                 offset_start,
                 offset_end,
-                event.anchor_byte,
+                anchor_byte,
                 associated_blob_ids.as_deref(),
                 None::<String>, // payload_schema_name
                 None::<String>  // payload_schema_version
@@ -1262,16 +1263,82 @@ impl<'a> EventRepository<'a> {
         id: Id<EventPayloadSchema>,
         is_active: bool,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            "UPDATE sinex_schemas.event_payload_schemas SET is_active = $2, updated_at = NOW() WHERE id = $1",
-            *id.as_ulid() as _,
-            is_active
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "set schema active status"))?;
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema status update transaction"))?;
 
-        Ok(result.rows_affected() > 0)
+        // Get current schema details for event emission
+        let schema_details = sqlx::query!(
+            "SELECT schema_name, schema_version, is_active FROM sinex_schemas.event_payload_schemas WHERE id = $1",
+            *id.as_ulid() as _
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get schema details for status update"))?;
+
+        if let Some(schema) = schema_details {
+            // Emit schema status change intent event BEFORE state change
+            let schema_status_intent_event = RawEvent::system_event(
+                EventSource::new("sinex.schema.lifecycle".to_string()),
+                EventType::new("schema.status_change_intent".to_string()),
+                serde_json::json!({
+                    "schema_id": id.as_ulid().to_string(),
+                    "schema_name": schema.schema_name,
+                    "schema_version": schema.schema_version,
+                    "current_status": schema.is_active,
+                    "new_status": is_active,
+                    "change_type": if is_active { "activate" } else { "deactivate" }
+                }),
+            )
+            .with_host(HostName::new("sinex.schema".to_string()));
+
+            self.insert_with_tx(&mut tx, schema_status_intent_event)
+                .await?;
+
+            // Perform the status update
+            let result = sqlx::query!(
+                "UPDATE sinex_schemas.event_payload_schemas SET is_active = $2, updated_at = NOW() WHERE id = $1",
+                *id.as_ulid() as _,
+                is_active
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set schema active status"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            if rows_affected {
+                // Emit schema status changed confirmation event after successful update
+                let schema_status_changed_event = RawEvent::system_event(
+                    EventSource::new("sinex.schema.lifecycle".to_string()),
+                    EventType::new("schema.status_changed".to_string()),
+                    serde_json::json!({
+                        "schema_id": id.as_ulid().to_string(),
+                        "schema_name": schema.schema_name,
+                        "schema_version": schema.schema_version,
+                        "previous_status": schema.is_active,
+                        "new_status": is_active,
+                        "change_type": if is_active { "activate" } else { "deactivate" }
+                    }),
+                )
+                .with_host(HostName::new("sinex.schema".to_string()));
+
+                self.insert_with_tx(&mut tx, schema_status_changed_event)
+                    .await?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit schema status update transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     /// Deprecate a schema with reason
@@ -1280,24 +1347,90 @@ impl<'a> EventRepository<'a> {
         id: Id<EventPayloadSchema>,
         deprecation_reason: &str,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE sinex_schemas.event_payload_schemas 
-            SET 
-                is_active = false,
-                deprecated_at = NOW(),
-                deprecation_reason = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-            *id.as_ulid() as _,
-            deprecation_reason
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "deprecate schema"))?;
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema deprecation transaction"))?;
 
-        Ok(result.rows_affected() > 0)
+        // Get current schema details for event emission
+        let schema_details = sqlx::query!(
+            "SELECT schema_name, schema_version, is_active, deprecated_at FROM sinex_schemas.event_payload_schemas WHERE id = $1",
+            *id.as_ulid() as _
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get schema details for deprecation"))?;
+
+        if let Some(schema) = schema_details {
+            // Emit schema deprecation intent event BEFORE state change
+            let schema_deprecation_intent_event = RawEvent::system_event(
+                EventSource::new("sinex.schema.lifecycle".to_string()),
+                EventType::new("schema.deprecation_intent".to_string()),
+                serde_json::json!({
+                    "schema_id": id.as_ulid().to_string(),
+                    "schema_name": schema.schema_name,
+                    "schema_version": schema.schema_version,
+                    "current_status": schema.is_active,
+                    "already_deprecated": schema.deprecated_at.is_some(),
+                    "deprecation_reason": deprecation_reason
+                }),
+            )
+            .with_host(HostName::new("sinex.schema".to_string()));
+
+            self.insert_with_tx(&mut tx, schema_deprecation_intent_event)
+                .await?;
+
+            // Perform the deprecation
+            let result = sqlx::query!(
+                r#"
+                UPDATE sinex_schemas.event_payload_schemas 
+                SET 
+                    is_active = false,
+                    deprecated_at = NOW(),
+                    deprecation_reason = $2,
+                    updated_at = NOW()
+                WHERE id = $1
+                "#,
+                *id.as_ulid() as _,
+                deprecation_reason
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "deprecate schema"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            if rows_affected {
+                // Emit schema deprecated confirmation event after successful deprecation
+                let schema_deprecated_event = RawEvent::system_event(
+                    EventSource::new("sinex.schema.lifecycle".to_string()),
+                    EventType::new("schema.deprecated".to_string()),
+                    serde_json::json!({
+                        "schema_id": id.as_ulid().to_string(),
+                        "schema_name": schema.schema_name,
+                        "schema_version": schema.schema_version,
+                        "previous_status": schema.is_active,
+                        "was_already_deprecated": schema.deprecated_at.is_some(),
+                        "deprecation_reason": deprecation_reason
+                    }),
+                )
+                .with_host(HostName::new("sinex.schema".to_string()));
+
+                self.insert_with_tx(&mut tx, schema_deprecated_event)
+                    .await?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit schema deprecation transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     /// List schemas with optional filters
@@ -1572,8 +1705,11 @@ impl<'a> EventRepository<'a> {
         deletion_reason: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
-            r#"
-            UPDATE core.event_annotations
+            "DELETE FROM core.event_annotations WHERE id = $1",
+            *id.as_ulid() as _
+        )
+        .execute(self.pool)
+        .await
         .map_err(|e| db_error(e, "delete annotation"))?;
 
         Ok(result.rows_affected() > 0)
@@ -1587,7 +1723,7 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<Vec<EventAnnotation>> {
         let limit = limit.unwrap_or(100);
 
-        sqlx::query_as!(
+        let rows = sqlx::query_as!(
             EventAnnotation,
             r#"
             SELECT 
@@ -1809,7 +1945,7 @@ impl<'a> EventRepository<'a> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> DbResult<RawEvent> {
-        let event = RawEvent::new(
+        let event = RawEvent::system_event(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -1846,12 +1982,15 @@ impl<'a> EventRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Delete a test event (soft delete)
+    /// Delete a test event (hard delete for test cleanup)
     pub async fn delete_test_event(&self, id: Id<RawEvent>) -> DbResult<bool> {
-        self.delete_event_with_context(id, "test_system", "Test cleanup")
+        let result = sqlx::query!("DELETE FROM core.events WHERE id = $1", *id.as_ulid() as _)
+            .execute(self.pool)
             .await
-    }
+            .map_err(|e| db_error(e, "delete test event"))?;
 
+        Ok(result.rows_affected() > 0)
+    }
 
     /// Cleanup test events by source and type (soft delete)
     pub async fn cleanup_test_events(
@@ -2142,22 +2281,14 @@ impl<'a> EventRepository<'a> {
     /// Only use for test cleanup or administrative operations where
     /// you need to actually reclaim disk space.
     pub async fn hard_delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        // Enable bypass mode
-        sqlx::query!("SELECT enable_audit_bypass()")
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "enable audit bypass"))?;
+        // Note: Audit bypass mode not implemented - performing direct delete
 
         // Perform the hard delete
         let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
             .execute(self.pool)
             .await;
 
-        // Always disable bypass mode, even if delete failed
-        sqlx::query!("SELECT disable_audit_bypass()")
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "disable audit bypass"))?;
+        // Note: Audit bypass mode not implemented
 
         let result = result.map_err(|e| db_error(e, "hard delete by source"))?;
         Ok(result.rows_affected())
@@ -2271,7 +2402,7 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create an event
-        let event = crate::models::RawEvent::new(
+        let event = crate::models::RawEvent::test_event(
             EventSource::new("test.source"),
             EventType::new("test.event"),
             json!({"test": "data"}),
@@ -2298,7 +2429,7 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::RawEvent::new(
+        let source_event = crate::models::RawEvent::test_event(
             EventSource::new("test.source"),
             EventType::new("source.event"),
             json!({"original": true}),
@@ -2309,7 +2440,7 @@ mod tests {
         let source_id = source.id.unwrap();
 
         // Create derived event with provenance
-        let derived_event = crate::models::RawEvent::new(
+        let derived_event = crate::models::RawEvent::test_event(
             EventSource::new("test.processor"),
             EventType::new("derived.event"),
             json!({"derived": true}),

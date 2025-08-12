@@ -124,8 +124,10 @@ pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod lifecycle;
+#[cfg(feature = "nats-bypass")]
 pub mod nats;
 pub mod preflight;
+pub mod prelude;
 pub mod processor_runner;
 pub mod replay;
 pub mod replay_control;
@@ -142,7 +144,8 @@ pub use cli::{
     SourceState,
 };
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-pub use grpc_client::{GrpcClientConfig, IngestClient};
+pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
+pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
@@ -151,6 +154,15 @@ pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
     StreamProcessorRunner, TimeHorizon,
+};
+pub use version::{SatelliteInstance, SatelliteVersion};
+
+// Re-export commonly used annex types
+
+// Re-export preflight utilities
+pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+pub use preflight::{
+    run_preflight_checks, validate_toml_file, verify_service_dependencies, VerificationStatus,
 };
 
 /// Version information for satellite components
@@ -237,9 +249,9 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core::db::models::RawEvent;
 pub use sinex_core::types::error::SinexError;
 pub use sinex_core::types::ulid::Ulid;
+pub use sinex_core::RawEvent;
 
 /// Result type for satellite operations
 pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;

@@ -408,9 +408,12 @@ mod tests {
         let pool = db.pool();
 
         // Insert some test data
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let new_event = RawEvent::builder()
             .source(EventSource::new("test"))
@@ -442,9 +445,12 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Add data
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let new_event = RawEvent::builder()
             .source(EventSource::new("test"))

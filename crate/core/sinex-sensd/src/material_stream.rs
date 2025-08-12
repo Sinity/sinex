@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use sinex_core::types::Ulid;
 use sqlx::PgPool;
+use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_stream::{Stream, StreamExt};
@@ -55,6 +57,8 @@ pub struct MaterialSliceStream {
     current_offset: i64,
     batch_size: usize,
     finished: bool,
+    /// Buffer for current batch of slices
+    buffer: VecDeque<MaterialSlice>,
 }
 
 impl MaterialSliceStream {
@@ -66,6 +70,7 @@ impl MaterialSliceStream {
             current_offset: 0,
             batch_size,
             finished: false,
+            buffer: VecDeque::new(),
         }
     }
 
@@ -82,9 +87,8 @@ impl MaterialSliceStream {
                 material_id as "material_id: Ulid",
                 offset_start,
                 offset_end,
-                ts_capture_start,
-                ts_capture_end,
-                capture_metadata
+                ts_capture,
+                note
             FROM raw.temporal_ledger
             WHERE material_id = $1::ulid
             AND offset_start >= $2
@@ -107,16 +111,24 @@ impl MaterialSliceStream {
         let mut result = Vec::new();
 
         for record in slices {
-            // TODO: Load actual data from storage
-            // For now, create placeholder
+            // Load actual data from storage backend
+            let data = self
+                .load_material_data(record.material_id, record.offset_start, record.offset_end)
+                .await
+                .unwrap_or_else(|e| {
+                    error!("Failed to load material data: {}", e);
+                    vec![] // Return empty data on error
+                });
+
             let slice = MaterialSlice {
                 material_id: record.material_id,
                 offset_start: record.offset_start,
                 offset_end: record.offset_end,
-                ts_capture_start: record.ts_capture_start,
-                ts_capture_end: record.ts_capture_end,
-                data: vec![], // TODO: Load from storage
-                metadata: record.capture_metadata,
+                ts_capture_start: record.ts_capture,
+                ts_capture_end: record.ts_capture, // Same timestamp for single capture time
+                data,
+                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string()))
+                    .unwrap_or_default(),
             };
 
             self.current_offset = record.offset_end;
@@ -132,45 +144,154 @@ impl MaterialSliceStream {
 
         Ok(result)
     }
+
+    /// Load material data from storage backend
+    async fn load_material_data(
+        &self,
+        material_id: Ulid,
+        offset_start: i64,
+        offset_end: i64,
+    ) -> Result<Vec<u8>> {
+        // Query the source material registry to get storage information
+        let material = sqlx::query!(
+            r#"
+            SELECT 
+                data,
+                optional_blob_id as "optional_blob_id: Ulid"
+            FROM raw.source_material_registry
+            WHERE blob_id = $1::ulid
+            "#,
+            material_id as Ulid
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| eyre!("Material not found: {}", material_id))?;
+
+        if let Some(inline_data) = material.data {
+            // Extract slice from inline data
+            let start = offset_start as usize;
+            let end = offset_end as usize;
+
+            if start <= inline_data.len() && end <= inline_data.len() && start <= end {
+                return Ok(inline_data[start..end].to_vec());
+            } else {
+                return Ok(vec![]); // Return empty if slice is out of bounds
+            }
+        } else if let Some(blob_id) = material.optional_blob_id {
+            // Load from external blob storage
+            match self.load_blob_data(blob_id).await {
+                Ok(blob_data) => {
+                    // Extract slice from blob based on offsets
+                    let start = offset_start as usize;
+                    let end = offset_end as usize;
+                    if end <= blob_data.len() && start <= end {
+                        Ok(blob_data[start..end].to_vec())
+                    } else {
+                        error!(
+                            "Blob data size {} is smaller than slice end offset {}",
+                            blob_data.len(),
+                            end
+                        );
+                        Ok(vec![])
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to load blob {}: {}", blob_id, e);
+                    Ok(vec![])
+                }
+            }
+        } else {
+            // No data available
+            Ok(vec![])
+        }
+    }
+
+    /// Load blob data from storage backend
+    async fn load_blob_data(&self, blob_id: Ulid) -> Result<Vec<u8>> {
+        // First query the blob metadata
+        let blob = sqlx::query!(
+            r#"
+            SELECT 
+                annex_key,
+                size_bytes,
+                checksum_sha256,
+                storage_backend
+            FROM core.blobs
+            WHERE id = $1::ulid
+            "#,
+            blob_id as Ulid,
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
+
+        match blob.storage_backend.as_str() {
+            "git-annex" => {
+                // Load from git-annex storage
+                let annex_path = std::path::Path::new(".git/annex/objects")
+                    .join(&blob.annex_key[0..2])
+                    .join(&blob.annex_key[2..4])
+                    .join(&blob.annex_key);
+
+                if annex_path.exists() {
+                    tokio::fs::read(&annex_path)
+                        .await
+                        .map_err(|e| eyre!("Failed to read annex file: {}", e))
+                } else {
+                    Err(eyre!("Annex file not found at {:?}", annex_path))
+                }
+            }
+            "filesystem" => {
+                // Load from filesystem path stored in annex_key
+                let path = std::path::Path::new(&blob.annex_key);
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|e| eyre!("Failed to read file: {}", e))
+            }
+            "s3" => {
+                // S3 support would go here
+                Err(eyre!("S3 storage backend not yet implemented"))
+            }
+            backend => Err(eyre!("Unknown storage backend: {}", backend)),
+        }
+    }
 }
 
-impl Stream for MaterialSliceStream {
-    type Item = Result<MaterialSlice>;
+impl MaterialSliceStream {
+    /// Get next slice if available (non-blocking)
+    pub async fn next_slice(&mut self) -> Result<Option<MaterialSlice>> {
+        // If we have slices in buffer, return the next one
+        if let Some(slice) = self.buffer.pop_front() {
+            return Ok(Some(slice));
+        }
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // This is a simplified implementation
-        // In production, would properly integrate with async runtime
-
+        // If we're finished, no more slices
         if self.finished {
-            return Poll::Ready(None);
+            return Ok(None);
         }
 
-        // For now, return pending (would need proper waker integration)
-        Poll::Pending
+        // Fetch next batch
+        let slices = self.fetch_next_batch().await?;
+
+        if slices.is_empty() {
+            self.finished = true;
+            return Ok(None);
+        }
+
+        // Add to buffer and return first slice
+        self.buffer.extend(slices);
+        Ok(self.buffer.pop_front())
+    }
+
+    /// Convert to async stream
+    pub fn into_stream(self) -> impl Stream<Item = Result<MaterialSlice>> {
+        async_stream::stream! {
+            let mut stream = self;
+            while let Some(slice) = stream.next_slice().await? {
+                yield Ok(slice);
+            }
+        }
     }
 }
 
-/// gRPC service implementation for MaterialSliceStream
-pub mod grpc {
-    use super::*;
-    use tonic::{Request, Response, Status};
-
-    // TODO: Define protobuf and generate service
-    // This is a placeholder for the gRPC service that would serve
-    // MaterialSliceStream to remote ingestors
-
-    pub struct MaterialStreamService {
-        db_pool: PgPool,
-    }
-
-    impl MaterialStreamService {
-        pub fn new(db_pool: PgPool) -> Self {
-            Self { db_pool }
-        }
-
-        // TODO: Implement gRPC methods
-        // - GetMaterialStream(material_id) -> stream<MaterialSlice>
-        // - ListMaterials(filter) -> list<Material>
-        // - GetMaterialMetadata(material_id) -> MaterialMetadata
-    }
-}
+// Note: gRPC service implementation is in grpc_server.rs

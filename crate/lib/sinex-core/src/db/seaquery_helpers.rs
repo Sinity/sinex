@@ -4,7 +4,7 @@
 //! automatically handling the ULID to UUID conversion required by PostgreSQL.
 
 use crate::query_helpers::ulid_to_uuid;
-use crate::types::ulid::Ulid;
+use crate::Ulid;
 use sea_query::{Expr, SimpleExpr};
 use sqlx::types::Uuid as SqlxUuid;
 

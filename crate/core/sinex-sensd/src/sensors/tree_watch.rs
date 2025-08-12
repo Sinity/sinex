@@ -5,7 +5,7 @@
 
 use crate::{
     config::SensorConfig,
-    job_manager::SensorJob,
+    job_manager::{SensorJob, SensorType},
     temporal_ledger::{LedgerEntry, TemporalLedger},
 };
 use camino::Utf8Path;
@@ -241,7 +241,7 @@ mod tests {
         // Create a test job with a dangerous path
         let dangerous_job = SensorJob {
             job_id: Ulid::new(),
-            sensor_type: "tree_watch".to_string(),
+            sensor_type: SensorType::TreeWatch,
             target_path: "/etc/passwd".to_string(), // This should be rejected
             config: serde_json::Value::Null,
             status: crate::job_manager::JobStatus::Pending,
@@ -277,7 +277,7 @@ mod tests {
 
         let safe_job = SensorJob {
             job_id: Ulid::new(),
-            sensor_type: "tree_watch".to_string(),
+            sensor_type: SensorType::TreeWatch,
             target_path: temp_path.to_string(),
             config: serde_json::Value::Null,
             status: crate::job_manager::JobStatus::Pending,

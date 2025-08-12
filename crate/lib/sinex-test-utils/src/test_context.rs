@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `RawEvent::new()`
+//! without wrapping production APIs. Tests use production `RawEvent::test_event()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,7 +18,7 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> Result<()> {
 //!     // Direct production API - no wrapper
-//!     let event = RawEvent::new(
+//!     let event = RawEvent::test_event(
 //!         "fs-watcher",
 //!         "file.created",
 //!         json!({"path": "/test/file.txt", "size": 1024})
@@ -43,9 +43,9 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository};
 use sinex_core::types::{DbPool, Ulid};
+use sinex_core::RawEvent;
+use sinex_core::{DbPoolExt, EnhancedRepository};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -106,13 +106,8 @@ impl TestContext {
         S: AsRef<str>,
         T: AsRef<str>,
     {
-        let event = RawEvent::new(source.as_ref(), event_type.as_ref(), payload);
-        self.insert_event(&event).await
-    }
-
-    /// Insert single event
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<RawEvent> {
-        let inserted = self.pool.events().insert(event.clone()).await?;
+        let event = RawEvent::test_event(source.as_ref(), event_type.as_ref(), payload);
+        let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
         }
@@ -128,20 +123,6 @@ impl TestContext {
             }
         }
         Ok(())
-    }
-
-    /// Assert that an event exists by ID
-    pub async fn assert_event_exists(&self, event_id: Ulid) -> Result<()> {
-        let exists = self.pool.events().exists_by_id(&event_id).await?;
-        if !exists {
-            color_eyre::eyre::bail!("Event with ID {} does not exist", event_id);
-        }
-        Ok(())
-    }
-
-    /// Get count of events in test database
-    pub async fn test_event_count(&self) -> i64 {
-        self.pool.events().count_all().await.unwrap_or(0)
     }
 
     /// Access fixture utilities (placeholder - implement as needed)
@@ -384,7 +365,7 @@ mod tests {
         assert!(ctx.elapsed().as_nanos() > 0);
 
         // Test event count tracking
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await?;
         assert_eq!(initial_count, 0);
 
         Ok(())

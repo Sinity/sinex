@@ -72,8 +72,8 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
 
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(
@@ -130,7 +130,7 @@ impl TestScenarioBuilder {
         count: usize,
     ) -> Self {
         for i in 0..count {
-            let event = RawEvent::new(
+            let event = RawEvent::test_event(
                 source.clone(),
                 event_type.clone(),
                 json!({

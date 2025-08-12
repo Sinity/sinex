@@ -8,8 +8,11 @@ use crate::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::db::models::*;
 use sinex_core::db::DbPool;
+use sinex_core::{
+    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+    OperationRecord, Provenance, RawEvent, SourceMaterial,
+};
 
 use camino::Utf8Path;
 use sinex_core::types::error::SinexError;
@@ -243,7 +246,7 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
 
         RawEvent::builder()
             .source(EventSource::new(source))
@@ -434,7 +437,7 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
     let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
 
     // Check event count
-    use sinex_core::db::repositories::*;
+    use sinex_core::*;
     let event_count = pool.events().count_all().await?;
 
     if event_count != metadata.event_count as i64 {
@@ -502,7 +505,10 @@ mod benches {
     fn bench_generate_small_dataset() -> color_eyre::eyre::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
+        #[cfg(feature = "bench")]
         divan::black_box(events);
+        #[cfg(not(feature = "bench"))]
+        drop(events);
         Ok(())
     }
 
@@ -511,7 +517,10 @@ mod benches {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         let sql = gen.generate_sql(&events);
+        #[cfg(feature = "bench")]
         divan::black_box(sql);
+        #[cfg(not(feature = "bench"))]
+        drop(sql);
         Ok(())
     }
 }

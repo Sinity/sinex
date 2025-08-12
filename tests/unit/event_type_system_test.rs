@@ -10,14 +10,13 @@
 //! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
+use sinex_test_utils::prelude::*;
+
+// Additional imports for specific payload types
 use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_test_utils::prelude::*;
-use std::collections::HashSet;
 
 // =============================================================================
 // EVENT SOURCE CONSTANTS AND VALIDATION TESTS
@@ -239,7 +238,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
     assert_eq!(atuin_event.event_type.as_str(), "command.executed");
 
     // Verify both shell events exist
-    let shell_events = ctx.test_event_count().await;
+    let shell_events = ctx.pool.events().count_all().await?;
     assert!(shell_events >= 2, "Should have at least 2 events");
 
     Ok(())

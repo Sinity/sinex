@@ -4,7 +4,7 @@
 //! The actual schemas are managed by the sinex-schema-manager tool.
 
 use crate::domain::{EventSource, EventType};
-use crate::ulid::Ulid;
+use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;

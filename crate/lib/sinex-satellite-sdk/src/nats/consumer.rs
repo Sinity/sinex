@@ -14,7 +14,7 @@ use async_nats::jetstream::{
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
+use sinex_core::RawEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};

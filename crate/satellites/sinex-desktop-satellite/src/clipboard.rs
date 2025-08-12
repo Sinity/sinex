@@ -1,48 +1,30 @@
-//! Advanced clipboard watcher with rich metadata
+//! Clipboard watcher with sensd source material capture
 //!
-//! Monitors clipboard changes and text selection events with:
+//! Monitors clipboard changes and text selection events, capturing them as source material
+//! for later event creation with proper provenance tracking.
+//!
+//! ## Architecture
+//!
+//! This module follows the sensd pattern:
+//! 1. **Source Material Capture**: Clipboard content → raw.source_material_registry
+//! 2. **Temporal Ledger**: Precise timing → raw.temporal_ledger
+//! 3. **Event Generation**: Material processing → events with Provenance::Material
+//!
+//! ## Features
+//!
 //! - BLAKE3 content hashing for deduplication
-//! - Source application detection
-//! - Window title capture
+//! - Source application detection via window manager integration
 //! - File path extraction and URL detection
-//! - Blob storage for large content
-//! - Linux primary selection support
-//!
-//! ## Implementation Notes
-//!
-//! Currently uses polling approach with `copypasta` crate. The event-driven approach
-//! documented in TIM-ClipboardMonitoring would be more efficient:
-//! - Wayland: `wl-paste --watch` for event notifications (CPU <0.1%, ~95% less power)
-//! - X11: XFIXES extension for selection change events
-//!
-//! ## Platform-Specific Clipboard Access
-//!
-//! ### Display Server Detection
-//! - Check `WAYLAND_DISPLAY` env var for Wayland
-//! - Check `DISPLAY` env var for X11
-//! - Initialize appropriate backend based on detection
-//!
-//! ### MIME Type Handling
-//! Current implementation analyzes content heuristically. Native clipboard APIs provide:
-//! - Wayland: `wl-paste --list-types` for available MIME types
-//! - X11: `TARGETS` atom request for available formats
+//! - Support for both clipboard and primary selection
+//! - Comprehensive metadata capture
 
-use camino::Utf8PathBuf;
-use chrono::Utc;
+// Use local facade for common types
+use crate::common::*;
+
+// Clipboard-specific imports
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::SanitizedPath;
-use sinex_core::types::events::Event;
-use sinex_core::types::Timestamp;
-use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
-use sinex_satellite_sdk::error_helpers::{path_utils, processing_error};
-use sinex_satellite_sdk::SatelliteResult;
-use std::collections::VecDeque;
-use std::time::Duration;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use sinex_core::types::Ulid;
+use sqlx::PgPool;
 
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -72,7 +54,7 @@ struct ClipboardHistoryEntry {
     copy_count: u32,
 }
 
-/// Advanced clipboard watcher with blob storage
+/// Clipboard watcher with sensd source material capture
 pub struct ClipboardWatcher {
     poll_interval: Duration,
     last_content: Option<ClipboardContent>,
@@ -83,12 +65,14 @@ pub struct ClipboardWatcher {
     max_history_entries: usize,
     enable_primary_selection: bool,
     enable_history: bool,
-    blob_manager: Option<BlobManager>,
+    // sensd integration
+    db_pool: Option<PgPool>,
+    source_identifier: String,
 }
 
 impl ClipboardWatcher {
-    /// Create new advanced clipboard watcher
-    pub async fn new(poll_interval_secs: u64) -> SatelliteResult<Self> {
+    /// Create new clipboard watcher with sensd integration
+    pub async fn new(poll_interval_secs: u64, db_pool: Option<PgPool>) -> SatelliteResult<Self> {
         let mut watcher = Self {
             poll_interval: Duration::from_secs(poll_interval_secs),
             last_content: None,
@@ -99,20 +83,15 @@ impl ClipboardWatcher {
             max_history_entries: DEFAULT_MAX_HISTORY_ENTRIES,
             enable_primary_selection: true,
             enable_history: true,
-            blob_manager: None,
+            db_pool,
+            source_identifier: "desktop_clipboard".to_string(),
         };
 
         // Check for clipboard tools availability
         watcher.check_clipboard_tools().await?;
 
-        // Initialize blob manager if database connection is available
-        if let Some(blob_manager) = watcher.initialize_blob_manager().await {
-            watcher.blob_manager = Some(blob_manager);
-            info!("Blob manager initialized for large clipboard content");
-        }
-
         info!(
-            "Advanced clipboard watcher initialized with {}s polling interval",
+            "Clipboard watcher initialized with {}s polling interval (sensd mode)",
             poll_interval_secs
         );
         Ok(watcher)
@@ -145,51 +124,6 @@ impl ClipboardWatcher {
             wl_paste_available, xclip_available
         );
         Ok(())
-    }
-
-    /// Initialize blob manager for large content storage
-    async fn initialize_blob_manager(&self) -> Option<BlobManager> {
-        // Try to get database URL from environment
-        let db_url = std::env::var("DATABASE_URL").ok()?;
-        let annex_path_str = std::env::var("SINEX_ANNEX_PATH")
-            .unwrap_or_else(|_| "/tmp/sinex-clipboard-annex".to_string());
-
-        // Validate annex path
-        let annex_path = match SanitizedPath::from_str_validated(&annex_path_str) {
-            Ok(path) => Utf8PathBuf::from(path.as_str()),
-            Err(e) => {
-                warn!("Invalid SINEX_ANNEX_PATH '{}': {}", annex_path_str, e);
-                return None;
-            }
-        };
-
-        // Create database pool
-        let pool = match sqlx::postgres::PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&db_url)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(e) => {
-                warn!("Failed to connect to database for blob storage: {}", e);
-                return None;
-            }
-        };
-
-        // Setup annex configuration
-        let annex_config = AnnexConfig {
-            repo_path: Utf8PathBuf::from(annex_path),
-            num_copies: Some(2),
-            large_files: None,
-        };
-
-        match BlobManager::new(annex_config, pool) {
-            Ok(manager) => Some(manager),
-            Err(e) => {
-                warn!("Failed to create blob manager: {}", e);
-                None
-            }
-        }
     }
 
     /// Calculate content hash using BLAKE3
@@ -233,7 +167,6 @@ impl ClipboardWatcher {
         }
     }
 
-    /// Sanitize path component using core utilities
     /// Extract file paths from clipboard content
     fn extract_file_paths(&self, content: &str) -> Option<Vec<String>> {
         path_utils::extract_file_paths(content)
@@ -304,11 +237,16 @@ impl ClipboardWatcher {
     }
 
     /// Find original hash for deduplication
-    fn find_original_hash(&self, content_hash: &str) -> Option<String> {
-        self.clipboard_history
+    fn find_original_hash(&self, content_hash: &str) -> Option<&str> {
+        if self
+            .clipboard_history
             .iter()
-            .find(|e| e.content_hash == content_hash)
-            .map(|e| e.content_hash.clone())
+            .any(|e| e.content_hash == content_hash)
+        {
+            Some(content_hash)
+        } else {
+            None
+        }
     }
 
     /// Update clipboard history with new entry
@@ -345,29 +283,92 @@ impl ClipboardWatcher {
         }
     }
 
-    /// Store large content using blob manager
-    async fn store_large_content(
+    /// Store clipboard content as source material in sensd
+    async fn store_clipboard_source_material(
         &self,
-        content: &str,
-        _content_hash: &str,
-    ) -> Result<(String, Option<String>), String> {
-        let blob_manager = self
-            .blob_manager
-            .as_ref()
-            .ok_or_else(|| "BlobManager not configured for large content storage".to_string())?;
+        content: &ClipboardContent,
+        selection_type: &str,
+    ) -> SatelliteResult<Option<Ulid>> {
+        let Some(db_pool) = &self.db_pool else {
+            warn!("No database pool available for source material storage");
+            return Ok(None);
+        };
 
-        // Use BlobManager to ingest content directly from bytes
-        let metadata = blob_manager
-            .ingest_from_bytes(content.as_bytes(), "clipboard_content", "text/plain")
-            .await
-            .map_err(|e| format!("Failed to ingest clipboard content: {}", e))?;
+        let material_id = Ulid::new();
+        let now = Utc::now();
 
-        debug!(
-            "Stored clipboard content via BlobManager: {:?} ({})",
-            metadata.id, metadata.annex_key
+        // Prepare metadata
+        let metadata = serde_json::json!({
+            "selection_type": selection_type,
+            "content_type": content.content_type,
+            "content_size": content.size_bytes,
+            "text_preview": content.text_preview,
+            "file_paths": content.file_paths,
+            "source_app": content.source_app,
+            "window_title": content.window_title,
+            "content_hash": content.hash,
+            "original_hash": self.find_original_hash(&content.hash).map(|h| h.to_string()),
+        });
+
+        // Store in source_material_registry
+        let data_bytes = content.text.as_bytes();
+        if data_bytes.len() <= self.max_content_size {
+            // Store inline
+            sqlx::query!(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    source_material_id, source_identifier, acquired_at,
+                    data, size_bytes, mime_type, metadata
+                )
+                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7)
+                "#,
+                material_id as Ulid,
+                self.source_identifier,
+                now,
+                data_bytes,
+                data_bytes.len() as i64,
+                "text/plain",
+                metadata.to_string(),
+            )
+            .execute(db_pool)
+            .await?;
+        } else {
+            // TODO: Large content would need blob storage
+            warn!("Large clipboard content not yet supported, skipping");
+            return Ok(None);
+        }
+
+        // Create temporal ledger entry
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.temporal_ledger (
+                material_id, offset_start, offset_end, 
+                offset_kind, proximity_hint, temporal_hint, timing_source,
+                ts_capture, note
+            )
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+            material_id as Ulid,
+            0i64,
+            data_bytes.len() as i64,
+            "byte",
+            "exact",
+            "wall",
+            "realtime_capture",
+            content.timestamp,
+            metadata.to_string(),
+        )
+        .execute(db_pool)
+        .await?;
+
+        info!(
+            "Stored clipboard {} source material: {} bytes, hash: {}",
+            selection_type,
+            content.size_bytes,
+            &content.hash[..8]
         );
 
-        Ok((metadata.annex_key, metadata.id.map(|id| id.to_string())))
+        Ok(Some(material_id))
     }
 
     /// Get enriched clipboard content with metadata
@@ -502,143 +503,25 @@ impl ClipboardWatcher {
         })
     }
 
-    /// Handle large content storage and return appropriate preview/metadata
-    async fn handle_large_content(
-        &self,
-        content: &ClipboardContent,
-    ) -> (Option<String>, Option<String>, Option<String>) {
-        if content.size_bytes <= self.max_content_size {
-            return (content.text_preview.clone(), None, None);
-        }
-
-        match self.store_large_content(&content.text, &content.hash).await {
-            Ok((key, id)) => {
-                info!(
-                    "Stored large content ({} bytes) in blob storage: {}",
-                    content.size_bytes, key
-                );
-                (
-                    Some("[Content stored in blob storage]".to_string()),
-                    Some(key),
-                    id,
-                )
-            }
-            Err(e) => {
-                error!("Failed to store large content: {}", e);
-                (
-                    Some("[Content too large - storage failed]".to_string()),
-                    None,
-                    None,
-                )
-            }
-        }
-    }
-
-    /// Create rich clipboard changed event
-    async fn create_clipboard_event(
-        &self,
-        content: &ClipboardContent,
-        operation: &str,
-    ) -> Result<RawEvent, sinex_core::types::error::SinexError> {
-        // Check if this is a re-copy
-        let original_hash = if self.enable_history {
-            self.find_original_hash(&content.hash)
-        } else {
-            None
-        };
-
-        // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
-
-        let file_count = content.file_paths.as_ref().map(|paths| paths.len());
-
-        let event: RawEvent = Event::new(sinex_core::types::events::ClipboardCopiedPayload {
-            operation: operation.to_string(),
-            content_type: content.content_type.clone(),
-            content_size: content.size_bytes,
-            text_preview,
-            file_count,
-            file_paths: content.file_paths.clone(),
-            source_app: content.source_app.clone(),
-            window_title: content.window_title.clone(),
-            content_hash: content.hash.clone(),
-            original_hash,
-            annex_key,
-            blob_id,
-        })
-        .with_ts_orig(Some(content.timestamp))
-        .into();
-
-        Ok(event)
-    }
-
-    /// Create rich primary selection event
-    async fn create_primary_selection_event(
-        &self,
-        content: &ClipboardContent,
-    ) -> Result<RawEvent, sinex_core::types::error::SinexError> {
-        // Check if this is a re-selection
-        let original_hash = if self.enable_history {
-            self.find_original_hash(&content.hash)
-        } else {
-            None
-        };
-
-        // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
-
-        let event: RawEvent = Event::new(sinex_core::types::events::ClipboardSelectedPayload {
-            selection_type: "primary".to_string(),
-            content_type: content.content_type.clone(),
-            content_size: content.size_bytes,
-            text_preview,
-            source_app: content.source_app.clone(),
-            content_hash: content.hash.clone(),
-            original_hash,
-            annex_key,
-            blob_id,
-        })
-        .with_ts_orig(Some(content.timestamp))
-        .into();
-
-        Ok(event)
-    }
-
-    /// Send event or warn if channel closed, returning whether to continue
-    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
-        if tx.send(event).is_err() {
-            warn!("Event channel closed");
-            false
-        } else {
-            true
-        }
-    }
-
-    /// Check for clipboard changes with enhanced monitoring
-    async fn check_clipboard_changes(
-        &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
-        self.check_main_clipboard(tx).await?;
+    /// Check for clipboard changes and store as source material
+    async fn check_clipboard_changes(&mut self) -> SatelliteResult<()> {
+        self.check_main_clipboard().await?;
         if self.enable_primary_selection {
-            self.check_primary_selection(tx).await?;
+            self.check_primary_selection().await?;
         }
         Ok(())
     }
 
-    /// Start streaming events
-    pub async fn start_streaming(
-        &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
-        info!("Starting clipboard event streaming");
+    /// Start monitoring clipboard changes (sensd mode)
+    pub async fn start_monitoring(&mut self) -> SatelliteResult<()> {
+        info!("Starting clipboard monitoring (sensd mode)");
 
         let mut poll_interval = interval(self.poll_interval);
 
         loop {
             poll_interval.tick().await;
 
-            if let Err(e) = self.check_clipboard_changes(&tx).await {
+            if let Err(e) = self.check_clipboard_changes().await {
                 error!("Error checking clipboard changes: {}", e);
                 // Continue polling even if there's an error
             }
@@ -646,10 +529,7 @@ impl ClipboardWatcher {
     }
 
     /// Check main clipboard for changes
-    async fn check_main_clipboard(
-        &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn check_main_clipboard(&mut self) -> SatelliteResult<()> {
         if let Some(current_content) = self.get_clipboard_content().await {
             let content_changed = match &self.last_content {
                 Some(last) => last.hash != current_content.hash,
@@ -665,13 +545,9 @@ impl ClipboardWatcher {
                     current_content.source_app
                 );
 
-                let event = self
-                    .create_clipboard_event(&current_content, "copy")
+                // Store as source material (not event!)
+                self.store_clipboard_source_material(&current_content, "clipboard")
                     .await?;
-
-                if !self.send_event_or_warn(tx, event) {
-                    return Ok(());
-                }
 
                 // Update history
                 self.update_history(
@@ -686,10 +562,7 @@ impl ClipboardWatcher {
     }
 
     /// Check primary selection for changes
-    async fn check_primary_selection(
-        &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn check_primary_selection(&mut self) -> SatelliteResult<()> {
         if let Some(current_primary) = self.get_primary_selection_content().await {
             let primary_changed = match &self.last_primary_content {
                 Some(last) => last.hash != current_primary.hash,
@@ -705,13 +578,9 @@ impl ClipboardWatcher {
                     current_primary.source_app
                 );
 
-                let event = self
-                    .create_primary_selection_event(&current_primary)
+                // Store as source material (not event!)
+                self.store_clipboard_source_material(&current_primary, "primary")
                     .await?;
-
-                if !self.send_event_or_warn(tx, event) {
-                    return Ok(());
-                }
 
                 // Update history
                 self.update_history(
