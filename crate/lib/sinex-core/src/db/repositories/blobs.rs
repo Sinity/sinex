@@ -3,14 +3,15 @@
 //! Provides access to core.blobs table for managing binary large objects
 //! stored in git-annex with metadata in PostgreSQL.
 
-use crate::types::{ulid::Ulid, Id};
+use crate::{Id, Ulid};
 use chrono::Utc;
 use color_eyre::eyre::{Context, Result};
 use num_traits::ToPrimitive;
 use sqlx::PgPool;
 use tracing::instrument;
 
-use crate::models::{Blob, BlobRecord};
+use crate::models::Blob;
+use crate::BlobRecord;
 
 /// Repository for blob operations
 #[derive(Debug, Clone)]
@@ -40,7 +41,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
             )
             RETURNING 
-                id as "id: Ulid",
+                id,
                 annex_key,
                 original_filename,
                 size_bytes,
@@ -53,7 +54,7 @@ impl BlobRepository {
                 last_verified_at,
                 verification_status
             "#,
-            record.id as Ulid,
+            record.id as uuid::Uuid,
             record.annex_key,
             record.original_filename,
             record.size_bytes,
@@ -80,7 +81,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: Ulid",
+                id,
                 annex_key,
                 original_filename,
                 size_bytes,
@@ -95,7 +96,7 @@ impl BlobRepository {
             FROM core.blobs
             WHERE id = $1
             "#,
-            *id.as_ulid() as _
+            id.as_uuid()
         )
         .fetch_optional(&self.pool)
         .await
@@ -111,7 +112,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: Ulid",
+                id,
                 annex_key,
                 original_filename,
                 size_bytes,
@@ -143,7 +144,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: Ulid",
+                id,
                 annex_key,
                 original_filename,
                 size_bytes,
@@ -180,7 +181,7 @@ impl BlobRepository {
             "#,
             status,
             Utc::now(),
-            *id.as_ulid() as _
+            id.as_uuid()
         )
         .execute(&self.pool)
         .await
@@ -205,7 +206,7 @@ impl BlobRepository {
             WHERE id = $2
             "#,
             filename,
-            *id.as_ulid() as _
+            id.as_uuid()
         )
         .execute(&self.pool)
         .await

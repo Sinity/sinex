@@ -44,10 +44,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
 use sinex_core::db::telemetry::telemetry::TelemetryAccumulator;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::RawEvent;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -649,13 +649,7 @@ pub trait StatefulStreamProcessor: Send + Sync {
         )))
     }
 
-    // TODO: Define event filtering after NatsStreamConsumer removal
-    // Event filtering should be integrated into the scan method per TARGET_canonical.md
-    //
-    // /// Get event filters for NATS consumption (automata only)
-    // fn event_filters(&self) -> Vec<EventFilter> {
-    //     Vec::new()
-    // }
+    // Event filtering is now integrated into scan methods per satellite architecture
 
     /// Graceful shutdown
     async fn shutdown(&mut self) -> SatelliteResult<()> {
@@ -800,7 +794,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -823,7 +817,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -901,7 +895,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -924,7 +918,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -1002,7 +996,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -1025,7 +1019,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -1113,7 +1107,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -1136,7 +1130,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();

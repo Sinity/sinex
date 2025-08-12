@@ -601,7 +601,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             *relation.from_entity_id.as_ulid() as _,
             *relation.to_entity_id.as_ulid() as _,
             relation.relation_type,
-            strength,
+            strength as f32,
             metadata,
             valid_from,
             relation.valid_until,

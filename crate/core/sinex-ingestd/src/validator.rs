@@ -2,10 +2,10 @@
 
 use crate::{IngestdResult, SinexError};
 use ahash::AHashMap;
-use sinex_core::db::models::RawEvent;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::ulid::Ulid;
+use sinex_core::RawEvent;
+use sinex_core::{EventSource, EventType};
 use sqlx::FromRow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

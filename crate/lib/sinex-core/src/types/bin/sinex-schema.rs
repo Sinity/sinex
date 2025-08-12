@@ -268,7 +268,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         let event_types = vec![schema_name.clone()];
 
         // Parse source and event_type from schema_name (format: "source.event_type")
-        let (source, event_type) = if let Some(dot_pos) = schema_name.find('.') {
+        let (_source, _event_type) = if let Some(dot_pos) = schema_name.find('.') {
             (&schema_name[..dot_pos], &schema_name[dot_pos + 1..])
         } else {
             ("unknown", schema_name.as_str())
@@ -279,18 +279,18 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&schema_text);
-        let content_hash = format!("{:x}", hasher.finalize());
+        let _content_hash = format!("{:x}", hasher.finalize());
 
         // Insert or update schema
         let id = sqlx::query_scalar!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas
-                (schema_name, schema_version, schema_content, event_types, source, event_type, content_hash)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (source, event_type, schema_version) DO UPDATE
+                (schema_name, schema_version, schema_content, event_types, description)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (schema_name, schema_version) DO UPDATE
             SET schema_content = EXCLUDED.schema_content,
                 event_types = EXCLUDED.event_types,
-                content_hash = EXCLUDED.content_hash,
+                description = EXCLUDED.description,
                 updated_at = NOW()
             RETURNING id as "id: Ulid"
             "#,
@@ -298,9 +298,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
             "v1",
             &schema_content,
             &event_types as &[String],
-            source,
-            event_type,
-            &content_hash
+            Some(format!("Schema for {} events", schema_name))
         )
         .fetch_one(pool)
         .await?;

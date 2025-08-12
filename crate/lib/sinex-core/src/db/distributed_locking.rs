@@ -230,6 +230,34 @@ impl LeadershipGuard {
     /// Record leadership in database for monitoring/debugging
     #[instrument(skip(self, pool), fields(service = %self.service_name, instance = %self.instance_id))]
     pub async fn record_leadership(&self, pool: &DbPool) -> CoreResult<()> {
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = pool.begin().await.map_err(SinexError::from)?;
+
+        // Check if there's an existing leader for this service
+        let existing_leader = sqlx::query!(
+            "SELECT instance_id, acquired_at FROM core.service_leadership WHERE service_name = $1",
+            &self.service_name
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let operation_type = if existing_leader.is_some() {
+            "leadership_transfer"
+        } else {
+            "leadership_acquisition"
+        };
+
+        // Log leadership acquisition intent (replaced direct event insertion to fix architectural violation)
+        tracing::info!(
+            service_name = %self.service_name,
+            new_leader_instance_id = %self.instance_id,
+            operation_type = %operation_type,
+            previous_leader = ?existing_leader.as_ref().map(|l| l.instance_id),
+            previous_leader_acquired_at = ?existing_leader.as_ref().map(|l| l.acquired_at),
+            "Leadership acquisition intent"
+        );
+
+        // Perform the leadership record update
         sqlx::query(
             "INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
              VALUES ($1, $2, NOW(), NOW(), 'unknown')
@@ -238,8 +266,19 @@ impl LeadershipGuard {
         )
         .bind(&self.service_name)
         .bind(&self.instance_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+        // Log leadership acquired confirmation (replaced direct event insertion to fix architectural violation)
+        tracing::info!(
+            service_name = %self.service_name,
+            leader_instance_id = %self.instance_id,
+            operation_type = %operation_type,
+            previous_leader = ?existing_leader.as_ref().map(|l| l.instance_id),
+            "Leadership acquired"
+        );
+
+        tx.commit().await.map_err(SinexError::from)?;
 
         Ok(())
     }
@@ -247,12 +286,50 @@ impl LeadershipGuard {
     /// Update leadership heartbeat
     #[instrument(skip(self, pool), fields(service = %self.service_name))]
     pub async fn heartbeat(&self, pool: &DbPool) -> CoreResult<()> {
-        sqlx::query(
-            "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1",
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = pool.begin().await.map_err(SinexError::from)?;
+
+        // Get current heartbeat details for event emission
+        let current_heartbeat = sqlx::query!(
+            "SELECT last_heartbeat FROM core.service_leadership WHERE service_name = $1 AND instance_id = $2",
+            &self.service_name,
+            &self.instance_id
         )
-        .bind(&self.service_name)
-        .execute(pool)
+        .fetch_optional(&mut *tx)
         .await?;
+
+        if let Some(heartbeat_info) = current_heartbeat {
+            // Log heartbeat intent (replaced direct event insertion to fix architectural violation)
+            tracing::debug!(
+                service_name = %self.service_name,
+                leader_instance_id = %self.instance_id,
+                previous_heartbeat = ?heartbeat_info.last_heartbeat,
+                "Leadership heartbeat intent"
+            );
+
+            // Perform the heartbeat update
+            let result = sqlx::query!(
+                "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1 AND instance_id = $2",
+                &self.service_name,
+                &self.instance_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                // Log heartbeat updated confirmation (replaced direct event insertion to fix architectural violation)
+                tracing::debug!(
+                    service_name = %self.service_name,
+                    leader_instance_id = %self.instance_id,
+                    previous_heartbeat = ?heartbeat_info.last_heartbeat,
+                    "Leadership heartbeat updated"
+                );
+            }
+
+            tx.commit().await.map_err(SinexError::from)?;
+        } else {
+            tx.rollback().await.ok();
+        }
 
         Ok(())
     }

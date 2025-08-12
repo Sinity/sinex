@@ -3,31 +3,14 @@
 //! This module implements the system satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for system events.
 
-use sinex_core::db::models::RawEvent;
+// Use local facade for common types
+use crate::common::*;
 
-use async_trait::async_trait;
-use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+// System-specific event payloads
 use sinex_core::types::events::{
-    Event, JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
+    JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
-use sinex_satellite_sdk::{
-    checkpoint::CheckpointManager,
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
-    stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteResult,
-};
-use std::collections::HashMap;
-use std::time::Duration;
-use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 
@@ -112,12 +95,11 @@ pub struct SystemProcessor {
 impl SystemProcessor {
     /// Create a new unified system processor
     pub fn new() -> Self {
-        // TODO: Complete implementation of system satellite processor
-        // Issue: #XXX - Implement D-Bus, journal, and udev monitoring
-        // This should:
-        // 1. Monitor D-Bus for system events
-        // 2. Follow systemd journal for logs
-        // 3. Track udev hardware changes
+        // TODO(system-satellite): Complete implementation of system satellite processor
+        // Needs: D-Bus, journal, and udev monitoring
+        // - Monitor D-Bus for system events (org.freedesktop.systemd1, NetworkManager, etc.)
+        // - Follow systemd journal for logs and service state changes
+        // - Track udev hardware changes (USB, network interfaces, storage)
 
         Self {
             config: SystemConfig::default(),
@@ -739,7 +721,7 @@ impl ExplorationProvider for SystemProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {

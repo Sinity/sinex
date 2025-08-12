@@ -230,8 +230,8 @@
 //!     .some(&optional_value)?;
 //!
 //! // Event-specific assertions
-//! ctx.assert_event_count(5).await?;
-//! ctx.assert_event_exists(event_id).await?;
+//! let count = ctx.pool.events().count_all().await?;
+//! assert!(ctx.pool.events().exists_by_id(&event_id).await?);
 //! ctx.assert_no_events().await?;
 //!
 //! // Error assertions
@@ -384,7 +384,7 @@ pub mod prelude {
     // Core test infrastructure
     pub use crate::sinex_test;
     pub use crate::TestContext;
-    pub use color_eyre::eyre::{bail, ensure, Context};
+    pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
     pub use insta::{
@@ -402,14 +402,64 @@ pub mod prelude {
         test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
     };
 
-    // Common imports that tests need
+    // Core sinex imports - now using flattened namespace
+    pub use sinex_core::{
+        validate_json,
+        validate_path,
+        Blob,
+        BlobId,
+        BlobRecord,
+        CheckpointId,
+        CheckpointRepository,
+        ConsumerGroup,
+        ConsumerName,
+        // Database functionality (now available at root)
+        DbPool,
+        DbPoolExt,
+        DbTransaction,
+        Entity,
+        EntityId,
+        EntityRelation,
+        // Event types (now available at root)
+        Event,
+        // Type aliases for convenience
+        EventId,
+        EventPayload,
+        EventRepository,
+        EventResult,
+        // Domain types (now available at root)
+        EventSource,
+        EventType,
+        EventVersion,
+        EventVersionInfo,
+        HostName,
+        // Common utilities (now available at root)
+        Id,
+        JsonValue,
+        OperationId,
+        OptionalTimestamp,
+        ProcessorName,
+        Provenance,
+        // Database models (now available at root)
+        RawEvent,
+        SanitizedPath,
+        SchemaName,
+        SchemaVersion,
+        // Error handling (now available at root)
+        SinexError,
+        SourceMaterial,
+        SourceMaterialId,
+        Timestamp,
+        Ulid,
+        ValidationError,
+    };
 
-    pub use sinex_core::db::models::*;
-    pub use sinex_core::types::domain::*;
-    pub use sinex_core::types::error::*;
-    pub use sinex_core::types::events::*;
-    pub use sinex_core::types::{Id, Ulid};
-    pub use std::time::Duration;
+    // Time handling - very common in tests
+    pub use chrono::{Duration as ChronoDuration, Utc};
+    pub use std::time::{Duration, Instant};
+
+    // Collections - very common in tests
+    pub use std::collections::{HashMap, HashSet};
 
     // Path handling
     pub use camino::{Utf8Path, Utf8PathBuf};
@@ -419,9 +469,15 @@ pub mod prelude {
         create_test_temp_dir, create_test_temp_file, remove_test_dir, validate_test_path,
     };
 
-    // JSON handling
+    // JSON handling - essential for tests
     pub use serde_json::{json, Value};
 
+    // Async utilities common in tests
+    pub use futures::{future, stream, StreamExt, TryFutureExt, TryStreamExt};
+    pub use tokio::{sync, task, time as tokio_time};
+
+    // Property testing support
+    pub use proptest::prelude::*;
     // Benchmarking support when feature is enabled
     #[cfg(feature = "bench")]
     pub use crate::bench::BENCH_CONTEXT;
@@ -461,12 +517,12 @@ pub fn test_event_types() -> Vec<(&'static str, &'static str)> {
 }
 
 #[fixture]
-pub fn test_event_sources() -> Vec<sinex_core::types::domain::EventSource> {
+pub fn test_event_sources() -> Vec<sinex_core::EventSource> {
     vec![
-        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
-        sinex_core::types::domain::EventSource::from_static("terminal"),
-        sinex_core::types::domain::EventSource::from_static("desktop"),
-        sinex_core::types::domain::EventSource::from_static("system"),
+        sinex_core::EventSource::from_static("fs-watcher"),
+        sinex_core::EventSource::from_static("terminal"),
+        sinex_core::EventSource::from_static("desktop"),
+        sinex_core::EventSource::from_static("system"),
     ]
 }
 
@@ -514,12 +570,15 @@ mod tests {
     use crate::sinex_test;
     use rstest::rstest;
     use serde_json::json;
-    use sinex_core::db::models::*;
-    use sinex_core::db::repositories::DbPoolExt;
-    use sinex_core::types::domain::*;
     use sinex_core::types::error::*;
     use sinex_core::types::events::*;
     use sinex_core::types::{Id, Ulid};
+    use sinex_core::DbPoolExt;
+    use sinex_core::*;
+    use sinex_core::{
+        Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+        OperationRecord, Provenance, RawEvent, SourceMaterial,
+    };
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //
@@ -906,7 +965,7 @@ mod tests {
         ctx: TestContext,
     ) -> color_eyre::eyre::Result<()> {
         // Test that event counting is accurate across operations
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(initial_count, 0, "Should start with zero events");
 
         // Insert events one by one and verify count
@@ -914,7 +973,7 @@ mod tests {
             ctx.create_test_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
-            let current_count = ctx.test_event_count().await;
+            let current_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(
                 current_count as usize, i,
                 "Count should match inserted events"
@@ -924,7 +983,7 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                RawEvent::new(
+                RawEvent::test_event(
                     EventSource::from("count-test"),
                     EventType::from("batch"),
                     json!({"batch_index": i}),
@@ -934,7 +993,7 @@ mod tests {
 
         ctx.insert_events(&batch_events).await?;
 
-        let final_count = ctx.test_event_count().await;
+        let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(
             final_count, 15,
             "Should have all individual and batch events"
@@ -1086,7 +1145,7 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_lazy_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
 
         // Context should start with zero events
         assert_eq!(initial_count, 0, "Context should start with zero events");
@@ -1096,7 +1155,7 @@ mod tests {
             .await?;
 
         // Should have created one event
-        let after_event = ctx.test_event_count().await;
+        let after_event = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(
             after_event, 1,
             "Should have exactly one event after creation"

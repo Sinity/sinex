@@ -10,11 +10,55 @@
 
 use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::process::Command;
+use std::{collections::HashMap, fmt, process::Command, str::FromStr};
 use tracing::{debug, info};
 
 use super::VerificationStatus;
+
+/// SystemD service status enumeration
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServiceStatus {
+    Active,
+    Inactive,
+    Failed,
+    Unknown,
+}
+
+impl fmt::Display for ServiceStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServiceStatus::Active => write!(f, "active"),
+            ServiceStatus::Inactive => write!(f, "inactive"),
+            ServiceStatus::Failed => write!(f, "failed"),
+            ServiceStatus::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl FromStr for ServiceStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(ServiceStatus::Active),
+            "inactive" => Ok(ServiceStatus::Inactive),
+            "failed" => Ok(ServiceStatus::Failed),
+            "unknown" | _ => Ok(ServiceStatus::Unknown),
+        }
+    }
+}
+
+impl ServiceStatus {
+    /// Check if the service status indicates the service is running
+    pub fn is_running(&self) -> bool {
+        matches!(self, ServiceStatus::Active)
+    }
+
+    /// Check if the service status indicates a problem
+    pub fn has_issues(&self) -> bool {
+        matches!(self, ServiceStatus::Failed | ServiceStatus::Unknown)
+    }
+}
 
 /// Verify service dependencies and readiness
 pub async fn verify_service_dependencies() -> Result<(VerificationStatus, Value, Vec<String>)> {
@@ -306,9 +350,10 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
     for service_name in dependency_services {
         match check_systemd_service(service_name).await {
             Ok(service_data) => {
-                let status = service_data["status"].as_str().unwrap_or("unknown");
+                let status_str = service_data["status"].as_str().unwrap_or("unknown");
+                let status = ServiceStatus::from_str(status_str).unwrap_or(ServiceStatus::Unknown);
                 service_info.insert(service_name.to_string(), service_data.clone());
-                if status == "active" {
+                if status.is_running() {
                     messages.push(format!("✓ Dependency service '{}' is active", service_name));
                 } else {
                     messages.push(format!(

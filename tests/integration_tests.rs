@@ -691,7 +691,7 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
     }
 
     // Test database count assertion
-    let count = ctx.test_event_count().await;
+    let count = ctx.pool.events().count_all().await?;
     assert_eq!(count, 3);
 
     Ok(())

@@ -2,8 +2,8 @@
 //!
 //! Monitors systemd services, timers, and unit state changes
 
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
+use sinex_core::RawEvent;
 
 use sinex_core::types::events::{
     SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
@@ -11,10 +11,9 @@ use sinex_core::types::events::{
     SystemdUnitStatusPayload, SystemdUnitStoppedPayload, SystemdUnitStoppingPayload,
 };
 use sinex_satellite_sdk::SatelliteResult;
-use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Command, Stdio};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};

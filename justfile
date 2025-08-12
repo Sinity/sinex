@@ -72,15 +72,15 @@ test-vm:
 
 # Apply migrations
 migrate:
-    cd crate/lib/sinex-migrations && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- up
+    cd crate/lib/sinex-schema && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- up
 
 # Create new migration
 migrate-create NAME:
-    cd crate/lib/sinex-migrations && cargo run -- generate {{NAME}}
+    cd crate/lib/sinex-schema && cargo run -- generate {{NAME}}
 
 # Check migration status
 migrate-status:
-    cd crate/lib/sinex-migrations && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- status
+    cd crate/lib/sinex-schema && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- status
 
 # Reset database
 db-reset:

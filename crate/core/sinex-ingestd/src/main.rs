@@ -1,6 +1,6 @@
 use clap::Parser;
 use color_eyre::eyre::Result;
-use sinex_core::types::domain::SanitizedPath;
+use sinex_core::SanitizedPath;
 use sinex_ingestd::{IngestService, IngestdConfig};
 use std::str::FromStr;
 use tracing::{error, info};

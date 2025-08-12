@@ -23,7 +23,7 @@
 use color_eyre::eyre::Result;
 use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
+
 use sqlx::Row;
 use std::time::{Duration, Instant};
 

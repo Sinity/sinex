@@ -5,8 +5,8 @@
 
 use crate::prelude::*;
 use serde_json::Value;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::error::SinexError;
+use sinex_core::RawEvent;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext

@@ -9,10 +9,8 @@ use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::EventSource;
-use sinex_core::types::events::Event;
+use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
+use sinex_core::DbPoolExt;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -378,7 +376,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Res
 }
 
 async fn record_verification_result(report: &VerificationReport) -> Result<()> {
-    // Record verification results as a process.heartbeat event
+    // Use advisory lock to prove database connectivity and write capability
     let database_url =
         std::env::var("DATABASE_URL").wrap_err("DATABASE_URL environment variable not set")?;
 
@@ -386,37 +384,71 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         .await
         .wrap_err("Failed to connect to database for verification recording")?;
 
+    let coordination = DistributedCoordination::new(pool.clone());
+
     let status_str = match report.overall_status {
         VerificationStatus::Pass => "healthy",
         VerificationStatus::Fail => "failed",
         VerificationStatus::Warning => "degraded",
-        // Running state not supported by module enum
     };
 
-    let metrics = serde_json::json!({
-        "process_name": "sinex-preflight",
-        "version": env!("CARGO_PKG_VERSION"),
-        "uptime_seconds": 0,
-        "memory_mb": 0,
-        "cpu_percent": 0.0,
-        "events_processed": 0,
-        "errors_count": report.errors.len(),
-        "health_status": status_str,
-        "custom_metrics": serde_json::to_value(report)?
-    });
-
-    let new_event: RawEvent = Event::new(sinex_core::events::ProcessHeartbeatPayload {
-        source: "sinex-preflight".to_string(),
-        sequence: 1, // Single heartbeat for verification result
-        status: status_str.to_string(),
-        metrics: Some(metrics),
-    })
-    .with_ts_orig(Some(chrono::Utc::now()))
-    .into();
-    pool.events()
-        .insert(new_event)
+    // Acquire verification lock - this proves database connectivity and write capability
+    // The lock acquisition itself is a database write operation, proving write access
+    if let Some(lock_guard) = coordination
+        .try_become_leader("sinex-preflight")
         .await
-        .wrap_err("Failed to record verification result")?;
+        .wrap_err("Failed to acquire preflight verification lock")?
+    {
+        let instance_uuid = Uuid::new_v4(); // Generate UUID for this verification run
+        let leadership =
+            LeadershipGuard::new(lock_guard, "sinex-preflight".to_string(), instance_uuid);
+
+        // Store verification results in service leadership table (not events!)
+        // This provides persistent verification history without violating architecture
+        leadership
+            .record_leadership(&pool)
+            .await
+            .wrap_err("Failed to record verification leadership")?;
+
+        // Store detailed verification results in metadata field
+        let metadata = serde_json::json!({
+            "verification_status": status_str,
+            "errors_count": report.errors.len(),
+            "warnings_count": report.warnings.len(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "verification_details": serde_json::to_value(report)?,
+            "verification_timestamp": chrono::Utc::now(),
+        });
+
+        // Update the leadership record with detailed verification metadata
+        sqlx::query!(
+            "UPDATE core.service_leadership 
+             SET metadata = $1 
+             WHERE service_name = 'sinex-preflight' AND instance_id = $2",
+            metadata,
+            instance_uuid
+        )
+        .execute(&pool)
+        .await
+        .wrap_err("Failed to update verification metadata")?;
+
+        // Structured logging for observability (replaces event creation)
+        info!(
+            service_name = "sinex-preflight",
+            instance_id = %instance_uuid,
+            verification_status = %status_str,
+            errors_count = report.errors.len(),
+            warnings_count = report.warnings.len(),
+            verification_result = ?report.overall_status,
+            "System preflight verification completed using advisory lock coordination"
+        );
+
+        // Leadership guard automatically releases lock on drop
+    } else {
+        warn!(
+            "Another preflight verification is already running - skipping duplicate verification"
+        );
+    }
 
     Ok(())
 }

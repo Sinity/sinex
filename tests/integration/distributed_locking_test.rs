@@ -10,7 +10,7 @@
 
 use color_eyre::eyre::Result;
 use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
-use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
+use sinex_satellite_sdk::{SatelliteInstance, SatelliteVersion};
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};

@@ -53,6 +53,17 @@ sysinfo = "0.30"
 # Regex for pattern matching
 regex = "1.10"
 
+# Database access for sensd integration
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls", "macros", "uuid", "chrono"] }
+async-stream = "0.3"
+tokio-stream = "0.1"
+
+# Validation
+validator = { workspace = true, features = ["derive"] }
+
+# ULIDs
+ulid = { workspace = true }
+
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros", "telemetry"] }

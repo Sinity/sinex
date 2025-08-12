@@ -88,7 +88,7 @@ impl syn::parse::Parse for EventRegistryInput {
             let lookahead = input.lookahead1();
             if lookahead.peek(syn::Ident) {
                 let ident: Ident = input.parse()?;
-                match ident.to_string().as_str() {
+                match &*ident.to_string() {
                     "sources" => {
                         let content;
                         syn::braced!(content in input);

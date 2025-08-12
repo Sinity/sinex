@@ -154,6 +154,8 @@ impl ReplayConfig {
             enforce_invariants: true,
             collect_metrics: false,
             use_advisory_locks: false,
+            dry_run: false,
+            dry_run_verbose: false,
         }
     }
 
@@ -185,6 +187,8 @@ impl ReplayConfig {
             enforce_invariants: true,
             collect_metrics: true,
             use_advisory_locks: true,
+            dry_run: false,
+            dry_run_verbose: false,
         }
     }
 
@@ -216,6 +220,8 @@ impl ReplayConfig {
             enforce_invariants: false,
             collect_metrics: false,
             use_advisory_locks: false,
+            dry_run: false,
+            dry_run_verbose: false,
         }
     }
 }

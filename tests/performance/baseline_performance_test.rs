@@ -4,24 +4,22 @@
 // These tests create repeatable benchmarks that can be used to detect
 // performance regressions and track improvements over time.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::prelude::*;
+
+// Additional specific imports
 use redis::cmd;
-use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
-use sinex_test_utils::prelude::*;
-use std::collections::HashMap;
-use std::time::{Duration as StdDuration, Instant};
 
 /// Performance baseline measurements
 #[derive(Debug, Clone)]
 pub struct PerformanceBaseline {
     pub operation_name: String,
-    pub average_latency: StdDuration,
-    pub percentile_95_latency: StdDuration,
-    pub percentile_99_latency: StdDuration,
+    pub average_latency: Duration,
+    pub percentile_95_latency: Duration,
+    pub percentile_99_latency: Duration,
     pub throughput: f64,
     pub success_rate: f64,
     pub sample_size: usize,
@@ -40,7 +38,7 @@ pub struct EnvironmentInfo {
 /// Baseline tracking and storage
 pub struct BaselineTracker {
     baselines: HashMap<String, PerformanceBaseline>,
-    measurements: HashMap<String, Vec<StdDuration>>,
+    measurements: HashMap<String, Vec<Duration>>,
     success_counts: HashMap<String, usize>,
     error_counts: HashMap<String, usize>,
     start_time: Instant,
@@ -57,7 +55,7 @@ impl BaselineTracker {
         }
     }
 
-    pub fn record_measurement(&mut self, operation: &str, duration: StdDuration, success: bool) {
+    pub fn record_measurement(&mut self, operation: &str, duration: Duration, success: bool) {
         self.measurements
             .entry(operation.to_string())
             .or_insert_with(Vec::new)
@@ -87,7 +85,7 @@ impl BaselineTracker {
             sorted_measurements.sort();
 
             let average_latency =
-                measurements.iter().sum::<StdDuration>() / measurements.len() as u32;
+                measurements.iter().sum::<Duration>() / measurements.len() as u32;
 
             let p95_index = (measurements.len() as f64 * 0.95) as usize;
             let p99_index = (measurements.len() as f64 * 0.99) as usize;
@@ -314,7 +312,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
             match operation {
                 "single_event_insertion" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(50),
+                        baseline.average_latency < Duration::from_millis(50),
                         "Single insertion baseline should be < 50ms"
                     );
                     assert!(
@@ -324,7 +322,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
                 }
                 "primary_key_lookup" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(5),
+                        baseline.average_latency < Duration::from_millis(5),
                         "Primary key lookup baseline should be < 5ms"
                     );
                     assert!(
@@ -334,19 +332,19 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
                 }
                 "source_based_query" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(20),
+                        baseline.average_latency < Duration::from_millis(20),
                         "Source query baseline should be < 20ms"
                     );
                 }
                 "time_range_query" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(100),
+                        baseline.average_latency < Duration::from_millis(100),
                         "Time range query baseline should be < 100ms"
                     );
                 }
                 "aggregation_query" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(200),
+                        baseline.average_latency < Duration::from_millis(200),
                         "Aggregation query baseline should be < 200ms"
                     );
                 }
@@ -498,7 +496,7 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> color_eyre::
             match operation {
                 "stream_write" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(10),
+                        baseline.average_latency < Duration::from_millis(10),
                         "Stream write baseline should be < 10ms"
                     );
                     assert!(
@@ -508,19 +506,19 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> color_eyre::
                 }
                 "stream_read_batch" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(50),
+                        baseline.average_latency < Duration::from_millis(50),
                         "Stream read baseline should be < 50ms"
                     );
                 }
                 "stream_ack" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(5),
+                        baseline.average_latency < Duration::from_millis(5),
                         "Stream ACK baseline should be < 5ms"
                     );
                 }
                 "stream_info" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(5),
+                        baseline.average_latency < Duration::from_millis(5),
                         "Stream info baseline should be < 5ms"
                     );
                 }
@@ -637,7 +635,7 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> colo
 
         // Concurrent operations should be reasonably performant
         assert!(
-            baseline.average_latency < StdDuration::from_millis(200),
+            baseline.average_latency < Duration::from_millis(200),
             "Concurrent insertion baseline should be < 200ms"
         );
         assert!(
@@ -692,7 +690,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre
         }
 
         // Small delay between attempts
-        tokio::time::sleep(StdDuration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     // Baseline 2: Transaction recovery
@@ -770,7 +768,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre
             match operation {
                 "connection_recovery" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(50),
+                        baseline.average_latency < Duration::from_millis(50),
                         "Connection recovery baseline should be < 50ms"
                     );
                     assert!(
@@ -780,7 +778,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre
                 }
                 "transaction_recovery" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(100),
+                        baseline.average_latency < Duration::from_millis(100),
                         "Transaction recovery baseline should be < 100ms"
                     );
                     assert!(
@@ -790,7 +788,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre
                 }
                 "redis_reconnection" => {
                     assert!(
-                        baseline.average_latency < StdDuration::from_millis(100),
+                        baseline.average_latency < Duration::from_millis(100),
                         "Redis reconnection baseline should be < 100ms"
                     );
                     assert!(

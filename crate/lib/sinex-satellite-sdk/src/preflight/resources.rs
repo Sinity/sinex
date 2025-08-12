@@ -12,6 +12,7 @@ use camino::Utf8Path;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use tracing::info;
 
 use super::VerificationStatus;
@@ -337,17 +338,18 @@ async fn check_directory_permissions(dir_path: &str) -> Result<Value> {
 
     // Create directory if it doesn't exist
     if !path.exists() {
-        std::fs::create_dir_all(path)
+        tokio::fs::create_dir_all(path)
+            .await
             .wrap_err_with(|| format!("Failed to create directory {}", dir_path))?;
     }
 
     // Test write permissions by creating a temporary file
     let test_file = path.join(".sinex_preflight_test");
 
-    match std::fs::write(&test_file, "test") {
+    match tokio::fs::write(&test_file, "test").await {
         Ok(_) => {
             // Clean up test file
-            std::fs::remove_file(&test_file).ok();
+            tokio::fs::remove_file(&test_file).await.ok();
 
             Ok(json!({
                 "exists": true,
@@ -396,8 +398,6 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value
 }
 
 async fn test_dns_resolution() -> Result<()> {
-    use std::net::ToSocketAddrs;
-
     // Try to resolve a well-known hostname
     "google.com:80"
         .to_socket_addrs()
@@ -418,12 +418,18 @@ async fn test_localhost_connectivity() -> Result<()> {
         .wrap_err("Failed to parse localhost address")?;
 
     // Try to connect with a short timeout
-    match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
+    match tokio::time::timeout(
+        Duration::from_millis(100),
+        tokio::net::TcpStream::connect(addr),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Connection timeout"))
+    .and_then(|result| result)
+    {
         Ok(_) => Ok(()),
         Err(_) => {
             // SSH not running is normal, just test that localhost is reachable
             // Try a different approach - just verify localhost resolves
-            use std::net::ToSocketAddrs;
             "localhost:80"
                 .to_socket_addrs()
                 .wrap_err("Localhost name resolution failed")?;

@@ -159,8 +159,15 @@ impl LedgerReader {
     }
 
     /// Derive ts_orig and time_quality based on TARGET_final.md precedence (line 80-81)
+    ///
     /// Precedence: temporal ledger (realtime_capture) > intrinsic content >
     ///            inferred_mtime > inferred_ctime > inferred_user > staged_at
+    ///
+    /// # Panics
+    ///
+    /// This function contains an internal `unwrap()` that is safe because it's protected
+    /// by a condition check (`if intrinsic_timestamp.is_some()`), but the unwrap is used
+    /// to extract the timestamp when processing "intrinsic_content" entries.
     pub fn derive_ts_orig(
         &self,
         offset: i64,

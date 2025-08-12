@@ -25,16 +25,8 @@ serde.workspace = true
 serde_json.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 
-# Filesystem watching
-notify = "6.1"
-notify-debouncer-full = "0.3"
+# Directory discovery for default paths
 dirs.workspace = true
-
-# Pattern matching and path validation  
-glob = "0.3"
-shellexpand = "3.1"
-walkdir = "2.3"
-mime_guess = "2.0"
 
 # Database
 sqlx = { workspace = true }
@@ -44,9 +36,13 @@ tokio-stream = { workspace = true }
 async-stream = "0.3"
 futures = { workspace = true }
 
+# Validation
+validator = { workspace = true }
+
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros", "telemetry"] }
+sinex-sensd = { path = "../../core/sinex-sensd" }
 
 [features]
 default = []

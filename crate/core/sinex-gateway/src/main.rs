@@ -7,7 +7,7 @@
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use sinex_core::types::domain::SanitizedPath;
+use sinex_core::SanitizedPath;
 use std::str::FromStr;
 use tracing::info;
 

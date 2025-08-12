@@ -99,7 +99,7 @@ test_batch_events!(
 // BEFORE: Repetitive checkpoint management (25+ lines)
 #[sinex_test]
 async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    use sinex_satellite_sdk::checkpoint::CheckpointManager;
+    use sinex_satellite_sdk::CheckpointManager;
     
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool().clone(),

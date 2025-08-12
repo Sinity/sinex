@@ -143,7 +143,30 @@ Sinex uses a satellite constellation pattern where independent services communic
 
 ```
 crate/
-  [TODO]
+  core/                    # Core service implementations
+    sinex-gateway/         # API gateway service
+    sinex-ingestd/         # Central ingestion coordinator
+    sinex-rpc-dispatcher/  # RPC routing and dispatch
+    sinex-sensd/           # Sensor management daemon
+  lib/                     # Shared libraries
+    sinex-core/            # Core types, db, utilities
+    sinex-macros/          # Procedural macros
+    sinex-migrations/      # Database migrations
+    sinex-satellite-sdk/   # SDK for satellite development
+    sinex-services/        # Service abstractions
+    sinex-test-utils/      # Testing utilities
+  satellites/              # Event capture satellites
+    sinex-analytics-automaton/        # Analytics processing
+    sinex-content-automaton/          # Content processing
+    sinex-desktop-satellite/          # Desktop environment events
+    sinex-document-ingestor/          # Document ingestion
+    sinex-fs-watcher/                 # File system monitoring
+    sinex-health-aggregator/          # Health metrics collection
+    sinex-pkm-automaton/              # PKM processing
+    sinex-search-automaton/           # Search processing
+    sinex-system-satellite/           # System-level events
+    sinex-terminal-command-canonicalizer/  # Terminal command processing
+    sinex-terminal-satellite/         # Terminal session monitoring
 ```
 
 ### Key Directories

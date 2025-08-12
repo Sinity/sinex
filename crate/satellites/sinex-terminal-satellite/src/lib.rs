@@ -1,101 +1,57 @@
 //! Unified Terminal Satellite for Sinex
 //!
-//! This satellite handles all terminal-related event sources:
-//! - shell.atuin: Rich shell history from Atuin
-//! - shell.history: Shell history file parsing  
-//! - shell.kitty: Real-time Kitty terminal events
-//! - shell.recording: Terminal session recording (asciinema)
-//! - shell.scrollback: Terminal content capture
+//! This satellite captures terminal-related data through sensd Source Material system:
+//! - Atuin database monitoring via sensd AppendStream sensor
+//! - Shell history file monitoring via sensd AppendStream sensor
+//! - Terminal recordings via sensd TreeWatch sensor  
+//! - Kitty terminal integration via sensd AppendStream sensor
 //!
-//! This module provides the unified StatefulStreamProcessor architecture from Part 16.
+//! ## Architecture: sensd-First Data Capture
 //!
-//! ## Terminal Activity Capture Strategy (TIM-GenericTerminalLogging)
+//! All terminal data flows through sensd Source Material system:
+//! 1. **Source Material Capture**: Raw terminal data captured by sensd sensors
+//! 2. **Temporal Ledger**: Ordered material slices with provenance tracking
+//! 3. **Event Generation**: Events created from Source Material with proper provenance
+//! 4. **Provenance Chain**: Every event references its Source Material origin
 //!
-//! ### Asciinema Integration
-//! - **Recording**: Full PTY session capture with timing information
-//! - **Format**: Newline-delimited JSON (header + events)
-//! - **Auto-start**: Can be configured in shell profile
-//! - **Storage**: Recordings stored as .cast files with blob management
+//! ### sensd Sensor Integration
 //!
-//! ### Atuin Integration  
-//! - **Rich History**: Structured command history across all shells
-//! - **Metadata**: Exit codes, duration, CWD, hostname, session ID
-//! - **Real-time**: File watching on SQLite database
-//! - **Privacy**: Respects Atuin's sync encryption settings
+//! - **AppendStream sensors** for:
+//!   - Atuin SQLite database monitoring
+//!   - Shell history files (.bash_history, .zsh_history, fish_history)
+//!   - Kitty remote control socket monitoring
 //!
-//! ### Shell History Files
-//! - **Fallback**: Direct parsing of .bash_history, .zsh_history
-//! - **Format-aware**: Handles timestamps, multi-line commands
-//! - **Incremental**: Tracks position to avoid duplicates
+//! - **TreeWatch sensors** for:
+//!   - Terminal recording directories (asciinema .cast files)
 //!
-//! ### Implementation Patterns
-//! - **Unified Processor**: Single entry point for all terminal sources
-//! - **State Management**: Tracks last seen positions/timestamps
-//! - **Batch Processing**: Efficient handling of bulk history imports
-//! - **Event Correlation**: Links commands to sessions and recordings
+//! ### Event Types Generated
 //!
-//! ## Architectural Decision: Layered Capture Strategy (ADR-008)
+//! All events have `Provenance::Material` with references to Source Material:
+//! - `terminal.atuin_command_executed` - Commands from Atuin database
+//! - `terminal.bash_historical_command` - Commands from bash history
+//! - `terminal.zsh_historical_command` - Commands from zsh history  
+//! - `terminal.fish_historical_command` - Commands from fish history
+//! - `terminal.recording_started` - Asciinema recording begins
+//! - `terminal.recording_ended` - Asciinema recording completes
+//! - `terminal.kitty_window_state` - Kitty window/tab state
+//! - `terminal.kitty_content_captured` - Kitty scrollback content
 //!
-//! We use a multi-layered approach combining:
-//! 1. **Atuin** (primary): Structured command history with metadata
-//! 2. **Asciinema** (primary): Full session I/O capture for replayability
-//! 3. **Shell history** (fallback): Direct parsing when tools unavailable
-//! 4. **Kitty RC** (supplemental): Terminal-specific semantic events
+//! ## Eliminated Direct Event Creation
 //!
-//! This layered approach was chosen over single-tool solutions because:
-//! - No single tool captures everything (commands + output + context)
-//! - Atuin provides queryable structured data but misses output
-//! - Asciinema captures everything but requires parsing
-//! - Combination gives both structure and completeness
-//!
-//! Data correlation happens via timestamps, CWD, and session IDs.
-//!
-//! ## Future Enhancements (Not Yet Implemented)
-//!
-//! ### Session Correlation
-//! - Environment variable tracking (`SINEX_TERMINAL_SESSION_ULID`)
-//! - Cross-process command correlation
-//! - Unified session IDs between Atuin and Asciinema
-//!
-//! ### Privacy and Filtering
-//! - Regex-based sensitive command filtering
-//! - Password/secret redaction in recordings
-//! - User-configurable privacy rules
-//! - Audit mode vs full capture mode
-//! - Directory-based recording exclusions
-//!
-//! ### Command Analysis
-//! - Automatic command type categorization (git, docker, npm, etc.)
-//! - Frequency analysis and productivity metrics
-//! - Error rate tracking by command type
-//! - Command sequence pattern detection
-//! - Common workflow identification
-//!
-//! ### Performance Optimizations
-//! - Adaptive batch sizes based on system load
-//! - Parallel processing of multiple terminal sources
-//! - Cross-source deduplication
-//! - Incremental checkpointing during large imports
+//! Previous modules (atuin.rs, kitty.rs, recording.rs, scrollback.rs, history.rs)
+//! that created events directly have been removed. All terminal data capture now
+//! goes through sensd Source Material system first.
 
-mod atuin;
-mod history;
-mod kitty;
-mod recording;
-mod scrollback;
+pub mod sensd_integration;
 mod shell_detection;
 
 // New unified processor module
 pub mod unified_processor;
 
 // Re-export the new unified processor as the primary interface
-pub use unified_processor::{AtuinStatus, HistoryFileStatus, TerminalProcessor, TerminalState};
+pub use unified_processor::{TerminalProcessor, TerminalState};
 
-// Re-export individual watchers for compatibility
-pub use atuin::AtuinWatcher;
-pub use history::HistoryWatcher;
-pub use kitty::KittyWatcher;
-pub use recording::RecordingWatcher;
-pub use scrollback::ScrollbackWatcher;
-
-// Re-export for convenience
-pub use sinex_core::db::models::RawEvent;
+// Re-export sensd integration
+pub use sensd_integration::{
+    run_terminal_with_sensd, SensdIntegrationConfig, SensdTerminalProcessor,
+};

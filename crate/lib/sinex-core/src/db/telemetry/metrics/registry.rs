@@ -579,7 +579,7 @@ pub async fn init_global_registry() {
 /// prometheus_registry.register(Box::new(collector))?;
 /// ```
 pub struct ExternalMetricsCollector {
-    #[allow(dead_code)] // TODO: Use name for metric labeling
+    #[allow(dead_code)] // TODO(telemetry): Use collector name for metric labeling and grouping
     name: String,
     metrics: Arc<RwLock<Vec<MetricEntry>>>,
 }

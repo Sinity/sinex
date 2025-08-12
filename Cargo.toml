@@ -2,7 +2,7 @@
 members = [
   # Library crates  
   "crate/lib/sinex-core",
-  "crate/lib/sinex-migrations",
+  "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-satellite-sdk",
   "crate/lib/sinex-services",

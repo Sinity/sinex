@@ -9,7 +9,6 @@ pub mod sanitization;
 pub mod security;
 
 // Core modules
-pub mod constants;
 pub mod distributed_locking;
 
 // Repository pattern - the new way to access data
@@ -17,8 +16,7 @@ pub mod replay;
 pub mod repositories;
 
 // Database schema definitions using SeaQuery
-pub use sinex_migrations::schema;
-pub mod schema_migrations;
+pub use sinex_schema::schema;
 pub mod seaquery_helpers;
 
 // Migration support
@@ -27,10 +25,18 @@ pub mod migration;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    count, db_error, exists, from_db, is_retryable_db_error, opt_from_db, opt_to_db,
-    opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid, with_retry_transaction,
-    with_transaction, DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
+    count, db_error, exists, is_retryable_db_error, with_retry_transaction, with_transaction,
+    RetryConfig,
 };
+
+// Re-export ULID conversion utilities from sinex-schema
+pub use sinex_schema::ulid_conversions::{
+    from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid,
+    uuid_to_ulid, DbUuidCollectionExt, DbUuidExt, UlidArrayExt, UlidExt,
+};
+
+// Re-export constants from sinex-schema
+pub use sinex_schema::constants;
 
 // Re-export SeaQuery ULID helpers
 pub use seaquery_helpers::SeaQueryUlidExt;
@@ -62,7 +68,7 @@ pub type DbPoolRef<'a> = &'a PgPool;
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from types module
-pub use crate::types::{ulid::Timestamp, JsonValue};
+pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Configuration for database connection pool
@@ -133,14 +139,23 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     Ok(pool)
 }
 
-/// Get database URL from environment - DATABASE_URL required
+/// Get database URL from environment with environment namespacing
+///
+/// This function gets the DATABASE_URL and applies environment-specific namespacing
+/// to ensure proper isolation between dev/staging/prod environments.
 pub fn get_database_url() -> Result<String> {
-    env::var("DATABASE_URL").map_err(|_| {
+    use crate::environment::environment;
+
+    let base_url = env::var("DATABASE_URL").map_err(|_| {
         eyre!(
             "DATABASE_URL environment variable is required. Set it like: \
-             export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql"
+             export DATABASE_URL=postgresql:///sinex?host=/run/postgresql \
+             (database name will be automatically namespaced for environment)"
         )
-    })
+    })?;
+
+    // Apply environment namespacing to ensure isolation
+    environment().database_url(&base_url)
 }
 
 /// Create a database connection pool

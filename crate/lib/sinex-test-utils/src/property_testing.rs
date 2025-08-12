@@ -9,8 +9,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::error::SinexError;
+use sinex_core::DbPoolExt;
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -290,7 +290,7 @@ impl<'ctx> PropertyTester<'ctx> {
                 assert!(by_id.is_some());
 
                 // Should be findable by source
-                let source_ref = sinex_core::types::domain::EventSource::from(source.as_str());
+                let source_ref = sinex_core::EventSource::from(source.as_str());
                 let by_source = self
                     .ctx
                     .pool
@@ -301,7 +301,7 @@ impl<'ctx> PropertyTester<'ctx> {
             }
 
             // Should be findable by type
-            let type_ref = sinex_core::types::domain::EventType::from(event_type.as_str());
+            let type_ref = sinex_core::EventType::from(event_type.as_str());
             let by_type = self
                 .ctx
                 .pool
@@ -564,7 +564,7 @@ mod tests {
 
         // Property: querying by source should return exactly those events
         for source in &sources {
-            let source_ref = sinex_core::types::domain::EventSource::from(*source);
+            let source_ref = sinex_core::EventSource::from(*source);
             let events = ctx
                 .pool
                 .events()

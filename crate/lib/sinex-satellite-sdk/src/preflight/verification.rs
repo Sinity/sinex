@@ -11,12 +11,10 @@
 use chrono::Utc;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{
-    ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName,
-};
 use sinex_core::types::Id;
+use sinex_core::DbPoolExt;
+use sinex_core::RawEvent;
+use sinex_core::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -584,6 +582,72 @@ async fn get_test_pool() -> Result<PgPool> {
         .wrap_err("Failed to connect to test database")?;
 
     Ok(pool)
+}
+
+/// Main entry point for preflight verification
+pub async fn run_preflight_checks() -> Result<(VerificationStatus, Value, Vec<String>)> {
+    let mut messages = Vec::new();
+    let mut details = HashMap::new();
+    let mut has_warnings = false;
+    let mut has_failures = false;
+
+    info!("Starting comprehensive preflight verification");
+
+    // Run end-to-end integration tests
+    match verify_end_to_end_integration().await {
+        Ok((status, value, mut test_messages)) => {
+            messages.append(&mut test_messages);
+            details.insert("integration", value);
+
+            match status {
+                VerificationStatus::Warning => has_warnings = true,
+                VerificationStatus::Fail => has_failures = true,
+                VerificationStatus::Pass => {}
+            }
+        }
+        Err(e) => {
+            messages.push(format!("✗ Integration tests failed: {}", e));
+            has_failures = true;
+        }
+    }
+
+    // Run performance baseline tests
+    match verify_performance_baseline().await {
+        Ok((status, value, mut perf_messages)) => {
+            messages.append(&mut perf_messages);
+            details.insert("performance", value);
+
+            match status {
+                VerificationStatus::Warning => has_warnings = true,
+                VerificationStatus::Fail => has_failures = true,
+                VerificationStatus::Pass => {}
+            }
+        }
+        Err(e) => {
+            messages.push(format!("⚠ Performance baseline failed: {}", e));
+            has_warnings = true;
+        }
+    }
+
+    let status = if has_failures {
+        VerificationStatus::Fail
+    } else if has_warnings {
+        VerificationStatus::Warning
+    } else {
+        VerificationStatus::Pass
+    };
+
+    let result = json!({
+        "preflight_checks": details,
+        "total_checks": details.len(),
+        "overall_status": match status {
+            VerificationStatus::Pass => "pass",
+            VerificationStatus::Warning => "warning",
+            VerificationStatus::Fail => "fail"
+        }
+    });
+
+    Ok((status, result, messages))
 }
 
 /// Verify performance baseline

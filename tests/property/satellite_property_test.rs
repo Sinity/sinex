@@ -113,7 +113,7 @@ proptest! {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             // Check that we have the expected count
-            let actual_count = ctx.test_event_count().await;
+            let actual_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(actual_count, processed_events.len() as i64);
 
             let db_events = ctx.pool.events().get_recent(processed_events.len() as i64).await.unwrap();
@@ -186,7 +186,7 @@ proptest! {
             // Wait for processing to complete
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            let final_count = ctx.test_event_count().await;
+            let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(final_count, successful_events as i64);
 
             // Verify system recovered from failures
@@ -250,7 +250,7 @@ proptest! {
             // Wait for final consistency
             tokio::time::sleep(Duration::from_millis(200)).await;
 
-            let final_count = ctx.test_event_count().await;
+            let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(final_count, total_events as i64);
         });
     }
@@ -263,7 +263,7 @@ proptest! {
         _batch_size in 1usize..10000usize,
         _timeout_secs in 1u64..3600u64,
     ) {
-        use sinex_satellite_sdk::config::SatelliteConfig;
+        use sinex_satellite_sdk::SatelliteConfig;
 
         // Test config creation with various valid parameters
         let config = SatelliteConfig::builder()
@@ -331,7 +331,7 @@ proptest! {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             // Verify no events were lost during configuration changes
-            let final_count = ctx.test_event_count().await;
+            let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(final_count, events.len() as i64);
         });
     }
@@ -397,7 +397,7 @@ proptest! {
             let expected_minimum = events_before_interruption + events_after_interruption;
             tokio::time::sleep(Duration::from_millis(150)).await;
 
-            let final_count = ctx.test_event_count().await;
+            let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert!(final_count >= expected_minimum as i64);
         });
     }

@@ -1,0 +1,43 @@
+[package]
+name = "sinex-schema"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+description = "Schema definitions and database migrations for Sinex"
+
+[lib]
+name = "sinex_schema"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait = { version = "0.1" }
+sea-orm-migration = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+sea-query = { version = "0.30", features = ["with-uuid", "with-chrono", "with-json", "postgres-array"] }
+color-eyre = { workspace = true }
+
+# Dependencies for Record types
+sqlx = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+ulid = { workspace = true }
+
+# Dependencies for ID and ULID modules
+serde = { workspace = true }
+thiserror = { workspace = true }
+lazy_static = "1.5"
+rand = { workspace = true }
+
+# Optional dependencies (used conditionally)
+schemars = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
+
+[features]
+default = ["sqlx", "json-schema"]
+sqlx = []
+arbitrary = ["dep:proptest"]
+json-schema = ["dep:schemars"]

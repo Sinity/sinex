@@ -97,7 +97,8 @@ impl ReplayMetrics {
         let elapsed = self
             .start_time
             .as_ref()
-            .and_then(|t| t.as_ref().map(|start| start.elapsed()));
+            .as_ref()
+            .map(|start| start.elapsed());
 
         let events_processed = self.events_processed.load(Ordering::Relaxed);
         let events_failed = self.events_failed.load(Ordering::Relaxed);

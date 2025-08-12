@@ -1,18 +1,12 @@
 //! Unified terminal processor implementing StatefulStreamProcessor
 //!
-//! This module implements the terminal satellite processor supporting snapshot, historical, and
-//! continuous scanning modes for terminal events.
+//! This module implements the terminal satellite processor using sensd for source material capture.
+//! All terminal data flows through sensd sensors before being converted to events.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::error::with_context;
-use sinex_core::types::events::{
-    Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
-    TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
-};
 use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
@@ -27,12 +21,13 @@ use sinex_satellite_sdk::{
     SatelliteResult,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 use validator::{Validate, ValidationError};
 
-use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
-// use sinex_core::types::events::constants::{event_types, services}; // already imported above
+use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
 
 #[cfg(test)]
 mod config_validation_tests;
@@ -89,6 +84,9 @@ pub struct TerminalConfig {
         message = "Max file size must be between 1MB and 10GB"
     ))]
     pub scanner_max_file_size_mb: u64,
+
+    /// sensd integration configuration
+    pub sensd_config: SensdIntegrationConfig,
 }
 
 impl Default for TerminalConfig {
@@ -122,6 +120,7 @@ impl Default for TerminalConfig {
             .batch_size(100)
             .scanner_batch_size(1000)
             .scanner_max_file_size_mb(100)
+            .sensd_config(SensdIntegrationConfig::default())
             .build()
     }
 }
@@ -156,9 +155,7 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
 }
 
 /// Validate a single path for security and correctness using comprehensive validation
-fn validate_single_path(
-    path: &sinex_core::types::domain::SanitizedPath,
-) -> Result<(), ValidationError> {
+fn validate_single_path(path: &sinex_core::SanitizedPath) -> Result<(), ValidationError> {
     let path_str = path.as_str();
 
     // Use the comprehensive path validation from sinex-core
@@ -188,6 +185,9 @@ pub struct TerminalState {
 
     /// Recent activity summary
     pub recent_activity: Vec<String>,
+
+    /// sensd job statuses
+    pub sensd_jobs: Vec<SensdJobStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
@@ -198,6 +198,15 @@ pub struct HistoryFileStatus {
     pub estimated_entries: u64,
 }
 
+impl HistoryFileStatus {
+    pub const NonExistent: HistoryFileStatus = HistoryFileStatus {
+        exists: false,
+        size_bytes: 0,
+        last_modified: None,
+        estimated_entries: 0,
+    };
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct AtuinStatus {
     pub db_exists: bool,
@@ -206,9 +215,19 @@ pub struct AtuinStatus {
     pub last_entry_timestamp: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
+pub struct SensdJobStatus {
+    pub job_id: String,
+    pub sensor_type: String,
+    pub target_uri: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub material_id: Option<String>,
+}
+
 /// Unified terminal processor implementing StatefulStreamProcessor
 ///
-/// Supports snapshot, historical, and continuous scanning modes for terminal events.
+/// Uses sensd for all terminal data capture instead of direct event creation.
 pub struct TerminalProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
@@ -216,12 +235,8 @@ pub struct TerminalProcessor {
     /// Terminal monitoring configuration
     config: TerminalConfig,
 
-    /// Individual watchers (initialized during operation)
-    atuin_watcher: Option<AtuinWatcher>,
-    history_watcher: Option<HistoryWatcher>,
-    kitty_watcher: Option<KittyWatcher>,
-    recording_watcher: Option<RecordingWatcher>,
-    scrollback_watcher: Option<ScrollbackWatcher>,
+    /// sensd integration processor
+    sensd_processor: Option<Arc<SensdTerminalProcessor>>,
 
     /// Detected shell information
     shell_info: Option<crate::shell_detection::ShellInfo>,
@@ -231,6 +246,10 @@ pub struct TerminalProcessor {
 
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
+
+    /// Event channel for processing events
+    event_sender: Option<mpsc::Sender<sinex_core::RawEvent>>,
+    event_receiver: Option<mpsc::Receiver<sinex_core::RawEvent>>,
 }
 
 impl TerminalProcessor {
@@ -239,14 +258,12 @@ impl TerminalProcessor {
         Self {
             context: None,
             config: TerminalConfig::default(),
-            atuin_watcher: None,
-            history_watcher: None,
-            kitty_watcher: None,
-            recording_watcher: None,
-            scrollback_watcher: None,
+            sensd_processor: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
+            event_sender: None,
+            event_receiver: None,
         }
     }
 
@@ -255,28 +272,161 @@ impl TerminalProcessor {
         Self {
             context: None,
             config,
-            atuin_watcher: None,
-            history_watcher: None,
-            kitty_watcher: None,
-            recording_watcher: None,
-            scrollback_watcher: None,
+            sensd_processor: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
+            event_sender: None,
+            event_receiver: None,
         }
     }
 
+    /// Initialize sensd processor and submit terminal monitoring jobs
+    async fn initialize_sensd_integration(&mut self) -> SatelliteResult<()> {
+        info!("Initializing sensd integration for terminal monitoring");
+
+        // Create event channel for communication between sensd processor and this processor
+        let (sender, receiver) = mpsc::channel(1000);
+        self.event_sender = Some(sender.clone());
+        self.event_receiver = Some(receiver);
+
+        // Create sensd processor
+        let sensd_processor = SensdTerminalProcessor::new(self.config.sensd_config.clone(), sender)
+            .await
+            .map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to create sensd processor: {}",
+                    e
+                ))
+            })?;
+
+        let sensd_processor = Arc::new(sensd_processor);
+
+        // Submit monitoring jobs for enabled sources
+        if self
+            .config
+            .enabled_sources
+            .get("atuin")
+            .copied()
+            .unwrap_or(false)
+        {
+            if let Some(ref atuin_path) = self.config.atuin_db_path {
+                if atuin_path.exists() {
+                    info!("Submitting Atuin monitoring job: {}", atuin_path.as_str());
+                    sensd_processor
+                        .submit_atuin_job(atuin_path.as_str())
+                        .await
+                        .map_err(|e| {
+                            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                                "Failed to submit Atuin job: {}",
+                                e
+                            ))
+                        })?;
+                } else {
+                    warn!("Atuin database not found: {}", atuin_path.as_str());
+                }
+            }
+        }
+
+        if self
+            .config
+            .enabled_sources
+            .get("history")
+            .copied()
+            .unwrap_or(false)
+        {
+            for history_file in &self.config.history_files {
+                if history_file.exists() {
+                    info!(
+                        "Submitting history file monitoring job: {}",
+                        history_file.as_str()
+                    );
+                    sensd_processor
+                        .submit_history_file_job(history_file.as_str())
+                        .await
+                        .map_err(|e| {
+                            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                                "Failed to submit history file job: {}",
+                                e
+                            ))
+                        })?;
+                }
+            }
+        }
+
+        if self
+            .config
+            .enabled_sources
+            .get("recording")
+            .copied()
+            .unwrap_or(false)
+        {
+            if let Some(ref recordings_dir) = self.config.recording_output_dir {
+                info!(
+                    "Submitting recording monitoring job: {}",
+                    recordings_dir.as_str()
+                );
+                sensd_processor
+                    .submit_recording_job(recordings_dir.as_str())
+                    .await
+                    .map_err(|e| {
+                        sinex_satellite_sdk::SatelliteError::Processing(format!(
+                            "Failed to submit recording job: {}",
+                            e
+                        ))
+                    })?;
+            }
+        }
+
+        if self
+            .config
+            .enabled_sources
+            .get("kitty")
+            .copied()
+            .unwrap_or(false)
+        {
+            if let Some(ref socket_path) = self.config.kitty_socket_path {
+                info!("Submitting Kitty monitoring job: {}", socket_path.as_str());
+                sensd_processor
+                    .submit_kitty_job(socket_path.as_str())
+                    .await
+                    .map_err(|e| {
+                        sinex_satellite_sdk::SatelliteError::Processing(format!(
+                            "Failed to submit Kitty job: {}",
+                            e
+                        ))
+                    })?;
+            }
+        }
+
+        self.sensd_processor = Some(sensd_processor);
+        info!("sensd integration initialized successfully");
+        Ok(())
+    }
+
+    /// Start sensd job monitoring
+    async fn start_sensd_monitoring(&self) -> SatelliteResult<()> {
+        if let Some(ref processor) = self.sensd_processor {
+            info!("Starting sensd job monitoring");
+
+            // Start the job monitoring task in background
+            let monitor_processor = processor.clone();
+            tokio::spawn(async move {
+                if let Err(e) = monitor_processor.monitor_jobs().await {
+                    warn!("sensd job monitoring error: {}", e);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
     /// Take a snapshot of current terminal state
-    #[with_context(
-        operation = "take_terminal_snapshot",
-        retry_count = 2,
-        timeout_ms = 15000,
-        enable_metrics
-    )]
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
-        let mut enabled_sources = Vec::with_capacity(8); // Reasonable capacity for config items
+        let mut enabled_sources = Vec::with_capacity(8);
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
+        let sensd_jobs = Vec::new();
 
         // Check enabled sources
         for (source, enabled) in &self.config.enabled_sources {
@@ -296,243 +446,23 @@ impl TerminalProcessor {
             atuin_status = Some(Self::get_atuin_status(atuin_path).await);
         }
 
+        // TODO: Query sensd jobs from database
+        // This would require database access to query raw.sensor_jobs table
+
         let state = TerminalState {
             captured_at: Utc::now(),
             enabled_sources,
             history_file_status,
             atuin_status,
             shell_info: self.shell_info.clone(),
-            recent_activity: vec!["Terminal processor snapshot taken".to_string()],
+            recent_activity: vec![
+                "Terminal processor snapshot taken (sensd-integrated)".to_string()
+            ],
+            sensd_jobs,
         };
 
         self.last_state = Some(state.clone());
         Ok(state)
-    }
-
-    /// Initialize watchers based on enabled sources
-    #[with_context(
-        operation = "initialize_terminal_watchers",
-        retry_count = 3,
-        timeout_ms = 20000,
-        enable_metrics,
-        context = "component=watcher_initialization"
-    )]
-    async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
-        // For now, stub implementations - will be implemented properly later
-
-        // Initialize Atuin watcher
-        if self
-            .config
-            .enabled_sources
-            .get("atuin")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref atuin_path) = self.config.atuin_db_path {
-                if atuin_path.exists() {
-                    info!("Initializing Atuin watcher: {} (stub)", atuin_path.as_str());
-                    info!("✅ Atuin watcher initialized (stub)");
-                } else {
-                    warn!("Atuin database not found: {}", atuin_path.as_str());
-                }
-            }
-        }
-
-        // Initialize History watcher
-        if self
-            .config
-            .enabled_sources
-            .get("history")
-            .copied()
-            .unwrap_or(false)
-        {
-            let existing_files: Vec<Utf8PathBuf> = self
-                .config
-                .history_files
-                .iter()
-                .filter(|f| f.exists())
-                .cloned()
-                .collect();
-
-            if !existing_files.is_empty() {
-                info!(
-                    "Initializing History watcher for {} files (stub)",
-                    existing_files.len()
-                );
-                info!("✅ History watcher initialized (stub)");
-            } else {
-                warn!("No history files found");
-            }
-        }
-
-        // Initialize Kitty watcher (if requested and available)
-        if self
-            .config
-            .enabled_sources
-            .get("kitty")
-            .copied()
-            .unwrap_or(false)
-        {
-            info!("Initializing Kitty watcher (stub)");
-            info!("✅ Kitty watcher initialized (stub)");
-        }
-
-        // Initialize Recording watcher (if requested)
-        if self
-            .config
-            .enabled_sources
-            .get("recording")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref output_dir) = self.config.recording_output_dir {
-                info!(
-                    "Initializing Recording watcher: {} (stub)",
-                    output_dir.as_str()
-                );
-                info!("✅ Recording watcher initialized (stub)");
-            }
-        }
-
-        // Initialize Scrollback watcher (if requested)
-        if self
-            .config
-            .enabled_sources
-            .get("scrollback")
-            .copied()
-            .unwrap_or(false)
-        {
-            info!("Initializing Scrollback watcher (stub)");
-            info!("✅ Scrollback watcher initialized (stub)");
-        }
-
-        Ok(())
-    }
-
-    /// Start continuous terminal monitoring
-    #[with_context(
-        operation = "start_continuous_terminal_monitoring",
-        enable_metrics,
-        context = "component=continuous_monitoring"
-    )]
-    async fn start_continuous_monitoring(
-        &mut self,
-        _from_checkpoint: Checkpoint,
-    ) -> SatelliteResult<()> {
-        info!("Starting continuous terminal monitoring");
-
-        // For now, stub implementation - will be implemented properly later
-        // This would start the actual watchers and forward events
-
-        if let Some(ref context) = self.context {
-            info!("Terminal monitoring context available");
-
-            // Emit monitoring started event with shell info
-            let mut monitoring_event: RawEvent = Event::new(TerminalMonitoringStartedPayload {
-                enabled_sources: self.config.enabled_sources.clone(),
-                start_time: Utc::now(),
-            })
-            .into();
-
-            // Add shell info to the event payload if available
-            if let Some(ref shell_info) = self.shell_info {
-                if let serde_json::Value::Object(ref mut map) = monitoring_event.payload {
-                    map.insert(
-                        "shell_type".to_string(),
-                        serde_json::json!(shell_info.shell_type),
-                    );
-                    map.insert(
-                        "shell_version".to_string(),
-                        serde_json::json!(shell_info.version),
-                    );
-                    map.insert(
-                        "shell_capabilities".to_string(),
-                        serde_json::json!(shell_info.capabilities),
-                    );
-                }
-            }
-
-            context.emit_event(monitoring_event).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Perform historical scan on terminal sources
-    #[with_context(operation = "scan_historical_terminal_data")]
-    async fn scan_historical_terminal_data(
-        &self,
-        _from: &Checkpoint,
-        _until: &TimeHorizon,
-        _args: &ScanArgs,
-        emit_events: bool,
-    ) -> SatelliteResult<u64> {
-        let mut event_count = 0;
-
-        // This would implement historical scanning of terminal data
-        // For now, just provide a placeholder that shows the structure
-
-        if let Some(ref context) = self.context {
-            // Example: scan Atuin database for historical entries
-            if self
-                .config
-                .enabled_sources
-                .get("atuin")
-                .copied()
-                .unwrap_or(false)
-            {
-                if let Some(ref atuin_path) = self.config.atuin_db_path {
-                    if atuin_path.exists() && emit_events {
-                        // Create a sample historical event
-                        let event: RawEvent = Event::new(TerminalCommandHistoricalPayload {
-                            source: "atuin".to_string(),
-                            db_path: Some(atuin_path.clone().into()),
-                            file_path: None,
-                            scan_type: "historical".to_string(),
-                        })
-                        .into();
-
-                        context.emit_event(event).await?;
-                        event_count += 1;
-                    }
-                }
-            }
-
-            // Example: scan history files for historical entries
-            if self
-                .config
-                .enabled_sources
-                .get("history")
-                .copied()
-                .unwrap_or(false)
-            {
-                for history_file in &self.config.history_files {
-                    if history_file.exists() && emit_events {
-                        let event: RawEvent = Event::new(TerminalHistoryHistoricalPayload {
-                            source: "history_file".to_string(),
-                            file_path: history_file.clone().into(),
-                            scan_type: "historical".to_string(),
-                        })
-                        .into();
-
-                        context.emit_event(event).await?;
-                        event_count += 1;
-                    }
-                }
-            }
-        }
-
-        Ok(event_count)
-    }
-
-    /// Helper function to parse configuration field values
-    fn parse_config_field<T: serde::de::DeserializeOwned>(
-        config: &std::collections::HashMap<String, serde_json::Value>,
-        key: &str,
-    ) -> Option<T> {
-        config
-            .get(key)
-            .and_then(|v| serde_json::from_value::<T>(v.clone()).ok())
     }
 
     /// Helper function to get file metadata and status
@@ -578,9 +508,7 @@ impl TerminalProcessor {
     }
 
     /// Helper function to get Atuin database status
-    async fn get_atuin_status(
-        atuin_path: &sinex_core::types::domain::SanitizedPath,
-    ) -> AtuinStatus {
+    async fn get_atuin_status(atuin_path: &sinex_core::SanitizedPath) -> AtuinStatus {
         if atuin_path.exists() {
             let metadata = tokio::fs::metadata(atuin_path).await.ok();
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
@@ -628,38 +556,14 @@ impl TerminalProcessor {
         }
     }
 
-    /// Helper function to estimate Atuin entries
-    async fn estimate_atuin_entries(
-        atuin_db_path: &Option<Utf8PathBuf>,
-        warnings: &mut Vec<String>,
-    ) -> u64 {
-        if let Some(ref atuin_path) = atuin_db_path {
-            if atuin_path.exists() {
-                // Estimate based on file size (very rough)
-                tokio::fs::metadata(atuin_path)
-                    .await
-                    .map(|m| m.len() / 100) // ~100 bytes per entry
-                    .unwrap_or(0)
-            } else {
-                warnings.push("Atuin database not found".to_string());
-                0
-            }
-        } else {
-            0
-        }
-    }
-
-    /// Helper function to estimate history entries from files
-    async fn estimate_history_entries(history_files: &[Utf8PathBuf]) -> u64 {
-        let mut total = 0u64;
-        for f in history_files {
-            if f.exists() {
-                if let Ok(content) = tokio::fs::read_to_string(f).await {
-                    total += content.lines().count() as u64;
-                }
-            }
-        }
-        total
+    /// Helper function to parse configuration field values
+    fn parse_config_field<T: serde::de::DeserializeOwned>(
+        config: &std::collections::HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<T> {
+        config
+            .get(key)
+            .and_then(|v| serde_json::from_value::<T>(v.clone()).ok())
     }
 }
 
@@ -677,12 +581,12 @@ impl StatefulStreamProcessor for TerminalProcessor {
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
-        config: Self::Config,
+        _config: Self::Config,
     ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
-            "Initializing terminal processor"
+            "Initializing terminal processor with sensd integration"
         );
 
         // Initialize checkpoint manager
@@ -741,24 +645,15 @@ impl StatefulStreamProcessor for TerminalProcessor {
             self.config.history_files = files;
         }
 
-        if let Some(interval) =
-            Self::parse_config_field::<u64>(&ctx.config, "polling_interval_secs")
-        {
-            self.config.polling_interval_secs = interval;
-        }
-
-        if let Some(size) = Self::parse_config_field::<usize>(&ctx.config, "batch_size") {
-            self.config.batch_size = size;
-        }
-
         info!(
             enabled_sources = ?self.config.enabled_sources,
             atuin_db_path = ?self.config.atuin_db_path,
             history_files = ?self.config.history_files,
-            polling_interval_secs = self.config.polling_interval_secs,
-            batch_size = self.config.batch_size,
             "Terminal processor configuration"
         );
+
+        // Initialize sensd integration
+        self.initialize_sensd_integration().await?;
 
         self.context = Some(ctx);
         Ok(())
@@ -782,77 +677,30 @@ impl StatefulStreamProcessor for TerminalProcessor {
             until = ?until,
             targets = args.targets.len(),
             dry_run = args.dry_run,
-            "Starting terminal scan"
+            "Starting terminal scan with sensd integration"
         );
 
         match until {
             TimeHorizon::Snapshot => {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
-
-                // Initialize watchers for snapshot capabilities
-                if let Err(e) = self.initialize_watchers().await {
-                    warnings.push(format!("Failed to initialize some watchers: {}", e));
-                }
-
-                // Count available terminal sources
-                let active_watchers = [
-                    self.atuin_watcher.is_some(),
-                    self.history_watcher.is_some(),
-                    self.kitty_watcher.is_some(),
-                    self.recording_watcher.is_some(),
-                    self.scrollback_watcher.is_some(),
-                ]
-                .iter()
-                .filter(|&&x| x)
-                .count();
-
-                events_processed = active_watchers as u64;
                 successful_targets.push("terminal_state_snapshot".to_string());
-
-                if !args.dry_run {
-                    // Emit a snapshot event
-                    if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = Event::new(TerminalSnapshotPayload {
-                            active_watchers,
-                            enabled_sources: self.config.enabled_sources.clone(),
-                            snapshot_time: Utc::now(),
-                        })
-                        .into();
-
-                        context.emit_event(snapshot_event).await?;
-                    }
-                }
+                events_processed = 1;
             }
 
             TimeHorizon::Historical { .. } => {
-                // Historical scan of terminal data
-                warnings.push("Historical terminal scanning has limited capabilities".to_string());
-
-                match self
-                    .scan_historical_terminal_data(&from, &until, &args, !args.dry_run)
-                    .await
-                {
-                    Ok(count) => {
-                        events_processed = count;
-                        successful_targets.push("terminal_historical_scan".to_string());
-                    }
-                    Err(e) => {
-                        failed_targets
-                            .push(("terminal_historical_scan".to_string(), e.to_string()));
-                    }
-                }
+                warnings.push(
+                    "Historical scanning delegated to sensd - check sensd job status".to_string(),
+                );
+                successful_targets.push("sensd_historical_jobs".to_string());
+                events_processed = 0; // sensd handles the actual processing
             }
 
             TimeHorizon::Continuous => {
-                // Initialize watchers for continuous monitoring
-                self.initialize_watchers().await?;
-
-                // Start continuous monitoring
-                info!("Starting continuous terminal monitoring");
-                self.start_continuous_monitoring(from.clone()).await?;
-                // Continuous monitoring runs indefinitely
-                events_processed = 0; // Can't count events in continuous mode
+                // Start continuous monitoring via sensd
+                self.start_sensd_monitoring().await?;
+                successful_targets.push("sensd_continuous_monitoring".to_string());
+                events_processed = 0; // Continuous monitoring doesn't count discrete events
             }
         }
 
@@ -916,28 +764,16 @@ impl StatefulStreamProcessor for TerminalProcessor {
         until: &TimeHorizon,
         _args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
-        let mut estimated_events = 0;
-        let mut warnings = Vec::new();
-
-        // Estimate based on enabled sources and their potential
-        for (source, enabled) in &self.config.enabled_sources {
-            if *enabled {
-                let source_estimate = match source.as_str() {
-                    "atuin" => {
-                        Self::estimate_atuin_entries(&self.config.atuin_db_path, &mut warnings)
-                            .await
-                    }
-                    "history" => Self::estimate_history_entries(&self.config.history_files).await,
-                    _ => 10, // Default estimate for other sources
-                };
-                estimated_events += source_estimate;
-            }
-        }
+        let estimated_events = 100; // sensd handles the actual estimation
+        let mut warnings = vec![
+            "Event estimation delegated to sensd - actual numbers depend on source material"
+                .to_string(),
+        ];
 
         // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
             TimeHorizon::Snapshot => (0.1, 0.8), // Only current state
-            TimeHorizon::Historical { .. } => (1.0, 0.6), // Full history
+            TimeHorizon::Historical { .. } => (1.0, 0.3), // sensd handles historical
             TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
         };
 
@@ -990,7 +826,7 @@ impl ExplorationProvider for TerminalProcessor {
 
         Ok(SourceState {
             description: format!(
-                "Terminal processor monitoring {} sources",
+                "Terminal processor with sensd integration monitoring {} sources",
                 self.config
                     .enabled_sources
                     .values()
@@ -1009,20 +845,12 @@ impl ExplorationProvider for TerminalProcessor {
                     serde_json::to_value(&self.config.enabled_sources)?,
                 ),
                 (
-                    "atuin_db_path".to_string(),
-                    serde_json::to_value(&self.config.atuin_db_path)?,
-                ),
-                (
-                    "history_files".to_string(),
-                    serde_json::to_value(&self.config.history_files)?,
-                ),
-                (
-                    "polling_interval_secs".to_string(),
-                    serde_json::to_value(self.config.polling_interval_secs)?,
+                    "sensd_integration".to_string(),
+                    serde_json::Value::Bool(true),
                 ),
                 (
                     "processor_type".to_string(),
-                    serde_json::Value::String("ingestor".to_string()),
+                    serde_json::Value::String("sensd-integrated".to_string()),
                 ),
             ]),
             healthy: true,
@@ -1034,8 +862,7 @@ impl ExplorationProvider for TerminalProcessor {
         &self,
         _limit: u64,
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        // In a real implementation, this would query the database for scan history
-        // For now, return empty as this requires database access
+        // In sensd-integrated mode, ingestion history is managed by sensd
         Ok(vec![])
     }
 
@@ -1043,7 +870,6 @@ impl ExplorationProvider for TerminalProcessor {
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        // In a real implementation, this would compare terminal state with Sinex events
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
             let hour_ago = now - chrono::Duration::hours(1);
@@ -1068,29 +894,31 @@ impl ExplorationProvider for TerminalProcessor {
         Ok(CoverageAnalysis {
             time_range: (start_time, end_time),
             source_total,
-            sinex_total: 0, // Would query from database
+            sinex_total: 0, // Would query from database via sensd
             coverage_percentage: 0.0,
             missing_count: source_total,
             missing_samples: vec![MissingItem {
                 source_id: "terminal".to_string(),
                 timestamp: end_time,
-                description: "Terminal events not yet ingested into Sinex".to_string(),
-                missing_reason: Some("Initial scan required".to_string()),
+                description: "Terminal events processed via sensd source material".to_string(),
+                missing_reason: Some("Check sensd job status for actual processing".to_string()),
             }],
             duplicate_count: 0,
             recommendations: vec![
-                "Run a full snapshot scan to capture current state".to_string(),
-                "Enable continuous monitoring for real-time terminal events".to_string(),
-                "Check enabled sources configuration".to_string(),
+                "Monitor sensd job status for terminal source processing".to_string(),
+                "Check temporal_ledger for source material capture".to_string(),
+                "Verify sensd sensors are running for enabled sources".to_string(),
             ],
         })
     }
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
+        use sinex_core::types::validate_path;
+
         // Validate export path for security
         validate_path(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("Invalid export path '{}': {}", path, e))?;
@@ -1102,22 +930,20 @@ impl ExplorationProvider for TerminalProcessor {
                     // Simple CSV export
                     let mut csv = "source,enabled,status\n".to_string();
                     for (source, enabled) in &self.config.enabled_sources {
-                        csv.push_str(&format!("{},{},configured\n", source, enabled));
+                        csv.push_str(&format!("{},{},sensd-integrated\n", source, enabled));
                     }
                     csv
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            tokio::fs::write(path, content).await?;
+            std::fs::write(path.as_path(), content)?;
         } else {
             // Export configuration if no state available
             let config_data = serde_json::json!({
                 "enabled_sources": self.config.enabled_sources,
-                "atuin_db_path": self.config.atuin_db_path,
-                "history_files": self.config.history_files,
-                "polling_interval_secs": self.config.polling_interval_secs,
-                "batch_size": self.config.batch_size
+                "sensd_integration": true,
+                "processor_type": "sensd-integrated"
             });
 
             let content = match format {
@@ -1126,7 +952,7 @@ impl ExplorationProvider for TerminalProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            tokio::fs::write(path, content).await?;
+            std::fs::write(path.as_path(), content)?;
         }
 
         Ok(())

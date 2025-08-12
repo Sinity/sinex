@@ -131,7 +131,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_memory_metrics(&self) -> Vec<MetricEntry> {
-        // TODO: Implement actual memory metrics collection
+        // TODO(telemetry): Implement actual memory metrics collection using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_memory_usage_bytes".to_string(),
@@ -153,7 +153,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_cpu_metrics(&self) -> Vec<MetricEntry> {
-        // TODO: Implement actual CPU metrics collection
+        // TODO(telemetry): Implement actual CPU metrics collection using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_cpu_usage_percent".to_string(),
@@ -175,7 +175,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_disk_metrics(&self) -> Vec<MetricEntry> {
-        // TODO: Implement actual disk metrics collection
+        // TODO(telemetry): Implement actual disk metrics collection using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_disk_usage_bytes".to_string(),
@@ -205,7 +205,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_network_metrics(&self) -> Vec<MetricEntry> {
-        // TODO: Implement actual network metrics collection
+        // TODO(telemetry): Implement actual network metrics collection using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_network_bytes_received_total".to_string(),
@@ -259,7 +259,7 @@ impl ProcessMetricsCollector {
     }
 
     fn collect_process_metrics(&self) -> Vec<MetricEntry> {
-        // TODO: Implement actual process metrics collection
+        // TODO(telemetry): Implement actual process metrics collection using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_process_memory_usage_bytes".to_string(),
@@ -408,64 +408,64 @@ fn current_timestamp() -> u64 {
 
 // System metrics functions - These would be implemented using system APIs
 fn get_system_memory_usage() -> u64 {
-    // TODO: Implement actual system memory usage
+    // TODO(telemetry): Implement using sysinfo::System::used_memory()
     1024 * 1024 * 1024 // 1GB placeholder
 }
 
 fn get_system_memory_available() -> u64 {
-    // TODO: Implement actual system memory available
+    // TODO(telemetry): Implement using sysinfo::System::available_memory()
     4 * 1024 * 1024 * 1024 // 4GB placeholder
 }
 
 fn get_system_cpu_usage() -> f64 {
-    // TODO: Implement actual system CPU usage
+    // TODO(telemetry): Implement using sysinfo::System::global_cpu_info()
     25.0 // 25% placeholder
 }
 
 fn get_system_load_average() -> f64 {
-    // TODO: Implement actual system load average
+    // TODO(telemetry): Implement using sysinfo::System::load_average()
     1.5 // 1.5 placeholder
 }
 
 fn get_system_disk_usage() -> u64 {
-    // TODO: Implement actual system disk usage
+    // TODO(telemetry): Implement using sysinfo::System::disks()
     50 * 1024 * 1024 * 1024 // 50GB placeholder
 }
 
 fn get_system_disk_read_bytes() -> u64 {
-    // TODO: Implement actual system disk read bytes
+    // TODO(telemetry): Implement using sysinfo::Disk::total_read_bytes()
     1024 * 1024 * 1024 // 1GB placeholder
 }
 
 fn get_system_disk_write_bytes() -> u64 {
-    // TODO: Implement actual system disk write bytes
+    // TODO(telemetry): Implement using sysinfo::Disk::total_written_bytes()
     512 * 1024 * 1024 // 512MB placeholder
 }
 
 fn get_system_network_bytes_received() -> u64 {
-    // TODO: Implement actual system network bytes received
+    // TODO(telemetry): Implement using sysinfo::Networks::received()
     100 * 1024 * 1024 // 100MB placeholder
 }
 
 fn get_system_network_bytes_sent() -> u64 {
-    // TODO: Implement actual system network bytes sent
+    // TODO(telemetry): Implement using sysinfo::Networks::transmitted()
     50 * 1024 * 1024 // 50MB placeholder
 }
 
 fn get_process_memory_usage(pid: u32) -> u64 {
-    // TODO: Implement actual process memory usage
+    // TODO(telemetry): Implement using sysinfo::Process::memory()
     let _ = pid;
     100 * 1024 * 1024 // 100MB placeholder
 }
 
 fn get_process_cpu_usage(pid: u32) -> f64 {
-    // TODO: Implement actual process CPU usage
+    // TODO(telemetry): Implement using sysinfo::Process::cpu_usage()
     let _ = pid;
     10.0 // 10% placeholder
 }
 
 fn get_process_file_descriptors(pid: u32) -> u64 {
-    // TODO: Implement actual process file descriptor count
+    // TODO(telemetry): Implement using /proc/{pid}/fd/ directory count
     let _ = pid;
     50 // 50 FDs placeholder
 }

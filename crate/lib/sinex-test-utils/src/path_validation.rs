@@ -11,8 +11,8 @@
 //! - Test cleanup should only delete files within safe boundaries
 
 use camino::{Utf8Path, Utf8PathBuf};
-use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::SinexError;
+use sinex_core::SanitizedPath;
 use std::env;
 use std::str::FromStr;
 

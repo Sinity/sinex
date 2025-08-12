@@ -10,7 +10,7 @@
 //! All satellite services use environment-based configuration only:
 //!
 //! ```rust
-//! use sinex_satellite_sdk::config::SatelliteConfig;
+//! use sinex_satellite_sdk::SatelliteConfig;
 //!
 //! // Load from environment variables and defaults
 //! let config = SatelliteConfig::load_from_env("my-service");
@@ -240,7 +240,7 @@ impl SatelliteConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_satellite_sdk::config::SatelliteConfig;
+    /// use sinex_satellite_sdk::SatelliteConfig;
     ///
     /// // Load with defaults
     /// let config = SatelliteConfig::load_from_env("my-service");

@@ -456,7 +456,10 @@ mod benches {
             .with_checkpoints(100);
 
         let id = manager.fixture_id(&fixtures, DatasetSize::Medium);
+        #[cfg(feature = "bench")]
         divan::black_box(id);
+        #[cfg(not(feature = "bench"))]
+        drop(id);
         Ok(())
     }
 }

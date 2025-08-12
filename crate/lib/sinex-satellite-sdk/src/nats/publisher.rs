@@ -8,13 +8,13 @@ use super::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
-use sinex_core::db::models::{Provenance, RawEvent};
-use sinex_core::types::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::ServiceName;
+use sinex_core::{Provenance, RawEvent};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{debug, error, warn};
 
 /// NATS publisher for Sinex events
@@ -44,27 +44,21 @@ impl NatsPublisher {
         }
     }
 
-    /// Create a new NATS publisher with custom buffer size
-    pub fn with_buffer_size(jetstream: JetStream, max_buffer_size: usize) -> Self {
-        Self {
-            jetstream,
-            buffer: Arc::new(Mutex::new(Vec::new())),
-            max_buffer_size,
-        }
-    }
-
-    /// Publish a raw event
-    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
-        let subject = StreamManager::event_subject(&event.source, &event.event_type);
-
-        // Create headers
+    /// Create optimized headers for an event to reduce string allocations
+    fn create_event_headers(event: &RawEvent) -> HeaderMap {
         let mut headers = HeaderMap::new();
+
+        // Use pre-allocated capacity for header map
+        headers.reserve(6); // Typical number of headers
+
         if let Some(id) = &event.id {
             headers.insert("Sinex-Event-Id", id.to_string());
         }
-        headers.insert("Sinex-Source", event.source.as_str().to_string());
-        headers.insert("Sinex-Event-Type", event.event_type.as_str().to_string());
-        headers.insert("Sinex-Host", event.host.as_str().to_string());
+
+        // Avoid redundant .to_string() calls where possible
+        headers.insert("Sinex-Source", event.source.as_str());
+        headers.insert("Sinex-Event-Type", event.event_type.as_str());
+        headers.insert("Sinex-Host", event.host.as_str());
         headers.insert(
             "Sinex-Timestamp",
             event.ts_orig.unwrap_or_else(chrono::Utc::now).to_rfc3339(),
@@ -75,6 +69,7 @@ impl NatsPublisher {
             match provenance {
                 Provenance::Events(ids) => {
                     if !ids.is_empty() {
+                        // Use join directly to avoid intermediate Vec allocation
                         let ids_str = ids
                             .iter()
                             .map(|id| id.to_string())
@@ -88,6 +83,25 @@ impl NatsPublisher {
                 }
             }
         }
+
+        headers
+    }
+
+    /// Create a new NATS publisher with custom buffer size
+    pub fn with_buffer_size(jetstream: JetStream, max_buffer_size: usize) -> Self {
+        Self {
+            jetstream,
+            buffer: Arc::new(Mutex::new(Vec::new())),
+            max_buffer_size,
+        }
+    }
+
+    /// Publish a raw event
+    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
+        let subject = StreamManager::event_subject(&event.source, &event.event_type);
+
+        // Create optimized headers
+        let headers = Self::create_event_headers(event);
 
         // Serialize event to JSON
         let payload = serde_json::to_vec(event).map_err(|e| NatsError::Serialization(e))?;
@@ -206,37 +220,8 @@ impl NatsPublisher {
         for event in events {
             let subject = StreamManager::event_subject(&event.source, &event.event_type);
 
-            // Create headers for this event
-            let mut headers = HeaderMap::new();
-            if let Some(id) = &event.id {
-                headers.insert("Sinex-Event-Id", id.to_string());
-            }
-            headers.insert("Sinex-Source", event.source.as_str().to_string());
-            headers.insert("Sinex-Event-Type", event.event_type.as_str().to_string());
-            headers.insert("Sinex-Host", event.host.as_str().to_string());
-            headers.insert(
-                "Sinex-Timestamp",
-                event.ts_orig.unwrap_or_else(chrono::Utc::now).to_rfc3339(),
-            );
-
-            // Add provenance information if present
-            if let Some(provenance) = &event.provenance {
-                match provenance {
-                    Provenance::Events(ids) => {
-                        if !ids.is_empty() {
-                            let ids_str = ids
-                                .iter()
-                                .map(|id| id.to_string())
-                                .collect::<Vec<_>>()
-                                .join(",");
-                            headers.insert("Sinex-Source-Event-Ids", ids_str);
-                        }
-                    }
-                    Provenance::Material { id, .. } => {
-                        headers.insert("Sinex-Source-Material-Id", id.to_string());
-                    }
-                }
-            }
+            // Use optimized header creation
+            let headers = Self::create_event_headers(event);
 
             // Serialize event to JSON
             let payload = serde_json::to_vec(event).map_err(|e| NatsError::Serialization(e))?;

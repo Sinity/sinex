@@ -2,15 +2,17 @@
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
-use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
-use sinex_core::db::{create_pool, query_helpers::db_error};
-use sinex_core::types::domain::SanitizedPath;
-use sinex_core::types::error::SinexError;
-use sinex_satellite_sdk::annex::BlobManager;
-use sinex_satellite_sdk::grpc_client::IngestClient;
+use sinex_core::{
+    db::{
+        create_pool,
+        query_helpers::db_error,
+        telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator},
+    },
+    types::{domain::SanitizedPath, error::SinexError},
+};
+use sinex_satellite_sdk::{annex::BlobManager, IngestClient};
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 const TELEMETRY_INTERVAL_SECS: u64 = 300;
@@ -48,20 +50,35 @@ impl ServiceContainer {
         let annex_path = Utf8PathBuf::from(annex_path.as_str());
 
         // Ensure the annex directory exists
-        std::fs::create_dir_all(&annex_path).map_err(|e| {
+        tokio::fs::create_dir_all(&annex_path).await.map_err(|e| {
             SinexError::io("Failed to create annex directory")
                 .with_path(&annex_path)
                 .with_source(e.to_string())
         })?;
+
+        // Create IngestClient for BlobManager (required for proper event routing)
+        let ingest_client = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
+            IngestClient::new(&ingest_socket).await.map_err(|e| {
+                SinexError::service("Failed to create ingest client for blob manager")
+                    .with_source(e.to_string())
+            })?
+        } else {
+            return Err(SinexError::configuration(
+                "SINEX_INGEST_SOCKET environment variable not set - required for blob manager",
+            )
+            .into());
+        };
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone()).map_err(|e| {
-            SinexError::service("Failed to create blob manager").with_source(e.to_string())
-        })?);
+        let blob_manager = Arc::new(
+            BlobManager::new(annex_config, pool.clone(), ingest_client.clone()).map_err(|e| {
+                SinexError::service("Failed to create blob manager").with_source(e.to_string())
+            })?,
+        );
 
         // Initialize telemetry
         let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
@@ -69,16 +86,8 @@ impl ServiceContainer {
             let (tx, mut rx) = mpsc::channel(500);
 
             // Spawn task to forward telemetry events to ingestd
-            let ingest_socket_clone = ingest_socket.clone();
+            let mut telemetry_client = ingest_client.clone();
             tokio::spawn(async move {
-                let mut ingest_client = match IngestClient::new(&ingest_socket_clone).await {
-                    Ok(client) => client,
-                    Err(e) => {
-                        tracing::error!("Failed to create ingest client for telemetry: {}", e);
-                        return;
-                    }
-                };
-
                 let mut batch = Vec::new();
                 let mut last_flush = std::time::Instant::now();
 
@@ -87,7 +96,7 @@ impl ServiceContainer {
 
                     // Flush on batch size or timeout
                     if batch.len() >= 10 || last_flush.elapsed() > Duration::from_secs(5) {
-                        if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                        if let Err(e) = telemetry_client.ingest_batch(&batch).await {
                             tracing::warn!("Failed to send telemetry batch: {}", e);
                         }
                         batch.clear();
@@ -97,7 +106,7 @@ impl ServiceContainer {
 
                 // Final flush
                 if !batch.is_empty() {
-                    if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                    if let Err(e) = telemetry_client.ingest_batch(&batch).await {
                         tracing::warn!("Failed to send final telemetry batch: {}", e);
                     }
                 }
