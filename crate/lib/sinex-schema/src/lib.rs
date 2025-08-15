@@ -36,8 +36,6 @@ mod m20240103_000003_create_analytics_views;
 mod m20240104_000004_create_helper_functions;
 mod m20240105_000005_create_test_helper_functions;
 mod m20240106_000006_create_coordination_tables;
-mod m20240109_000009_add_payload_validation_function;
-mod m20240110_000010_add_event_payload_check_constraint;
 mod m20250810_000001_create_outbox_table;
 mod m20250810_000006_add_archive_trigger;
 mod m20250810_132050_drop_obsolete_artifact_tables;
@@ -58,9 +56,6 @@ impl MigratorTrait for Migrator {
             Box::new(m20240104_000004_create_helper_functions::Migration),
             Box::new(m20240105_000005_create_test_helper_functions::Migration),
             Box::new(m20240106_000006_create_coordination_tables::Migration),
-            // m20240109 duplicated validation; consolidated into 000002
-            // Box::new(m20240109_000009_add_payload_validation_function::Migration),
-            Box::new(m20240110_000010_add_event_payload_check_constraint::Migration),
             Box::new(m20250810_000001_create_outbox_table::Migration),
             Box::new(m20250810_000006_add_archive_trigger::Migration),
             Box::new(m20250810_132050_drop_obsolete_artifact_tables::Migration),
