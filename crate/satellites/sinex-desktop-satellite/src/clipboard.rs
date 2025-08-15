@@ -329,11 +329,11 @@ impl ClipboardWatcher {
                 data_bytes,              // $4 - data
                 data_bytes.len() as i64, // $5 - total_bytes
                 "text/plain",            // $6 - content_type
-                metadata.to_string(),    // $7 - metadata
-                "clipboard",             // $8 - source_type
-                "finalized",             // $9 - status
-                "clipboard",             // $10 - material_type
-                "clipboard://",          // $11 - source_uri
+                serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string()), // $7 - metadata
+                "clipboard",    // $8 - source_type
+                "finalized",    // $9 - status
+                "clipboard",    // $10 - material_type
+                "clipboard://", // $11 - source_uri
             )
             .execute(db_pool)
             .await?;

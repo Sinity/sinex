@@ -9,7 +9,11 @@ mod common {
     // Core types facade
     pub use sinex_core::{
         db::models::{Event, RawEvent},
-        types::{events::payloads::*, Id},
+        types::{
+            domain::{EventSource, EventType},
+            events::payloads::*,
+            Id,
+        },
     };
 
     // SDK facade for common processor types
@@ -18,6 +22,7 @@ mod common {
             ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
             IngestionHistoryEntry, MissingItem, SourceState,
         },
+        grpc_client::IngestClient,
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
             StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -103,7 +108,7 @@ pub enum HealthStatus {
 pub struct HealthAggregator {
     context: Option<StreamProcessorContext>,
     config: HealthAggregatorConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    ingest_client: Option<IngestClient>,
     db_pool: Option<PgPool>,
     component_health: HashMap<String, ComponentHealth>,
 }
@@ -113,7 +118,7 @@ impl HealthAggregator {
         Self {
             context: None,
             config: HealthAggregatorConfig::default(),
-            event_sender: None,
+            ingest_client: None,
             db_pool: None,
             component_health: HashMap::new(),
         }
@@ -125,10 +130,10 @@ impl HealthAggregator {
             .db_pool
             .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
+        let ingest_client = self
+            .ingest_client
             .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Ingest client not initialized"))?;
 
         // Query recent health events
         let health_events = self.query_health_events(db_pool, from).await?;
@@ -149,7 +154,7 @@ impl HealthAggregator {
                     .generate_component_health_report(component_name, health)
                     .await
                 {
-                    if let Err(e) = event_sender.send(health_report).await {
+                    if let Err(e) = ingest_client.ingest_event(&health_report).await {
                         warn!(
                             "Failed to send component health report for {}: {}",
                             component_name, e
@@ -164,7 +169,7 @@ impl HealthAggregator {
         // Generate system-wide health status if enabled
         if self.config.enable_system_health_status {
             if let Ok(system_health) = self.generate_system_health_status().await {
-                if let Err(e) = event_sender.send(system_health).await {
+                if let Err(e) = ingest_client.ingest_event(&system_health).await {
                     warn!("Failed to send system health status: {}", e);
                 } else {
                     events_processed += 1;
@@ -175,7 +180,7 @@ impl HealthAggregator {
         // Generate health alerts for unhealthy components
         let alert_events = self.generate_health_alerts().await?;
         for alert_event in alert_events {
-            if let Err(e) = event_sender.send(alert_event).await {
+            if let Err(e) = ingest_client.ingest_event(&alert_event).await {
                 warn!("Failed to send health alert: {}", e);
             } else {
                 events_processed += 1;
@@ -206,46 +211,31 @@ impl HealthAggregator {
             "service.error".to_string(),
         ];
 
-        use sinex_core::db::repositories::events::EventRecordExt;
-        use sinex_schema::schema::records::EventRecord;
+        use sinex_core::db::repositories::DbPoolExt;
+        use sinex_core::types::domain::EventType;
 
-        let event_records = sqlx::query_as!(
-            EventRecord,
-            r#"
-            SELECT 
-                id as "id!: Uuid",
-                ts_ingest as "ts_ingest!",
-                ts_orig,
-                source as "source!",
-                event_type as "event_type!",
-                host as "host!",
-                payload as "payload!",
-                ingestor_version,
-                payload_schema_id,
-                payload_schema_name,
-                payload_schema_version,
-                source_event_ids as "source_event_ids?: Vec<Uuid>",
-                source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
-                anchor_byte,
-                associated_blob_ids as "associated_blob_ids?: Vec<Uuid>"
-            FROM core.events 
-            WHERE ts_orig >= $1 
-            AND (event_type = ANY($2) OR payload::text ILIKE '%health%' OR payload::text ILIKE '%status%')
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &health_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;
+        // Query health events for each type
+        let mut all_events = Vec::new();
+        for event_type_str in &health_event_types {
+            let event_type = EventType::from(event_type_str.as_str());
+            let events = db_pool
+                .events()
+                .get_events_by_type_and_time_range(
+                    &event_type,
+                    window_start,
+                    chrono::Utc::now(),
+                    Some(100),
+                )
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;
+            all_events.extend(events);
+        }
 
-        let events: Vec<RawEvent> = event_records
-            .into_iter()
-            .map(|record| record.to_event())
-            .collect();
+        // Sort by timestamp and limit to 1000 most recent
+        all_events.sort_by(|a, b| b.ts_orig.cmp(&a.ts_orig));
+        all_events.truncate(1000);
+
+        let events = all_events;
 
         Ok(events)
     }
@@ -443,8 +433,13 @@ impl HealthAggregator {
         });
 
         // Create synthesized event with proper provenance from recent events
-        let event = Event::from_events(report_payload, health.recent_events.clone())
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "health-aggregator",
+            "health.component_report",
+            report_payload,
+            health.recent_events.clone(),
+        )
+        .with_ts_orig(Some(Utc::now()));
 
         Ok(event.into())
     }
@@ -504,7 +499,7 @@ impl HealthAggregator {
             system_health_payload,
             all_event_ids,
         )
-        .with_timestamp(Utc::now());
+        .with_ts_orig(Some(Utc::now()));
 
         Ok(event.into())
     }
@@ -538,8 +533,13 @@ impl HealthAggregator {
                     "generated_at": Utc::now(),
                 });
 
-                let alert_event = Event::from_events(alert_payload, health.recent_events.clone())
-                    .with_ts_orig(Some(Utc::now()));
+                let alert_event = Event::from_synthesis(
+                    "health-aggregator",
+                    "health.alert",
+                    alert_payload,
+                    health.recent_events.clone(),
+                )
+                .with_ts_orig(Some(Utc::now()));
 
                 alerts.push(alert_event.into());
             }
@@ -567,9 +567,9 @@ impl StatefulStreamProcessor for HealthAggregator {
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
 
-        // Get database pool from context
+        // Get database pool and ingest client from context
         self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
+        self.ingest_client = Some(ctx.ingest_client.clone());
         self.context = Some(ctx);
         self.config = config;
 

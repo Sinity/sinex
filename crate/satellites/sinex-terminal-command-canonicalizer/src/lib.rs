@@ -257,47 +257,31 @@ impl TerminalCommandCanonicalizer {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
 
-        use sinex_core::db::repositories::events::EventRecordExt;
-        use sinex_schema::schema::records::EventRecord;
+        use sinex_core::db::repositories::DbPoolExt;
+        use sinex_core::types::domain::EventType;
 
-        let event_records = sqlx::query_as!(
-            EventRecord,
-            r#"
-            SELECT 
-                id as "id!: Uuid",
-                ts_ingest as "ts_ingest!",
-                ts_orig,
-                source as "source!",
-                event_type as "event_type!",
-                host as "host!",
-                payload as "payload!",
-                ingestor_version,
-                payload_schema_id,
-                payload_schema_name,
-                payload_schema_version,
-                source_event_ids as "source_event_ids?: Vec<Uuid>",
-                source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
-                anchor_byte,
-                associated_blob_ids as "associated_blob_ids?: Vec<Uuid>"
-            FROM core.events 
-            WHERE ts_orig >= $1 AND event_type = ANY($2)
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &self.config.terminal_event_types
-        )
-        .fetch_all(db_pool)
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query terminal events: {}", e))?;
+        // Query terminal command events for each configured type
+        let mut all_events = Vec::new();
+        for event_type_str in &self.config.terminal_event_types {
+            let event_type = EventType::from(event_type_str.as_str());
+            let events = db_pool
+                .events()
+                .get_events_by_type_and_time_range(
+                    &event_type,
+                    window_start,
+                    chrono::Utc::now(),
+                    Some(100),
+                )
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query terminal events: {}", e))?;
+            all_events.extend(events);
+        }
 
-        // Convert EventRecord to RawEvent using the EventRecordExt trait
-        let events: Vec<RawEvent> = event_records
-            .into_iter()
-            .map(|record| record.to_event())
-            .collect();
+        // Sort by timestamp and limit to 1000 most recent
+        all_events.sort_by(|a, b| b.ts_orig.cmp(&a.ts_orig));
+        all_events.truncate(1000);
+
+        let events = all_events;
 
         Ok(events)
     }

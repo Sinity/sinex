@@ -361,18 +361,18 @@ impl DesktopProcessor {
             )
             VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
-            material_id as Ulid,        // $1 - source_material_id
-            source_identifier,          // $2 - source_identifier
-            acquired_at,                // $3 - created_at
-            data,                       // $4 - data
-            data.len() as i64,          // $5 - total_bytes
-            "application/json",         // $6 - content_type
-            format!("{:x}", data_hash), // $7 - checksum (as hex string)
-            metadata,                   // $8 - metadata
-            "desktop",                  // $9 - source_type
-            "finalized",                // $10 - status
-            "desktop_snapshot",         // $11 - material_type
-            "desktop://snapshot"        // $12 - source_uri
+            material_id as Ulid,            // $1 - source_material_id
+            source_identifier,              // $2 - source_identifier
+            acquired_at,                    // $3 - created_at
+            data,                           // $4 - data
+            data.len() as i64,              // $5 - total_bytes
+            "application/json",             // $6 - content_type
+            data_hash.to_hex().to_string(), // $7 - checksum (as hex string)
+            metadata,                       // $8 - metadata
+            "desktop",                      // $9 - source_type
+            "finalized",                    // $10 - status
+            "desktop_snapshot",             // $11 - material_type
+            "desktop://snapshot"            // $12 - source_uri
         )
         .execute(db_pool)
         .await;
@@ -528,10 +528,12 @@ impl StatefulStreamProcessor for DesktopProcessor {
                     if let Some(ref db_pool) = self.db_pool {
                         let snapshot_data = serde_json::json!({
                             "snapshot_type": "desktop_state",
-                            "enabled_sources": [
-                                if self.config.clipboard_enabled { Some("clipboard") } else { None },
-                                if self.config.window_manager_enabled { Some("window_manager") } else { None }
-                            ].into_iter().flatten().collect::<Vec<_>>(),
+                            "enabled_sources": {
+                                let mut sources = Vec::new();
+                                if self.config.clipboard_enabled { sources.push("clipboard"); }
+                                if self.config.window_manager_enabled { sources.push("window_manager"); }
+                                sources
+                            },
                             "source_count": active_watchers,
                             "clipboard_enabled": self.config.clipboard_enabled,
                             "window_manager_enabled": self.config.window_manager_enabled,

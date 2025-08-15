@@ -109,7 +109,7 @@ impl WindowManagerWatcher {
     /// Create new window manager watcher with sensd integration
     pub async fn new(wm_type: WindowManagerType, db_pool: Option<PgPool>) -> SatelliteResult<Self> {
         let mut watcher = Self {
-            wm_type,
+            wm_type: wm_type.clone(),
             socket_path: None,
             command_socket_path: None,
             windows: HashMap::new(),
@@ -230,17 +230,17 @@ impl WindowManagerWatcher {
             )
             VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
-            material_id as Ulid,           // $1 - source_material_id
-            self.source_identifier,        // $2 - source_identifier
-            now,                           // $3 - created_at
-            &data_bytes,                   // $4 - data
-            data_bytes.len() as i64,       // $5 - total_bytes
-            "application/json",            // $6 - content_type
-            complete_metadata.to_string(), // $7 - metadata
-            "window_manager",              // $8 - source_type
-            "finalized",                   // $9 - status
-            "window_state",                // $10 - material_type
-            "hyprland://",                 // $11 - source_uri
+            material_id as Ulid,     // $1 - source_material_id
+            self.source_identifier,  // $2 - source_identifier
+            now,                     // $3 - created_at
+            &data_bytes,             // $4 - data
+            data_bytes.len() as i64, // $5 - total_bytes
+            "application/json",      // $6 - content_type
+            serde_json::to_string(&complete_metadata).unwrap_or_else(|_| "{}".to_string()), // $7 - metadata
+            "window_manager", // $8 - source_type
+            "finalized",      // $9 - status
+            "window_state",   // $10 - material_type
+            "hyprland://",    // $11 - source_uri
         )
         .execute(db_pool)
         .await?;

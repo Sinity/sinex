@@ -400,11 +400,17 @@ impl PkmService {
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
                 material_type: m.material_type,
-                source_uri: m.source_uri,
-                ingestion_time: m.ingestion_time,
-                file_size_bytes: m.metadata.get("file_size_bytes").cloned(),
-                mime_type: m.metadata.get("mime_type").cloned(),
-                metadata: m.metadata,
+                source_uri: Some(m.source_uri),
+                ingestion_time: m.ingestion_time.unwrap_or_else(|| m.created_at),
+                file_size_bytes: m
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("file_size_bytes").cloned()),
+                mime_type: m
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("mime_type").cloned()),
+                metadata: m.metadata.unwrap_or(serde_json::json!({})),
                 content_preview: m.content_preview,
             })
             .collect();
@@ -432,11 +438,11 @@ impl PkmService {
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
                 material_type: m.material_type,
-                source_uri: m.source_uri,
-                ingestion_time: m.ingestion_time,
+                source_uri: Some(m.source_uri),
+                ingestion_time: m.ingestion_time.unwrap_or_else(|| m.created_at),
                 file_size_bytes: None,
                 mime_type: None,
-                metadata: m.metadata,
+                metadata: m.metadata.unwrap_or(serde_json::json!({})),
                 content_preview: None,
             })
             .collect();

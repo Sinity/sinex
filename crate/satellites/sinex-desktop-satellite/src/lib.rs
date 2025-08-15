@@ -42,7 +42,7 @@ mod common {
             Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
             StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies

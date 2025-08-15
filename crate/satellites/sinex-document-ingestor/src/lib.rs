@@ -9,9 +9,10 @@ use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    types::{events::DocumentIngestedPayload, Event, Ulid},
-    RawEvent,
+    db::models::{Event, RawEvent},
+    types::{events::DocumentIngestedPayload, ulid::Ulid},
 };
 use sinex_satellite_sdk::{
     cli::{
@@ -23,7 +24,6 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_schema::ulid_conversions::ulid_to_uuid;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
@@ -517,17 +517,18 @@ impl StatefulStreamProcessor for DocumentProcessor {
         // Create event channel
         let (event_sender, mut event_receiver) = mpsc::channel(1000);
 
+        // Clone ingest_client before storing context
+        let ingest_client = ctx.ingest_client.clone();
+
         // Store configuration and resources
         self.config = config;
         self.db_pool = Some(db_pool);
         self.event_sender = Some(event_sender);
-        self.context = Some(ctx.clone());
-
-        // Start background task to forward events to ingestd
-        let ingest_client = ctx.ingest_client.clone();
+        self.context = Some(ctx);
         tokio::spawn(async move {
+            let mut client = ingest_client;
             while let Some(event) = event_receiver.recv().await {
-                if let Err(e) = ingest_client.emit_event(event).await {
+                if let Err(e) = client.ingest_event(&event).await {
                     error!("Failed to emit event to ingestd: {}", e);
                 }
             }
