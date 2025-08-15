@@ -147,7 +147,7 @@ impl TemporalLedger {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                blob_id, source_identifier, source_type, source_path,
+                source_material_id, source_identifier, source_type, source_path,
                 content_type, status, created_at
             )
             VALUES ($1::ulid, $2, $3, $4, $5, 'sensing', NOW())

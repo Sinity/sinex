@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types

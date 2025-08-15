@@ -154,16 +154,16 @@ impl EventValidator {
         let schemas = sqlx::query_as!(
             SchemaRecord,
             r#"
-            SELECT DISTINCT ON (source, event_type)
+            SELECT DISTINCT ON (source_type, event_type)
                 id as "id: Ulid",
-                source as "source!",
+                source_type as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version DESC
+            ORDER BY source_type, event_type, schema_version DESC
             "#
         )
         .fetch_all(pool)
@@ -337,14 +337,14 @@ impl EventValidator {
             r#"
             SELECT 
                 id as "id: Ulid",
-                source as "source!",
+                source_type as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version
+            ORDER BY source_type, event_type, schema_version
             "#
         )
         .fetch_all(pool)

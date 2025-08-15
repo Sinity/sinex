@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -499,8 +496,13 @@ impl HealthAggregator {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(system_health_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "health-aggregator",
+            "health.system_status",
+            system_health_payload,
+            all_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }

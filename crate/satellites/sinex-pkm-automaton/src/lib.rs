@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -551,8 +548,13 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(insights_payload, source_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "pkm-automaton",
+            "pkm.knowledge_extraction",
+            insights_payload,
+            source_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -645,8 +647,13 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_events(session_payload, session.events.clone())
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "pkm-automaton",
+            "pkm.learning_session",
+            session_payload,
+            session.events.clone(),
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -708,8 +715,13 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event =
-                Event::from_events(graph_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+            let graph_event = Event::from_synthesis(
+                "pkm-automaton",
+                "pkm.knowledge_graph",
+                graph_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             graph_events.push(graph_event.into());
         }
@@ -763,8 +775,13 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = Event::from_events(workflow_payload, pattern_event_ids)
-                    .with_ts_orig(Some(Utc::now()));
+                let pattern_event = Event::from_synthesis(
+                    "pkm-automaton",
+                    "pkm.workflow_pattern",
+                    workflow_payload,
+                    pattern_event_ids,
+                )
+                .with_timestamp(Utc::now());
 
                 pattern_events.push(pattern_event.into());
             }

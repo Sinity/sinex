@@ -85,7 +85,7 @@ impl SensdIntegrationTest {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                blob_id, source_identifier, source_type, 
+                source_material_id, source_identifier, source_type, 
                 total_bytes, content_type, data, status, 
                 created_at, staged_at
             )

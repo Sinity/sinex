@@ -325,7 +325,7 @@ impl ProtoService for SensdGrpcService {
         let result = sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                id, source_identifier, source_type, 
+                source_material_id, source_identifier, source_type, 
                 content_type, status, total_bytes,
                 created_at, staged_at, metadata, data,
                 material_type, checksum, source_uri, encoding,
@@ -333,7 +333,7 @@ impl ProtoService for SensdGrpcService {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
             )
-            RETURNING id as "id: Ulid"
+            RETURNING source_material_id as "id: Ulid"
             "#,
             material_id as _,
             req.source_identifier,

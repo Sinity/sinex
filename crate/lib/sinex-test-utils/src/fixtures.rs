@@ -641,7 +641,10 @@ async fn create_performance_dataset_fixture(
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     // Use source constants from payload types
-    use sinex_core::types::*;
+    use sinex_core::types::events::payloads::{
+        clipboard::ClipboardCopiedPayload, filesystem::FileCreatedPayload,
+        shell::KittyCommandExecutedPayload, window::HyprlandWindowFocusedPayload,
+    };
 
     let sources = vec![
         FileCreatedPayload::SOURCE,

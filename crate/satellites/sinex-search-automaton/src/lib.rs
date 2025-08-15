@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -514,8 +511,13 @@ impl SearchAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(index_payload, source_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "search-automaton",
+            "search.index_built",
+            index_payload,
+            source_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -541,8 +543,13 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let analytics_event =
-                Event::from_events(analytics_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+            let analytics_event = Event::from_synthesis(
+                "search-automaton",
+                "search.analytics",
+                analytics_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             analytics_events.push(analytics_event.into());
         }
@@ -630,8 +637,13 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let discoverability_event = Event::from_events(discoverability_payload, all_entry_ids)
-                .with_ts_orig(Some(Utc::now()));
+            let discoverability_event = Event::from_synthesis(
+                "search-automaton",
+                "search.content_discoverability",
+                discoverability_payload,
+                all_entry_ids,
+            )
+            .with_timestamp(Utc::now());
 
             discoverability_events.push(discoverability_event.into());
         }

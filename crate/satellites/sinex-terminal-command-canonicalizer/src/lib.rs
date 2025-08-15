@@ -10,11 +10,8 @@ pub mod unified_processor;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -570,8 +567,13 @@ impl TerminalCommandCanonicalizer {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(canonical_payload, vec![canonical_cmd.source_event_id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "terminal-canonicalizer",
+            "terminal.command_canonicalized",
+            canonical_payload,
+            vec![canonical_cmd.source_event_id],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -617,8 +619,13 @@ impl TerminalCommandCanonicalizer {
             "generated_at": Utc::now(),
         });
 
-        let pattern_event =
-            Event::from_events(pattern_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+        let pattern_event = Event::from_synthesis(
+            "terminal-canonicalizer",
+            "terminal.command_pattern",
+            pattern_payload,
+            all_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         pattern_events.push(pattern_event.into());
 
@@ -715,8 +722,13 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let safety_event = Event::from_events(safety_payload, dangerous_event_ids)
-                .with_ts_orig(Some(Utc::now()));
+            let safety_event = Event::from_synthesis(
+                "terminal-canonicalizer",
+                "terminal.safety_analysis",
+                safety_payload,
+                dangerous_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             safety_events.push(safety_event.into());
         }
@@ -795,8 +807,13 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let workflow_event =
-                Event::from_events(workflow_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+            let workflow_event = Event::from_synthesis(
+                "terminal-canonicalizer",
+                "terminal.workflow_detected",
+                workflow_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             workflow_events.push(workflow_event.into());
         }

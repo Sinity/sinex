@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -305,8 +302,13 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(analysis_payload, vec![source_event.id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "content-automaton",
+            "content.analyzed",
+            analysis_payload,
+            vec![source_event.id],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -364,8 +366,13 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(classification_payload, vec![source_event.id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "content-automaton",
+            "content.classified",
+            classification_payload,
+            vec![source_event.id],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -400,8 +407,13 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = Event::from_events(similarity_payload, event_ids)
-                    .with_ts_orig(Some(Utc::now()));
+                let similarity_event = Event::from_synthesis(
+                    "content-automaton",
+                    "content.similarity_detected",
+                    similarity_payload,
+                    event_ids,
+                )
+                .with_timestamp(Utc::now());
 
                 similarity_events.push(similarity_event.into());
             }
