@@ -6,8 +6,8 @@ use sea_orm_migration::prelude::*;
 pub enum SourceMaterials {
     #[iden = "source_material_registry"]
     Table,
-    #[iden = "source_material_id"]
-    SourceMaterialId,
+    #[iden = "id"]
+    Id,
     #[iden = "source_identifier"]
     SourceIdentifier,
     #[iden = "acquired_at"]
@@ -43,9 +43,6 @@ pub enum SourceMaterials {
     StagedAt,
     #[iden = "optional_blob_id"]
     OptionalBlobId,
-    // New columns from migrations
-    #[iden = "id"]
-    Id,
     #[iden = "material_type"]
     MaterialType,
     #[iden = "content_preview"]
@@ -73,7 +70,7 @@ impl SourceMaterials {
             .if_not_exists()
             // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(SourceMaterials::SourceMaterialId)
+                ColumnDef::new(SourceMaterials::Id)
                     .custom("ULID")
                     .not_null()
                     .primary_key(),
@@ -114,8 +111,6 @@ impl SourceMaterials {
             .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
             .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
             .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom("ULID"))
-            // New columns from migrations
-            .col(ColumnDef::new(SourceMaterials::Id).custom("ULID"))
             .col(
                 ColumnDef::new(SourceMaterials::MaterialType)
                     .text()
@@ -207,7 +202,7 @@ impl SourceMaterials {
             .if_not_exists()
             // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(SourceMaterials::SourceMaterialId)
+                ColumnDef::new(SourceMaterials::Id)
                     .custom("ULID")
                     .not_null()
                     .primary_key(),
@@ -248,8 +243,6 @@ impl SourceMaterials {
             .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
             .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
             .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom("ULID"))
-            // New columns from migrations
-            .col(ColumnDef::new(SourceMaterials::Id).custom("ULID"))
             .col(
                 ColumnDef::new(SourceMaterials::MaterialType)
                     .text()

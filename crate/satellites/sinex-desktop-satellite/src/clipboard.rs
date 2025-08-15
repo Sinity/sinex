@@ -317,7 +317,7 @@ impl ClipboardWatcher {
             sqlx::query!(
                 r#"
                 INSERT INTO raw.source_material_registry (
-                    source_material_id, source_identifier, created_at,
+                    id, source_identifier, created_at,
                     data, total_bytes, content_type, metadata,
                     source_type, status, material_type, source_uri
                 )

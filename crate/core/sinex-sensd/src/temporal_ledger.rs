@@ -182,7 +182,7 @@ impl TemporalLedger {
             SET status = $2, 
                 finalized_at = NOW(),
                 total_bytes = $3
-            WHERE source_material_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             material_id as Ulid,
             status,

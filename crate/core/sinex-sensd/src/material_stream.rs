@@ -159,7 +159,7 @@ impl MaterialSliceStream {
                 data,
                 optional_blob_id as "optional_blob_id: Ulid"
             FROM raw.source_material_registry
-            WHERE source_material_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             material_id as Ulid
         )
@@ -219,7 +219,7 @@ impl MaterialSliceStream {
             FROM core.blobs
             WHERE id = $1::uuid
             "#,
-            sinex_schema::ulid_conversions::ulid_to_uuid(blob_id),
+            sinex_core::ulid_to_uuid(blob_id),
         )
         .fetch_optional(&self.db_pool)
         .await?

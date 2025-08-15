@@ -346,7 +346,7 @@ impl DesktopProcessor {
         let result = sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id,
+                id,
                 source_identifier, 
                 created_at,
                 data,

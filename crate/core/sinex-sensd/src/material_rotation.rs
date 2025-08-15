@@ -313,8 +313,9 @@ impl MaterialRotationManager {
             );
             Ok(new_material_id)
         } else {
-            let new_material_id = existing_new_id
-                .ok_or_else(|| eyre!("Invalid rotation state: existing_new_id is None"))?;
+            let new_material_id = existing_new_id.ok_or_else(|| {
+                color_eyre::eyre::eyre!("Invalid rotation state: existing_new_id is None")
+            })?;
             warn!("Forcing completion of ongoing rotation due to: {}", reason);
 
             // Complete the ongoing rotation immediately

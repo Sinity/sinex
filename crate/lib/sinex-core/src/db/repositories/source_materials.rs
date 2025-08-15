@@ -176,7 +176,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id,
+                id,
                 material_type,
                 source_uri,
                 encoding,
@@ -189,7 +189,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 status
             ) VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8::ulid, $3, 'file', 'sensing')
             RETURNING 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -236,7 +236,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -260,7 +260,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 archive_time,
                 updated_at
             FROM raw.source_material_registry
-            WHERE source_material_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             *id.as_ulid() as _
         )
@@ -278,7 +278,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -317,7 +317,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -363,7 +363,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -413,7 +413,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -458,7 +458,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 is_archived = true,
                 archive_time = NOW(),
                 updated_at = NOW()
-            WHERE source_material_id = $1::ulid AND NOT is_archived
+            WHERE id = $1::ulid AND NOT is_archived
             "#,
             *id.as_ulid() as _
         )
@@ -481,7 +481,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -531,9 +531,9 @@ impl<'a> SourceMaterialRepository<'a> {
             SET 
                 metadata = $2,
                 updated_at = NOW()
-            WHERE source_material_id = $1::ulid
+            WHERE id = $1::ulid
             RETURNING 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -614,12 +614,12 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id, material_type, source_uri, metadata, content_preview
+                id, material_type, source_uri, metadata, content_preview
             ) VALUES (
                 $1::ulid, $2, $3, $4, $5
             )
             RETURNING 
-                source_material_id::uuid as "id!",
+                id::uuid as "id!",
                 checksum,
                 source_identifier,
                 source_type,
@@ -669,7 +669,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 encoding = $3,
                 content_preview = $4,
                 updated_at = NOW()
-            WHERE source_material_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             *id.as_ulid() as _,
             blob_id.map(|id| *id.as_ulid()) as _,
