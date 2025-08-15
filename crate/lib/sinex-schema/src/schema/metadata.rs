@@ -11,6 +11,8 @@ pub enum SqlType {
     Text,
     /// JSON/JSONB
     Json,
+    /// INTEGER
+    Integer,
     /// BIGINT
     BigInteger,
     /// TIMESTAMP WITH TIME ZONE
