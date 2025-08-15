@@ -5,11 +5,12 @@
 //! event processing while maintaining compatibility with `RawEvent` for
 //! heterogeneous processing scenarios.
 
-use crate::db::models::event::{OptionalTimestamp, SourceMaterial, Timestamp};
+use crate::db::models::event::{EventId, OptionalTimestamp, SourceMaterial, Timestamp};
 use crate::db::models::{Provenance, RawEvent};
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::events::EventPayload;
 use crate::types::{Id, Ulid};
+use crate::types_impl::non_empty::NonEmptyVec;
 use crate::SinexError;
 use serde::{Deserialize, Serialize};
 
@@ -73,9 +74,6 @@ pub struct Event<T: EventPayload> {
     /// Provenance tracking: either from events or source material
     pub provenance: Option<Provenance>,
 
-    /// Immutable anchor byte offset within source material
-    pub anchor_byte: Option<i64>,
-
     /// Array of associated blob IDs (screenshots, recordings, etc.)
     pub associated_blob_ids: Option<Vec<Ulid>>,
 }
@@ -89,9 +87,12 @@ impl<T: EventPayload> Event<T> {
         material_id: impl Into<Id<SourceMaterial>>,
         anchor_byte: i64,
     ) -> Self {
-        Self::new(payload)
-            .with_provenance(Provenance::from_material(material_id.into(), None, None))
-            .with_anchor_byte(Some(anchor_byte))
+        Self::new(payload).with_provenance(Provenance::from_material(
+            material_id.into(),
+            anchor_byte,
+            None,
+            None,
+        ))
     }
 
     /// Create a synthesized typed event from other events
@@ -101,12 +102,15 @@ impl<T: EventPayload> Event<T> {
     where
         I: IntoIterator<Item = Id<RawEvent>>,
     {
-        Self::new(payload).with_provenance(Provenance::from_events(parent_ids))
+        Self::new(payload).with_provenance(
+            Provenance::from_synthesis(parent_ids)
+                .expect("from_synthesis requires at least one parent ID"),
+        )
     }
     /// Create a new typed event from a payload
     ///
     /// WARNING: This creates an event WITHOUT provenance, which violates the architecture!
-    /// You MUST call `.with_provenance()` to set either Material or Events provenance.
+    /// You MUST call `.with_provenance()` to set either Material or Synthesis provenance.
     ///
     /// Consider using `from_material()` or `from_events()` instead, which ensure
     /// proper provenance from the start.
@@ -121,7 +125,6 @@ impl<T: EventPayload> Event<T> {
             ingestor_version: get_ingestor_version(),
             payload_schema_id: None,
             provenance: None,
-            anchor_byte: None,
             associated_blob_ids: None,
         }
     }
@@ -144,10 +147,7 @@ impl<T: EventPayload> Event<T> {
     }
 
     /// Builder pattern method to set anchor byte
-    pub fn with_anchor_byte(mut self, byte: Option<i64>) -> Self {
-        self.anchor_byte = byte;
-        self
-    }
+    // Note: anchor_byte is now part of Provenance::Material, not a separate field
 
     /// Builder pattern method to set associated blob IDs
     pub fn with_blob_ids(mut self, ids: Vec<Ulid>) -> Self {
@@ -187,8 +187,20 @@ impl<T: EventPayload> From<Event<T>> for RawEvent {
             host: typed.host,
             ingestor_version: typed.ingestor_version,
             payload_schema_id: typed.payload_schema_id,
-            provenance: typed.provenance,
-            anchor_byte: typed.anchor_byte,
+            provenance: typed.provenance.unwrap_or_else(|| {
+                // Create a dummy system bootstrap event ID for synthesis
+                let system_bootstrap_id = EventId::from_ulid(
+                    crate::types::Ulid::from_bytes([
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .expect("hardcoded ULID bytes should be valid"),
+                );
+                Provenance::Synthesis {
+                    source_event_ids: NonEmptyVec::single(system_bootstrap_id),
+                    operation_id: None,
+                }
+            }),
             associated_blob_ids: typed.associated_blob_ids,
         }
     }
@@ -237,8 +249,7 @@ where
             host: raw.host,
             ingestor_version: raw.ingestor_version,
             payload_schema_id: raw.payload_schema_id,
-            provenance: raw.provenance,
-            anchor_byte: raw.anchor_byte,
+            provenance: Some(raw.provenance),
             associated_blob_ids: raw.associated_blob_ids,
         })
     }
@@ -359,13 +370,11 @@ mod tests {
         let event = Event::new(payload)
             .with_ts_orig(Some(ts))
             .with_schema_id(schema_id)
-            .with_blob_ids(vec![blob_id])
-            .with_anchor_byte(Some(42));
+            .with_blob_ids(vec![blob_id]);
 
         assert_eq!(event.ts_orig, Some(ts));
         assert_eq!(event.payload_schema_id, Some(schema_id));
         assert_eq!(event.associated_blob_ids, Some(vec![blob_id]));
-        assert_eq!(event.anchor_byte, Some(42));
         Ok(())
     }
 }

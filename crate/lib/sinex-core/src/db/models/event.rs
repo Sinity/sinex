@@ -9,6 +9,7 @@
 //! - anchor_byte is moved into Material provenance where it belongs
 
 use crate::types::domain::{EventSource, EventType, HostName};
+use crate::types::non_empty::NonEmptyVec;
 use crate::types::{Id, Ulid};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -93,7 +94,7 @@ pub enum Provenance {
     },
     /// Event derived from other events (synthesized event)  
     Synthesis {
-        source_event_ids: Vec<EventId>, // Use stable EventId type
+        source_event_ids: NonEmptyVec<EventId>, // Enforces non-empty at type level!
         operation_id: Option<Id<Operation>>,
     },
 }
@@ -137,9 +138,19 @@ impl Provenance {
     }
 
     /// Create synthesis provenance from parent event IDs
-    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Self {
+    /// Returns None if the iterator is empty (enforces non-empty invariant)
+    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
+        let vec: Vec<EventId> = ids.into_iter().collect();
+        NonEmptyVec::from_vec(vec).map(|source_event_ids| Provenance::Synthesis {
+            source_event_ids,
+            operation_id: None,
+        })
+    }
+
+    /// Create synthesis provenance with at least one parent ID
+    pub fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
         Provenance::Synthesis {
-            source_event_ids: ids.into_iter().collect(),
+            source_event_ids: NonEmptyVec::from_head_tail(first, rest),
             operation_id: None,
         }
     }
@@ -191,7 +202,8 @@ impl<T> Event<T> {
             host: get_hostname(),
             ingestor_version: get_ingestor_version(),
             payload_schema_id: None,
-            provenance: Provenance::from_synthesis(parent_ids),
+            provenance: Provenance::from_synthesis(parent_ids)
+                .expect("from_synthesis requires at least one parent ID"),
             associated_blob_ids: None,
         }
     }
@@ -208,12 +220,26 @@ impl<T> Event<T> {
     ) -> Self {
         // Use a well-known system bootstrap event ID as parent
         // In practice, this should be replaced with proper sensd integration
-        let system_bootstrap_id = EventId::from_ulid(crate::types::Ulid::from_bytes([
-            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ]));
+        let system_bootstrap_id = EventId::from_ulid(
+            crate::types::Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
 
-        Self::from_synthesis(source, event_type, payload, vec![system_bootstrap_id])
+        Event {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: None,
+            host: get_hostname(),
+            ingestor_version: get_ingestor_version(),
+            payload_schema_id: None,
+            provenance: Provenance::from_synthesis_safe(system_bootstrap_id, vec![]),
+            associated_blob_ids: None,
+        }
     }
 
     #[cfg(feature = "testing")]
@@ -226,10 +252,13 @@ impl<T> Event<T> {
         event_type: impl Into<EventType>,
         payload: T,
     ) -> Self {
-        let test_material_id = Id::<SourceMaterial>::from_ulid(crate::types::Ulid::from_bytes([
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
-            0x32, 0x10,
-        ]));
+        let test_material_id = Id::<SourceMaterial>::from_ulid(
+            crate::types::Ulid::from_bytes([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
+                0x32, 0x10,
+            ])
+            .expect("hardcoded test ULID bytes should be valid"),
+        );
 
         Self::from_material(source, event_type, payload, test_material_id, 0)
     }

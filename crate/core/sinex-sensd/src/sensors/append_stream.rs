@@ -8,6 +8,7 @@ use crate::{
     material_rotation::{MaterialRotationManager, RotationPolicy},
     temporal_ledger::{LedgerEntry, TemporalLedger},
 };
+use blake3;
 use bytes::BytesMut;
 use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
@@ -38,7 +39,7 @@ impl AppendStreamSensor {
         job: &SensorJob,
         temporal_ledger: &Arc<TemporalLedger>,
     ) -> Result<Ulid> {
-        info!("Processing append_stream job for {}", job.target_path);
+        info!("Processing append_stream job for {}", job.target_uri);
 
         // Create rotation manager for continuous stream
         let rotation_policy = RotationPolicy {
@@ -51,16 +52,16 @@ impl AppendStreamSensor {
             temporal_ledger.clone(),
             rotation_policy,
             SensorType::AppendStream.to_string(),
-            job.target_path.clone(),
+            job.target_uri.clone(),
         );
 
         // Get or create initial material (ensures zero-gap from start)
         let mut current_material_id = rotation_manager.get_or_create_material().await?;
 
         // Connect to socket
-        let mut stream = UnixStream::connect(&job.target_path)
+        let mut stream = UnixStream::connect(&job.target_uri)
             .await
-            .map_err(|e| eyre!("Failed to connect to socket {}: {}", job.target_path, e))?;
+            .map_err(|e| eyre!("Failed to connect to socket {}: {}", job.target_uri, e))?;
 
         // Create buffer
         let mut buffer = BytesMut::with_capacity(self.config.socket_buffer_size);
@@ -85,7 +86,7 @@ impl AppendStreamSensor {
             if let Some(new_material_id) = rotation_manager.check_rotation(total_bytes).await? {
                 info!(
                     "Rotating material for {}: {} -> {}",
-                    job.target_path, current_material_id, new_material_id
+                    job.target_uri, current_material_id, new_material_id
                 );
                 current_material_id = new_material_id;
                 offset = 0; // Reset offset for new material
@@ -94,18 +95,29 @@ impl AppendStreamSensor {
             // Get current active material (handles rotation state)
             let active_material = rotation_manager.get_active_material().await?;
 
+            // Calculate hash of the data slice
+            let slice_hash = blake3::hash(&buffer).to_hex().to_string();
+
             // Record ledger entry
             let entry = LedgerEntry {
                 material_id: active_material,
                 offset_start: offset,
                 offset_end: offset + bytes_read as i64,
-                ts_capture_start: capture_start,
-                ts_capture_end: capture_end,
-                slice_hash: None, // TODO: Calculate hash
-                capture_metadata: serde_json::json!({
-                    "bytes_read": bytes_read,
-                    "source": job.target_path,
-                }),
+                ts_capture: capture_end,
+                offset_kind: "byte".to_string(),
+                precision: "exact".to_string(),
+                clock: "wall".to_string(),
+                source_type: SensorType::AppendStream.to_string(),
+                note: Some(
+                    serde_json::json!({
+                        "bytes_read": bytes_read,
+                        "source": job.target_uri,
+                        "slice_hash": slice_hash,
+                        "capture_start": capture_start,
+                        "capture_end": capture_end,
+                    })
+                    .to_string(),
+                ),
             };
 
             temporal_ledger.record_entry(entry).await?;
@@ -124,7 +136,7 @@ impl AppendStreamSensor {
 
             debug!(
                 "Read {} bytes from {}, total: {}, material: {}",
-                bytes_read, job.target_path, total_bytes, active_material
+                bytes_read, job.target_uri, total_bytes, active_material
             );
 
             // Verify zero-gap invariant is maintained
@@ -139,7 +151,7 @@ impl AppendStreamSensor {
 
         info!(
             "Completed append_stream job for {}, {} bytes captured across materials",
-            job.target_path, total_bytes
+            job.target_uri, total_bytes
         );
 
         Ok(final_material)

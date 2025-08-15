@@ -1,6 +1,6 @@
 //! Schema definitions for event relations tables
 
-use sea_query::{ColumnDef, Iden, Table};
+use sea_orm_migration::prelude::*;
 
 #[derive(Iden)]
 pub enum EventRelations {
@@ -11,7 +11,7 @@ pub enum EventRelations {
 impl EventRelations {
     pub fn create_table() -> String {
         Table::create()
-            .table(EventRelations::Table)
+            .table((Alias::new("core"), EventRelations::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EventRelations::Id)
@@ -19,7 +19,7 @@ impl EventRelations {
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {

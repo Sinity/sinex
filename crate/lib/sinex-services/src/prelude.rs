@@ -15,10 +15,11 @@
 pub use crate::{AnalyticsService, ContentService, PkmService, SearchService};
 
 // Search-related types
-pub use crate::{SearchQuery, SearchResult};
+pub use crate::search::SearchResult;
+pub use crate::SearchQuery;
 
 // PKM-related types
-pub use crate::MaterialSummary;
+pub use crate::pkm::MaterialSummary;
 
 // Error handling
 pub use crate::{Result, ServiceResult, SinexError};

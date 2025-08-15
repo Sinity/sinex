@@ -5,7 +5,8 @@ use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
 use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
-use crate::types::Id;
+use crate::types::non_empty::NonEmptyVec;
+use crate::types::{Id, Ulid};
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -47,13 +48,17 @@ impl EventRecordExt for EventRecord {
             self.source_material_id,
             self.anchor_byte,
         ) {
-            (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
-                source_event_ids: event_ids
+            (Some(event_ids), None, _) if !event_ids.is_empty() => {
+                let ids: Vec<EventId> = event_ids
                     .into_iter()
                     .map(|uuid| EventId::from(uuid_to_ulid(uuid)))
-                    .collect(),
-                operation_id: None,
-            },
+                    .collect();
+                // SAFETY: We checked that event_ids is not empty above
+                Provenance::Synthesis {
+                    source_event_ids: NonEmptyVec::from_vec(ids).unwrap(),
+                    operation_id: None,
+                }
+            }
             (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
                 id: Id::<SourceMaterial>::from(uuid_to_ulid(material_id)),
                 anchor_byte,
@@ -62,9 +67,10 @@ impl EventRecordExt for EventRecord {
                 offset_kind: OffsetKind::default(),
             },
             _ => {
-                // Default to empty synthesis if no provenance (shouldn't happen in production)
+                // This should never happen in production - all events must have provenance
+                // Create a synthetic bootstrap provenance as fallback
                 Provenance::Synthesis {
-                    source_event_ids: vec![],
+                    source_event_ids: NonEmptyVec::single(EventId::from(Ulid::nil())),
                     operation_id: None,
                 }
             }
@@ -160,7 +166,7 @@ pub struct EventAnnotation {
     pub id: Id<EventAnnotation>,
     pub event_id: Id<RawEvent>,
     pub annotation_type: String,
-    pub content: String,
+    pub content: JsonValue,
     pub metadata: JsonValue,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
@@ -1058,7 +1064,7 @@ impl<'a> EventRepository<'a> {
             let event_id = event.id.as_ref().unwrap();
 
             // Extract provenance
-            let (source_event_ids, source_material_id, offset_start, offset_end) =
+            let (source_event_ids, source_material_id, offset_start, offset_end, anchor_byte) =
                 extract_provenance(event);
 
             let associated_blob_ids = event
@@ -1567,7 +1573,7 @@ impl<'a> EventRepository<'a> {
         &self,
         event_id: Id<RawEvent>,
         annotation_type: &str,
-        content: &str,
+        content: serde_json::Value,
         metadata: serde_json::Value,
         created_by: &str,
     ) -> DbResult<EventAnnotation> {
@@ -1665,7 +1671,7 @@ impl<'a> EventRepository<'a> {
     pub async fn update_annotation(
         &self,
         annotation_id: Id<EventAnnotation>,
-        content: &str,
+        content: serde_json::Value,
     ) -> DbResult<EventAnnotation> {
         sqlx::query_as!(
             EventAnnotation,
@@ -1736,7 +1742,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE content ILIKE $1
+            WHERE content::text ILIKE $1
             ORDER BY created_at DESC
             LIMIT $2
             "#,
@@ -2446,17 +2452,23 @@ mod tests {
             json!({"derived": true}),
         )
         .with_host(HostName::new("test-host"))
-        .with_provenance(crate::models::Provenance::Events(vec![source_id.clone()]));
+        .with_provenance(crate::models::Provenance::Synthesis {
+            source_event_ids: vec![source_id.clone()],
+            operation_id: None,
+        });
 
         let inserted = pool.events().insert(derived_event).await?;
 
         // Verify provenance was preserved through EventRecord
         match inserted.provenance {
-            Some(crate::models::Provenance::Events(ids)) => {
+            Some(crate::models::Provenance::Synthesis {
+                source_event_ids: ids,
+                ..
+            }) => {
                 assert_eq!(ids.len(), 1);
                 assert_eq!(ids[0], source_id);
             }
-            _ => panic!("Expected Events provenance"),
+            _ => panic!("Expected Synthesis provenance"),
         }
 
         Ok(())

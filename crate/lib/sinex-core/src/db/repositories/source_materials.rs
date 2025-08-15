@@ -176,29 +176,42 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                id,
+                source_material_id,
                 material_type,
                 source_uri,
                 encoding,
                 metadata,
                 content_preview,
                 retention_policy,
-                optional_blob_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                optional_blob_id,
+                source_identifier,
+                source_type,
+                status
+            ) VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8::ulid, $3, 'file', 'sensing')
             RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             "#,
             *id.as_ulid() as _,
             material.material_type,
@@ -222,22 +235,32 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
-            WHERE id = $1
+            WHERE source_material_id = $1::ulid
             "#,
             *id.as_ulid() as _
         )
@@ -254,22 +277,32 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
-            WHERE optional_blob_id = $1
+            WHERE optional_blob_id = $1::ulid
             "#,
             *blob_id.as_ulid() as _
         )
@@ -283,20 +316,30 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
             ORDER BY ingestion_time DESC
             LIMIT $1
@@ -319,20 +362,30 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
             WHERE material_type = $1
             ORDER BY ingestion_time DESC
@@ -359,20 +412,30 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY ingestion_time DESC
@@ -395,7 +458,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 is_archived = true,
                 archive_time = NOW(),
                 updated_at = NOW()
-            WHERE id = $1 AND NOT is_archived
+            WHERE source_material_id = $1::ulid AND NOT is_archived
             "#,
             *id.as_ulid() as _
         )
@@ -417,20 +480,30 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as!(
             SourceMaterialRecord,
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+            SELECT 
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             FROM raw.source_material_registry
             WHERE NOT is_archived 
               AND ingestion_time < $1
@@ -458,21 +531,31 @@ impl<'a> SourceMaterialRepository<'a> {
             SET 
                 metadata = $2,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE source_material_id = $1::ulid
             RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             "#,
             *id.as_ulid() as _,
             metadata
@@ -505,7 +588,7 @@ impl<'a> SourceMaterialRepository<'a> {
             r#"
             SELECT COALESCE(SUM(b.size_bytes), 0)::BIGINT as total_size
             FROM raw.source_material_registry sm
-            LEFT JOIN core.blobs b ON sm.optional_blob_id = b.id
+            LEFT JOIN core.blobs b ON sm.optional_blob_id::uuid = b.id::uuid
             WHERE sm.material_type = $1
             "#,
             material_type
@@ -531,24 +614,34 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                id, material_type, source_uri, metadata, content_preview
+                source_material_id, material_type, source_uri, metadata, content_preview
             ) VALUES (
-                $1, $2, $3, $4, $5
+                $1::ulid, $2, $3, $4, $5
             )
             RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
+                source_material_id::uuid as "id!",
+                checksum,
+                source_identifier,
+                source_type,
+                source_path,
+                content_type,
+                status,
+                total_bytes,
                 created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+                finalized_at,
+                staged_at,
+                metadata,
+                data,
+                optional_blob_id::uuid as optional_blob_id,
+                material_type,
+                content_preview,
+                source_uri,
+                encoding,
+                is_archived,
+                retention_policy,
+                ingestion_time,
+                archive_time,
+                updated_at
             "#,
             *id.as_ulid() as _,
             material_type,
@@ -576,7 +669,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 encoding = $3,
                 content_preview = $4,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE source_material_id = $1::ulid
             "#,
             *id.as_ulid() as _,
             blob_id.map(|id| *id.as_ulid()) as _,

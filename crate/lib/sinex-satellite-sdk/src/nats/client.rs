@@ -157,7 +157,7 @@ impl NatsClient {
         client_clone
             .request(subject, payload.into())
             .await
-            .map_err(|e| NatsError::Client(Box::new(e)))
+            .map_err(|e| NatsError::Client(Arc::new(e)))
     }
 
     /// Subscribe to a subject
@@ -194,7 +194,7 @@ impl NatsClient {
         client_clone
             .flush()
             .await
-            .map_err(|e| NatsError::Client(Box::new(e)))
+            .map_err(|e| NatsError::Client(Arc::new(e)))
     }
 
     /// Get server info

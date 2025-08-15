@@ -19,31 +19,39 @@
 //! The unified interpretation log implementing Deep Oneness:
 //! ```sql
 //! CREATE TABLE core.events (
-//!     event_id ULID PRIMARY KEY,              -- Time-ordered, globally unique
-//!     ts_ingest TIMESTAMPTZ,                  -- System time (from ULID)
-//!     ts_orig TIMESTAMPTZ,                    -- Semantic time
-//!     source TEXT NOT NULL,                   -- Who created this
-//!     event_type TEXT NOT NULL,               -- What happened
-//!     payload JSONB NOT NULL,                 -- The details
-//!     
-//!     -- Provenance tracking
-//!     source_event_ids ULID[],                -- NULL=raw, populated=synthesis
-//!     source_material_id ULID,                -- External data reference
-//!     anchor_byte BIGINT,                     -- Immutable location
-//!     
+//!     id ULID PRIMARY KEY,                  -- Time-ordered, globally unique
+//!     ts_ingest TIMESTAMPTZ GENERATED ALWAYS AS (id::timestamp) STORED,
+//!     ts_orig TIMESTAMPTZ,                  -- Semantic time (optional)
+//!     source TEXT NOT NULL,                 -- Who created this
+//!     event_type TEXT NOT NULL,             -- What happened
+//!     host TEXT NOT NULL,                   -- Envelope host provenance
+//!     payload JSONB NOT NULL,               -- The details
+//!
+//!     -- Envelope provenance (XOR):
+//!     source_event_ids ULID[],              -- Internal provenance (synthesis)
+//!     source_material_id ULID,              -- External provenance (material)
+//!     source_material_offset_start BIGINT,
+//!     source_material_offset_end BIGINT,
+//!     anchor_byte BIGINT,
+//!
 //!     -- Schema evolution support
+//!     ingestor_version TEXT,
 //!     payload_schema_id ULID,
 //!     payload_schema_name TEXT,
-//!     payload_schema_version TEXT
+//!     payload_schema_version TEXT,
+//!
+//!     -- Optional associated content
+//!     associated_blob_ids ULID[]
 //! );
+//! -- Plus a CHECK enforcing XOR between (source_material_id, anchor_byte) and source_event_ids.
 //! ```
 
 // Types module - unified types system
 pub mod types {
     // Re-export the entire types module structure
     pub use crate::types_impl::*;
-    // Re-export ids and ulid from sinex_schema
-    pub use sinex_schema::{ids, ulid};
+    // Re-export ulid from sinex_schema
+    pub use sinex_schema::ulid;
 }
 
 // Database module - database access and models
@@ -87,11 +95,9 @@ pub use types::{
     SinexError,
 };
 
-// Re-export ID types from sinex-schema
-pub use sinex_schema::{
-    ids::Id,
-    ulid::{Timestamp, Ulid},
-};
+// Re-export ID types - Ulid from sinex-schema, Id from local types
+pub use sinex_schema::ulid::{Timestamp, Ulid};
+pub use types::ids::Id;
 
 // Re-export environment functionality at crate level
 pub use environment::{environment, SinexEnvironment};
@@ -126,14 +132,14 @@ pub use db::{
     constants, create_database_if_not_exists, create_pool, create_pool_strict,
     create_pool_with_config, create_pool_with_config_strict, create_test_pool, distributed_locking,
     get_database_url, models, pool, query_helpers, repositories, run_migrations, sanitization,
-    schema_migrations, seaquery_helpers, security, DbPool, DbPoolRef, PoolConfig,
+    seaquery_helpers, security, DbPool, DbPoolRef, PoolConfig,
 };
 
 // Re-export the most commonly used database models at crate root
 pub use db::models::{Blob, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
 
 // Re-export the unified Event type (EventId is already defined above as type alias)
-pub use db::models::event::Event;
+pub use db::models::event::{Event, OffsetKind};
 
 // Re-export records from sinex-schema
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};

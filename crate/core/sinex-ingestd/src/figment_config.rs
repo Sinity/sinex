@@ -4,6 +4,15 @@
 //! using Figment for multi-source configuration loading.
 
 use camino::Utf8PathBuf;
+
+// Default configuration constants
+const DEFAULT_POOL_SIZE: u32 = 50;
+const DEFAULT_BATCH_SIZE: usize = 1000;
+const DEFAULT_BATCH_TIMEOUT: u64 = 5;
+const DEFAULT_VALIDATE_SCHEMAS: bool = true;
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const DEFAULT_SOCKET_PATH: &str = "/tmp/sinex-ingestd.sock";
+const DEFAULT_NATS_CONSUMER_NAME: &str = "ingestd";
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -100,7 +109,7 @@ fn default_socket_path() -> String {
     DEFAULT_SOCKET_PATH.to_string()
 }
 fn default_nats_stream_name() -> String {
-    DEFAULT_NATS_STREAM_NAME.to_string()
+    "EVENTS".to_string()
 }
 fn default_nats_consumer_name() -> String {
     DEFAULT_NATS_CONSUMER_NAME.to_string()

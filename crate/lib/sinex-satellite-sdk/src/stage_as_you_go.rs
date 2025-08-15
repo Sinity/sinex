@@ -122,11 +122,13 @@ impl StageAsYouGoContext {
         offset_end: Option<i64>,
     ) -> SatelliteResult<String> {
         // Attach source material provenance to the event
-        event.provenance = Some(sinex_core::Provenance::Material {
+        event.provenance = sinex_core::Provenance::Material {
             id: source_material_id.into(),
+            anchor_byte: 0, // Default to beginning of material
             offset_start,
             offset_end,
-        });
+            offset_kind: sinex_core::OffsetKind::default(),
+        };
 
         // Add source material reference to payload metadata if not already present
         if let Some(obj) = event.payload.as_object_mut() {

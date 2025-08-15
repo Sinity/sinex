@@ -7,7 +7,11 @@ use super::{
 };
 use async_nats::jetstream;
 use serde::{Deserialize, Serialize};
-use sinex_core::{environment::environment, EventSource, EventType, NatsSubject, ServiceName};
+use sinex_core::{
+    domain::{NatsSubject, ServiceName},
+    environment::environment,
+    EventSource, EventType,
+};
 use std::collections::HashMap;
 use tracing::{debug, info};
 

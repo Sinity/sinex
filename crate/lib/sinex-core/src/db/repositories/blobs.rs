@@ -52,7 +52,11 @@ impl BlobRepository {
                 metadata,
                 created_at,
                 last_verified_at,
-                verification_status
+                verification_status,
+                updated_at,
+                content_hash,
+                stored_at,
+                content_type
             "#,
             record.id as uuid::Uuid,
             record.annex_key,
@@ -92,11 +96,15 @@ impl BlobRepository {
                 metadata,
                 created_at,
                 last_verified_at,
-                verification_status
+                verification_status,
+                updated_at,
+                content_hash,
+                stored_at,
+                content_type
             FROM core.blobs
             WHERE id = $1
             "#,
-            id.as_uuid()
+            id.to_uuid()
         )
         .fetch_optional(&self.pool)
         .await
@@ -123,7 +131,11 @@ impl BlobRepository {
                 metadata,
                 created_at,
                 last_verified_at,
-                verification_status
+                verification_status,
+                updated_at,
+                content_hash,
+                stored_at,
+                content_type
             FROM core.blobs
             WHERE checksum_blake3 = $1
             LIMIT 1
@@ -155,7 +167,11 @@ impl BlobRepository {
                 metadata,
                 created_at,
                 last_verified_at,
-                verification_status
+                verification_status,
+                updated_at,
+                content_hash,
+                stored_at,
+                content_type
             FROM core.blobs
             WHERE annex_key = $1
             "#,
@@ -181,7 +197,7 @@ impl BlobRepository {
             "#,
             status,
             Utc::now(),
-            id.as_uuid()
+            id.to_uuid()
         )
         .execute(&self.pool)
         .await
@@ -206,7 +222,7 @@ impl BlobRepository {
             WHERE id = $2
             "#,
             filename,
-            id.as_uuid()
+            id.to_uuid()
         )
         .execute(&self.pool)
         .await

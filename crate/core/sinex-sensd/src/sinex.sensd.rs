@@ -170,6 +170,35 @@ pub struct JobStatus {
     #[prost(string, tag = "8")]
     pub material_id: ::prost::alloc::string::String,
 }
+/// Direct capture acknowledgment (for when explicit ack is required)
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DirectCaptureRequest {
+    #[prost(string, tag = "1")]
+    pub source_identifier: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub sensor_type: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "4")]
+    pub metadata_json: ::prost::alloc::string::String,
+    #[prost(bool, tag = "5")]
+    pub require_acknowledgment: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DirectCaptureAcknowledgment {
+    #[prost(string, tag = "1")]
+    pub material_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub success: bool,
+    #[prost(string, tag = "3")]
+    pub error: ::prost::alloc::string::String,
+    #[prost(int64, tag = "4")]
+    pub bytes_captured: i64,
+    #[prost(string, tag = "5")]
+    pub capture_timestamp: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub checksum: ::prost::alloc::string::String,
+}
 /// Generated server implementations.
 pub mod sensd_service_server {
     #![allow(
@@ -223,6 +252,14 @@ pub mod sensd_service_server {
             &self,
             request: tonic::Request<super::GetJobStatusRequest>,
         ) -> std::result::Result<tonic::Response<super::JobStatus>, tonic::Status>;
+        /// Direct capture with acknowledgment (for critical data that needs confirmation)
+        async fn capture_direct_with_ack(
+            &self,
+            request: tonic::Request<super::DirectCaptureRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DirectCaptureAcknowledgment>,
+            tonic::Status,
+        >;
     }
     /// Service definition
     #[derive(Debug)]
@@ -515,6 +552,55 @@ pub mod sensd_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetJobStatusSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/sinex.sensd.SensdService/CaptureDirectWithAck" => {
+                    #[allow(non_camel_case_types)]
+                    struct CaptureDirectWithAckSvc<T: SensdService>(pub Arc<T>);
+                    impl<
+                        T: SensdService,
+                    > tonic::server::UnaryService<super::DirectCaptureRequest>
+                    for CaptureDirectWithAckSvc<T> {
+                        type Response = super::DirectCaptureAcknowledgment;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DirectCaptureRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SensdService>::capture_direct_with_ack(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CaptureDirectWithAckSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

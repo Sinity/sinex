@@ -1,9 +1,10 @@
 //! Schema definitions for embeddings and ML tables
 
-use sea_query::{ColumnDef, Iden, Table};
+use sea_orm_migration::prelude::*;
 
 #[derive(Iden)]
 pub enum EmbeddingCache {
+    #[iden = "embedding_cache"]
     Table,
     Id,
 }
@@ -24,6 +25,11 @@ pub enum EventEmbeddings {
 pub enum EventClusters {
     Table,
     Id,
+    ClusterName,
+    ClusterType,
+    Metadata,
+    CreatedAt,
+    UpdatedAt,
 }
 
 #[derive(Iden)]
@@ -35,7 +41,7 @@ pub enum EventClusterMembers {
 impl EmbeddingCache {
     pub fn create_table() -> String {
         Table::create()
-            .table(EmbeddingCache::Table)
+            .table((Alias::new("core"), EmbeddingCache::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EmbeddingCache::Id)
@@ -43,7 +49,7 @@ impl EmbeddingCache {
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
@@ -54,7 +60,7 @@ impl EmbeddingCache {
 impl EmbeddingModels {
     pub fn create_table() -> String {
         Table::create()
-            .table(EmbeddingModels::Table)
+            .table((Alias::new("core"), EmbeddingModels::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EmbeddingModels::Id)
@@ -62,7 +68,7 @@ impl EmbeddingModels {
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
@@ -73,7 +79,7 @@ impl EmbeddingModels {
 impl EventEmbeddings {
     pub fn create_table() -> String {
         Table::create()
-            .table(EventEmbeddings::Table)
+            .table((Alias::new("core"), EventEmbeddings::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EventEmbeddings::Id)
@@ -81,7 +87,7 @@ impl EventEmbeddings {
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
@@ -92,15 +98,30 @@ impl EventEmbeddings {
 impl EventClusters {
     pub fn create_table() -> String {
         Table::create()
-            .table(EventClusters::Table)
+            .table((Alias::new("core"), EventClusters::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EventClusters::Id)
-                    .uuid()
+                    .custom(Alias::new("ULID"))
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .col(ColumnDef::new(EventClusters::ClusterName).text())
+            .col(ColumnDef::new(EventClusters::ClusterType).text())
+            .col(ColumnDef::new(EventClusters::Metadata).json_binary())
+            .col(
+                ColumnDef::new(EventClusters::CreatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(
+                ColumnDef::new(EventClusters::UpdatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
@@ -111,7 +132,7 @@ impl EventClusters {
 impl EventClusterMembers {
     pub fn create_table() -> String {
         Table::create()
-            .table(EventClusterMembers::Table)
+            .table((Alias::new("core"), EventClusterMembers::Table))
             .if_not_exists()
             .col(
                 ColumnDef::new(EventClusterMembers::Id)
@@ -119,7 +140,7 @@ impl EventClusterMembers {
                     .not_null()
                     .primary_key(),
             )
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {

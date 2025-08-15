@@ -75,6 +75,7 @@ mod id_types;
 mod satellite_helpers;
 mod stream_processor;
 mod typed_event_envelope;
+mod validate_record;
 // mod validation_chain; // REMOVED: ValidationChain is being replaced with validator crate
 
 use proc_macro::TokenStream;
@@ -440,4 +441,28 @@ pub fn define_id_type(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(EventPayload, attributes(event_payload))]
 pub fn derive_event_payload(input: TokenStream) -> TokenStream {
     event_payload::derive_event_payload_impl(input)
+}
+
+/// Derive macro for ValidateRecord
+///
+/// Validates at compile time that a Record struct matches its schema definition.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::ValidateRecord;
+/// use sqlx::FromRow;
+///
+/// #[derive(FromRow, ValidateRecord)]
+/// #[validate_against(sinex_schema::Events)]
+/// pub struct EventRecord {
+///     pub id: Ulid,
+///     pub source: String,
+///     pub event_type: String,
+///     // ... other fields matching the schema
+/// }
+/// ```
+#[proc_macro_derive(ValidateRecord, attributes(validate_against))]
+pub fn validate_record(input: TokenStream) -> TokenStream {
+    validate_record::validate_record_impl(input)
 }

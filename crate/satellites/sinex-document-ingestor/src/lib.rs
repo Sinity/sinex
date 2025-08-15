@@ -23,6 +23,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
+use sinex_schema::ulid_conversions::ulid_to_uuid;
 use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
@@ -231,7 +232,7 @@ impl DocumentProcessor {
                         tl.offset_end,
                         tl.ts_capture,
                         tl.note,
-                        sm.optional_blob_id as "blob_id?: Ulid",
+                        sm.optional_blob_id as "optional_blob_id?: Ulid",
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
@@ -265,7 +266,7 @@ impl DocumentProcessor {
                                 } else {
                                     inline_data // Return full data if slice bounds are invalid
                                 }
-                            } else if let Some(blob_id) = record.blob_id {
+                            } else if let Some(blob_id) = record.optional_blob_id {
                                 // Load from blob storage
                                 match self.load_blob_data(blob_id, db_pool).await {
                                     Ok(blob_data) => {
@@ -328,9 +329,9 @@ impl DocumentProcessor {
                 checksum_sha256,
                 storage_backend
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid
             "#,
-            blob_id as Ulid,
+            ulid_to_uuid(blob_id),
         )
         .fetch_optional(db_pool)
         .await?

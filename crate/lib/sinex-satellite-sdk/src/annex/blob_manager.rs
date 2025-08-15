@@ -99,16 +99,13 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_id = existing
-                .id
-                .as_ref()
-                .map(|id| *id.as_ulid())
-                .unwrap_or_else(|| Ulid::new());
+            let existing_id = existing.id.clone();
             info!("File already exists in blob store with ID: {}", existing_id);
 
             // Update original_filenames array if this is a new filename
             if let Some(filename) = original_filename {
-                self.add_original_filename(&existing_id, filename).await?;
+                self.add_original_filename(existing_id.as_ulid(), filename)
+                    .await?;
             }
 
             // Emit deduplication event via ingestd
@@ -119,7 +116,8 @@ impl BlobManager {
                 checksum_blake3: blake3_hash,
                 deduplicated: true,
                 original_filename: original_filename
-                    .unwrap_or(&existing.original_filename)
+                    .or(existing.original_filename.as_deref())
+                    .unwrap_or("unknown")
                     .to_string(),
             })
             .with_ts_orig(Some(chrono::Utc::now()))
@@ -159,15 +157,10 @@ impl BlobManager {
             .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
             .storage_backend("git-annex".to_string())
-            .verification_status("verified".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_id = blob_metadata
-            .id
-            .as_ref()
-            .map(|id| *id.as_ulid())
-            .unwrap_or_else(Ulid::new);
+        let blob_id = blob_metadata.id.clone();
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event via ingestd
@@ -207,18 +200,15 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_id = existing
-                .id
-                .as_ref()
-                .map(|id| *id.as_ulid())
-                .unwrap_or_else(|| Ulid::new());
+            let existing_id = existing.id.clone();
             info!(
                 "Content already exists in blob store with ID: {}",
                 existing_id
             );
 
             // Update original_filenames array if this is a new filename
-            self.add_original_filename(&existing_id, filename).await?;
+            self.add_original_filename(existing_id.as_ulid(), filename)
+                .await?;
 
             // Emit deduplication event via ingestd
             let event: RawEvent = Event::new(BlobIngestedPayload {
@@ -271,15 +261,10 @@ impl BlobManager {
             .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
             .storage_backend("git-annex".to_string())
-            .verification_status("verified".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_id = blob_metadata
-            .id
-            .as_ref()
-            .map(|id| *id.as_ulid())
-            .unwrap_or_else(Ulid::new);
+        let blob_id = blob_metadata.id.clone();
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event via ingestd

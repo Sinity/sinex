@@ -12,6 +12,7 @@ use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::info;
+use tracing::warn;
 
 /// Standard CLI arguments for all stream processor satellites
 #[derive(Parser, Debug, Clone)]
@@ -570,7 +571,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     let runner = Arc::new(Mutex::new(runner));
 
                     // Run with coordination (hot standby pattern)
-                    coordination
+                    coordination?
                         .run_coordination_loop(move || {
                             let runner = runner.clone();
                             async move {

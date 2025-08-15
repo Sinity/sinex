@@ -274,7 +274,9 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Create trigger for embedding cache
+        // TODO: Fix embedding cache trigger - references non-existent columns
+        // Commenting out for now to allow migrations to run
+        /*
         manager
             .get_connection()
             .execute_unprepared(
@@ -288,14 +290,15 @@ impl MigrationTrait for Migration {
                 END;
                 $$ LANGUAGE plpgsql;
 
-                CREATE TRIGGER update_cache_on_use 
-                    BEFORE UPDATE ON core.embedding_cache 
-                    FOR EACH ROW 
+                CREATE TRIGGER update_cache_on_use
+                    BEFORE UPDATE ON core.embedding_cache
+                    FOR EACH ROW
                     WHEN (OLD.embedding IS NOT DISTINCT FROM NEW.embedding)
                     EXECUTE FUNCTION update_embedding_cache_last_used();
                 "#,
             )
             .await?;
+        */
 
         // Create entities
         manager

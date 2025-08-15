@@ -4644,6 +4644,7 @@ dependencies = [
  "color-eyre",
  "dirs",
  "figment",
+ "futures",
  "hex",
  "jsonschema",
  "mimalloc",
@@ -4666,6 +4667,7 @@ dependencies = [
  "tonic-build 0.11.0",
  "tracing",
  "tracing-subscriber",
+ "url",
  "validator 0.18.1",
 ]
 
@@ -4788,6 +4790,7 @@ dependencies = [
  "sea-query 0.30.7",
  "serde",
  "serde_json",
+ "sinex-macros",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4821,6 +4824,7 @@ version = "0.4.2"
 dependencies = [
  "async-stream",
  "async-trait",
+ "blake3",
  "bon",
  "bytes",
  "camino",
@@ -4828,6 +4832,7 @@ dependencies = [
  "color-eyre",
  "config",
  "notify 7.0.0",
+ "prost 0.13.5",
  "serde",
  "serde_json",
  "sinex-core",
@@ -4874,6 +4879,7 @@ name = "sinex-system-satellite"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "bon",
  "camino",
  "chrono",
  "clap",
@@ -4884,7 +4890,9 @@ dependencies = [
  "futures",
  "futures-util",
  "indexmap 2.10.0",
+ "libc",
  "mimalloc",
+ "nix 0.27.1",
  "serde",
  "serde_json",
  "sinex-core",

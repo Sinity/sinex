@@ -333,7 +333,7 @@ impl FilesystemProcessor {
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.blob_id = tl.material_id
+                        ON sm.source_material_id = tl.material_id
                     WHERE tl.material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
@@ -858,7 +858,7 @@ impl ExplorationProvider for FilesystemProcessor {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,
                 ExportFormat::Csv => {
-                    let mut csv = "job_id,target_path\n".to_string();
+                    let mut csv = "job_id,target_uri\n".to_string();
                     for (job_id, path) in &state.active_jobs {
                         csv.push_str(&format!("{},{}\n", job_id, path));
                     }

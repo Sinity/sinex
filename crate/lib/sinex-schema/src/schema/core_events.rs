@@ -1,9 +1,10 @@
 //! Schema definitions for core events tables
 
-use sea_query::{Alias, ColumnDef, Iden, Table};
+use crate::schema::metadata::{ColumnSchema, Constraint, HasSchema, SqlType, TableSchema};
+use sea_orm_migration::prelude::*;
 
 /// Events table (main events storage)
-#[derive(Iden)]
+#[derive(Iden, Copy, Clone)]
 pub enum Events {
     Table,
     Id,
@@ -71,7 +72,11 @@ impl Events {
             .col(ColumnDef::new(Events::PayloadSchemaName).text())
             .col(ColumnDef::new(Events::PayloadSchemaVersion).text())
             // Provenance fields (XOR constraint)
-            .col(ColumnDef::new(Events::SourceEventIds).array(sea_query::ColumnType::Uuid))
+            .col(
+                ColumnDef::new(Events::SourceEventIds).array(sea_query::ColumnType::Custom(
+                    Alias::new("ULID").into_iden(),
+                )),
+            )
             .col(ColumnDef::new(Events::SourceMaterialId).uuid())
             .col(ColumnDef::new(Events::SourceMaterialOffsetStart).big_integer())
             .col(ColumnDef::new(Events::SourceMaterialOffsetEnd).big_integer())
@@ -79,7 +84,7 @@ impl Events {
             // Associated data
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(sea_query::ColumnType::Uuid))
             .to_owned()
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
@@ -106,3 +111,139 @@ impl Events {
         .to_string()
     }
 }
+
+impl HasSchema for Events {
+    fn schema() -> &'static TableSchema {
+        &EVENTS_SCHEMA
+    }
+}
+
+/// Schema metadata for the Events table
+static EVENTS_SCHEMA: TableSchema = TableSchema {
+    name: "events",
+    schema: "core",
+    columns: &[
+        ColumnSchema {
+            name: "id",
+            rust_type: "Uuid",
+            sql_type: SqlType::Custom("ULID"),
+            nullable: false,
+            constraints: &[Constraint::PrimaryKey],
+        },
+        ColumnSchema {
+            name: "ts_ingest",
+            rust_type: "DateTime<Utc>",
+            sql_type: SqlType::TimestampWithTimeZone,
+            nullable: false,
+            constraints: &[Constraint::Generated("ulid_timestamp(id)"), Constraint::Index],
+        },
+        ColumnSchema {
+            name: "ts_orig",
+            rust_type: "Option<DateTime<Utc>>",
+            sql_type: SqlType::TimestampWithTimeZone,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "source",
+            rust_type: "String",
+            sql_type: SqlType::Text,
+            nullable: false,
+            constraints: &[Constraint::NotNull, Constraint::Index],
+        },
+        ColumnSchema {
+            name: "event_type",
+            rust_type: "String",
+            sql_type: SqlType::Text,
+            nullable: false,
+            constraints: &[Constraint::NotNull, Constraint::Index],
+        },
+        ColumnSchema {
+            name: "host",
+            rust_type: "String",
+            sql_type: SqlType::Text,
+            nullable: false,
+            constraints: &[Constraint::NotNull],
+        },
+        ColumnSchema {
+            name: "payload",
+            rust_type: "serde_json::Value",
+            sql_type: SqlType::Json,
+            nullable: false,
+            constraints: &[Constraint::NotNull],
+        },
+        ColumnSchema {
+            name: "ingestor_version",
+            rust_type: "Option<String>",
+            sql_type: SqlType::Text,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "payload_schema_id",
+            rust_type: "Option<Uuid>",
+            sql_type: SqlType::Uuid,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "payload_schema_name",
+            rust_type: "Option<String>",
+            sql_type: SqlType::Text,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "payload_schema_version",
+            rust_type: "Option<String>",
+            sql_type: SqlType::Text,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "source_event_ids",
+            rust_type: "Option<Vec<Uuid>>",
+            sql_type: SqlType::UlidArray,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "source_material_id",
+            rust_type: "Option<Uuid>",
+            sql_type: SqlType::Uuid,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "source_material_offset_start",
+            rust_type: "Option<i64>",
+            sql_type: SqlType::BigInteger,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "source_material_offset_end",
+            rust_type: "Option<i64>",
+            sql_type: SqlType::BigInteger,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "anchor_byte",
+            rust_type: "Option<i64>",
+            sql_type: SqlType::BigInteger,
+            nullable: true,
+            constraints: &[],
+        },
+        ColumnSchema {
+            name: "associated_blob_ids",
+            rust_type: "Option<Vec<Uuid>>",
+            sql_type: SqlType::UuidArray,
+            nullable: true,
+            constraints: &[],
+        },
+    ],
+    table_constraints: &[
+        "CHECK ((source_material_id IS NOT NULL AND anchor_byte IS NOT NULL AND source_event_ids IS NULL) OR (source_event_ids IS NOT NULL AND source_material_id IS NULL AND anchor_byte IS NULL))",
+    ],
+};

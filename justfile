@@ -18,7 +18,7 @@ default:
     @echo -e "  \033[1mingestd\033[0m      Start central coordinator"
     @echo -e "  \033[1mgateway\033[0m      Start API gateway"
     @echo -e "  \033[1mquery\033[0m        Query events (alias: q)"
-    @echo -e "  \033[1mmonitor\033[0m      Dev dashboard (all services)\n"
+    @echo -e "\n"
     @echo -e "\033[90mSatellites:\033[0m"
     @echo -e "  \033[1mfs-watcher\033[0m   File system events"
     @echo -e "  \033[1mterminal\033[0m     Terminal events"
@@ -66,7 +66,7 @@ test-integration:
 
 # Run VM tests
 test-vm:
-    ./test/nixos-vm/run-vm-tests.sh -c smoke
+    ./tests/nixos-vm/run-vm-tests.sh -c smoke
 
 # === Database ===
 
@@ -121,9 +121,7 @@ gateway:
 query LIMIT='10':
     ./cli/exo.py query --limit {{LIMIT}}
 
-# Development monitor (all services)
-monitor:
-    mprocs -c config/mprocs-dev.yaml
+# (monitor target removed; config not present)
 
 # === Satellites ===
 

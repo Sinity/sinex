@@ -13,7 +13,7 @@ use crate::{Id, RawEvent};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::types::BigDecimal;
+use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Database record for operations_log table
@@ -31,7 +31,7 @@ pub struct OperationRecord {
     pub started_at: Option<DateTime<Utc>>, // Nullable in database
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
-    pub error_details: Option<String>,
+    pub error_details: Option<serde_json::Value>,
 }
 
 /// Operation log entry matching core.operations_log per TARGET_canonical.md
@@ -53,7 +53,7 @@ pub struct Operation {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
-    pub error_details: Option<String>,
+    pub error_details: Option<serde_json::Value>,
 
     #[builder(skip)]
     pub created_at: DateTime<Utc>,
@@ -374,11 +374,14 @@ impl<'a> StateRepository<'a> {
                 deletion_operation.actor,
                 deletion_operation.scope,
                 op_state,
-                deletion_operation.preview_summary,
+                deletion_operation.preview_summary.clone(),
                 op_started_at,
                 deletion_operation.finished_at,
                 deletion_operation.outcome,
-                deletion_operation.error_details
+                deletion_operation
+                    .error_details
+                    .as_ref()
+                    .map(|s| serde_json::json!({"error": s}))
             )
             .execute(&mut *tx)
             .await
@@ -457,7 +460,7 @@ impl<'a> StateRepository<'a> {
             operation.actor,
             operation.scope,
             state,
-            operation.preview_summary,
+            operation.preview_summary.clone(),
             started_at,
             operation.finished_at,
             operation.outcome,
@@ -732,13 +735,13 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                processor_name, version, processor_type, description
+                processor_name, version, processor_type, description, deployment_status
             ) VALUES (
-                $1, $2, $3, $4
+                $1, $2, $3, $4, 'inactive'
             )
             RETURNING 
                 id,
-                processor_name as "processor_name!",
+                processor_name,
                 version,
                 description,
                 processor_type,
@@ -768,7 +771,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                processor_name as "processor_name!",
+                processor_name,
                 version,
                 description,
                 processor_type,
@@ -800,7 +803,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                processor_name as "processor_name!",
+                processor_name,
                 version,
                 description,
                 processor_type,
@@ -1259,7 +1262,7 @@ impl<'a> StateRepositoryTx<'a> {
             operation.actor,
             operation.scope,
             state,
-            operation.preview_summary,
+            operation.preview_summary.clone(),
             started_at,
             operation.finished_at,
             operation.outcome,
@@ -1276,18 +1279,18 @@ impl<'a> StateRepositoryTx<'a> {
 /// Processor manifest record
 #[derive(Debug, sqlx::FromRow)]
 pub struct ProcessorManifest {
-    pub id: i32,
+    pub id: Uuid,
     pub processor_name: String,
     pub version: String,
     pub description: Option<String>,
-    pub processor_type: String,
+    pub processor_type: Option<String>,
     pub input_schemas: Option<JsonValue>,
     pub output_schemas: Option<JsonValue>,
     pub configuration_schema: Option<JsonValue>,
     pub runtime_requirements: Option<JsonValue>,
     pub deployment_status: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
     pub build_metadata: Option<JsonValue>,
 }
 

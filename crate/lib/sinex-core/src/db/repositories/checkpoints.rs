@@ -31,8 +31,8 @@ impl<'a> EnhancedRepository<'a> for CheckpointRepository<'a> {
 pub struct CheckpointRecord {
     pub id: Id<CheckpointRecord>,
     pub processor_name: ProcessorName,
-    pub consumer_group: ConsumerGroup,
-    pub consumer_name: ConsumerName,
+    pub consumer_group: Option<ConsumerGroup>,
+    pub consumer_name: Option<ConsumerName>,
     pub last_processed_id: Option<Id<RawEvent>>,
     pub last_processed_ts: Option<DateTime<Utc>>,
     pub processed_count: i64,

@@ -192,8 +192,8 @@ impl CreateEntity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityRelationRecord {
     pub id: Id<EntityRelation>,
-    pub from_entity_id: Id<Entity>,
-    pub to_entity_id: Id<Entity>,
+    pub from_entity_id: Option<Id<Entity>>,
+    pub to_entity_id: Option<Id<Entity>>,
     pub relation_type: String,
     pub strength: f64,
     pub metadata: serde_json::Value,
@@ -587,15 +587,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
             )
             RETURNING 
                 id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id: Id<Entity>",
-                to_entity_id as "to_entity_id: Id<Entity>",
+                from_entity_id as "from_entity_id?: Id<Entity>",
+                to_entity_id as "to_entity_id?: Id<Entity>",
                 relation_type as "relation_type!",
                 strength as "strength!",
                 metadata as "metadata!",
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                created_from_event_id as "created_from_event_id?: Id<RawEvent>"
             "#,
             *id.as_ulid() as _,
             *relation.from_entity_id.as_ulid() as _,
@@ -626,15 +626,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id?: Id<Entity>",
+                        to_entity_id as "to_entity_id?: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        created_from_event_id as "created_from_event_id?: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -654,15 +654,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id?: Id<Entity>",
+                        to_entity_id as "to_entity_id?: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        created_from_event_id as "created_from_event_id?: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -681,15 +681,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id?: Id<Entity>",
+                        to_entity_id as "to_entity_id?: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        created_from_event_id as "created_from_event_id?: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -707,15 +707,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id?: Id<Entity>",
+                        to_entity_id as "to_entity_id?: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        created_from_event_id as "created_from_event_id?: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         from_entity_id = $1 OR to_entity_id = $1
@@ -744,15 +744,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id: Id<Entity>",
-                to_entity_id as "to_entity_id: Id<Entity>",
+                from_entity_id as "from_entity_id?: Id<Entity>",
+                to_entity_id as "to_entity_id?: Id<Entity>",
                 relation_type as "relation_type!",
                 strength as "strength!",
                 metadata as "metadata!",
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                created_from_event_id as "created_from_event_id?: Id<RawEvent>"
             "#,
             *id.as_ulid() as _,
             valid_until

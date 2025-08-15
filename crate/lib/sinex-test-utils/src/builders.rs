@@ -70,6 +70,11 @@ impl TestCheckpointBuilder {
         self
     }
 
+    /// Build the checkpoint (returns self for compatibility)
+    pub fn build(self) -> Self {
+        self
+    }
+
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
         use sinex_core::*;

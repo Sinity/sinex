@@ -100,7 +100,12 @@ impl MaterialRotationManager {
                 // Need to create initial material
                 let material_id = self
                     .temporal_ledger
-                    .create_material(&self.source_type, &self.source_path, None)
+                    .create_material(
+                        &format!("{}:{}", self.source_type, self.source_path),
+                        &self.source_type,
+                        Some(&self.source_path),
+                        None,
+                    )
                     .await?;
 
                 info!(
@@ -156,7 +161,12 @@ impl MaterialRotationManager {
             // CRITICAL: Create new material BEFORE finalizing old one (zero-gap invariant)
             let new_material_id = self
                 .temporal_ledger
-                .create_material(&self.source_type, &self.source_path, None)
+                .create_material(
+                    &format!("{}:{}", self.source_type, self.source_path),
+                    &self.source_type,
+                    Some(&self.source_path),
+                    None,
+                )
                 .await?;
 
             let overlap_deadline =
@@ -303,7 +313,8 @@ impl MaterialRotationManager {
             );
             Ok(new_material_id)
         } else {
-            let new_material_id = existing_new_id.unwrap();
+            let new_material_id = existing_new_id
+                .ok_or_else(|| eyre!("Invalid rotation state: existing_new_id is None"))?;
             warn!("Forcing completion of ongoing rotation due to: {}", reason);
 
             // Complete the ongoing rotation immediately

@@ -107,18 +107,26 @@ impl BlobBuilder {
 impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
-            id: blob.id.as_uuid(),
+            id: blob.id.to_uuid(),
             annex_key: blob.annex_key,
             original_filename: blob.original_filename,
             size_bytes: blob.size_bytes,
-            mime_type: blob.mime_type,
-            checksum_sha256: blob.checksum_sha256,
-            checksum_blake3: blob.checksum_blake3,
+            mime_type: blob.mime_type.clone(),
+            checksum_sha256: blob.checksum_sha256.clone().unwrap_or_default(),
+            checksum_blake3: blob.checksum_blake3.clone().unwrap_or_default(),
             storage_backend: blob.storage_backend,
             metadata: blob.metadata,
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
-            verification_status: blob.verification_status,
+            verification_status: blob
+                .verification_status
+                .clone()
+                .unwrap_or_else(|| "unverified".to_string()),
+            // Legacy fields
+            updated_at: Some(blob.created_at),
+            content_hash: blob.checksum_sha256.clone(),
+            stored_at: blob.last_verified_at,
+            content_type: blob.mime_type,
         }
     }
 }
@@ -132,13 +140,21 @@ impl From<BlobRecord> for Blob {
             original_filename: record.original_filename,
             size_bytes: record.size_bytes,
             mime_type: record.mime_type,
-            checksum_sha256: record.checksum_sha256,
-            checksum_blake3: record.checksum_blake3,
+            checksum_sha256: if record.checksum_sha256.is_empty() {
+                None
+            } else {
+                Some(record.checksum_sha256)
+            },
+            checksum_blake3: if record.checksum_blake3.is_empty() {
+                None
+            } else {
+                Some(record.checksum_blake3)
+            },
             storage_backend: record.storage_backend,
             metadata: record.metadata,
             created_at: record.created_at,
             last_verified_at: record.last_verified_at,
-            verification_status: record.verification_status,
+            verification_status: Some(record.verification_status),
         }
     }
 }

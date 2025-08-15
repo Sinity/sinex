@@ -57,6 +57,9 @@ impl DbUuidExt for SqlxUuid {
     }
 }
 
+// Note: We cannot implement From traits for external types like Option<T>
+// SQLX queries need to use the conversion functions directly
+
 /// Helper trait for ULID collections
 pub trait UlidArrayExt {
     fn to_uuid_vec(&self) -> Vec<SqlxUuid>;

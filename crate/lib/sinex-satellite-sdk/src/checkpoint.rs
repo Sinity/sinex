@@ -380,9 +380,7 @@ impl CheckpointManager {
             serde_json::to_value(&state.checkpoint).map_err(SatelliteError::Serialization)?;
 
         let last_processed_id = match &state.checkpoint {
-            Checkpoint::Stream { message_id, .. } => {
-                message_id.parse::<sinex_core::ulid::Ulid>().ok()
-            }
+            Checkpoint::Stream { message_id, .. } => message_id.parse::<sinex_core::Ulid>().ok(),
             _ => None,
         };
 

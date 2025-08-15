@@ -133,6 +133,7 @@ pub mod replay;
 pub mod replay_control;
 pub mod replay_metrics;
 pub mod replay_progress;
+pub mod sensd_client;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
@@ -161,9 +162,7 @@ pub use version::{SatelliteInstance, SatelliteVersion};
 
 // Re-export preflight utilities
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
-pub use preflight::{
-    run_preflight_checks, validate_toml_file, verify_service_dependencies, VerificationStatus,
-};
+pub use preflight::{run_preflight_checks, verify_service_dependencies, VerificationStatus};
 
 /// Version information for satellite components
 #[derive(Debug, Clone)]

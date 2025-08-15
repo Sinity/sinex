@@ -317,18 +317,23 @@ impl ClipboardWatcher {
             sqlx::query!(
                 r#"
                 INSERT INTO raw.source_material_registry (
-                    source_material_id, source_identifier, acquired_at,
-                    data, size_bytes, mime_type, metadata
+                    source_material_id, source_identifier, created_at,
+                    data, total_bytes, content_type, metadata,
+                    source_type, status, material_type, source_uri
                 )
-                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7)
+                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 "#,
-                material_id as Ulid,
-                self.source_identifier,
-                now,
-                data_bytes,
-                data_bytes.len() as i64,
-                "text/plain",
-                metadata.to_string(),
+                material_id as Ulid,     // $1 - source_material_id
+                self.source_identifier,  // $2 - source_identifier
+                now,                     // $3 - created_at
+                data_bytes,              // $4 - data
+                data_bytes.len() as i64, // $5 - total_bytes
+                "text/plain",            // $6 - content_type
+                metadata.to_string(),    // $7 - metadata
+                "clipboard",             // $8 - source_type
+                "finalized",             // $9 - status
+                "clipboard",             // $10 - material_type
+                "clipboard://",          // $11 - source_uri
             )
             .execute(db_pool)
             .await?;
@@ -342,21 +347,22 @@ impl ClipboardWatcher {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger (
-                material_id, offset_start, offset_end, 
-                offset_kind, proximity_hint, temporal_hint, timing_source,
-                ts_capture, note
+                entry_id, material_id, offset_start, offset_end, 
+                offset_kind, ts_capture, precision, clock, source_type,
+                proximity_hint, note
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES (gen_ulid()::ulid, $1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
-            material_id as Ulid,
-            0i64,
-            data_bytes.len() as i64,
-            "byte",
-            "exact",
-            "wall",
-            "realtime_capture",
-            content.timestamp,
-            metadata.to_string(),
+            material_id as Ulid,     // $1 - material_id
+            0i64,                    // $2 - offset_start
+            data_bytes.len() as i64, // $3 - offset_end
+            "byte",                  // $4 - offset_kind
+            content.timestamp,       // $5 - ts_capture
+            "millisecond",           // $6 - precision
+            "wall",                  // $7 - clock
+            "realtime_capture",      // $8 - source_type
+            serde_json::json!({}),   // $9 - proximity_hint
+            metadata.to_string(),    // $10 - note
         )
         .execute(db_pool)
         .await?;

@@ -15,6 +15,7 @@ use sinex_core::{
         Id, Ulid,
     },
 };
+use sinex_schema::ulid_conversions::ulid_to_uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -268,7 +269,7 @@ impl SensdTerminalProcessor {
                         tl.offset_end,
                         tl.ts_capture,
                         tl.note,
-                        sm.optional_blob_id as "blob_id?: Ulid",
+                        sm.optional_blob_id as "optional_blob_id?: Ulid",
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
@@ -295,7 +296,7 @@ impl SensdTerminalProcessor {
                             // Load data from storage
                             let data = if let Some(inline_data) = record.inline_data {
                                 inline_data
-                            } else if let Some(blob_id) = record.blob_id {
+                            } else if let Some(blob_id) = record.optional_blob_id {
                                 match self.load_blob_data(blob_id).await {
                                     Ok(blob_data) => {
                                         let start = record.offset_start as usize;
@@ -355,9 +356,9 @@ impl SensdTerminalProcessor {
                 checksum_sha256,
                 storage_backend
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid
             "#,
-            blob_id as Ulid,
+            ulid_to_uuid(blob_id),
         )
         .fetch_optional(&self.db_pool)
         .await?

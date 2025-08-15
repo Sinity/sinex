@@ -2,16 +2,29 @@
 
 use sea_orm_migration::prelude::*;
 
-#[derive(Iden)]
+#[derive(Iden, Copy, Clone)]
 pub enum SourceMaterials {
     #[iden = "source_material_registry"]
     Table,
-    #[iden = "blob_id"]
-    BlobId,
-    #[iden = "checksum"]
-    Checksum,
+    #[iden = "source_material_id"]
+    SourceMaterialId,
     #[iden = "source_identifier"]
     SourceIdentifier,
+    #[iden = "acquired_at"]
+    AcquiredAt,
+    #[iden = "data"]
+    Data,
+    #[iden = "size_bytes"]
+    SizeBytes,
+    #[iden = "mime_type"]
+    MimeType,
+    #[iden = "content_hash_blake3"]
+    ContentHashBlake3,
+    #[iden = "metadata"]
+    Metadata,
+    // Legacy columns
+    #[iden = "checksum"]
+    Checksum,
     #[iden = "source_type"]
     SourceType,
     #[iden = "source_path"]
@@ -28,12 +41,29 @@ pub enum SourceMaterials {
     FinalizedAt,
     #[iden = "staged_at"]
     StagedAt,
-    #[iden = "metadata"]
-    Metadata,
-    #[iden = "data"]
-    Data,
     #[iden = "optional_blob_id"]
     OptionalBlobId,
+    // New columns from migrations
+    #[iden = "id"]
+    Id,
+    #[iden = "material_type"]
+    MaterialType,
+    #[iden = "content_preview"]
+    ContentPreview,
+    #[iden = "source_uri"]
+    SourceUri,
+    #[iden = "encoding"]
+    Encoding,
+    #[iden = "is_archived"]
+    IsArchived,
+    #[iden = "retention_policy"]
+    RetentionPolicy,
+    #[iden = "ingestion_time"]
+    IngestionTime,
+    #[iden = "archive_time"]
+    ArchiveTime,
+    #[iden = "updated_at"]
+    UpdatedAt,
 }
 
 impl SourceMaterials {
@@ -43,56 +73,92 @@ impl SourceMaterials {
             .if_not_exists()
             // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(SourceMaterials::BlobId)
-                    .custom(Alias::new("ULID"))
+                ColumnDef::new(SourceMaterials::SourceMaterialId)
+                    .custom("ULID")
                     .not_null()
                     .primary_key(),
             )
-            // Content integrity
-            .col(ColumnDef::new(SourceMaterials::Checksum).text())
-            // Source identification
+            // Core columns
             .col(
                 ColumnDef::new(SourceMaterials::SourceIdentifier)
                     .text()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(SourceMaterials::SourceType)
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
-            .col(ColumnDef::new(SourceMaterials::ContentType).text())
-            // Lifecycle status
-            .col(
-                ColumnDef::new(SourceMaterials::Status)
-                    .text()
-                    .not_null()
-                    .default("'sensing'"),
-            )
-            // Size tracking
-            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
-            // Timestamps
-            .col(
-                ColumnDef::new(SourceMaterials::CreatedAt)
+                ColumnDef::new(SourceMaterials::AcquiredAt)
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
-            // Flexible metadata
+            .col(ColumnDef::new(SourceMaterials::Data).binary())
+            .col(
+                ColumnDef::new(SourceMaterials::SizeBytes)
+                    .big_integer()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(SourceMaterials::MimeType).text())
+            .col(ColumnDef::new(SourceMaterials::ContentHashBlake3).binary())
             .col(
                 ColumnDef::new(SourceMaterials::Metadata)
                     .json_binary()
                     .default("{}"),
             )
-            // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).binary())
-            // Optional reference to external blob storage
-            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
+            // Legacy columns for compatibility
+            .col(ColumnDef::new(SourceMaterials::Checksum).text())
+            .col(ColumnDef::new(SourceMaterials::SourceType).text())
+            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
+            .col(ColumnDef::new(SourceMaterials::ContentType).text())
+            .col(ColumnDef::new(SourceMaterials::Status).text())
+            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
+            .col(ColumnDef::new(SourceMaterials::CreatedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom("ULID"))
+            // New columns from migrations
+            .col(ColumnDef::new(SourceMaterials::Id).custom("ULID"))
+            .col(
+                ColumnDef::new(SourceMaterials::MaterialType)
+                    .text()
+                    .not_null()
+                    .default("generic"),
+            )
+            .col(ColumnDef::new(SourceMaterials::ContentPreview).text())
+            .col(
+                ColumnDef::new(SourceMaterials::SourceUri)
+                    .text()
+                    .not_null()
+                    .default(""),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::Encoding)
+                    .text()
+                    .not_null()
+                    .default("utf-8"),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::IsArchived)
+                    .boolean()
+                    .not_null()
+                    .default(false),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::RetentionPolicy)
+                    .text()
+                    .default("permanent"),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::IngestionTime)
+                    .timestamp_with_time_zone()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(ColumnDef::new(SourceMaterials::ArchiveTime).timestamp_with_time_zone())
+            .col(
+                ColumnDef::new(SourceMaterials::UpdatedAt)
+                    .timestamp_with_time_zone()
+                    .default(Expr::current_timestamp()),
+            )
             .to_owned()
-            .to_string(sea_query::PostgresQueryBuilder)
+            .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_check_constraints() -> Vec<String> {
@@ -141,54 +207,90 @@ impl SourceMaterials {
             .if_not_exists()
             // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(SourceMaterials::BlobId)
-                    .custom(Alias::new("ULID"))
+                ColumnDef::new(SourceMaterials::SourceMaterialId)
+                    .custom("ULID")
                     .not_null()
                     .primary_key(),
             )
-            // Content integrity
-            .col(ColumnDef::new(SourceMaterials::Checksum).text())
-            // Source identification
+            // Core columns
             .col(
                 ColumnDef::new(SourceMaterials::SourceIdentifier)
                     .text()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(SourceMaterials::SourceType)
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
-            .col(ColumnDef::new(SourceMaterials::ContentType).text())
-            // Lifecycle status
-            .col(
-                ColumnDef::new(SourceMaterials::Status)
-                    .text()
-                    .not_null()
-                    .default("'sensing'"),
-            )
-            // Size tracking
-            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
-            // Timestamps
-            .col(
-                ColumnDef::new(SourceMaterials::CreatedAt)
+                ColumnDef::new(SourceMaterials::AcquiredAt)
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
-            // Flexible metadata
+            .col(ColumnDef::new(SourceMaterials::Data).binary())
+            .col(
+                ColumnDef::new(SourceMaterials::SizeBytes)
+                    .big_integer()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(SourceMaterials::MimeType).text())
+            .col(ColumnDef::new(SourceMaterials::ContentHashBlake3).binary())
             .col(
                 ColumnDef::new(SourceMaterials::Metadata)
                     .json_binary()
                     .default("{}"),
             )
-            // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).binary())
-            // Optional reference to external blob storage
-            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
+            // Legacy columns for compatibility
+            .col(ColumnDef::new(SourceMaterials::Checksum).text())
+            .col(ColumnDef::new(SourceMaterials::SourceType).text())
+            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
+            .col(ColumnDef::new(SourceMaterials::ContentType).text())
+            .col(ColumnDef::new(SourceMaterials::Status).text())
+            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
+            .col(ColumnDef::new(SourceMaterials::CreatedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom("ULID"))
+            // New columns from migrations
+            .col(ColumnDef::new(SourceMaterials::Id).custom("ULID"))
+            .col(
+                ColumnDef::new(SourceMaterials::MaterialType)
+                    .text()
+                    .not_null()
+                    .default("generic"),
+            )
+            .col(ColumnDef::new(SourceMaterials::ContentPreview).text())
+            .col(
+                ColumnDef::new(SourceMaterials::SourceUri)
+                    .text()
+                    .not_null()
+                    .default(""),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::Encoding)
+                    .text()
+                    .not_null()
+                    .default("utf-8"),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::IsArchived)
+                    .boolean()
+                    .not_null()
+                    .default(false),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::RetentionPolicy)
+                    .text()
+                    .default("permanent"),
+            )
+            .col(
+                ColumnDef::new(SourceMaterials::IngestionTime)
+                    .timestamp_with_time_zone()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(ColumnDef::new(SourceMaterials::ArchiveTime).timestamp_with_time_zone())
+            .col(
+                ColumnDef::new(SourceMaterials::UpdatedAt)
+                    .timestamp_with_time_zone()
+                    .default(Expr::current_timestamp()),
+            )
             .to_owned()
     }
 }

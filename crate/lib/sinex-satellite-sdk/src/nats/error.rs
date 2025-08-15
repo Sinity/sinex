@@ -1,5 +1,6 @@
 //! NATS-specific error types
 
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
@@ -23,10 +24,10 @@ pub enum NatsError {
     Consumer(String),
 
     #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    Serialization(Arc<serde_json::Error>),
 
     #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(Arc<std::io::Error>),
 
     #[error("Configuration error: {0}")]
     Config(String),
@@ -38,10 +39,28 @@ pub enum NatsError {
     Timeout,
 
     #[error("NATS client error: {0}")]
-    Client(#[from] Box<dyn std::error::Error + Send + Sync>),
+    Client(Arc<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T> = std::result::Result<T, NatsError>;
+
+impl From<serde_json::Error> for NatsError {
+    fn from(err: serde_json::Error) -> Self {
+        NatsError::Serialization(Arc::new(err))
+    }
+}
+
+impl From<std::io::Error> for NatsError {
+    fn from(err: std::io::Error) -> Self {
+        NatsError::Io(Arc::new(err))
+    }
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for NatsError {
+    fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        NatsError::Client(Arc::from(err))
+    }
+}
 
 impl From<NatsError> for sinex_core::error::SinexError {
     fn from(err: NatsError) -> Self {

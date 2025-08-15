@@ -13,12 +13,15 @@ pub mod embeddings;
 pub mod entities;
 pub mod event_relations;
 pub mod knowledge_graph;
+pub mod metadata;
 pub mod outbox;
 pub mod processors;
 pub mod records;
 pub mod schemas;
 pub mod sensor_jobs;
+pub mod sensor_states;
 pub mod source_materials;
+pub mod table_def_impls;
 pub mod temporal_ledger;
 
 // Re-export everything from modules
@@ -36,6 +39,7 @@ pub use records::*;
 pub use records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub use schemas::*;
 pub use sensor_jobs::*;
+pub use sensor_states::*;
 pub use source_materials::*;
 pub use temporal_ledger::*;
 

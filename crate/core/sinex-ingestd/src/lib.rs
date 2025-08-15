@@ -33,41 +33,39 @@ pub type IngestdResult<T> = Result<T>;
 ///
 /// This function preserves the original IngestdError -> tonic::Status mapping
 /// while using the unified SinexError system.
-impl From<SinexError> for tonic::Status {
-    fn from(err: SinexError) -> Self {
-        use tonic::Code;
-        match err {
-            // Configuration, validation, and service errors are client errors
-            SinexError::Configuration(_) | SinexError::Validation(_) | SinexError::Service(_) => {
-                tonic::Status::new(Code::InvalidArgument, err.to_string())
-            }
-            // Database errors are internal server errors
-            SinexError::Database(_) => {
-                tonic::Status::new(Code::Internal, format!("Database error: {}", err))
-            }
-            // Network errors map to connection issues
-            SinexError::Network(_) => {
-                tonic::Status::new(Code::Unavailable, format!("Network error: {}", err))
-            }
-            // Serialization and parsing errors are client input issues
-            SinexError::Serialization(_) | SinexError::Parse(_) => tonic::Status::new(
-                Code::InvalidArgument,
-                format!("Serialization error: {}", err),
-            ),
-            // I/O errors are internal issues
-            SinexError::Io(_) => tonic::Status::new(Code::Internal, format!("IO error: {}", err)),
-            // Timeout and resource exhaustion are temporary server issues
-            SinexError::Timeout(_) | SinexError::ResourceExhausted(_) => {
-                tonic::Status::new(Code::Unavailable, err.to_string())
-            }
-            // Permission issues
-            SinexError::PermissionDenied(_) => {
-                tonic::Status::new(Code::PermissionDenied, err.to_string())
-            }
-            // Not found issues
-            SinexError::NotFound(_) => tonic::Status::new(Code::NotFound, err.to_string()),
-            // Everything else is internal
-            _ => tonic::Status::new(Code::Internal, format!("Internal error: {}", err)),
+pub fn sinex_error_to_status(err: SinexError) -> tonic::Status {
+    use tonic::Code;
+    match err {
+        // Configuration, validation, and service errors are client errors
+        SinexError::Configuration(_) | SinexError::Validation(_) | SinexError::Service(_) => {
+            tonic::Status::new(Code::InvalidArgument, err.to_string())
         }
+        // Database errors are internal server errors
+        SinexError::Database(_) => {
+            tonic::Status::new(Code::Internal, format!("Database error: {}", err))
+        }
+        // Network errors map to connection issues
+        SinexError::Network(_) => {
+            tonic::Status::new(Code::Unavailable, format!("Network error: {}", err))
+        }
+        // Serialization and parsing errors are client input issues
+        SinexError::Serialization(_) | SinexError::Parse(_) => tonic::Status::new(
+            Code::InvalidArgument,
+            format!("Serialization error: {}", err),
+        ),
+        // I/O errors are internal issues
+        SinexError::Io(_) => tonic::Status::new(Code::Internal, format!("IO error: {}", err)),
+        // Timeout and resource exhaustion are temporary server issues
+        SinexError::Timeout(_) | SinexError::ResourceExhausted(_) => {
+            tonic::Status::new(Code::Unavailable, err.to_string())
+        }
+        // Permission issues
+        SinexError::PermissionDenied(_) => {
+            tonic::Status::new(Code::PermissionDenied, err.to_string())
+        }
+        // Not found issues
+        SinexError::NotFound(_) => tonic::Status::new(Code::NotFound, err.to_string()),
+        // Everything else is internal
+        _ => tonic::Status::new(Code::Internal, format!("Internal error: {}", err)),
     }
 }

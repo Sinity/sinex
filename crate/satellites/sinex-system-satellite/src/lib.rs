@@ -14,6 +14,9 @@ mod payloads;
 mod systemd_watcher;
 mod udev_watcher;
 
+// Modern systemd/journald integration using nix crate
+pub mod systemd_integration;
+
 // New unified processor module
 pub mod unified_processor;
 

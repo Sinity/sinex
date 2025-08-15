@@ -153,7 +153,7 @@ impl DesktopProcessor {
 
             // Try to get window manager status
             window_manager_status = Some(WindowManagerStatus {
-                wm_type: self.config.window_manager_type,
+                wm_type: self.config.window_manager_type.to_string(),
                 connection_active: self.window_manager_watcher.is_some(),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
@@ -197,27 +197,58 @@ impl DesktopProcessor {
         Ok(())
     }
 
-    /// Start continuous desktop monitoring
+    /// Start continuous desktop monitoring by submitting jobs to sensd
     #[instrument(skip(self), fields(processor = "desktop", checkpoint = %_from_checkpoint.description()))]
     async fn start_continuous_monitoring(
         &mut self,
         _from_checkpoint: Checkpoint,
     ) -> SatelliteResult<()> {
-        info!("Starting continuous desktop monitoring");
-
-        // For now, stub implementation - will be implemented properly later
-        // This would start the actual watchers and forward events
+        info!("Starting continuous desktop monitoring via sensd jobs");
 
         if let Some(ref context) = self.context {
-            info!("Desktop monitoring context available");
-
-            // Store monitoring started event as source material
             if let Some(ref db_pool) = self.db_pool {
+                // Create sensd job submitter
+                let submitter = crate::sensd_job_submitter::DesktopSensdSubmitter::new(
+                    db_pool.clone(),
+                    "desktop-satellite".to_string(),
+                )
+                .await
+                .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+
+                // Submit job for clipboard monitoring if enabled
+                if self.config.clipboard_enabled {
+                    info!("Submitting clipboard monitoring job to sensd");
+                    submitter
+                        .submit_clipboard_job(self.config.clipboard_poll_interval_secs)
+                        .await
+                        .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+                }
+
+                // Submit job for window manager monitoring if enabled
+                if self.config.window_manager_enabled {
+                    info!("Submitting window manager monitoring job to sensd");
+                    let socket_path = match self.config.window_manager_type {
+                        WindowManagerType::Hyprland => {
+                            "/tmp/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+                        }
+                    };
+
+                    submitter
+                        .submit_window_manager_job(
+                            self.config.window_manager_type.as_str(),
+                            socket_path,
+                        )
+                        .await
+                        .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+                }
+
+                // Store monitoring started event as source material
                 let monitoring_data = serde_json::json!({
                     "event_type": "monitoring_started",
                     "clipboard_enabled": self.config.clipboard_enabled,
                     "window_manager_enabled": self.config.window_manager_enabled,
-                    "start_time": Utc::now().to_rfc3339()
+                    "start_time": Utc::now().to_rfc3339(),
+                    "submitted_to_sensd": true
                 });
 
                 let _ = self
@@ -276,7 +307,7 @@ impl DesktopProcessor {
                         let scan_data = serde_json::json!({
                             "event_type": "historical_scan_attempt",
                             "source": "window_manager",
-                            "wm_type": self.config.window_manager_type,
+                            "wm_type": self.config.window_manager_type.to_string(),
                             "scan_type": "historical",
                             "scan_time": Utc::now().to_rfc3339(),
                             "note": "Limited historical data available for window manager events"
@@ -317,22 +348,31 @@ impl DesktopProcessor {
             INSERT INTO raw.source_material_registry (
                 source_material_id,
                 source_identifier, 
-                acquired_at,
+                created_at,
                 data,
-                size_bytes,
-                mime_type,
-                content_hash_blake3,
-                metadata
+                total_bytes,
+                content_type,
+                checksum,
+                metadata,
+                source_type,
+                status,
+                material_type,
+                source_uri
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, 'application/json', $6, $7)
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
-            material_id as Ulid,
-            source_identifier,
-            acquired_at,
-            data,
-            data.len() as i64,
-            data_hash.as_bytes(),
-            metadata
+            material_id as Ulid,        // $1 - source_material_id
+            source_identifier,          // $2 - source_identifier
+            acquired_at,                // $3 - created_at
+            data,                       // $4 - data
+            data.len() as i64,          // $5 - total_bytes
+            "application/json",         // $6 - content_type
+            format!("{:x}", data_hash), // $7 - checksum (as hex string)
+            metadata,                   // $8 - metadata
+            "desktop",                  // $9 - source_type
+            "finalized",                // $10 - status
+            "desktop_snapshot",         // $11 - material_type
+            "desktop://snapshot"        // $12 - source_uri
         )
         .execute(db_pool)
         .await;
@@ -391,6 +431,11 @@ impl StatefulStreamProcessor for DesktopProcessor {
             service = %ctx.service_name,
             "Initializing desktop processor"
         );
+
+        // Get database pool from context
+        if let Some(db_pool) = ctx.db_pool.clone() {
+            self.db_pool = Some(db_pool);
+        }
 
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
@@ -696,7 +741,7 @@ impl ExplorationProvider for DesktopProcessor {
                 ),
                 (
                     "window_manager_type",
-                    serde_json::to_value(&self.config.window_manager_type)?,
+                    serde_json::to_value(self.config.window_manager_type.to_string())?,
                 ),
                 (
                     "clipboard_poll_interval_secs",

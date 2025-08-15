@@ -152,7 +152,7 @@ impl SensorJobs {
         format!(
             r#"CREATE TRIGGER trg_sensor_jobs_updated_at
                BEFORE UPDATE ON raw.{}
-               FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"#,
+               FOR EACH ROW EXECUTE FUNCTION set_current_timestamp()"#,
             SensorJobs::Table.to_string()
         )
     }

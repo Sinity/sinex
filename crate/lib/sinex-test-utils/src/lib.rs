@@ -430,8 +430,6 @@ pub mod prelude {
         // Domain types (now available at root)
         EventSource,
         EventType,
-        EventVersion,
-        EventVersionInfo,
         HostName,
         // Common utilities (now available at root)
         Id,
@@ -451,7 +449,6 @@ pub mod prelude {
         SourceMaterialId,
         Timestamp,
         Ulid,
-        ValidationError,
     };
 
     // Time handling - very common in tests

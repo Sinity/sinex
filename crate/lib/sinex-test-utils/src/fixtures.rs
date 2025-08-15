@@ -1,4 +1,8 @@
 // Test Fixture Management System
+
+use sinex_core::types::domain::CommandText;
+use sinex_core::types::events::payloads::shell::KittyCommandExecutedPayload;
+use sinex_core::types::events::payloads::window::HyprlandWindowFocusedPayload;
 //
 // Provides reusable test data with proper lifecycle management for Sinex tests.
 // Features:
@@ -673,7 +677,7 @@ async fn create_performance_dataset_fixture(
                 "data": "x".repeat(payload_size)
             }),
         )
-        .with_ts_orig(Some(start_time + time_step * i as i32));
+        .with_timestamp(start_time + time_step * i as i32);
         batch.push(event);
     }
 

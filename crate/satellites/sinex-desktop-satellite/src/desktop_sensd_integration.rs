@@ -102,10 +102,10 @@ impl DesktopSensdProcessor {
             SELECT 
                 source_material_id as "material_id: Ulid",
                 source_identifier,
-                acquired_at,
+                created_at as acquired_at,
                 data,
-                size_bytes,
-                mime_type,
+                total_bytes as size_bytes,
+                content_type as mime_type,
                 metadata
             FROM raw.source_material_registry
             WHERE source_material_id = $1::ulid
@@ -262,7 +262,9 @@ impl DesktopSensdProcessor {
             .provenance(Provenance::Material {
                 id: Id::from(slice.material_id),
                 anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(slice.offset_start),
+                offset_end: Some(slice.offset_end),
             })
             .build();
 
@@ -311,7 +313,9 @@ impl DesktopSensdProcessor {
             .provenance(Provenance::Material {
                 id: Id::from(slice.material_id),
                 anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(slice.offset_start),
+                offset_end: Some(slice.offset_end),
             })
             .build();
 
@@ -345,7 +349,9 @@ impl DesktopSensdProcessor {
             .provenance(Provenance::Material {
                 id: Id::from(slice.material_id),
                 anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(slice.offset_start),
+                offset_end: Some(slice.offset_end),
             })
             .build();
 
@@ -391,7 +397,9 @@ impl DesktopSensdProcessor {
             .provenance(Provenance::Material {
                 id: Id::from(slice.material_id),
                 anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(slice.offset_start),
+                offset_end: Some(slice.offset_end),
             })
             .build();
 
@@ -417,9 +425,9 @@ impl DesktopSensdProcessor {
                 WHERE source_identifier IN ('desktop_clipboard', 'desktop_window_manager', 'desktop_snapshot', 'desktop_monitoring')
                 AND NOT EXISTS (
                     SELECT 1 FROM core.events 
-                    WHERE material_id = source_material_registry.source_material_id
+                    WHERE source_material_id::ulid = source_material_registry.source_material_id
                 )
-                ORDER BY acquired_at DESC
+                ORDER BY created_at DESC
                 LIMIT 10
                 "#,
             )

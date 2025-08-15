@@ -84,7 +84,7 @@ impl MigrationTrait for Migration {
                         e.ts_orig,
                         e.source_event_ids as parent_event_ids
                     FROM core.events e
-                    WHERE e.id = start_event_id
+                    WHERE e.id::uuid = start_event_id::uuid
                     
                     UNION ALL
                     
@@ -168,7 +168,7 @@ impl MigrationTrait for Migration {
                     INTO event_record
                     FROM core.events e
                     LEFT JOIN sinex_schemas.event_payload_schemas s ON e.payload_schema_id = s.id
-                    WHERE e.id = event_id_param;
+                    WHERE e.id::uuid = event_id_param::uuid;
                     
                     IF NOT FOUND THEN
                         RAISE EXCEPTION 'Event % not found', event_id_param;
@@ -269,7 +269,7 @@ impl MigrationTrait for Migration {
                     SELECT e.ts_orig, e.ts_ingest, e.host, e.source
                     INTO ref_event
                     FROM core.events e
-                    WHERE e.id = reference_event_id;
+                    WHERE e.id::uuid = reference_event_id::uuid;
                     
                     IF NOT FOUND THEN
                         RAISE EXCEPTION 'Reference event % not found', reference_event_id;
@@ -291,7 +291,7 @@ impl MigrationTrait for Migration {
                             ELSE 0.5
                         END * (1.0 - LEAST(1.0, ABS(EXTRACT(EPOCH FROM (COALESCE(e.ts_orig, e.ts_ingest) - time_ref.ref_time))) / EXTRACT(EPOCH FROM time_window))) as relevance_score
                     FROM core.events e, time_ref
-                    WHERE e.id != reference_event_id
+                    WHERE e.id::uuid != reference_event_id::uuid
                       AND COALESCE(e.ts_orig, e.ts_ingest) BETWEEN time_ref.ref_time - time_window AND time_ref.ref_time + time_window
                       AND (NOT same_host_only OR e.host = ref_event.host)
                     ORDER BY relevance_score DESC, ABS(EXTRACT(EPOCH FROM time_diff));

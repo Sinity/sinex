@@ -8,8 +8,8 @@ use super::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
+use sinex_core::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::ServiceName;
 use sinex_core::{Provenance, RawEvent};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,8 +48,7 @@ impl NatsPublisher {
     fn create_event_headers(event: &RawEvent) -> HeaderMap {
         let mut headers = HeaderMap::new();
 
-        // Use pre-allocated capacity for header map
-        headers.reserve(6); // Typical number of headers
+        // Pre-allocate headers
 
         if let Some(id) = &event.id {
             headers.insert("Sinex-Event-Id", id.to_string());
@@ -65,22 +64,17 @@ impl NatsPublisher {
         );
 
         // Add provenance information if present
-        if let Some(provenance) = &event.provenance {
-            match provenance {
-                Provenance::Events(ids) => {
-                    if !ids.is_empty() {
-                        // Use join directly to avoid intermediate Vec allocation
-                        let ids_str = ids
-                            .iter()
-                            .map(|id| id.to_string())
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        headers.insert("Sinex-Source-Event-Ids", ids_str);
-                    }
-                }
-                Provenance::Material { id, .. } => {
-                    headers.insert("Sinex-Source-Material-Id", id.to_string());
-                }
+        match &event.provenance {
+            Provenance::Material { id, .. } => {
+                headers.insert("Sinex-Source-Material-Id", id.to_string());
+            }
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => {
+                headers.insert(
+                    "Sinex-Source-Event-Count",
+                    source_event_ids.len().to_string(),
+                );
             }
         }
 
@@ -104,7 +98,8 @@ impl NatsPublisher {
         let headers = Self::create_event_headers(event);
 
         // Serialize event to JSON
-        let payload = serde_json::to_vec(event).map_err(|e| NatsError::Serialization(e))?;
+        let payload =
+            serde_json::to_vec(event).map_err(|e| NatsError::Serialization(Arc::new(e)))?;
 
         // Publish with headers
         self.publish_with_headers(&subject, headers, payload).await
@@ -160,7 +155,8 @@ impl NatsPublisher {
 
     /// Publish a serializable message
     pub async fn publish<T: Serialize>(&self, subject: &str, message: &T) -> Result<PublishAck> {
-        let payload = serde_json::to_vec(message).map_err(|e| NatsError::Serialization(e))?;
+        let payload =
+            serde_json::to_vec(message).map_err(|e| NatsError::Serialization(Arc::new(e)))?;
 
         self.jetstream.publish(subject, payload).await
     }
@@ -224,7 +220,8 @@ impl NatsPublisher {
             let headers = Self::create_event_headers(event);
 
             // Serialize event to JSON
-            let payload = serde_json::to_vec(event).map_err(|e| NatsError::Serialization(e))?;
+            let payload =
+                serde_json::to_vec(event).map_err(|e| NatsError::Serialization(Arc::new(e)))?;
 
             batch_messages.push((subject, headers, payload));
         }
@@ -270,7 +267,8 @@ impl NatsPublisher {
         // Serialize all messages
         let mut batch_messages = Vec::with_capacity(messages.len());
         for (subject, message) in messages {
-            let payload = serde_json::to_vec(message).map_err(|e| NatsError::Serialization(e))?;
+            let payload =
+                serde_json::to_vec(message).map_err(|e| NatsError::Serialization(Arc::new(e)))?;
             batch_messages.push((subject.clone(), payload));
         }
 

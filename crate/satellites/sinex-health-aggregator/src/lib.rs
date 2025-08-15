@@ -209,12 +209,30 @@ impl HealthAggregator {
             "service.error".to_string(),
         ];
 
-        let events = sqlx::query_as!(
-            RawEvent,
+        use sinex_core::db::repositories::events::EventRecordExt;
+        use sinex_schema::schema::records::EventRecord;
+
+        let event_records = sqlx::query_as!(
+            EventRecord,
             r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
+            SELECT 
+                id as "id!: Uuid",
+                ts_ingest as "ts_ingest!",
+                ts_orig,
+                source as "source!",
+                event_type as "event_type!",
+                host as "host!",
+                payload as "payload!",
+                ingestor_version,
+                payload_schema_id,
+                payload_schema_name,
+                payload_schema_version,
+                source_event_ids as "source_event_ids?: Vec<Uuid>",
+                source_material_id,
+                source_material_offset_start,
+                source_material_offset_end,
+                anchor_byte,
+                associated_blob_ids as "associated_blob_ids?: Vec<Uuid>"
             FROM core.events 
             WHERE ts_orig >= $1 
             AND (event_type = ANY($2) OR payload::text ILIKE '%health%' OR payload::text ILIKE '%status%')
@@ -226,6 +244,11 @@ impl HealthAggregator {
         )
         .fetch_all(db_pool).await
         .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;
+
+        let events: Vec<RawEvent> = event_records
+            .into_iter()
+            .map(|record| record.to_event())
+            .collect();
 
         Ok(events)
     }

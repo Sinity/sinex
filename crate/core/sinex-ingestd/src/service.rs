@@ -15,6 +15,7 @@ use crate::{
 // External crates
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
+use sinex_core::environment as sinex_environment;
 use sinex_core::{
     db::{
         models::{Provenance, RawEvent},
@@ -84,12 +85,14 @@ impl SubjectCache {
             }
         }
 
-        // Slow path: create and cache the subject
-        let subject = Arc::new(format!(
+        // Slow path: create and cache the subject, namespaced by environment
+        let env = sinex_environment();
+        let base = format!(
             "events.{}.{}",
             source.replace('.', "_"),
             event_type.replace('.', "_")
-        ));
+        );
+        let subject = Arc::new(env.nats_subject(&base));
 
         let mut cache = self.cache.lock().await;
         // Double-check in case another task inserted while we were waiting
@@ -149,10 +152,11 @@ impl IngestService {
             })?;
             let js = jetstream::new(client.clone());
 
-            // Create or get the events stream
+            // Create or get the events stream (subjects namespaced by environment)
+            let env = sinex_environment();
             let stream_config = jetstream::stream::Config {
                 name: config.nats_stream_name.clone(),
-                subjects: vec!["events.>".to_string()],
+                subjects: vec![env.nats_subject("events.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
                 max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days
@@ -202,7 +206,7 @@ impl IngestService {
         let telemetry = None;
 
         let service = Self {
-            config,
+            config: config.clone(),
             db_pool,
             nats_client,
             jetstream,
@@ -354,7 +358,7 @@ impl IngestService {
             .map_err(|e| {
                 SinexError::service(format!("gRPC server error: {}", e))
                     .with_operation("service.start_grpc_server")
-                    .with_context("socket_path", config.socket_path.clone())
+                    .with_context("socket_path", self.config.socket_path.clone())
             })?;
 
         info!("Ingestion service stopped");
@@ -482,7 +486,7 @@ impl IngestService {
         // Read and lock pending outbox entries (limit 100 for batching)
         // Use SELECT FOR UPDATE to prevent concurrent processing of same entries
         let pending = sqlx::query_as::<_, OutboxEntry>(
-            "SELECT id, event_id, subject, payload, created_at FROM core.outbox 
+            "SELECT id, event_id, destination as subject, payload, created_at FROM core.outbox 
              ORDER BY created_at 
              LIMIT 100 
              FOR UPDATE SKIP LOCKED",
@@ -716,31 +720,28 @@ impl IngestService {
             payload_schema_versions.push(Some("1.0.0".to_string()));
 
             // Extract provenance into separate database fields
-            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
-                match &event.provenance {
-                    Some(Provenance::Events(ids)) => {
-                        let uuids: Vec<sqlx::types::Uuid> =
-                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
-                        (Some(uuids), None, None, None)
-                    }
-                    Some(Provenance::Material {
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end, anchor_byte) =
+                match event.provenance {
+                    Provenance::Material {
                         id,
+                        anchor_byte,
                         offset_start,
                         offset_end,
-                    }) => (
+                        ..  // Ignore other fields
+                    } => (
                         None,
                         Some(ulid_to_uuid(*id.as_ulid())),
-                        *offset_start,
-                        *offset_end,
+                        offset_start,
+                        offset_end,
+                        anchor_byte,
                     ),
-                    None => (None, None, None, None),
                 };
 
             source_event_id_arrays.push(source_event_ids_opt);
             source_material_ids.push(source_material_id);
             source_material_offset_starts.push(offset_start);
             source_material_offset_ends.push(offset_end);
-            anchor_bytes.push(event.anchor_byte);
+            anchor_bytes.push(anchor_byte);
 
             let blob_uuids = event
                 .associated_blob_ids
@@ -749,16 +750,19 @@ impl IngestService {
             associated_blob_id_arrays.push(blob_uuids);
 
             // Prepare outbox entry for NATS publishing - use cached subject if available
+            // Subjects are namespaced by environment
             let subject = if let Some(cache) = subject_cache {
                 cache
                     .get_subject(event.source.as_str(), event.event_type.as_str())
                     .await
             } else {
-                Arc::new(format!(
+                let env = sinex_environment();
+                let base = format!(
                     "events.{}.{}",
                     event.source.as_str().replace('.', "_"),
                     event.event_type.as_str().replace('.', "_")
-                ))
+                );
+                Arc::new(env.nats_subject(&base))
             };
             outbox_entries.push((event_id, (*subject).clone(), serde_json::to_value(event)?));
         }
@@ -805,7 +809,7 @@ impl IngestService {
         // Insert outbox entries for NATS publishing
         for (event_id, subject, payload) in outbox_entries {
             sqlx::query!(
-                "INSERT INTO core.outbox (event_id, subject, payload) VALUES ($1::ulid, $2, $3)",
+                "INSERT INTO core.outbox (id, event_id, destination, payload) VALUES (gen_ulid()::ulid, $1::ulid, $2, $3)",
                 ulid_to_uuid(event_id) as sqlx::types::Uuid,
                 subject,
                 payload

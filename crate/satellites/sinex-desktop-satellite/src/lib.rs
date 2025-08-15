@@ -17,8 +17,9 @@ mod window_manager;
 // New unified processor module
 pub mod unified_processor;
 
-// Sensd integration module
+// Sensd integration modules
 pub mod desktop_sensd_integration;
+pub mod sensd_job_submitter;
 
 // Local facade module to reduce import verbosity
 mod common {

@@ -7,6 +7,7 @@
 
 use crate::prelude::*;
 use crate::Result;
+use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::*; // Use production primitives from sinex-types
 use sinex_core::*;

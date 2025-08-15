@@ -186,7 +186,7 @@ impl ReplayManager {
 
     /// Process events in replay mode with progress tracking
     pub async fn replay_events_with_progress<F, Fut>(
-        &self,
+        &mut self,
         mut processor: F,
         progress_callback: Option<
             impl Fn(&crate::replay_progress::ReplayProgress) + Send + Sync + 'static,
@@ -473,7 +473,7 @@ impl ReplayManager {
     }
 
     /// Process events in replay mode (backwards compatibility)
-    pub async fn replay_events<F, Fut>(&self, processor: F) -> SatelliteResult<ReplayResult>
+    pub async fn replay_events<F, Fut>(&mut self, processor: F) -> SatelliteResult<ReplayResult>
     where
         F: FnMut(Vec<RawEvent>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
