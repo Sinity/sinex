@@ -1,6 +1,6 @@
 use sea_orm_migration::prelude::*;
 
-use crate::schema::{SensorJobs, SourceMaterials, TemporalLedger};
+use crate::schema::{SensorJobs, TemporalLedger};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -8,27 +8,7 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create raw.source_material_registry table with full schema
-        // Note: This creates a new table alongside the existing source_materials table
-        manager
-            .create_table(SourceMaterials::create_table_statement())
-            .await?;
-
-        // Add constraints to source_material_registry
-        for constraint_sql in SourceMaterials::create_check_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create indexes for source_material_registry
-        for index_sql in SourceMaterials::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
+        // Source material registry is created by the initial schema; do not recreate it here
 
         // Create sensor_jobs table
         manager
@@ -135,11 +115,7 @@ impl MigrationTrait for Migration {
             .execute_unprepared("DROP TABLE IF EXISTS raw.sensor_jobs CASCADE")
             .await?;
 
-        // Drop the source_material_registry table (leaves original source_materials intact)
-        manager
-            .get_connection()
-            .execute_unprepared("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-            .await?;
+        // Do not drop source_material_registry here
 
         Ok(())
     }

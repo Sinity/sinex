@@ -33,8 +33,12 @@ pub enum ProcessorManifests {
     Description,
     Capabilities,
     ConfigSchema,
+    ConfigurationSchema,
+    InputSchemas,
+    OutputSchemas,
     RuntimeRequirements,
     DeploymentStatus,
+    BuildMetadata,
     CreatedAt,
     UpdatedAt,
 }
@@ -51,6 +55,8 @@ pub enum OperationsLog {
     Outcome,
     PreviewSummary,
     ApprovedBy,
+    ApprovedAt,
+    ExecutorNode,
     StartedAt,
     CompletedAt,
     FinishedAt,
@@ -159,7 +165,11 @@ impl ProcessorManifests {
                     .default("{}"),
             )
             .col(ColumnDef::new(ProcessorManifests::ConfigSchema).json_binary())
+            .col(ColumnDef::new(ProcessorManifests::ConfigurationSchema).json_binary())
+            .col(ColumnDef::new(ProcessorManifests::InputSchemas).json_binary())
+            .col(ColumnDef::new(ProcessorManifests::OutputSchemas).json_binary())
             .col(ColumnDef::new(ProcessorManifests::RuntimeRequirements).json_binary())
+            .col(ColumnDef::new(ProcessorManifests::BuildMetadata).json_binary())
             .col(
                 ColumnDef::new(ProcessorManifests::DeploymentStatus)
                     .text()
@@ -228,14 +238,16 @@ impl OperationsLog {
             )
             .col(
                 ColumnDef::new(OperationsLog::Scope)
-                    .text()
+                    .json_binary()
                     .not_null()
-                    .default("unknown"),
+                    .default("{}"),
             )
             .col(ColumnDef::new(OperationsLog::Context).json_binary())
             .col(ColumnDef::new(OperationsLog::Outcome).text())
-            .col(ColumnDef::new(OperationsLog::PreviewSummary).text())
+            .col(ColumnDef::new(OperationsLog::PreviewSummary).json_binary())
             .col(ColumnDef::new(OperationsLog::ApprovedBy).text())
+            .col(ColumnDef::new(OperationsLog::ApprovedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(OperationsLog::ExecutorNode).text())
             .col(
                 ColumnDef::new(OperationsLog::StartedAt)
                     .timestamp_with_time_zone()

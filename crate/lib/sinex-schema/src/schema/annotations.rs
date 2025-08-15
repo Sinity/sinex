@@ -44,6 +44,11 @@ impl EventAnnotations {
                     .not_null(),
             )
             .col(
+                ColumnDef::new(EventAnnotations::Metadata)
+                    .json_binary()
+                    .default("{}"),
+            )
+            .col(
                 ColumnDef::new(EventAnnotations::CreatedAt)
                     .timestamp_with_time_zone()
                     .not_null()

@@ -43,7 +43,7 @@ impl TableDef for SourceMaterials {
     }
 
     fn primary_key() -> &'static str {
-        "source_material_id"
+        "id"
     }
 }
 

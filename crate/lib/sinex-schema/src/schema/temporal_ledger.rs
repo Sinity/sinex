@@ -29,13 +29,6 @@ pub enum TemporalLedger {
     CreatedAt,
 }
 
-#[derive(Iden)]
-pub enum SourceMaterialRegistry {
-    Table,
-    #[iden = "blob_id"]
-    BlobId,
-}
-
 impl TemporalLedger {
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
@@ -90,7 +83,7 @@ impl TemporalLedger {
     pub fn create_foreign_key_constraints() -> Vec<String> {
         vec![format!(
             r#"ALTER TABLE raw.{} ADD CONSTRAINT fk_temporal_ledger_material_id 
-                   FOREIGN KEY (material_id) REFERENCES raw.source_material_registry(blob_id) ON DELETE CASCADE"#,
+                   FOREIGN KEY (material_id) REFERENCES raw.source_material_registry(id) ON DELETE CASCADE"#,
             TemporalLedger::Table.to_string()
         )]
     }

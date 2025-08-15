@@ -18,6 +18,10 @@ pub enum EventPayloadSchemas {
     DeprecatedAt,
     DeprecationReason,
     Examples,
+    ContentHash,
+    Description,
+    EventTypes,
+    ApprovedBy,
 }
 
 #[derive(Iden)]
@@ -66,6 +70,12 @@ impl EventPayloadSchemas {
                     .json_binary()
                     .not_null(),
             )
+            .col(ColumnDef::new(EventPayloadSchemas::ContentHash).text())
+            .col(
+                ColumnDef::new(EventPayloadSchemas::EventTypes)
+                    .array(sea_query::ColumnType::Text)
+                    .default("{}"),
+            )
             .col(
                 ColumnDef::new(EventPayloadSchemas::IsActive)
                     .boolean()
@@ -87,11 +97,15 @@ impl EventPayloadSchemas {
             .col(ColumnDef::new(EventPayloadSchemas::DeprecatedAt).timestamp_with_time_zone())
             .col(ColumnDef::new(EventPayloadSchemas::DeprecationReason).text())
             .col(ColumnDef::new(EventPayloadSchemas::Examples).json_binary())
+            .col(ColumnDef::new(EventPayloadSchemas::Description).text())
+            .col(ColumnDef::new(EventPayloadSchemas::ApprovedBy).text())
             .to_string(PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
-        vec![]
+        vec![
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_event_payload_schemas_name_version_unique ON sinex_schemas.event_payload_schemas (schema_name, schema_version);".to_string(),
+        ]
     }
 }
 

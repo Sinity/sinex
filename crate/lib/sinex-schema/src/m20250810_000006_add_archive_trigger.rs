@@ -32,21 +32,22 @@ impl MigrationTrait for Migration {
 
                   INSERT INTO audit.archived_events (
                     id, event_type, source, ts_orig, ts_ingest, host, payload,
-                    source_material_id, offset_kind, offset_start, offset_end, anchor_byte,
-                    source_event_ids, payload_schema_id, processor_manifest_id,
+                    source_material_id, offset_start, offset_end, anchor_byte,
+                    source_event_ids, payload_schema_id,
                     archived_at, archived_by, archive_reason, superseded_by_event_id
                   )
                   VALUES (
                     OLD.id, OLD.event_type, OLD.source, OLD.ts_orig, OLD.ts_ingest, OLD.host, OLD.payload,
-                    OLD.source_material_id, OLD.offset_kind, OLD.offset_start, OLD.offset_end, OLD.anchor_byte,
-                    OLD.source_event_ids, OLD.payload_schema_id, OLD.processor_manifest_id,
+                    OLD.source_material_id, OLD.source_material_offset_start, OLD.source_material_offset_end, OLD.anchor_byte,
+                    OLD.source_event_ids, OLD.payload_schema_id,
                     NOW(), who, why, sup_id
                   );
 
                   -- Also record this in operations_log
-                  UPDATE core.operations_log 
-                  SET events_archived = COALESCE(events_archived, 0) + 1
-                  WHERE operation_id = op_id::ULID;
+                  -- Optional: record archive activity in operations_log if schema supports it
+                  -- UPDATE core.operations_log 
+                  -- SET checkpoint = jsonb_set(COALESCE(checkpoint, '{}'), '{events_archived}', to_jsonb(COALESCE((checkpoint->>'events_archived')::int,0)+1), true)
+                  -- WHERE id = op_id::uuid;
 
                   RETURN OLD;
                 END $$;
