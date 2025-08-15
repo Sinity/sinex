@@ -25,10 +25,11 @@ pub mod proto {
 
 use proto::{
     sensd_service_server::{SensdService as ProtoService, SensdServiceServer},
-    CreateJobRequest, CreateJobResponse, EndOfMaterial, GapIndicator, GetJobStatusRequest,
-    GetMaterialMetadataRequest, GetMaterialStreamRequest, JobStatus as ProtoJobStatus,
-    ListMaterialsRequest, ListMaterialsResponse, MaterialMetadata, MaterialSlice as ProtoSlice,
-    RotationBoundary, StreamFrame as ProtoFrame,
+    CreateJobRequest, CreateJobResponse, DirectCaptureAcknowledgment, DirectCaptureRequest,
+    EndOfMaterial, GapIndicator, GetJobStatusRequest, GetMaterialMetadataRequest,
+    GetMaterialStreamRequest, JobStatus as ProtoJobStatus, ListMaterialsRequest,
+    ListMaterialsResponse, MaterialMetadata, MaterialSlice as ProtoSlice, RotationBoundary,
+    StreamFrame as ProtoFrame,
 };
 
 /// gRPC service implementation

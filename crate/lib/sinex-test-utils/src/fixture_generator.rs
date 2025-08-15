@@ -246,16 +246,16 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_core::*;
+        use sinex_core::types::domain::{EventSource, EventType, HostName};
 
-        RawEvent::builder()
-            .source(EventSource::new(source))
-            .event_type(EventType::new(event_type))
-            .host(HostName::new("fixture_host"))
-            .payload(serde_json::to_value(payload).unwrap())
-            .ts_orig(Some(timestamp))
-            .ingestor_version("fixture_generator/1.0.0".to_string())
-            .build()
+        RawEvent::test_event(
+            EventSource::new(source),
+            EventType::new(event_type),
+            serde_json::to_value(payload).unwrap(),
+        )
+        .with_host(HostName::new("fixture_host"))
+        .with_timestamp(timestamp)
+        .with_ingestor_version("fixture_generator/1.0.0")
     }
 
     /// Generate SQL for the dataset

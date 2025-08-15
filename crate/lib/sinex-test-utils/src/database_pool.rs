@@ -1110,12 +1110,12 @@ mod tests {
             // Insert test data
 
             let repo = db.pool.events();
-            let event = RawEvent::builder()
-                .source(EventSource::new("test"))
-                .event_type(EventType::new("test.event"))
-                .host(HostName::new("test-host"))
-                .payload(serde_json::json!({}))
-                .build();
+            let event = RawEvent::test_event(
+                EventSource::new("test"),
+                EventType::new("test.event"),
+                serde_json::json!({}),
+            )
+            .with_host(HostName::new("test-host"));
             repo.insert(event).await?;
 
             // Verify data exists
@@ -1203,12 +1203,12 @@ mod tests {
         };
 
         let repo = db.pool.events();
-        let event_to_insert = RawEvent::builder()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test"))
-            .host(HostName::new("test"))
-            .payload(serde_json::json!({}))
-            .build();
+        let event_to_insert = RawEvent::test_event(
+            EventSource::new("test"),
+            EventType::new("test"),
+            serde_json::json!({}),
+        )
+        .with_host(HostName::new("test"));
         let event = repo.insert(event_to_insert).await?;
 
         // Add annotation
@@ -1268,12 +1268,12 @@ mod tests {
 
                 let repo = db.pool.events();
                 for _j in 0..5 {
-                    let event = RawEvent::builder()
-                        .source(EventSource::new(&format!("task_{}", i)))
-                        .event_type(EventType::new("stress.test"))
-                        .host(HostName::new("test"))
-                        .payload(serde_json::json!({}))
-                        .build();
+                    let event = RawEvent::test_event(
+                        EventSource::new(&format!("task_{}", i)),
+                        EventType::new("stress.test"),
+                        serde_json::json!({}),
+                    )
+                    .with_host(HostName::new("test"));
                     repo.insert(event).await?;
                 }
 
@@ -1447,12 +1447,12 @@ mod benches {
 
         let repo = pool.events();
         for i in 0..100 {
-            let new_event = RawEvent::builder()
-                .source(EventSource::new("bench"))
-                .event_type(EventType::new("test"))
-                .host(HostName::new("host"))
-                .payload(serde_json::json!({"index": i}))
-                .build();
+            let new_event = RawEvent::test_event(
+                EventSource::new("bench"),
+                EventType::new("test"),
+                serde_json::json!({"index": i}),
+            )
+            .with_host(HostName::new("host"));
             repo.insert(new_event).await?;
         }
 
@@ -1497,12 +1497,12 @@ mod benches {
 
         let repo = pool.events();
         for i in 0..50 {
-            let new_event = RawEvent::builder()
-                .source(EventSource::new(&format!("source_{}", i % 10)))
-                .event_type(EventType::new("test"))
-                .host(HostName::new("bench"))
-                .payload(serde_json::json!({}))
-                .build();
+            let new_event = RawEvent::test_event(
+                EventSource::new(&format!("source_{}", i % 10)),
+                EventType::new("test"),
+                serde_json::json!({}),
+            )
+            .with_host(HostName::new("bench"));
             repo.insert(new_event).await?;
         }
 

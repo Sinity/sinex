@@ -53,13 +53,18 @@ impl BatchedPullSensor {
             material_id,
             offset_start: offset,
             offset_end: offset + data.len() as i64,
-            ts_capture_start: Utc::now(),
-            ts_capture_end: Utc::now(),
-            slice_hash: None,
-            capture_metadata: serde_json::json!({
-                "pattern": "batched_pull",
-                "data_size": data.len(),
-            }),
+            ts_capture: Utc::now(),
+            offset_kind: "byte".to_string(),
+            precision: "millisecond".to_string(),
+            clock: "system".to_string(),
+            source_type: "batched_pull".to_string(),
+            note: Some(
+                serde_json::json!({
+                    "pattern": "batched_pull",
+                    "data_size": data.len(),
+                })
+                .to_string(),
+            ),
         };
 
         buffer.push(entry);
@@ -149,15 +154,20 @@ impl ReplaceSnapshotSensor {
             material_id,
             offset_start: 0,
             offset_end: snapshot.len() as i64,
-            ts_capture_start: Utc::now(),
-            ts_capture_end: Utc::now(),
-            slice_hash: None,
-            capture_metadata: serde_json::json!({
-                "pattern": "replace_snapshot",
-                "source": source_path,
-                "snapshot_size": snapshot.len(),
-                "replaced_previous": current.is_some(),
-            }),
+            ts_capture: Utc::now(),
+            offset_kind: "byte".to_string(),
+            precision: "millisecond".to_string(),
+            clock: "system".to_string(),
+            source_type: "replace_snapshot".to_string(),
+            note: Some(
+                serde_json::json!({
+                    "pattern": "replace_snapshot",
+                    "source": source_path,
+                    "snapshot_size": snapshot.len(),
+                    "replaced_previous": current.is_some(),
+                })
+                .to_string(),
+            ),
         };
 
         self.temporal_ledger.record_entry(entry).await?;
@@ -257,15 +267,20 @@ impl MultiFileSensor {
                     material_id,
                     offset_start: 0,
                     offset_end: file_size,
-                    ts_capture_start: Utc::now(),
-                    ts_capture_end: Utc::now(),
-                    slice_hash: None,
-                    capture_metadata: serde_json::json!({
-                        "pattern": "multi_file",
-                        "file_path": file_path.to_string_lossy(),
-                        "file_size": file_size,
-                        "modified": metadata.modified().ok(),
-                    }),
+                    ts_capture: Utc::now(),
+                    offset_kind: "byte".to_string(),
+                    precision: "millisecond".to_string(),
+                    clock: "system".to_string(),
+                    source_type: "multi_file".to_string(),
+                    note: Some(
+                        serde_json::json!({
+                            "pattern": "multi_file",
+                            "file_path": file_path.to_string_lossy(),
+                            "file_size": file_size,
+                            "modified": metadata.modified().ok(),
+                        })
+                        .to_string(),
+                    ),
                 };
 
                 self.temporal_ledger.record_entry(entry).await?;

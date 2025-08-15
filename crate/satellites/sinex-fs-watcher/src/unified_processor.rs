@@ -11,7 +11,7 @@ use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::{
-    db::models::{Provenance, RawEvent},
+    db::models::{event::OffsetKind, Provenance, RawEvent},
     types::{
         domain::{EventSource, EventType},
         Id, Ulid,
@@ -279,24 +279,28 @@ impl FilesystemProcessor {
         };
 
         // Create event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from(event_type))
-            .source(EventSource::from("filesystem"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("filesystem"),
+            EventType::from(event_type),
+            json!({
                 "path": path,
                 "size": file_size,
                 "is_directory": is_directory,
                 "event_kind": event_kind,
                 "material_id": slice.material_id.to_string(),
                 "offset_range": [slice.offset_start, slice.offset_end],
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
 

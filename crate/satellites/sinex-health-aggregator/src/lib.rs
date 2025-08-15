@@ -259,17 +259,19 @@ impl HealthAggregator {
                     .entry(component_info.component_name.clone())
                     .or_insert_with(|| ComponentHealth {
                         component_name: component_info.component_name.clone(),
-                        last_seen: event.ts_orig,
+                        last_seen: event.ts_orig.unwrap_or_else(Utc::now),
                         status: HealthStatus::Unknown,
                         metrics: HashMap::new(),
                         recent_events: Vec::new(),
                     });
 
                 // Update health information
-                component_health.last_seen = event.ts_orig;
+                component_health.last_seen = event.ts_orig.unwrap_or_else(Utc::now);
                 component_health.status = component_info.status;
                 component_health.metrics.extend(component_info.metrics);
-                component_health.recent_events.push(event.id);
+                if let Some(event_id) = event.id {
+                    component_health.recent_events.push(event_id);
+                }
 
                 // Keep only recent events (last 10)
                 if component_health.recent_events.len() > 10 {

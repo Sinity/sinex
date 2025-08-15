@@ -415,12 +415,12 @@ mod tests {
             OperationRecord, Provenance, RawEvent, SourceMaterial,
         };
 
-        let new_event = RawEvent::builder()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test.event"))
-            .host(HostName::new("test-host"))
-            .payload(serde_json::json!({}))
-            .build();
+        let new_event = RawEvent::test_event(
+            EventSource::new("test"),
+            EventType::new("test.event"),
+            serde_json::json!({}),
+        )
+        .with_host(HostName::new("test-host"));
         pool.events().insert(new_event).await?;
 
         // Verify data exists
@@ -452,12 +452,12 @@ mod tests {
             OperationRecord, Provenance, RawEvent, SourceMaterial,
         };
 
-        let new_event = RawEvent::builder()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test"))
-            .host(HostName::new("test"))
-            .payload(serde_json::json!({}))
-            .build();
+        let new_event = RawEvent::test_event(
+            EventSource::new("test"),
+            EventType::new("test"),
+            serde_json::json!({}),
+        )
+        .with_host(HostName::new("test"));
         pool.events().insert(new_event).await?;
 
         // Should fail verification

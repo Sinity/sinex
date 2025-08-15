@@ -3,12 +3,13 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::db::repositories::source_materials::SourceMaterial;
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
 use sinex_core::Entity as DbEntity;
 use sinex_core::RawEvent;
-use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
+use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
 use std::collections::HashMap;
 use std::convert::From;
 use tracing::{debug, info};
@@ -243,7 +244,7 @@ impl PkmService {
             let existing_material = self
                 .pool
                 .source_materials()
-                .find_by_blob_id(blob.id.unwrap())
+                .find_by_blob_id(blob.id)
                 .await?;
 
             if let Some(material) = existing_material {
@@ -357,8 +358,8 @@ impl PkmService {
             .source_materials()
             .finalize_in_flight(
                 id.into(),
-                inserted_blob.id, // blob_id
-                None,             // encoding
+                Some(inserted_blob.id), // blob_id
+                None,                   // encoding
                 content_preview,
             )
             .await?;

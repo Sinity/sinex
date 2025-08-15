@@ -183,28 +183,24 @@ impl TerminalCommandCanonicalizer {
             "enrichment_history": Vec::<String>::new(),
         });
 
+        use sinex_core::db::models::Event;
         use sinex_core::types::{Id, Ulid as CoreUlid};
 
-        let event = RawEvent {
-            id: None,
-            source: EventSource::from_static("automaton.terminal_command_canonicalizer"),
-            event_type: EventType::from_static("command.canonical"),
+        let source_event_ids: Vec<Id<Event<_>>> = command_data
+            .source_events
+            .iter()
+            .map(|ulid| Id::from_ulid(*ulid))
+            .collect();
+
+        let event = RawEvent::from_synthesis(
+            "automaton.terminal_command_canonicalizer",
+            "command.canonical",
             payload,
-            ts_orig: Some(command_data.start_time),
-            ts_ingest: Utc::now(),
-            host: HostName::new("localhost"), // Will be set by builder default
-            ingestor_version: Some("1.0.0".to_string()),
-            payload_schema_id: None,
-            provenance: Some(Provenance::Events(
-                command_data
-                    .source_events
-                    .iter()
-                    .map(|ulid| Id::<RawEvent>::from_ulid(*ulid))
-                    .collect(),
-            )),
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
+            source_event_ids,
+        )
+        .with_timestamp(command_data.start_time)
+        .with_host(HostName::new("localhost"))
+        .with_ingestor_version("1.0.0");
 
         Ok(event)
     }

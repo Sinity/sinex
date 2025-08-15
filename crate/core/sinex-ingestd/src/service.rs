@@ -1168,17 +1168,15 @@ impl IngestServiceImpl {
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
-        let builder = RawEvent::builder()
-            .source(source)
-            .event_type(event_type)
-            .host(HostName::new(proto.host))
-            .payload(payload)
-            .ingestor_version(INGESTOR_VERSION);
+        let mut event = RawEvent::system_event(source, event_type, payload);
+        event = event
+            .with_host(HostName::new(proto.host))
+            .with_ingestor_version(INGESTOR_VERSION);
 
         Ok(if let Some(id) = schema_id {
-            builder.payload_schema_id(id).build()
+            event.with_schema_id(id)
         } else {
-            builder.build()
+            event
         })
     }
 }
