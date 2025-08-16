@@ -54,44 +54,44 @@ impl SearchService {
         let mut select_query = Query::select()
             .expr_as(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::ID),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Id),
                 ))
                 .cast_as(Alias::new("text")),
                 Alias::new("event_id"),
             )
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Source),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_TYPE),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::EventType),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_INGEST),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::TsIngest),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Payload),
             ))
             .expr_as(Expr::val(1.0_f64), Alias::new("score"))
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from(Events::table_iden())
             .to_owned();
 
         // Add source filter using proper parameterization
         if !query.sources.is_empty() {
             select_query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::SOURCE),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Source),
                 ))
                 .is_in(query.sources.iter().cloned()),
             );
@@ -101,9 +101,9 @@ impl SearchService {
         if !query.event_types.is_empty() {
             select_query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_TYPE),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::EventType),
                 ))
                 .is_in(query.event_types.iter().cloned()),
             );
@@ -113,9 +113,9 @@ impl SearchService {
         if let Some(start) = query.start_time {
             select_query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .gte(start),
             );
@@ -124,9 +124,9 @@ impl SearchService {
         if let Some(end) = query.end_time {
             select_query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .lte(end),
             );
@@ -136,9 +136,9 @@ impl SearchService {
         if let Some(text) = &query.text {
             select_query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::PAYLOAD),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Payload),
                 ))
                 .cast_as(Alias::new("text"))
                 .ilike(Expr::val(format!("%{}%", text))),
@@ -149,9 +149,9 @@ impl SearchService {
         select_query
             .order_by(
                 (
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ),
                 sea_query::Order::Desc,
             )

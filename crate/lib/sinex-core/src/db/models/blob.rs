@@ -133,7 +133,9 @@ impl From<Blob> for BlobRecord {
             size_bytes: blob.size_bytes,
             mime_type: blob.mime_type,
             checksum_blake3: blob.checksum_blake3,
-            metadata: blob.metadata,
+            metadata: blob
+                .metadata
+                .unwrap_or(serde_json::Value::Object(Default::default())),
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
             verification_status: blob.verification_status,
@@ -156,7 +158,7 @@ impl From<BlobRecord> for Blob {
             size_bytes: record.size_bytes,
             mime_type: record.mime_type,
             checksum_blake3: record.checksum_blake3,
-            metadata: record.metadata,
+            metadata: Some(record.metadata),
             created_at: record.created_at,
             last_verified_at: record.last_verified_at,
             verification_status: record.verification_status,

@@ -134,29 +134,24 @@ fn extract_provenance(
 #[derive(Debug, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Id<EventPayloadSchema>,
-    pub schema_name: SchemaName,
+    pub source: String,
+    pub event_type: String,
     pub schema_version: SchemaVersion,
     pub schema_content: JsonValue,
+    pub content_hash: String,
     pub is_active: bool,
-    pub event_types: Vec<String>,
-    pub description: Option<String>,
-    pub examples: Option<JsonValue>,
-    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub deprecated_at: Option<DateTime<Utc>>,
-    pub deprecation_reason: Option<String>,
 }
 
 /// New schema input structure
 #[derive(Debug)]
 pub struct NewSchema {
-    pub schema_name: SchemaName,
+    pub source: String,
+    pub event_type: String,
     pub schema_version: SchemaVersion,
     pub schema_content: JsonValue,
+    pub content_hash: String,
     pub is_active: bool,
-    pub event_types: Vec<String>,
-    pub description: Option<String>,
-    pub examples: Option<JsonValue>,
 }
 
 /// Event annotation record
@@ -658,86 +653,86 @@ impl<'a> EventRepository<'a> {
         // Build dynamic query with SeaQuery
         let mut query = Query::select()
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ID),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Id),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Source),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_TYPE),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::EventType),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_INGEST),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::TsIngest),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_ORIG),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::TsOrig),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::HOST),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Host),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::INGESTOR_VERSION),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::IngestorVersion),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD_SCHEMA_ID),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::PayloadSchemaId),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::Payload),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_EVENT_IDS),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::SourceEventIds),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_ID),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::SourceMaterialId),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_START),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::OffsetStart),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_END),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::OffsetEnd),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ANCHOR_BYTE),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::AnchorByte),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ASSOCIATED_BLOB_IDS),
+                Alias::new("core"),
+                Alias::new(Events::Table),
+                Alias::new(Events::AssociatedBlobIds),
             ))
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from(Events::table_iden())
             .order_by(
                 (
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ),
                 sea_query::Order::Desc,
             )
@@ -749,9 +744,9 @@ impl<'a> EventRepository<'a> {
         if let Some(source) = &filters.source {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::SOURCE),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Source),
                 ))
                 .eq(source.as_str()),
             );
@@ -760,9 +755,9 @@ impl<'a> EventRepository<'a> {
         if let Some(event_type) = &filters.event_type {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_TYPE),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::EventType),
                 ))
                 .eq(event_type.as_str()),
             );
@@ -771,9 +766,9 @@ impl<'a> EventRepository<'a> {
         if let Some(host) = &filters.host {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::HOST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Host),
                 ))
                 .eq(host.as_str()),
             );
@@ -782,9 +777,9 @@ impl<'a> EventRepository<'a> {
         if let Some(after) = &filters.after {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .gte(after.clone()),
             );
@@ -793,9 +788,9 @@ impl<'a> EventRepository<'a> {
         if let Some(before) = &filters.before {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .lte(before.clone()),
             );
@@ -830,34 +825,34 @@ impl<'a> EventRepository<'a> {
                 Func::cust(Alias::new("time_bucket"))
                     .arg(Expr::val(interval))
                     .arg(Expr::col((
-                        Alias::new(Events::SCHEMA),
-                        Alias::new(Events::TABLE),
-                        Alias::new(Events::TS_INGEST),
+                        Alias::new("core"),
+                        Alias::new(Events::Table),
+                        Alias::new(Events::TsIngest),
                     ))),
                 Alias::new("bucket"),
             )
             .expr_as(
                 Func::count(Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::ID),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::Id),
                 ))),
                 Alias::new("count"),
             )
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from(Events::table_iden())
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .gte(start),
             )
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new(Events::Table),
+                    Alias::new(Events::TsIngest),
                 ))
                 .lte(end),
             )
@@ -1078,6 +1073,11 @@ impl<'a> EventRepository<'a> {
     }
 
     // ===== Schema Management Methods =====
+    // NOTE: These methods are commented out because the actual database schema
+    // is different from what these methods expect. The table has:
+    // id, source, event_type, schema_version, schema_content, content_hash, is_active, updated_at
+    // But the code expects additional columns that don't exist.
+    /*
 
     /// Register a new event payload schema
     pub async fn register_schema(&self, schema: NewSchema) -> DbResult<EventPayloadSchema> {
@@ -1087,37 +1087,28 @@ impl<'a> EventRepository<'a> {
             EventPayloadSchema,
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas (
-                id, schema_name, schema_version, schema_content,
-                is_active, event_types, description, examples
+                id, source, event_type, schema_version, schema_content,
+                content_hash, is_active
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7
             )
-            RETURNING 
+            RETURNING
                 id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
+                source,
+                event_type,
                 schema_version as "schema_version!: SchemaVersion",
                 schema_content as "schema_content!",
+                content_hash,
                 is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
+                updated_at as "updated_at!"
             "#,
             *id.as_ulid() as _,
-            schema.schema_name.as_str(),
+            schema.source,
+            schema.event_type,
             schema.schema_version.as_str(),
             schema.schema_content,
-            schema.is_active,
-            &schema
-                .event_types
-                .iter()
-                .map(|et| et.as_str().to_string())
-                .collect::<Vec<_>>()[..],
-            schema.description,
-            schema.examples
+            schema.content_hash,
+            schema.is_active
         )
         .fetch_one(self.pool)
         .await
@@ -1132,7 +1123,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query_as!(
             EventPayloadSchema,
             r#"
-            SELECT 
+            SELECT
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1145,7 +1136,7 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!",
                 deprecated_at,
                 deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
+            FROM sinex_schemas.event_payload_schemas
             WHERE id = $1
             "#,
             *id.as_ulid() as _
@@ -1163,7 +1154,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query_as!(
             EventPayloadSchema,
             r#"
-            SELECT 
+            SELECT
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1176,8 +1167,8 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!",
                 deprecated_at,
                 deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE $1 = ANY(event_types) 
+            FROM sinex_schemas.event_payload_schemas
+            WHERE $1 = ANY(event_types)
               AND is_active = true
             ORDER BY created_at DESC
             LIMIT 1
@@ -1198,7 +1189,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query_as!(
             EventPayloadSchema,
             r#"
-            SELECT 
+            SELECT
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1211,8 +1202,8 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!",
                 deprecated_at,
                 deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE schema_name = $1 
+            FROM sinex_schemas.event_payload_schemas
+            WHERE schema_name = $1
               AND schema_version = $2
             "#,
             schema_name.as_str(),
@@ -1351,8 +1342,8 @@ impl<'a> EventRepository<'a> {
             // Perform the deprecation
             let result = sqlx::query!(
                 r#"
-                UPDATE sinex_schemas.event_payload_schemas 
-                SET 
+                UPDATE sinex_schemas.event_payload_schemas
+                SET
                     is_active = false,
                     deprecated_at = NOW(),
                     deprecation_reason = $2,
@@ -1414,7 +1405,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query_as!(
             EventPayloadSchema,
             r#"
-            SELECT 
+            SELECT
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1427,8 +1418,8 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!",
                 deprecated_at,
                 deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE 
+            FROM sinex_schemas.event_payload_schemas
+            WHERE
                 ($2::text IS NULL OR schema_name = $2) AND
                 ($3::text IS NULL OR $3 = ANY(event_types)) AND
                 ($4::boolean IS NULL OR is_active = $4)
@@ -1453,7 +1444,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query_as!(
             EventPayloadSchema,
             r#"
-            SELECT 
+            SELECT
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1466,7 +1457,7 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!",
                 deprecated_at,
                 deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
+            FROM sinex_schemas.event_payload_schemas
             WHERE schema_name = $1
             ORDER BY created_at DESC
             "#,
@@ -1494,7 +1485,7 @@ impl<'a> EventRepository<'a> {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
-            RETURNING 
+            RETURNING
                 id as "id: Id<EventPayloadSchema>",
                 schema_name as "schema_name!: SchemaName",
                 schema_version as "schema_version!: SchemaVersion",
@@ -1525,6 +1516,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "register schema with tx"))
     }
+    */
 
     // ========== Event Annotations ==========
 
