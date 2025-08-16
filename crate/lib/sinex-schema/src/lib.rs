@@ -25,6 +25,7 @@ pub mod ulid_conversions;
 pub mod schema;
 
 // The directory containing all migration files.
+mod m20250816_122538_add_associated_blob_ids;
 mod migrations;
 
 /// The canonical Migrator for the Sinex database.
@@ -38,14 +39,8 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            // In our refactored design, there is only ONE initial migration.
-            // It creates the entire, complete, canonical schema. All old,
-            // incremental migrations have been squashed into this one file
-            // for clarity and speed when setting up new databases.
-            //
-            // All future schema changes will be implemented as new migration
-            // files (e.g., `m20241028_..._add_new_feature_table.rs`).
             Box::new(migrations::m20241028_000001_create_canonical_schema::Migration),
+            Box::new(m20250816_122538_add_associated_blob_ids::Migration),
         ]
     }
 }

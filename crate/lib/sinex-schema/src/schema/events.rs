@@ -31,7 +31,7 @@ pub enum Events {
     Payload,
     TsOrig,
     TsIngest,
-    IngestorVersion,
+
     // External Provenance
     SourceMaterialId,
     AnchorByte,
@@ -40,8 +40,12 @@ pub enum Events {
     OffsetKind,
     // Internal Provenance
     SourceEventIds,
+
+    AssociatedBlobIds,
+
     // Metadata
     PayloadSchemaId,
+    IngestorVersion,
 }
 
 impl TableDef for Events {
@@ -69,7 +73,7 @@ pub struct EventRecord {
     pub payload: JsonValue,
     pub ts_orig: DateTime<Utc>,
     pub ts_ingest: DateTime<Utc>,
-    pub ingestor_version: Option<String>,
+
     // Provenance fields
     pub source_material_id: Option<Ulid>,
     pub anchor_byte: Option<i64>,
@@ -77,8 +81,12 @@ pub struct EventRecord {
     pub offset_end: Option<i64>,
     pub offset_kind: Option<String>,
     pub source_event_ids: Option<Vec<Ulid>>,
+
+    pub associated_blob_ids: Option<Vec<Ulid>>,
+
     // Metadata
     pub payload_schema_id: Option<Ulid>,
+    pub ingestor_version: Option<String>,
 }
 
 impl Events {
@@ -100,6 +108,7 @@ impl Events {
             .col(ColumnDef::new(Events::OffsetEnd).big_integer())
             .col(ColumnDef::new(Events::OffsetKind).text().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
+            .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("ULID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("ULID")))
             .col(ColumnDef::new(Events::IngestorVersion).text())
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.

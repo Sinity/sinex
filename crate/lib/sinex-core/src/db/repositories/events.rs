@@ -5,6 +5,7 @@ use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
 use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
+use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
@@ -255,14 +256,12 @@ impl<'a> EventRepository<'a> {
                 id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                anchor_byte, associated_blob_ids
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16
+                $13, $14::uuid[]
             )
             RETURNING 
                 id::uuid as "id!",
@@ -279,9 +278,7 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids::uuid[] as associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                associated_blob_ids::uuid[] as associated_blob_ids
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -296,9 +293,7 @@ impl<'a> EventRepository<'a> {
             offset_start,
             offset_end,
             anchor_byte,
-            associated_blob_ids.as_deref(),
-            None::<String>, // payload_schema_name
-            None::<String>  // payload_schema_version
+            associated_blob_ids.as_deref()
         )
         .fetch_one(self.pool)
         .await
@@ -327,8 +322,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE id = $1
             "#,
@@ -371,8 +364,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             ORDER BY ts_ingest DESC
             LIMIT $1
@@ -414,8 +405,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE source = $1
             ORDER BY ts_ingest DESC
@@ -460,8 +449,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE event_type = $1
             ORDER BY ts_ingest DESC
@@ -534,8 +521,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE ts_ingest >= $1 AND ts_ingest <= $2
             ORDER BY ts_ingest DESC
@@ -603,8 +588,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
             ORDER BY ts_ingest DESC
@@ -646,8 +629,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE source = $1 
               AND event_type = 'process.heartbeat'
@@ -916,14 +897,12 @@ impl<'a> EventRepository<'a> {
                 id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                anchor_byte, associated_blob_ids
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16
+                $13, $14::uuid[]
             )
             RETURNING 
                 id::uuid as "id!",
@@ -940,9 +919,7 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids::uuid[] as associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                associated_blob_ids::uuid[] as associated_blob_ids
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -957,9 +934,7 @@ impl<'a> EventRepository<'a> {
             offset_start,
             offset_end,
             anchor_byte,
-            associated_blob_ids.as_deref(),
-            None::<String>, // payload_schema_name
-            None::<String>  // payload_schema_version
+            associated_blob_ids.as_deref()
         )
         .fetch_one(&mut **tx)
         .await
@@ -1052,7 +1027,7 @@ impl<'a> EventRepository<'a> {
             let event_id = event.id.as_ref().unwrap();
 
             // Extract provenance
-            let (source_event_ids, source_material_id, offset_start, offset_end) =
+            let (source_event_ids, source_material_id, offset_start, offset_end, anchor_byte) =
                 extract_provenance(event);
 
             let associated_blob_ids = event
@@ -1066,14 +1041,13 @@ impl<'a> EventRepository<'a> {
                     id, source, event_type, host, payload,
                     ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                     source_material_id, offset_start, offset_end,
-                    anchor_byte, associated_blob_ids,
-                    payload_schema_name, payload_schema_version
+                    anchor_byte, associated_blob_ids
                 )
                 VALUES (
                     $1::uuid, $2, $3, $4, $5,
                     $6, $7, $8::uuid, $9::uuid[],
                     $10::uuid, $11, $12,
-                    $13, $14::uuid[], $15, $16
+                    $13, $14::uuid[]
                 )
                 "#,
                 ulid_to_uuid(*event_id.as_ulid()),
@@ -1089,9 +1063,7 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids.as_deref(),
-                None::<String>, // payload_schema_name
-                None::<String>  // payload_schema_version
+                associated_blob_ids.as_deref()
             )
             .execute(&mut *tx)
             .await
@@ -2314,8 +2286,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE id = ANY($1::uuid[])
             ORDER BY ts_ingest DESC
@@ -2359,8 +2329,6 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY source ORDER BY ts_ingest DESC) as rn

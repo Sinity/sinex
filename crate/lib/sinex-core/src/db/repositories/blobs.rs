@@ -93,7 +93,7 @@ impl BlobRepository {
             FROM core.blobs
             WHERE id = $1
             "#,
-            id_uuid
+            id_uuid as _
         )
         .fetch_optional(&self.pool)
         .await
@@ -184,7 +184,7 @@ impl BlobRepository {
             "#,
             status,
             Utc::now(),
-            id_uuid
+            id_uuid as _
         )
         .execute(&self.pool)
         .await
@@ -210,7 +210,7 @@ impl BlobRepository {
             WHERE id = $2
             "#,
             filename,
-            id_uuid
+            id_uuid as _
         )
         .execute(&self.pool)
         .await

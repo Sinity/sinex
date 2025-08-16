@@ -143,8 +143,11 @@ CREATE TABLE IF NOT EXISTS core.events (
     -- Internal Provenance (for events derived from other events)
     source_event_ids        ULID[] NULL,
 
+    -- Secondary Content Association
+    associated_blob_ids     ULID[] NULL, -- CORRECTLY ADDED
+
     -- Metadata
-    payload_schema_id       ULID NULL, -- FK added later
+    payload_schema_id       ULID NULL, -- FK added after schema table creation
     ingestor_version        TEXT NULL
 );
 COMMENT ON TABLE core.events IS 'The single source of truth: a unified, immutable log of all observations and syntheses.';
