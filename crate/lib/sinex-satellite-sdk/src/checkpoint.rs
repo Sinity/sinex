@@ -318,7 +318,7 @@ impl CheckpointManager {
                     checkpoint,
                     processed_count: row.processed_count as u64,
                     last_activity: row.last_activity,
-                    data: row.state_data,
+                    data: row.state,
                     version,
                 }
             } else {
@@ -328,10 +328,12 @@ impl CheckpointManager {
                 );
 
                 let legacy = LegacyCheckpointState {
-                    last_processed_id: row.last_processed_id.map(|id| id.as_ulid().to_string()),
+                    last_processed_id: row
+                        .last_processed_event_id
+                        .map(|id| id.as_ulid().to_string()),
                     processed_count: row.processed_count as u64,
                     last_activity: row.last_activity,
-                    data: row.state_data,
+                    data: row.state,
                     version,
                 };
 

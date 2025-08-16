@@ -1,177 +1,136 @@
-//! Schema definitions for temporal ledger table
+//! The Canonical Database Schema for the Temporal Ledger.
+//!
+//! This module defines the `raw.temporal_ledger` table, a critical component
+//! for the "Source Material is Ground Truth" and "Provenance Everywhere" principles.
+//! It is a high-precision, immutable, append-only log that records *when* the
+//! `sensd` daemon physically acquired each slice of data.
 
+use crate::schema::{SourceMaterialRegistry, TableDef};
+use crate::ulid::Ulid;
+use chrono::{DateTime, Utc};
 use sea_orm_migration::prelude::*;
+use sqlx::FromRow;
 
-#[derive(Iden)]
+// =============================================================================
+// The `raw.temporal_ledger` Table
+// =============================================================================
+
+/// **Table: `raw.temporal_ledger`**
+///
+/// An append-only ledger providing a high-precision, immutable record of when
+/// each chunk of data was physically acquired. This table is the ground truth
+/// for the *capture time* of all information. Ingestors **MUST** consult this
+/// table to derive the `ts_orig` for the events they produce.
+#[derive(Iden, Copy, Clone)]
 pub enum TemporalLedger {
     Table,
-    #[iden = "entry_id"]
-    EntryId,
-    #[iden = "material_id"]
-    MaterialId,
-    #[iden = "offset_start"]
+    Id,
+    SourceMaterialId,
     OffsetStart,
-    #[iden = "offset_end"]
     OffsetEnd,
-    #[iden = "offset_kind"]
     OffsetKind,
-    #[iden = "ts_capture"]
     TsCapture,
-    #[iden = "precision"]
+    // Decomposed time quality fields for performance and integrity
     Precision,
-    #[iden = "clock"]
     Clock,
-    #[iden = "source_type"]
     SourceType,
-    #[iden = "note"]
-    Note,
-    #[iden = "created_at"]
-    CreatedAt,
+}
+
+impl TableDef for TemporalLedger {
+    fn table_name() -> &'static str {
+        "temporal_ledger"
+    }
+    fn schema_name() -> &'static str {
+        "raw"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+/// The Rust struct representation of a row from `raw.temporal_ledger`.
+#[derive(Debug, FromRow)]
+pub struct TemporalLedgerRecord {
+    pub id: Ulid,
+    pub source_material_id: Ulid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+    pub offset_kind: String,
+    pub ts_capture: DateTime<Utc>,
+    pub precision: String,
+    pub clock: String,
+    pub source_type: String,
 }
 
 impl TemporalLedger {
+    /// Generates the `CREATE TABLE` statement for `raw.temporal_ledger`.
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
-            .table((Alias::new("raw"), TemporalLedger::Table))
+            .table(Self::table_iden())
             .if_not_exists()
-            // Primary key
-            .col(
-                ColumnDef::new(TemporalLedger::EntryId)
-                    .custom(Alias::new("ULID"))
-                    .not_null()
-                    .primary_key(),
+            .col(ColumnDef::new(TemporalLedger::Id).custom(Alias::new("ULID")).primary_key().extra("DEFAULT gen_ulid()"))
+            .col(ColumnDef::new(TemporalLedger::SourceMaterialId).custom(Alias::new("ULID")).not_null())
+            .col(ColumnDef::new(TemporalLedger::OffsetStart).big_integer().not_null())
+            .col(ColumnDef::new(TemporalLedger::OffsetEnd).big_integer().not_null())
+            .col(ColumnDef::new(TemporalLedger::OffsetKind).text().not_null().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))
+            .col(ColumnDef::new(TemporalLedger::TsCapture).timestamp_with_time_zone().not_null())
+            .col(ColumnDef::new(TemporalLedger::Precision).text().not_null().check(Expr::cust("precision IN ('exact', 'bounded')")))
+            .col(ColumnDef::new(TemporalLedger::Clock).text().not_null().check(Expr::cust("clock IN ('monotonic', 'wall')")))
+            .col(ColumnDef::new(TemporalLedger::SourceType).text().not_null().check(Expr::cust("source_type IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_user')")))
+            .foreign_key(
+                ForeignKey::create()
+                    .from(Self::table_iden(), TemporalLedger::SourceMaterialId)
+                    .to(SourceMaterialRegistry::table_iden(), Alias::new("id"))
+                    .on_delete(ForeignKeyAction::Cascade) // If the source material is deleted, its ledger entries are useless.
             )
-            // Foreign key to source material
-            .col(
-                ColumnDef::new(TemporalLedger::MaterialId)
-                    .custom(Alias::new("ULID"))
-                    .not_null(),
-            )
-            // Offset information
-            .col(
-                ColumnDef::new(TemporalLedger::OffsetStart)
-                    .big_integer()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new(TemporalLedger::OffsetEnd)
-                    .big_integer()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(TemporalLedger::OffsetKind).text().not_null())
-            // Timestamp information
-            .col(
-                ColumnDef::new(TemporalLedger::TsCapture)
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(TemporalLedger::Precision).text().not_null())
-            .col(ColumnDef::new(TemporalLedger::Clock).text().not_null())
-            .col(ColumnDef::new(TemporalLedger::SourceType).text().not_null())
-            // Optional note field
-            .col(ColumnDef::new(TemporalLedger::Note).text())
-            // Creation timestamp
-            .col(
-                ColumnDef::new(TemporalLedger::CreatedAt)
-                    .timestamp_with_time_zone()
-                    .not_null()
-                    .default(Expr::current_timestamp()),
-            )
+            .check(Expr::col(TemporalLedger::OffsetEnd).gte(Expr::col(TemporalLedger::OffsetStart)))
             .to_owned()
     }
 
-    pub fn create_foreign_key_constraints() -> Vec<String> {
-        vec![format!(
-            r#"ALTER TABLE raw.{} ADD CONSTRAINT fk_temporal_ledger_material_id 
-                   FOREIGN KEY (material_id) REFERENCES raw.source_material_registry(id) ON DELETE CASCADE"#,
-            TemporalLedger::Table.to_string()
-        )]
-    }
-
-    pub fn create_check_constraints() -> Vec<String> {
+    /// Generates indexes for `raw.temporal_ledger`.
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_temporal_ledger_offset_kind 
-                   CHECK (offset_kind IN ('byte', 'line', 'rowid', 'logical'))"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_temporal_ledger_precision 
-                   CHECK (precision IN ('exact', 'bounded'))"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_temporal_ledger_clock 
-                   CHECK (clock IN ('monotonic', 'wall'))"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_temporal_ledger_source_type 
-                   CHECK (source_type IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_ctime', 'inferred_user'))"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_temporal_ledger_offsets 
-                   CHECK (offset_end >= offset_start)"#,
-                TemporalLedger::Table.to_string()
-            ),
+            // Unique constraint on material and offset
+            Index::create()
+                .name("uk_temporal_ledger_material_offset")
+                .table(Self::table_iden())
+                .col(TemporalLedger::SourceMaterialId)
+                .col(TemporalLedger::OffsetStart)
+                .unique()
+                .to_owned(),
+            // The primary query pattern for ingestors is to look up the capture time for a given byte range.
+            Index::create()
+                .name("ix_tl_material_offsets")
+                .table(Self::table_iden())
+                .col(TemporalLedger::SourceMaterialId)
+                .col(TemporalLedger::OffsetStart)
+                .col(TemporalLedger::OffsetEnd)
+                .to_owned(),
+            // Index to support time-based queries across all materials.
+            Index::create()
+                .name("ix_tl_ts_and_source_type")
+                .table(Self::table_iden())
+                .col(TemporalLedger::TsCapture)
+                .col(TemporalLedger::SourceType)
+                .to_owned(),
         ]
     }
 
-    pub fn create_unique_constraints() -> Vec<String> {
-        vec![format!(
-            r#"ALTER TABLE raw.{} ADD CONSTRAINT uq_temporal_ledger_material_offset 
-                   UNIQUE (material_id, offset_start)"#,
-            TemporalLedger::Table.to_string()
-        )]
-    }
+    /// Generates the trigger that enforces the append-only nature of the temporal ledger.
+    /// This is a critical invariant that guarantees the history of data capture cannot be altered.
+    pub fn create_append_only_trigger_sql() -> &'static str {
+        r#"
+        CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $$
+        BEGIN
+            -- Disallow any UPDATE or DELETE operations on this table.
+            RAISE EXCEPTION 'Table raw.temporal_ledger is append-only (operation % is forbidden)', TG_OP;
+        END $$;
 
-    pub fn create_indexes() -> Vec<String> {
-        vec![
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_tl_material_offsets 
-                   ON raw.{} (material_id, offset_start, offset_end)"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_tl_ts 
-                   ON raw.{} (ts_capture, source_type)"#,
-                TemporalLedger::Table.to_string()
-            ),
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_tl_created_at 
-                   ON raw.{} (created_at)"#,
-                TemporalLedger::Table.to_string()
-            ),
-        ]
-    }
-
-    /// Create append-only trigger function
-    pub fn create_append_only_function() -> String {
-        r#"CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
-           RETURNS TRIGGER AS $$
-           BEGIN
-             RAISE EXCEPTION 'raw.temporal_ledger is append-only (no % allowed)', TG_OP;
-           END;
-           $$ LANGUAGE plpgsql;"#
-            .to_string()
-    }
-
-    /// Create append-only trigger
-    pub fn create_append_only_trigger() -> String {
-        format!(
-            r#"CREATE TRIGGER trg_tl_no_update
-               BEFORE UPDATE OR DELETE ON raw.{}
-               FOR EACH ROW EXECUTE FUNCTION raw.fn_temporal_ledger_append_only()"#,
-            TemporalLedger::Table.to_string()
-        )
-    }
-
-    /// Drop trigger if exists (for migration rollback)
-    pub fn drop_append_only_trigger() -> String {
-        format!(
-            r#"DROP TRIGGER IF EXISTS trg_tl_no_update ON raw.{}"#,
-            TemporalLedger::Table.to_string()
-        )
+        DROP TRIGGER IF EXISTS trg_tl_no_update_delete ON raw.temporal_ledger;
+        CREATE TRIGGER trg_tl_no_update_delete
+        BEFORE UPDATE OR DELETE ON raw.temporal_ledger
+        FOR EACH ROW EXECUTE FUNCTION raw.fn_temporal_ledger_append_only();
+        "#
     }
 }

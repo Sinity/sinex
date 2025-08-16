@@ -1,5 +1,5 @@
-use crate::db::schema::Events;
-use crate::models::{Provenance, RawEvent, SourceMaterial};
+use crate::db::schema::{Events, TableDef};
+use crate::models::{Provenance, RawEvent};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
@@ -684,86 +684,89 @@ impl<'a> EventRepository<'a> {
         // Build dynamic query with SeaQuery
         let mut query = Query::select()
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ID),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::Id,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::Source,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_TYPE),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::EventType,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_INGEST),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::TsIngest,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_ORIG),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::TsOrig,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::HOST),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::Host,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::INGESTOR_VERSION),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::IngestorVersion,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD_SCHEMA_ID),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::PayloadSchemaId,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::Payload,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_EVENT_IDS),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::SourceEventIds,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_ID),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::SourceMaterialId,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_START),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::OffsetStart,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_END),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::OffsetEnd,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ANCHOR_BYTE),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::AnchorByte,
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ASSOCIATED_BLOB_IDS),
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+                Events::SourceEventIds,
             ))
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from((
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+            ))
             .order_by(
                 (
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::TsIngest,
                 ),
                 sea_query::Order::Desc,
             )
@@ -775,9 +778,9 @@ impl<'a> EventRepository<'a> {
         if let Some(source) = &filters.source {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::SOURCE),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::Source,
                 ))
                 .eq(source.as_str()),
             );
@@ -786,9 +789,9 @@ impl<'a> EventRepository<'a> {
         if let Some(event_type) = &filters.event_type {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_TYPE),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::EventType,
                 ))
                 .eq(event_type.as_str()),
             );
@@ -797,9 +800,9 @@ impl<'a> EventRepository<'a> {
         if let Some(host) = &filters.host {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::HOST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::Host,
                 ))
                 .eq(host.as_str()),
             );
@@ -808,9 +811,9 @@ impl<'a> EventRepository<'a> {
         if let Some(after) = &filters.after {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::TsIngest,
                 ))
                 .gte(after.clone()),
             );
@@ -819,9 +822,9 @@ impl<'a> EventRepository<'a> {
         if let Some(before) = &filters.before {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::TsIngest,
                 ))
                 .lte(before.clone()),
             );
@@ -848,7 +851,7 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
     ) -> DbResult<Vec<TimeBucketResult>> {
         // Use SeaQuery for dynamic query building with proper escaping
-        use crate::db::schema::Events;
+        use crate::db::schema::{Events, TableDef};
         use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 
         let query = Query::select()
@@ -856,34 +859,37 @@ impl<'a> EventRepository<'a> {
                 Func::cust(Alias::new("time_bucket"))
                     .arg(Expr::val(interval))
                     .arg(Expr::col((
-                        Alias::new(Events::SCHEMA),
-                        Alias::new(Events::TABLE),
-                        Alias::new(Events::TS_INGEST),
+                        Alias::new(Events::schema_name()),
+                        Alias::new(Events::table_name()),
+                        Events::TsIngest,
                     ))),
                 Alias::new("bucket"),
             )
             .expr_as(
                 Func::count(Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::ID),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::Id,
                 ))),
                 Alias::new("count"),
             )
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from((
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+            ))
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::TsIngest,
                 ))
                 .gte(start),
             )
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new(Events::schema_name()),
+                    Alias::new(Events::table_name()),
+                    Events::TsIngest,
                 ))
                 .lte(end),
             )
@@ -1600,7 +1606,7 @@ impl<'a> EventRepository<'a> {
             *id.as_ulid() as _,
             *event_id.as_ulid() as _,
             annotation_type,
-            content,
+            content.to_string(),
             metadata,
             created_by
         )
@@ -1690,7 +1696,7 @@ impl<'a> EventRepository<'a> {
                 updated_at as "updated_at!"
             "#,
             *annotation_id.as_ulid() as _,
-            content
+            content.to_string()
         )
         .fetch_one(self.pool)
         .await

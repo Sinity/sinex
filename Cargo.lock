@@ -4087,19 +4087,6 @@ dependencies = [
 
 [[package]]
 name = "sea-query"
-version = "0.30.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4166a1e072292d46dc91f31617c2a1cdaf55a8be4b5c9f4bf2ba248e3ac4999b"
-dependencies = [
- "chrono",
- "inherent",
- "sea-query-derive",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "sea-query"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4fd043b8117af233e221f73e3ea8dfbc8e8c3c928017c474296db45c649105c"
@@ -4116,9 +4103,12 @@ version = "0.32.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64c91783d1514b99754fc6a4079081dcc2c587dadbff65c48c7f62297443536a"
 dependencies = [
+ "chrono",
  "inherent",
  "ordered-float",
  "sea-query-derive",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4474,7 +4464,7 @@ dependencies = [
  "rusqlite",
  "schemars",
  "sea-orm-migration",
- "sea-query 0.30.7",
+ "sea-query 0.32.6",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -4787,7 +4777,7 @@ dependencies = [
  "rand 0.8.5",
  "schemars",
  "sea-orm-migration",
- "sea-query 0.30.7",
+ "sea-query 0.32.6",
  "serde",
  "serde_json",
  "sinex-macros",

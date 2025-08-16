@@ -175,6 +175,7 @@ impl StageAsYouGoContext {
         // Note: Blob storage is handled separately in the annex system
         // For now, we don't store the actual content in the database
         let blob_id = None;
+        let total_bytes = Some(content.len() as i64);
 
         source_material_repo
             .finalize_in_flight(
@@ -182,6 +183,7 @@ impl StageAsYouGoContext {
                 blob_id,
                 encoding,
                 content_preview,
+                total_bytes,
             )
             .await
             .map_err(|e| {

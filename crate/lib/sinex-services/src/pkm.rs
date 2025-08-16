@@ -361,6 +361,7 @@ impl PkmService {
                 Some(inserted_blob.id), // blob_id
                 None,                   // encoding
                 content_preview,
+                Some(content.len() as i64), // total_bytes
             )
             .await?;
 

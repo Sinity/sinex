@@ -1,20 +1,19 @@
-//! Schema definitions and database migrations for the Sinex event-driven data capture system.
+//! # Sinex Database Migrations
 //!
-//! This crate contains:
-//! - Database schema migrations using SeaORM migration framework
-//! - Schema definitions and Record types for database tables
-//! - Core type definitions (IDs, ULIDs) used across the system
+//! This crate contains the complete schema definition and the evolutionary history
+//! of the Sinex database. It uses the `sea-orm-migration` framework with `sea-query`
+//! to define the schema in a type-safe, programmatic way.
 //!
-//! Migrations are organized chronologically and handle the evolution of the database schema
-//! for the core Sinex data substrate (PostgreSQL + TimescaleDB).
+//! ## Architecture
 //!
-//! ## Migration Strategy
-//!
-//! - All migrations are atomic and reversible where possible
-//! - ULID-based primary keys for distributed-safe time-ordered IDs
-//! - JSON Schema validation via pg_jsonschema for event payloads
-//! - TimescaleDB hypertables for time-series optimization
-//! - Comprehensive indexing for query performance
+//! - **`src/schema/`:** Contains the canonical, state-of-the-art definition of
+//!   every table in the database as of the latest version. This is the single
+//!   source of truth for the schema.
+//! - **`src/migrations/`:** Contains a single "squashed" initial migration that
+//!   creates the entire canonical schema from scratch. All future schema changes
+//!   will be new, timestamped migration files that apply incremental `ALTER`
+//!   statements.
+//! - **`src/main.rs`:** Provides a CLI for managing migrations.
 
 pub use sea_orm_migration::prelude::*;
 
@@ -22,48 +21,31 @@ pub use sea_orm_migration::prelude::*;
 pub mod ulid;
 pub mod ulid_conversions;
 
-// Database constants and utilities
-pub mod constants;
-pub mod migration_helpers;
-
-// Schema definitions
+// The single source of truth for all schema definitions.
 pub mod schema;
 
-// Migration modules
-mod m20240101_000001_initial_schema;
-mod m20240102_000002_add_validation_functions;
-mod m20240103_000003_create_analytics_views;
-mod m20240104_000004_create_helper_functions;
-mod m20240105_000005_create_test_helper_functions;
-mod m20240106_000006_create_coordination_tables;
-mod m20250810_000001_create_outbox_table;
-mod m20250810_000006_add_archive_trigger;
-mod m20250810_132050_drop_obsolete_artifact_tables;
-mod m20250811_000002_add_path_validation_functions;
-mod m20250811_000003_fix_idempotency_index;
-mod m20250811_000004_add_sensd_tables;
-mod m20250812_000001_add_sensor_states_table;
+// The directory containing all migration files.
+mod migrations;
 
+/// The canonical Migrator for the Sinex database.
+///
+/// This struct is the entry point for the `sea-orm-migration` tool. It defines
+/// the complete, ordered list of all migrations that constitute the history
+/// of the database schema.
 pub struct Migrator;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            Box::new(m20240101_000001_initial_schema::Migration),
-            Box::new(m20240102_000002_add_validation_functions::Migration),
-            Box::new(m20240103_000003_create_analytics_views::Migration),
-            Box::new(m20240104_000004_create_helper_functions::Migration),
-            Box::new(m20240105_000005_create_test_helper_functions::Migration),
-            Box::new(m20240106_000006_create_coordination_tables::Migration),
-            Box::new(m20250810_000001_create_outbox_table::Migration),
-            Box::new(m20250810_000006_add_archive_trigger::Migration),
-            Box::new(m20250810_132050_drop_obsolete_artifact_tables::Migration),
-            Box::new(m20250811_000002_add_path_validation_functions::Migration),
-            Box::new(m20250811_000003_fix_idempotency_index::Migration),
-            Box::new(m20250811_000004_add_sensd_tables::Migration),
-            Box::new(m20250812_000001_add_sensor_states_table::Migration),
-            // Cleanup: drop fix-up migrations; canonical schema now defines final state
+            // In our refactored design, there is only ONE initial migration.
+            // It creates the entire, complete, canonical schema. All old,
+            // incremental migrations have been squashed into this one file
+            // for clarity and speed when setting up new databases.
+            //
+            // All future schema changes will be implemented as new migration
+            // files (e.g., `m20241028_..._add_new_feature_table.rs`).
+            Box::new(migrations::m20241028_000001_create_canonical_schema::Migration),
         ]
     }
 }

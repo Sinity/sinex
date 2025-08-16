@@ -1,70 +1,108 @@
-//! Schema definitions for blob storage tables
+//! The Canonical Database Schema for Content-Addressed Storage (`core.blobs`).
+//!
+//! This module defines the schema for managing metadata about large binary objects
+//! (blobs) that are stored externally, primarily in git-annex. It acts as a
+//! high-performance index and metadata cache for the content-addressed store.
 
+use crate::schema::{SourceMaterialRegistry, TableDef};
+use crate::ulid::Ulid;
+use chrono::{DateTime, Utc};
 use sea_orm_migration::prelude::*;
+use serde_json::Value as JsonValue;
+use sqlx::FromRow;
 
-/// Blobs table
-#[derive(Iden)]
+// =============================================================================
+// The `core.blobs` Table
+// =============================================================================
+
+/// **Table: `core.blobs`**
+///
+/// This table stores metadata for large binary objects. The actual content is stored
+/// in an external content-addressed system like git-annex. This table provides a
+
+/// fast, queryable index into that store.
+///
+/// **Design Rationale:**
+/// - **Surrogate vs. Natural Key:** A `ULID` surrogate key (`id`) is used as the
+///   primary key for performance. `UUID`s (which ULIDs are stored as) are fixed-size
+///   (16 bytes) and excellent for join performance. The `annex_key` is a long,
+///   variable-length string, making it a poor choice for a primary key that will
+///   be referenced by many foreign keys.
+/// - **Decomposed `annex_key`:** The `annex_key` string is decomposed into its
+///   constituent parts (`annex_backend`, `content_hash`, `size_bytes`) to allow for
+///   typed storage and efficient, direct querying on these attributes. A `UNIQUE`
+///   constraint on `(annex_backend, content_hash)` preserves the natural key's integrity.
+/// - **Dual Checksums:** The table stores both a cryptographic hash (from the annex
+///   key) for integrity and a faster, non-cryptographic hash (`checksum_blake3`)
+///   for high-speed deduplication checks during ingestion.
+#[derive(Iden, Copy, Clone)]
 pub enum Blobs {
     Table,
     Id,
-    AnnexKey,
-    OriginalFilename,
+    // Decomposed annex key components
+    AnnexBackend,
+    ContentHash,
     SizeBytes,
-    MimeType,
-    ChecksumSha256,
+    // Fast deduplication hash
     ChecksumBlake3,
-    StorageBackend,
+    // Essential metadata
+    OriginalFilename,
+    MimeType,
+    // Rich intrinsic metadata
     Metadata,
+    // Operational status
     CreatedAt,
     LastVerifiedAt,
     VerificationStatus,
-    // Legacy fields
-    UpdatedAt,
-    ContentHash,
-    StoredAt,
-    ContentType,
+}
+
+impl TableDef for Blobs {
+    fn table_name() -> &'static str {
+        "blobs"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+/// The Rust struct representation of a row from `core.blobs`.
+/// This is used by `sqlx::query_as!` for deserializing database results.
+#[derive(Debug, FromRow)]
+pub struct BlobRecord {
+    pub id: Ulid,
+    pub annex_backend: String,
+    pub content_hash: String,
+    pub size_bytes: i64,
+    pub checksum_blake3: Option<String>,
+    pub original_filename: String,
+    pub mime_type: Option<String>,
+    pub metadata: JsonValue,
+    pub created_at: DateTime<Utc>,
+    pub last_verified_at: Option<DateTime<Utc>>,
+    pub verification_status: Option<String>,
 }
 
 impl Blobs {
-    pub const TABLE: &'static str = "blobs";
-    pub const SCHEMA: &'static str = "core";
-
-    pub const ID: &'static str = "id";
-    pub const ANNEX_KEY: &'static str = "annex_key";
-    pub const ORIGINAL_FILENAME: &'static str = "original_filename";
-    pub const SIZE_BYTES: &'static str = "size_bytes";
-    pub const MIME_TYPE: &'static str = "mime_type";
-    pub const CHECKSUM_SHA256: &'static str = "checksum_sha256";
-    pub const CHECKSUM_BLAKE3: &'static str = "checksum_blake3";
-    pub const STORAGE_BACKEND: &'static str = "storage_backend";
-    pub const METADATA: &'static str = "metadata";
-    pub const CREATED_AT: &'static str = "created_at";
-    pub const LAST_VERIFIED_AT: &'static str = "last_verified_at";
-    pub const VERIFICATION_STATUS: &'static str = "verification_status";
-
-    pub fn create_table() -> String {
+    /// Generates the `CREATE TABLE` statement for `core.blobs`.
+    pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
-            .table((Alias::new("core"), Blobs::Table))
+            .table(Self::table_iden())
             .if_not_exists()
             .col(
                 ColumnDef::new(Blobs::Id)
                     .custom(Alias::new("ULID"))
-                    .not_null()
                     .primary_key()
-                    .default(Expr::cust("gen_ulid()")),
+                    .extra("DEFAULT gen_ulid()"),
             )
-            .col(ColumnDef::new(Blobs::AnnexKey).text().not_null())
-            .col(ColumnDef::new(Blobs::OriginalFilename).text().not_null())
+            .col(ColumnDef::new(Blobs::AnnexBackend).text().not_null())
+            .col(ColumnDef::new(Blobs::ContentHash).text().not_null())
             .col(ColumnDef::new(Blobs::SizeBytes).big_integer().not_null())
-            .col(ColumnDef::new(Blobs::MimeType).text())
-            .col(ColumnDef::new(Blobs::ChecksumSha256).text().not_null())
             .col(ColumnDef::new(Blobs::ChecksumBlake3).text())
-            .col(
-                ColumnDef::new(Blobs::StorageBackend)
-                    .text()
-                    .not_null()
-                    .default("git-annex"),
-            )
+            .col(ColumnDef::new(Blobs::OriginalFilename).text().not_null())
+            .col(ColumnDef::new(Blobs::MimeType).text())
             .col(
                 ColumnDef::new(Blobs::Metadata)
                     .json_binary()
@@ -78,25 +116,62 @@ impl Blobs {
                     .default(Expr::current_timestamp()),
             )
             .col(ColumnDef::new(Blobs::LastVerifiedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(Blobs::VerificationStatus).text())
-            // Legacy columns for compatibility
-            .col(ColumnDef::new(Blobs::UpdatedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(Blobs::ContentHash).text())
-            .col(ColumnDef::new(Blobs::StoredAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(Blobs::ContentType).text())
-            .to_string(PostgresQueryBuilder)
+            .col(
+                ColumnDef::new(Blobs::VerificationStatus)
+                    .text()
+                    .check(Expr::cust(
+                        "verification_status IN ('pending', 'verified', 'corrupted')",
+                    )),
+            )
+            // The true natural key is enforced via unique index - see create_indexes()
+            .to_owned()
     }
 
-    pub fn create_indexes() -> Vec<String> {
+    /// Generates all necessary indexes for `core.blobs`.
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            // Unique index on annex_key
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_blobs_annex_key ON core.blobs (annex_key);".to_string(),
-            // Index on checksum_sha256 for deduplication
-            "CREATE INDEX IF NOT EXISTS idx_blobs_checksum_sha256 ON core.blobs (checksum_sha256);".to_string(),
-            // Index on checksum_blake3 for deduplication
-            "CREATE INDEX IF NOT EXISTS idx_blobs_checksum_blake3 ON core.blobs (checksum_blake3) WHERE checksum_blake3 IS NOT NULL;".to_string(),
-            // Legacy index on content_hash
-            "CREATE INDEX IF NOT EXISTS idx_blobs_content_hash ON core.blobs (content_hash) WHERE content_hash IS NOT NULL;".to_string(),
+            // The true natural key of the annexed content is the combination of its hashing algorithm and the resulting hash.
+            Index::create()
+                .name("uk_blobs_annex_backend_content_hash")
+                .table(Self::table_iden())
+                .col(Blobs::AnnexBackend)
+                .col(Blobs::ContentHash)
+                .unique()
+                .to_owned(),
+            // An index on the BLAKE3 checksum is critical for the high-speed deduplication check performed during ingestion.
+            // This is a unique index to ensure no duplicate content
+            Index::create()
+                .name("uk_blobs_checksum_blake3")
+                .table(Self::table_iden())
+                .col(Blobs::ChecksumBlake3)
+                .unique()
+                .cond_where(Expr::col(Blobs::ChecksumBlake3).is_not_null())
+                .to_owned(),
+            // Index for finding blobs that need periodic integrity verification.
+            Index::create()
+                .name("ix_blobs_verification_status")
+                .table(Self::table_iden())
+                .col(Blobs::VerificationStatus)
+                .col(Blobs::LastVerifiedAt)
+                .to_owned(),
         ]
+    }
+}
+
+// =============================================================================
+// Foreign Key Integration
+//
+// Defines the relationship from `raw.source_material_registry` to `core.blobs`.
+// This must be run *after* both tables have been created.
+// =============================================================================
+
+impl SourceMaterialRegistry {
+    /// Generates the `ALTER TABLE` statement to add the foreign key to `core.blobs`.
+    pub fn create_blob_foreign_key() -> ForeignKeyCreateStatement {
+        ForeignKey::create()
+            .from(Self::table_iden(), Alias::new("optional_blob_id"))
+            .to(Blobs::table_iden(), Blobs::Id)
+            .on_delete(ForeignKeyAction::SetNull) // If a blob is deleted, don't delete the source material record, just nullify the link.
+            .to_owned()
     }
 }

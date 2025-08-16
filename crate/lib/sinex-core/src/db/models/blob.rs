@@ -1,6 +1,7 @@
 //! Blob model for binary large object storage
 
-use crate::{BlobRecord, Id, Ulid};
+use crate::types::Id;
+use crate::BlobRecord;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -9,17 +10,44 @@ use serde_json::Value as JsonValue;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Blob {
     pub id: Id<Blob>,
-    pub annex_key: String,
+    pub annex_backend: String, // e.g., "SHA256E"
+    pub content_hash: String,  // The hash value
     pub original_filename: Option<String>,
     pub size_bytes: i64,
     pub mime_type: Option<String>,
-    pub checksum_sha256: Option<String>,
     pub checksum_blake3: Option<String>,
-    pub storage_backend: String,
     pub metadata: Option<JsonValue>,
     pub created_at: DateTime<Utc>,
     pub last_verified_at: Option<DateTime<Utc>>,
     pub verification_status: Option<String>,
+}
+
+impl Blob {
+    /// Construct the git-annex key from components
+    /// Format: BACKEND-sSize--filename (e.g., SHA256E-s12345--filename.ext)
+    pub fn annex_key(&self) -> String {
+        let filename = self.original_filename.as_deref().unwrap_or("file");
+        format!("{}-s{}--{}", self.annex_backend, self.size_bytes, filename)
+    }
+
+    /// Parse an annex key into its components
+    pub fn parse_annex_key(key: &str) -> Option<(String, i64, String)> {
+        let parts: Vec<&str> = key.split("--").collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let prefix_parts: Vec<&str> = parts[0].split("-s").collect();
+        if prefix_parts.len() != 2 {
+            return None;
+        }
+
+        let backend = prefix_parts[0].to_string();
+        let size = prefix_parts[1].parse::<i64>().ok()?;
+        let filename = parts[1].to_string();
+
+        Some((backend, size, filename))
+    }
 }
 
 impl Blob {
@@ -32,19 +60,23 @@ impl Blob {
 /// Builder for creating new Blob instances
 #[derive(Default)]
 pub struct BlobBuilder {
-    annex_key: Option<String>,
+    annex_backend: Option<String>,
+    content_hash: Option<String>,
     original_filename: Option<String>,
     size_bytes: Option<i64>,
     mime_type: Option<String>,
-    checksum_sha256: Option<String>,
     checksum_blake3: Option<String>,
-    storage_backend: Option<String>,
     metadata: Option<JsonValue>,
 }
 
 impl BlobBuilder {
-    pub fn annex_key(mut self, key: String) -> Self {
-        self.annex_key = Some(key);
+    pub fn annex_backend(mut self, backend: String) -> Self {
+        self.annex_backend = Some(backend);
+        self
+    }
+
+    pub fn content_hash(mut self, hash: String) -> Self {
+        self.content_hash = Some(hash);
         self
     }
 
@@ -63,18 +95,8 @@ impl BlobBuilder {
         self
     }
 
-    pub fn checksum_sha256(mut self, checksum: String) -> Self {
-        self.checksum_sha256 = Some(checksum);
-        self
-    }
-
     pub fn checksum_blake3(mut self, checksum: String) -> Self {
         self.checksum_blake3 = Some(checksum);
-        self
-    }
-
-    pub fn storage_backend(mut self, backend: String) -> Self {
-        self.storage_backend = Some(backend);
         self
     }
 
@@ -86,15 +108,12 @@ impl BlobBuilder {
     pub fn build(self) -> Blob {
         Blob {
             id: Id::new(),
-            annex_key: self.annex_key.unwrap_or_default(),
+            annex_backend: self.annex_backend.unwrap_or_else(|| "SHA256E".to_string()),
+            content_hash: self.content_hash.unwrap_or_default(),
             original_filename: self.original_filename,
             size_bytes: self.size_bytes.unwrap_or(0),
             mime_type: self.mime_type,
-            checksum_sha256: self.checksum_sha256,
             checksum_blake3: self.checksum_blake3,
-            storage_backend: self
-                .storage_backend
-                .unwrap_or_else(|| "git-annex".to_string()),
             metadata: self.metadata,
             created_at: Utc::now(),
             last_verified_at: None,
@@ -107,26 +126,17 @@ impl BlobBuilder {
 impl From<Blob> for BlobRecord {
     fn from(blob: Blob) -> Self {
         BlobRecord {
-            id: blob.id.to_uuid(),
-            annex_key: blob.annex_key,
-            original_filename: blob.original_filename,
+            id: blob.id.into(), // Convert Id<Blob> to Ulid
+            annex_backend: blob.annex_backend,
+            content_hash: blob.content_hash,
+            original_filename: blob.original_filename.unwrap_or_default(),
             size_bytes: blob.size_bytes,
-            mime_type: blob.mime_type.clone(),
-            checksum_sha256: blob.checksum_sha256.clone().unwrap_or_default(),
-            checksum_blake3: blob.checksum_blake3.clone().unwrap_or_default(),
-            storage_backend: blob.storage_backend,
+            mime_type: blob.mime_type,
+            checksum_blake3: blob.checksum_blake3,
             metadata: blob.metadata,
             created_at: blob.created_at,
             last_verified_at: blob.last_verified_at,
-            verification_status: blob
-                .verification_status
-                .clone()
-                .unwrap_or_else(|| "unverified".to_string()),
-            // Legacy fields
-            updated_at: Some(blob.created_at),
-            content_hash: blob.checksum_sha256.clone(),
-            stored_at: blob.last_verified_at,
-            content_type: blob.mime_type,
+            verification_status: blob.verification_status,
         }
     }
 }
@@ -135,26 +145,21 @@ impl From<Blob> for BlobRecord {
 impl From<BlobRecord> for Blob {
     fn from(record: BlobRecord) -> Self {
         Blob {
-            id: Id::from_uuid(record.id),
-            annex_key: record.annex_key,
-            original_filename: record.original_filename,
+            id: Id::from_ulid(record.id),
+            annex_backend: record.annex_backend,
+            content_hash: record.content_hash,
+            original_filename: if record.original_filename.is_empty() {
+                None
+            } else {
+                Some(record.original_filename)
+            },
             size_bytes: record.size_bytes,
             mime_type: record.mime_type,
-            checksum_sha256: if record.checksum_sha256.is_empty() {
-                None
-            } else {
-                Some(record.checksum_sha256)
-            },
-            checksum_blake3: if record.checksum_blake3.is_empty() {
-                None
-            } else {
-                Some(record.checksum_blake3)
-            },
-            storage_backend: record.storage_backend,
+            checksum_blake3: record.checksum_blake3,
             metadata: record.metadata,
             created_at: record.created_at,
             last_verified_at: record.last_verified_at,
-            verification_status: Some(record.verification_status),
+            verification_status: record.verification_status,
         }
     }
 }

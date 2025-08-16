@@ -20,8 +20,10 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct OperationRecord {
     pub id: Id<Operation>,
+    pub operation_type: String, // replay|reprocess|delete|archive|migrate
     pub actor: String,
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
+    pub context: Option<JsonValue>, // Additional operation context
     pub state: String, // planning|previewed|approved|executing|committing|completed|failed|cancelled
     pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
     pub checkpoint: Option<JsonValue>,      // Execution checkpoint for resumable operations
@@ -29,9 +31,11 @@ pub struct OperationRecord {
     pub approved_at: Option<DateTime<Utc>>,
     pub executor_node: Option<String>,
     pub started_at: Option<DateTime<Utc>>, // Nullable in database
-    pub finished_at: Option<DateTime<Utc>>,
-    pub outcome: Option<String>, // success|error|cancelled
+    pub completed_at: Option<DateTime<Utc>>, // When execution completed
+    pub finished_at: Option<DateTime<Utc>>, // When fully finished (after cleanup)
+    pub outcome: Option<String>,           // success|error|cancelled
     pub error_details: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Operation log entry matching core.operations_log per TARGET_canonical.md
@@ -194,15 +198,15 @@ impl<'a> StateRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 processor_name, consumer_group, consumer_name,
-                last_processed_id, last_processed_ts, checkpoint_data, state_data
+                last_processed_event_id, last_processed_at, checkpoint_data, state
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
             )
-            ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
-                last_processed_id = EXCLUDED.last_processed_id,
-                last_processed_ts = EXCLUDED.last_processed_ts,
+            ON CONFLICT ON CONSTRAINT uk_processor_consumer DO UPDATE SET
+                last_processed_event_id = EXCLUDED.last_processed_event_id,
+                last_processed_at = EXCLUDED.last_processed_at,
                 checkpoint_data = EXCLUDED.checkpoint_data,
-                state_data = EXCLUDED.state_data,
+                state = EXCLUDED.state,
                 processed_count = core.processor_checkpoints.processed_count + 1,
                 last_activity = NOW(),
                 updated_at = NOW(),
@@ -212,11 +216,14 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_processed_ts,
+                last_processed_event_id as "last_processed_event_id?: Id<RawEvent>",
+                last_processed_at,
                 processed_count,
+                failed_attempts,
+                last_error,
+                checkpoint,
                 checkpoint_data,
-                state_data,
+                state,
                 checkpoint_version,
                 last_activity,
                 created_at,
@@ -225,10 +232,10 @@ impl<'a> StateRepository<'a> {
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref(),
-            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
-            checkpoint.last_processed_ts,
+            checkpoint.last_processed_event_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_at,
             checkpoint.checkpoint_data,
-            checkpoint.state_data
+            checkpoint.state
         )
         .fetch_one(&mut *tx)
         .await
@@ -251,11 +258,14 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_processed_ts,
+                last_processed_event_id as "last_processed_event_id?: Id<RawEvent>",
+                last_processed_at,
                 processed_count,
+                failed_attempts,
+                last_error,
+                checkpoint,
                 checkpoint_data,
-                state_data,
+                state,
                 checkpoint_version,
                 last_activity,
                 created_at,
@@ -280,11 +290,14 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_processed_ts,
+                last_processed_event_id as "last_processed_event_id?: Id<RawEvent>",
+                last_processed_at,
                 processed_count,
+                failed_attempts,
+                last_error,
+                checkpoint,
                 checkpoint_data,
-                state_data,
+                state,
                 checkpoint_version,
                 last_activity,
                 created_at,
@@ -364,15 +377,17 @@ impl<'a> StateRepository<'a> {
             sqlx::query!(
                 r#"
                 INSERT INTO core.operations_log (
-                    id, actor, scope, state, preview_summary,
+                    id, operation_type, actor, scope, context, state, preview_summary,
                     started_at, finished_at, outcome, error_details
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
                 )
                 "#,
                 *op_id.as_ulid() as _,
+                "delete", // operation_type
                 deletion_operation.actor,
                 deletion_operation.scope,
+                None::<JsonValue>, // context
                 op_state,
                 deletion_operation.preview_summary.clone(),
                 op_started_at,
@@ -436,15 +451,17 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                id, actor, scope, state, preview_summary,
+                id, operation_type, actor, scope, context, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
             )
             RETURNING 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -452,13 +469,17 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             "#,
             *id.as_ulid() as _,
+            "operation", // Default operation_type, should be determined from operation scope/context
             operation.actor,
             operation.scope,
+            None::<JsonValue>, // context - not in Operation struct yet
             state,
             operation.preview_summary.clone(),
             started_at,
@@ -485,8 +506,10 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -494,9 +517,11 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             FROM core.operations_log 
             WHERE id = $1
             "#,
@@ -514,8 +539,10 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -523,9 +550,11 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             FROM core.operations_log 
             ORDER BY created_at DESC
             LIMIT $1
@@ -547,7 +576,7 @@ impl<'a> StateRepository<'a> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT id, actor, scope, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
+            "SELECT id, operation_type, actor, scope, context, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, completed_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
         );
 
         if let Some(actor) = actor {
@@ -583,8 +612,10 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -592,9 +623,11 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             FROM core.operations_log 
             WHERE scope @> $1
             ORDER BY created_at DESC
@@ -621,8 +654,10 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -630,9 +665,11 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             FROM core.operations_log 
             WHERE actor = $1
             ORDER BY created_at DESC
@@ -660,8 +697,10 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -669,9 +708,11 @@ impl<'a> StateRepository<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             FROM core.operations_log 
             WHERE outcome = 'error' AND created_at > $1
             ORDER BY created_at DESC
@@ -1079,10 +1120,10 @@ impl<'a> StateRepository<'a> {
             processor_name: processor_name.into(),
             consumer_group: Some("test".into()),
             consumer_name: Some("test".into()),
-            last_processed_id: None,
-            last_processed_ts: None,
+            last_processed_event_id: None,
+            last_processed_at: None,
             checkpoint_data: None,
-            state_data: Some(state_data),
+            state: Some(state_data),
         };
 
         let result = self.save_checkpoint(checkpoint).await?;
@@ -1184,15 +1225,15 @@ impl<'a> StateRepositoryTx<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 processor_name, consumer_group, consumer_name,
-                last_processed_id, last_processed_ts, checkpoint_data, state_data
+                last_processed_event_id, last_processed_at, checkpoint_data, state
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
             )
-            ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
-                last_processed_id = EXCLUDED.last_processed_id,
-                last_processed_ts = EXCLUDED.last_processed_ts,
+            ON CONFLICT ON CONSTRAINT uk_processor_consumer DO UPDATE SET
+                last_processed_event_id = EXCLUDED.last_processed_event_id,
+                last_processed_at = EXCLUDED.last_processed_at,
                 checkpoint_data = EXCLUDED.checkpoint_data,
-                state_data = EXCLUDED.state_data,
+                state = EXCLUDED.state,
                 processed_count = core.processor_checkpoints.processed_count + 1,
                 last_activity = NOW(),
                 updated_at = NOW(),
@@ -1202,11 +1243,14 @@ impl<'a> StateRepositoryTx<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_processed_ts,
+                last_processed_event_id as "last_processed_event_id?: Id<RawEvent>",
+                last_processed_at,
                 processed_count,
+                failed_attempts,
+                last_error,
+                checkpoint,
                 checkpoint_data,
-                state_data,
+                state,
                 checkpoint_version,
                 last_activity,
                 created_at,
@@ -1215,10 +1259,10 @@ impl<'a> StateRepositoryTx<'a> {
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref(),
-            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
-            checkpoint.last_processed_ts,
+            checkpoint.last_processed_event_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_at,
             checkpoint.checkpoint_data,
-            checkpoint.state_data
+            checkpoint.state
         )
         .fetch_one(&mut **self.tx)
         .await
@@ -1238,15 +1282,17 @@ impl<'a> StateRepositoryTx<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                id, actor, scope, state, preview_summary,
+                id, operation_type, actor, scope, context, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
             )
             RETURNING 
                 id as "id: Id<Operation>",
+                operation_type,
                 actor,
                 scope,
+                context,
                 state,
                 preview_summary,
                 checkpoint,
@@ -1254,13 +1300,17 @@ impl<'a> StateRepositoryTx<'a> {
                 approved_at,
                 executor_node,
                 started_at,
+                completed_at,
                 finished_at,
                 outcome,
-                error_details
+                error_details,
+                created_at
             "#,
             *id.as_ulid() as _,
+            "operation", // Default operation_type, should be determined from operation scope/context
             operation.actor,
             operation.scope,
+            None::<JsonValue>, // context - not in Operation struct yet
             state,
             operation.preview_summary.clone(),
             started_at,
@@ -1307,7 +1357,7 @@ pub struct ProcessorHealthSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct CheckpointGap {
     pub processor_name: String,
-    pub last_processed_id: Option<crate::EventId>,
+    pub last_processed_event_id: Option<crate::EventId>,
     pub processed_count: Option<i64>,
     pub last_activity: Option<DateTime<Utc>>,
     pub events_after_checkpoint: Option<i64>,
@@ -1368,10 +1418,10 @@ mod tests {
             processor_name: "test-processor".into(),
             consumer_group: None,
             consumer_name: None,
-            last_processed_id: Some(id),
-            last_processed_ts: Some(Utc::now()),
+            last_processed_event_id: Some(id),
+            last_processed_at: Some(Utc::now()),
             checkpoint_data: Some(serde_json::json!({ "batch_size": 100 })),
-            state_data: None,
+            state: None,
         };
 
         let saved = repo.save_checkpoint(checkpoint).await?;
@@ -1381,14 +1431,14 @@ mod tests {
         // Update the checkpoint
         let new_id = Id::<crate::models::RawEvent>::new();
         let update = CheckpointInput::new("test-processor")
-            .with_last_processed_id(new_id.clone())
-            .with_last_processed_ts(Utc::now())
+            .with_last_processed_event_id(new_id.clone())
+            .with_last_processed_at(Utc::now())
             .with_checkpoint_data(serde_json::json!({ "batch_size": 200 }));
 
         let updated = repo.save_checkpoint(update).await?;
         assert_eq!(updated.processor_name.as_ref(), "test-processor");
         assert_eq!(updated.checkpoint_version, 2);
-        assert_eq!(updated.last_processed_id, Some(new_id));
+        assert_eq!(updated.last_processed_event_id, Some(new_id));
 
         // Get checkpoint
         let retrieved = repo.get_checkpoint("test-processor").await?;

@@ -4,7 +4,7 @@
 //! (files, streams, etc.) that contain events to be processed.
 
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
-use crate::db::schema::SourceMaterials;
+use crate::db::schema::SourceMaterialRegistry;
 use crate::query_helpers::ulid_to_uuid;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
@@ -161,7 +161,7 @@ impl<'a> Repository<'a> for SourceMaterialRepository<'a> {
 }
 
 impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
-    type Table = SourceMaterials;
+    type Table = SourceMaterialRegistry;
 }
 
 impl<'a> SourceMaterialRepository<'a> {
@@ -180,30 +180,7 @@ impl<'a> SourceMaterialRepository<'a> {
             ) VALUES (
                 ($1::uuid)::ulid, $2, $3, $4, $5, $6, ($7::uuid)::ulid, $3
             )
-            RETURNING 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
+            RETURNING *
             "#
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
@@ -225,31 +202,7 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE id::uuid = $1
             "#,
         )
@@ -266,31 +219,7 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE optional_blob_id::uuid = $1
             "#,
         )
@@ -304,31 +233,7 @@ impl<'a> SourceMaterialRepository<'a> {
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<SourceMaterialRecord>> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             ORDER BY created_at DESC
             LIMIT $1
             "#,
@@ -349,31 +254,7 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE material_type = $1
             ORDER BY created_at DESC
             LIMIT $2
@@ -398,31 +279,7 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY created_at DESC
             LIMIT $2
@@ -441,6 +298,9 @@ impl<'a> SourceMaterialRepository<'a> {
             r#"
             UPDATE raw.source_material_registry
             SET 
+                is_archived = true,
+                archive_time = NOW(),
+                status = 'archived',
                 updated_at = NOW()
             WHERE id::uuid = $1
             "#,
@@ -463,32 +323,9 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
-            FROM raw.source_material_registry
-            WHERE created_at < $1
+            SELECT * FROM raw.source_material_registry
+            WHERE NOT is_archived 
+              AND created_at < $1
             ORDER BY created_at ASC
             LIMIT $2
             "#,
@@ -511,30 +348,7 @@ impl<'a> SourceMaterialRepository<'a> {
             UPDATE raw.source_material_registry
             SET metadata = $2, updated_at = NOW()
             WHERE id::uuid = $1
-            RETURNING 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
+            RETURNING *
             "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
@@ -592,34 +406,11 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             INSERT INTO raw.source_material_registry (
-                id, material_type, source_uri, metadata, content_preview
+                id, material_type, source_uri, metadata, content_preview, source_identifier
             ) VALUES (
-                ($1::uuid)::ulid, $2, $3, $4, $5
+                ($1::uuid)::ulid, $2, $3, $4, $5, COALESCE($3, 'in-flight')
             )
-            RETURNING 
-                id::uuid as "id!",
-                NULL::text as checksum,
-                source_identifier,
-                'unknown'::text as source_type,
-                NULL::text as source_path,
-                NULL::text as content_type,
-                'sensing'::text as status,
-                NULL::bigint as total_bytes,
-                created_at,
-                NULL::timestamptz as finalized_at,
-                NULL::timestamptz as staged_at,
-                metadata,
-                NULL::bytea as data,
-                optional_blob_id::uuid as optional_blob_id,
-                material_type,
-                content_preview,
-                source_uri,
-                encoding,
-                false as is_archived,
-                NULL::text as retention_policy,
-                NULL::timestamptz as ingestion_time,
-                NULL::timestamptz as archive_time,
-                updated_at
+            RETURNING *
             "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
@@ -639,13 +430,17 @@ impl<'a> SourceMaterialRepository<'a> {
         blob_id: Option<Id<crate::Blob>>,
         encoding: Option<&str>,
         content_preview: Option<String>,
+        total_bytes: Option<i64>,
     ) -> DbResult<()> {
         sqlx::query(
             r#"
             UPDATE raw.source_material_registry
             SET optional_blob_id = ($2::uuid)::ulid,
-                encoding = $3,
-                content_preview = $4,
+                encoding = COALESCE($3, encoding),
+                content_preview = COALESCE($4, content_preview),
+                total_bytes = COALESCE($5, total_bytes),
+                status = 'finalized',
+                finalized_at = NOW(),
                 updated_at = NOW()
             WHERE id::uuid = $1
             "#,
@@ -654,6 +449,7 @@ impl<'a> SourceMaterialRepository<'a> {
         .bind(blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
         .bind(encoding)
         .bind(content_preview)
+        .bind(total_bytes)
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "finalize in-flight material"))?;

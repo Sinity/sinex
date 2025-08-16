@@ -360,17 +360,17 @@ impl SensdClient {
         let materials = sqlx::query!(
             r#"
             SELECT 
-                source_material_id as "material_id: Ulid",
+                id as "material_id: Ulid",
                 created_at as acquired_at,
                 total_bytes as size_bytes,
-                content_type as mime_type,
+                material_type as mime_type,
                 metadata
             FROM raw.source_material_registry
             WHERE source_identifier = $1
             AND created_at > $2
             AND NOT EXISTS (
                 SELECT 1 FROM core.events 
-                WHERE source_material_id::ulid = source_material_registry.source_material_id
+                WHERE source_material_id::ulid = source_material_registry.id
             )
             ORDER BY acquired_at DESC
             LIMIT 100
@@ -387,7 +387,7 @@ impl SensdClient {
                 material_id: m.material_id,
                 acquired_at: m.acquired_at,
                 size_bytes: m.size_bytes.unwrap_or(0),
-                mime_type: m.mime_type,
+                mime_type: Some(m.mime_type),
                 metadata: m.metadata.unwrap_or_default(),
             })
             .collect())

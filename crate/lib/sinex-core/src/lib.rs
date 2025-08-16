@@ -129,10 +129,10 @@ pub type EventResult<T = ()> = std::result::Result<T, SinexError>;
 // Note: DbResult is already re-exported from repositories
 
 pub use db::{
-    constants, create_database_if_not_exists, create_pool, create_pool_strict,
-    create_pool_with_config, create_pool_with_config_strict, create_test_pool, distributed_locking,
-    get_database_url, models, pool, query_helpers, repositories, run_migrations, sanitization,
-    seaquery_helpers, security, DbPool, DbPoolRef, PoolConfig,
+    create_database_if_not_exists, create_pool, create_pool_strict, create_pool_with_config,
+    create_pool_with_config_strict, create_test_pool, distributed_locking, get_database_url,
+    models, pool, query_helpers, repositories, run_migrations, sanitization, seaquery_helpers,
+    security, DbPool, DbPoolRef, PoolConfig,
 };
 
 // Re-export the most commonly used database models at crate root
