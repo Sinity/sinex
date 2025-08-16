@@ -21,7 +21,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction};
 pub struct OperationRecord {
     pub id: Id<Operation>,
     pub operation_type: String, // replay|reprocess|delete|archive|migrate
-    pub actor: String,
+    pub operator: String,
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
     pub context: Option<JsonValue>, // Additional operation context
     pub state: String, // planning|previewed|approved|executing|committing|completed|failed|cancelled
@@ -46,7 +46,7 @@ pub struct Operation {
     #[builder(skip)]
     pub id: Option<Id<Operation>>,
 
-    pub actor: String,                      // e.g., 'user@host' or 'system'
+    pub operator: String,                   // e.g., 'user@host' or 'system'
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
     pub state: Option<String>, // planning|previewed|approved|executing|committing|completed|failed|cancelled
     pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
@@ -322,7 +322,7 @@ impl<'a> StateRepository<'a> {
     pub async fn delete_checkpoint_with_reason(
         &self,
         processor_name: &str,
-        actor: &str,
+        operator: &str,
         reason: &str,
     ) -> DbResult<bool> {
         // Start transaction to ensure atomicity of operation logging and deletion
@@ -354,7 +354,7 @@ impl<'a> StateRepository<'a> {
         if let Some(checkpoint) = checkpoint_to_delete {
             // Log the deletion operation to operations_log
             let deletion_operation = Operation::builder()
-                .actor(actor.to_string())
+                .operator(operator.to_string())
                 .scope(serde_json::json!({
                     "operation_type": "delete_checkpoint",
                     "processor_name": processor_name,
@@ -377,7 +377,7 @@ impl<'a> StateRepository<'a> {
             sqlx::query!(
                 r#"
                 INSERT INTO core.operations_log (
-                    id, operation_type, actor, scope, context, state, preview_summary,
+                    id, operation_type, operator, scope, context, state, preview_summary,
                     started_at, finished_at, outcome, error_details
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
@@ -385,7 +385,7 @@ impl<'a> StateRepository<'a> {
                 "#,
                 *op_id.as_ulid() as _,
                 "delete", // operation_type
-                deletion_operation.actor,
+                deletion_operation.operator,
                 deletion_operation.scope,
                 None::<JsonValue>, // context
                 op_state,
@@ -451,7 +451,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                id, operation_type, actor, scope, context, state, preview_summary,
+                id, operation_type, operator, scope, context, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
@@ -459,7 +459,7 @@ impl<'a> StateRepository<'a> {
             RETURNING 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -477,7 +477,7 @@ impl<'a> StateRepository<'a> {
             "#,
             *id.as_ulid() as _,
             "operation", // Default operation_type, should be determined from operation scope/context
-            operation.actor,
+            operation.operator,
             operation.scope,
             None::<JsonValue>, // context - not in Operation struct yet
             state,
@@ -507,7 +507,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -540,7 +540,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -566,22 +566,22 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get recent operations"))
     }
 
-    /// Get operations by actor and scope
+    /// Get operations by operator and scope
     pub async fn get_operations_by_actor_and_scope(
         &self,
-        actor: Option<&str>,
+        operator: Option<&str>,
         scope_filter: Option<JsonValue>,
         limit: Option<i64>,
     ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT id, operation_type, actor, scope, context, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, completed_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
+            "SELECT id, operation_type, operator, scope, context, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, completed_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
         );
 
-        if let Some(actor) = actor {
-            query_builder.push(" AND actor = ");
-            query_builder.push_bind(actor);
+        if let Some(operator) = operator {
+            query_builder.push(" AND operator = ");
+            query_builder.push_bind(operator);
         }
 
         if let Some(scope) = scope_filter {
@@ -596,7 +596,7 @@ impl<'a> StateRepository<'a> {
         query
             .fetch_all(self.pool)
             .await
-            .map_err(|e| db_error(e, "get operations by actor and scope"))
+            .map_err(|e| db_error(e, "get operations by operator and scope"))
     }
 
     /// Get operations by scope filter (searches JSONB scope field)
@@ -613,7 +613,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -641,10 +641,10 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get operations by scope"))
     }
 
-    /// Get operations by actor
+    /// Get operations by operator
     pub async fn get_operations_by_actor(
         &self,
-        actor: &str,
+        operator: &str,
         limit: Option<i64>,
     ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
@@ -655,7 +655,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -671,16 +671,16 @@ impl<'a> StateRepository<'a> {
                 error_details,
                 created_at
             FROM core.operations_log 
-            WHERE actor = $1
+            WHERE operator = $1
             ORDER BY created_at DESC
             LIMIT $2
             "#,
-            actor,
+            operator,
             limit
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get operations by actor"))
+        .map_err(|e| db_error(e, "get operations by operator"))
     }
 
     /// Get failed operations
@@ -698,7 +698,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -1282,7 +1282,7 @@ impl<'a> StateRepositoryTx<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                id, operation_type, actor, scope, context, state, preview_summary,
+                id, operation_type, operator, scope, context, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
@@ -1290,7 +1290,7 @@ impl<'a> StateRepositoryTx<'a> {
             RETURNING 
                 id as "id: Id<Operation>",
                 operation_type,
-                actor,
+                operator,
                 scope,
                 context,
                 state,
@@ -1308,7 +1308,7 @@ impl<'a> StateRepositoryTx<'a> {
             "#,
             *id.as_ulid() as _,
             "operation", // Default operation_type, should be determined from operation scope/context
-            operation.actor,
+            operation.operator,
             operation.scope,
             None::<JsonValue>, // context - not in Operation struct yet
             state,
@@ -1468,7 +1468,7 @@ mod tests {
             approved_at: None,
             executor_node: None,
             created_at: Utc::now(),
-            actor: "ingestd@localhost".to_string(),
+            operator: "ingestd@localhost".to_string(),
             scope: json!({
                 "processor": "ingestd",
                 "mode": "ingestor",
@@ -1485,7 +1485,7 @@ mod tests {
         };
 
         let logged = repo.log_operation(operation).await?;
-        assert_eq!(logged.actor, "ingestd@localhost");
+        assert_eq!(logged.operator, "ingestd@localhost");
         assert_eq!(logged.outcome.as_deref(), Some("success"));
         assert!(logged.error_details.is_none());
 
@@ -1498,7 +1498,7 @@ mod tests {
             approved_at: None,
             executor_node: None,
             created_at: Utc::now(),
-            actor: "api-user@localhost".to_string(),
+            operator: "api-user@localhost".to_string(),
             scope: json!({
                 "processor": "schema-manager",
                 "mode": "automaton",
@@ -1522,7 +1522,7 @@ mod tests {
         let recent = repo.get_recent_operations(10).await?;
         assert_eq!(recent.len(), 2);
 
-        // Get operations by actor
+        // Get operations by operator
         let by_actor = repo
             .get_operations_by_actor("ingestd@localhost", None)
             .await?;
@@ -1558,7 +1558,7 @@ mod tests {
                 approved_at: None,
                 executor_node: None,
                 created_at: Utc::now(),
-                actor: "test-service@localhost".to_string(),
+                operator: "test-service@localhost".to_string(),
                 scope: json!({
                     "processor": "test",
                     "mode": "automaton"

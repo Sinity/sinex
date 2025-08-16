@@ -36,10 +36,10 @@ futures = "0.3"
 num-traits = "0.2"
 
 # Query building
-sea-query = { version = "0.32", features = ["with-uuid", "with-chrono", "with-json", "postgres-array"] }
+sea-query = { workspace = true }
 
 # Migration system  
-sea-orm-migration = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
+sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
 
 # Type dependencies (from sinex-core)
 ulid = { workspace = true }

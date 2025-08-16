@@ -5,7 +5,8 @@ use crate::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sinex_schema::CheckpointRecord;
+use sqlx::{PgPool, Postgres, Transaction};
 
 /// Checkpoint repository for database operations
 pub struct CheckpointRepository<'a> {
@@ -26,26 +27,7 @@ impl<'a> EnhancedRepository<'a> for CheckpointRepository<'a> {
     type Table = ProcessorCheckpoints;
 }
 
-/// Checkpoint record from database
-#[derive(Debug, FromRow)]
-pub struct CheckpointRecord {
-    pub id: Id<CheckpointRecord>,
-    pub processor_name: ProcessorName,
-    pub consumer_group: Option<ConsumerGroup>,
-    pub consumer_name: Option<ConsumerName>,
-    pub last_processed_event_id: Option<Id<RawEvent>>,
-    pub last_processed_at: Option<DateTime<Utc>>,
-    pub processed_count: i64,
-    pub failed_attempts: i32,
-    pub last_error: Option<String>,
-    pub checkpoint: Option<JsonValue>,
-    pub checkpoint_data: Option<JsonValue>,
-    pub checkpoint_version: i32,
-    pub state: Option<JsonValue>,
-    pub last_activity: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
+// CheckpointRecord is imported from sinex_schema
 
 /// Checkpoint to create
 #[derive(Debug)]
@@ -53,8 +35,7 @@ pub struct Checkpoint {
     pub processor_name: ProcessorName,
     pub consumer_group: Option<ConsumerGroup>,
     pub consumer_name: Option<ConsumerName>,
-    pub last_processed_event_id: Option<Id<RawEvent>>,
-    pub last_processed_at: Option<DateTime<Utc>>,
+    pub last_processed_id: Option<Id<RawEvent>>,
     pub checkpoint_data: Option<JsonValue>,
     pub state: Option<JsonValue>,
 }
@@ -66,8 +47,7 @@ impl Checkpoint {
             processor_name: processor_name.into(),
             consumer_group: None,
             consumer_name: None,
-            last_processed_event_id: None,
-            last_processed_at: None,
+            last_processed_id: None,
             checkpoint_data: None,
             state: None,
         }
@@ -83,8 +63,7 @@ impl Checkpoint {
             processor_name: processor_name.into(),
             consumer_group: Some(consumer_group.into()),
             consumer_name: Some(consumer_name.into()),
-            last_processed_event_id: None,
-            last_processed_at: None,
+            last_processed_id: None,
             checkpoint_data: None,
             state: None,
         }
@@ -103,14 +82,8 @@ impl Checkpoint {
     }
 
     /// Fluent method to set last processed event ID
-    pub fn with_last_processed_event_id(mut self, id: Id<RawEvent>) -> Self {
-        self.last_processed_event_id = Some(id);
-        self
-    }
-
-    /// Fluent method to set last processed timestamp
-    pub fn with_last_processed_at(mut self, ts: DateTime<Utc>) -> Self {
-        self.last_processed_at = Some(ts);
+    pub fn with_last_processed_id(mut self, id: Id<RawEvent>) -> Self {
+        self.last_processed_id = Some(id);
         self
     }
 
@@ -142,36 +115,29 @@ impl<'a> CheckpointRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
-                last_processed_event_id, last_processed_at, checkpoint_data, state
+                last_processed_id, checkpoint_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6
             )
             RETURNING 
-                id as "id: Id<CheckpointRecord>",
-                processor_name as "processor_name!: ProcessorName",
-                consumer_group as "consumer_group!: ConsumerGroup",
-                consumer_name as "consumer_name!: ConsumerName",
-                last_processed_event_id as "last_processed_event_id: Id<RawEvent>",
-                last_processed_at,
-                processed_count as "processed_count!",
-                failed_attempts as "failed_attempts!",
-                last_error,
-                checkpoint,
+                id as "id: sinex_schema::ulid::Ulid",
+                processor_name,
+                consumer_group,
+                consumer_name,
+                last_processed_id as "last_processed_id: sinex_schema::ulid::Ulid",
+                processed_count,
                 checkpoint_data,
-                checkpoint_version as "checkpoint_version!",
-                state,
-                last_activity as "last_activity!",
-                created_at as "created_at!",
-                updated_at as "updated_at!"
+                last_activity,
+                updated_at
             "#,
             *id.as_ulid() as _,
             checkpoint.processor_name.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
-            checkpoint.last_processed_event_id.map(|id| *id.as_ulid()) as _,
-            checkpoint.last_processed_at,
-            checkpoint.checkpoint_data,
-            checkpoint.state
+            sinex_schema::ulid_conversions::opt_to_db(
+                checkpoint.last_processed_id.map(|id| *id.as_ulid())
+            ),
+            checkpoint.checkpoint_data
         )
         .fetch_one(self.pool)
         .await
@@ -186,22 +152,15 @@ impl<'a> CheckpointRepository<'a> {
             CheckpointRecord,
             r#"
             SELECT 
-                id as "id: Id<CheckpointRecord>",
-                processor_name as "processor_name!: ProcessorName",
-                consumer_group as "consumer_group!: ConsumerGroup",
-                consumer_name as "consumer_name!: ConsumerName",
-                last_processed_event_id as "last_processed_event_id: Id<RawEvent>",
-                last_processed_at,
-                processed_count as "processed_count!",
-                failed_attempts as "failed_attempts!",
-                last_error,
-                checkpoint,
+                id as "id: sinex_schema::ulid::Ulid",
+                processor_name,
+                consumer_group,
+                consumer_name,
+                last_processed_id as "last_processed_id: sinex_schema::ulid::Ulid",
+                processed_count,
                 checkpoint_data,
-                checkpoint_version as "checkpoint_version!",
-                state,
-                last_activity as "last_activity!",
-                created_at as "created_at!",
-                updated_at as "updated_at!"
+                last_activity,
+                updated_at
             FROM core.processor_checkpoints 
             WHERE processor_name = $1
             ORDER BY updated_at DESC
@@ -224,22 +183,15 @@ impl<'a> CheckpointRepository<'a> {
             CheckpointRecord,
             r#"
             SELECT 
-                id as "id: Id<CheckpointRecord>",
-                processor_name as "processor_name!: ProcessorName",
-                consumer_group as "consumer_group!: ConsumerGroup",
-                consumer_name as "consumer_name!: ConsumerName",
-                last_processed_event_id as "last_processed_event_id: Id<RawEvent>",
-                last_processed_at,
-                processed_count as "processed_count!",
-                failed_attempts as "failed_attempts!",
-                last_error,
-                checkpoint,
+                id as "id: sinex_schema::ulid::Ulid",
+                processor_name,
+                consumer_group,
+                consumer_name,
+                last_processed_id as "last_processed_id: sinex_schema::ulid::Ulid",
+                processed_count,
                 checkpoint_data,
-                checkpoint_version as "checkpoint_version!",
-                state,
-                last_activity as "last_activity!",
-                created_at as "created_at!",
-                updated_at as "updated_at!"
+                last_activity,
+                updated_at
             FROM core.processor_checkpoints 
             WHERE processor_name = $1 
               AND consumer_group = $2 
@@ -260,8 +212,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_event_id: Option<Id<RawEvent>>,
-        last_processed_at: Option<DateTime<Utc>>,
+        last_processed_id: Option<Id<RawEvent>>,
         checkpoint_data: Option<JsonValue>,
         state: Option<JsonValue>,
         increment_count: bool,
@@ -272,10 +223,9 @@ impl<'a> CheckpointRepository<'a> {
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
-                    last_processed_event_id = $4,
-                    last_processed_at = $5,
-                    checkpoint_data = $6,
-                    state = $7,
+                    last_processed_id = $4,
+                    checkpoint_data = $5,
+                    state = $6,
                     processed_count = processed_count + 1,
                     last_activity = NOW(),
                     updated_at = NOW()
@@ -303,8 +253,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
-                last_processed_event_id.map(|id| *id.as_ulid()) as _,
-                last_processed_at,
+                last_processed_id.map(|id| *id.as_ulid()) as _,
                 checkpoint_data,
                 state
             )
@@ -317,10 +266,9 @@ impl<'a> CheckpointRepository<'a> {
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
-                    last_processed_event_id = $4,
-                    last_processed_at = $5,
-                    checkpoint_data = $6,
-                    state = $7,
+                    last_processed_id = $4,
+                    checkpoint_data = $5,
+                    state = $6,
                     last_activity = NOW(),
                     updated_at = NOW()
                 WHERE processor_name = $1 
@@ -347,8 +295,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
-                last_processed_event_id.map(|id| *id.as_ulid()) as _,
-                last_processed_at,
+                last_processed_id.map(|id| *id.as_ulid()) as _,
                 checkpoint_data,
                 state
             )
@@ -363,8 +310,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_event_id: Option<Id<RawEvent>>,
-        last_processed_at: Option<DateTime<Utc>>,
+        last_processed_id: Option<Id<RawEvent>>,
         checkpoint_data: Option<JsonValue>,
         state: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
@@ -375,14 +321,13 @@ impl<'a> CheckpointRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
-                last_processed_event_id, last_processed_at, checkpoint_data, state
+                last_processed_id, checkpoint_data, state
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
-                last_processed_event_id = EXCLUDED.last_processed_event_id,
-                last_processed_at = EXCLUDED.last_processed_at,
+                last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 state = EXCLUDED.state,
                 processed_count = core.processor_checkpoints.processed_count + 1,
@@ -393,8 +338,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_event_id as "last_processed_event_id: Id<RawEvent>",
-                last_processed_at,
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 processed_count as "processed_count!",
                 failed_attempts as "failed_attempts!",
                 last_error,
@@ -556,8 +500,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_event_id: Option<Id<RawEvent>>,
-        last_processed_at: Option<DateTime<Utc>>,
+        last_processed_id: Option<Id<RawEvent>>,
         checkpoint_data: Option<JsonValue>,
         state: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
@@ -568,14 +511,13 @@ impl<'a> CheckpointRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
-                last_processed_event_id, last_processed_at, checkpoint_data, state
+                last_processed_id, checkpoint_data, state
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
-                last_processed_event_id = EXCLUDED.last_processed_event_id,
-                last_processed_at = EXCLUDED.last_processed_at,
+                last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 state = EXCLUDED.state,
                 processed_count = core.processor_checkpoints.processed_count + 1,
@@ -586,8 +528,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_event_id as "last_processed_event_id: Id<RawEvent>",
-                last_processed_at,
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 processed_count as "processed_count!",
                 failed_attempts as "failed_attempts!",
                 last_error,
@@ -644,8 +585,7 @@ impl CheckpointExt for Checkpoint {
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                self.last_processed_event_id,
-                self.last_processed_at,
+                self.last_processed_id,
                 self.checkpoint_data,
                 self.state,
             )

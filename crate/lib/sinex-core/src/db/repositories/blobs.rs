@@ -41,7 +41,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id as "id: crate::ulid::Ulid",
+                id as "id: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -74,11 +74,12 @@ impl BlobRepository {
     /// Get a blob by ID
     #[instrument(skip(self))]
     pub async fn get_by_id(&self, id: Id<Blob>) -> Result<Option<Blob>> {
+        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
             SELECT 
-                id as "id: crate::ulid::Ulid",
+                id as "id: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -92,7 +93,7 @@ impl BlobRepository {
             FROM core.blobs
             WHERE id = $1
             "#,
-            crate::ulid_conversions::to_db(id.as_ulid())
+            id_uuid
         )
         .fetch_optional(&self.pool)
         .await
@@ -113,7 +114,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: crate::ulid::Ulid",
+                id as "id: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -145,7 +146,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: crate::ulid::Ulid",
+                id as "id: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -172,6 +173,7 @@ impl BlobRepository {
     /// Update blob verification status
     #[instrument(skip(self))]
     pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> Result<()> {
+        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -182,7 +184,7 @@ impl BlobRepository {
             "#,
             status,
             Utc::now(),
-            crate::ulid_conversions::to_db(id.as_ulid())
+            id_uuid
         )
         .execute(&self.pool)
         .await
@@ -195,6 +197,7 @@ impl BlobRepository {
     #[instrument(skip(self))]
     pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> Result<()> {
         // Update the metadata JSON to include the filename in an array
+        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -207,7 +210,7 @@ impl BlobRepository {
             WHERE id = $2
             "#,
             filename,
-            crate::ulid_conversions::to_db(id.as_ulid())
+            id_uuid
         )
         .execute(&self.pool)
         .await

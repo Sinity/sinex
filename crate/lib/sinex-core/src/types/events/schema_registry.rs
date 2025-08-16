@@ -54,12 +54,14 @@ pub async fn lookup_schema_id(
         r#"
         SELECT id as "id: Ulid"
         FROM sinex_schemas.event_payload_schemas
-        WHERE schema_name = $1
+        WHERE source = $1
+          AND event_type = $2
           AND schema_version = 'v1'
           AND is_active = true
         LIMIT 1
         "#,
-        &schema_name
+        source.as_str(),
+        event_type.as_str()
     )
     .fetch_optional(pool)
     .await
@@ -174,7 +176,8 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
         r#"
         SELECT 
             id as "id: Ulid", 
-            schema_name,
+            source,
+            event_type,
             schema_version
         FROM sinex_schemas.event_payload_schemas
         WHERE is_active = true
@@ -187,7 +190,8 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
     let mut version_cache = VERSION_CACHE.write();
 
     for schema in &schemas {
-        cache.insert(schema.schema_name.clone(), schema.id);
+        let schema_name = format!("{}.{}", schema.source, schema.event_type);
+        cache.insert(schema_name, schema.id);
         version_cache.insert(schema.id, Arc::new(schema.schema_version.clone()));
     }
 

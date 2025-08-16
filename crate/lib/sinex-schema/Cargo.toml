@@ -14,9 +14,9 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { version = "0.1" }
-sea-orm-migration = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-sea-query = { version = "0.32", features = ["with-uuid", "with-chrono", "with-json", "postgres-array"] }
+sea-query = { workspace = true }
 color-eyre = { workspace = true }
 sinex-macros = { path = "../sinex-macros" }
 

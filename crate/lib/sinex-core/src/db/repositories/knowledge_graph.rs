@@ -301,13 +301,13 @@ impl<'a> KnowledgeGraphRepository<'a> {
             EntityRecord,
             r#"
             INSERT INTO core.entities (
-                id, type, name, canonical_name, aliases, description, metadata
+                id, entity_type, name, canonical_name, aliases, description, metadata
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
             )
             RETURNING 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
@@ -337,7 +337,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
@@ -365,7 +365,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
@@ -405,7 +405,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<Entity>",
-                        type as "entity_type!",
+                        entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
@@ -416,7 +416,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         merged_into_id as "merged_into_id: Id<Entity>"
                     FROM core.entities
                     WHERE 
-                        type = $3
+                        entity_type = $3
                         AND (
                             LOWER(name) LIKE $1 
                             OR LOWER(canonical_name) LIKE $1
@@ -441,7 +441,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<Entity>",
-                        type as "entity_type!",
+                        entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
@@ -493,7 +493,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
