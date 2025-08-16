@@ -47,44 +47,48 @@ impl EventRecordExt for EventRecord {
             self.source_material_id,
             self.anchor_byte,
         ) {
-            (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
-                source_event_ids: event_ids
+            (Some(event_ids), None, _) if !event_ids.is_empty() => {
+                let ids: Vec<EventId> = event_ids
                     .into_iter()
-                    .map(|uuid| EventId::from(uuid_to_ulid(uuid)))
-                    .collect(),
-                operation_id: None,
-            },
+                    .map(|ulid| EventId::from_ulid(ulid))
+                    .collect();
+                Provenance::Synthesis {
+                    source_event_ids: NonEmptyVec::from_vec(ids)
+                        .expect("already checked non-empty"),
+                    operation_id: None,
+                }
+            }
             (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
-                id: Id::<SourceMaterial>::from(uuid_to_ulid(material_id)),
+                id: Id::<SourceMaterial>::from_ulid(material_id),
                 anchor_byte,
                 offset_start: self.offset_start,
                 offset_end: self.offset_end,
                 offset_kind: OffsetKind::default(),
             },
             _ => {
-                // Default to empty synthesis if no provenance (shouldn't happen in production)
-                Provenance::Synthesis {
-                    source_event_ids: vec![],
-                    operation_id: None,
+                // Default to material provenance with placeholder values if no provenance
+                // (shouldn't happen in production, but needed for type safety)
+                Provenance::Material {
+                    id: Id::<SourceMaterial>::new(),
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::default(),
                 }
             }
         };
 
-        let associated_blob_ids = self
-            .associated_blob_ids
-            .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
-
         RawEvent {
-            id: Some(EventId::from_uuid(self.id)),
+            id: Some(EventId::from_ulid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
             payload: self.payload,
             ts_orig: Some(self.ts_orig),
             ingestor_version: self.ingestor_version,
-            payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
+            payload_schema_id: self.payload_schema_id,
             provenance,
-            associated_blob_ids,
+            associated_blob_ids: None,
         }
     }
 }
