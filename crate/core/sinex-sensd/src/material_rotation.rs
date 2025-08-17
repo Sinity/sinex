@@ -336,11 +336,9 @@ impl MaterialRotationManager {
     }
 
     /// Get total bytes for a material from temporal ledger
-    async fn get_material_bytes(&self, _material_id: Ulid) -> Result<i64> {
-        // Query temporal ledger for total bytes
-        // This would normally query the database
-        // For now, return a placeholder
-        Ok(0)
+    async fn get_material_bytes(&self, material_id: Ulid) -> Result<i64> {
+        // Delegate to the temporal ledger for proper byte counting
+        self.temporal_ledger.get_material_bytes(material_id).await
     }
 
     /// Verify zero-gap invariant is maintained

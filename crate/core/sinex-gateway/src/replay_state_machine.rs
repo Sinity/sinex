@@ -2,6 +2,44 @@
 //!
 //! This module implements a distributed state machine for replay operations,
 //! enabling pause/resume, collaborative approval, and failure recovery.
+//!
+//! ## State Machine Overview
+//!
+//! The replay state machine manages the lifecycle of replay operations with these states:
+//!
+//! - **Planning**: Initial state, gathering scope and planning the operation
+//! - **Previewed**: Preview computed, awaiting approval from authorized user
+//! - **Approved**: Operation approved for execution
+//! - **Executing**: Active replay in progress with checkpoint tracking
+//! - **Committing**: Finalizing changes and cleanup
+//! - **Completed**: Successfully finished
+//! - **Failed**: Error occurred during execution
+//! - **Cancelled**: User cancelled the operation
+//!
+//! ## State Transitions
+//!
+//! Valid transitions ensure operational safety:
+//! ```text
+//! Planning → Previewed → Approved → Executing → Committing → Completed
+//!     ↓          ↓         ↓          ↓            ↓
+//! Cancelled  Cancelled  Cancelled   Failed      Failed
+//!     ↓          ↓         
+//! Planning   Planning   
+//! ```
+//!
+//! ## Distributed Coordination
+//!
+//! - PostgreSQL advisory locks prevent concurrent execution conflicts
+//! - Checkpoints enable pause/resume functionality
+//! - Node tracking identifies which executor is running operations
+//! - Approval workflow ensures human oversight of destructive operations
+//!
+//! ## Error Handling and Recovery
+//!
+//! - Failed operations can be restarted from Planning state
+//! - Checkpoints contain savepoint information for transaction rollback
+//! - Detailed error logging helps with troubleshooting
+//! - Operations can be cancelled at any non-terminal state
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
@@ -641,6 +679,7 @@ mod tests {
             last_event_id: Some(Ulid::new()),
             batch_number: 42,
             savepoint_id: Some("sp_12345".to_string()),
+            updated_at: Utc::now(),
         };
 
         // Serialize to JSON
@@ -666,6 +705,7 @@ mod tests {
             last_event_id: None,
             batch_number: 1,
             savepoint_id: None,
+            updated_at: Utc::now(),
         };
 
         // Serialize and deserialize
@@ -679,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replay_config_serialization() {
+    fn test_replay_scope_serialization() {
         use chrono::{TimeZone, Utc};
         use sinex_core::types::ulid::Ulid;
         use std::collections::HashMap;
@@ -688,11 +728,8 @@ mod tests {
         filters.insert("source".to_string(), serde_json::json!("filesystem"));
         filters.insert("max_size".to_string(), serde_json::json!(1024));
 
-        let config = ReplayConfig {
-            batch_size: 500,
-            validation_mode: ValidationMode::Strict,
-            target_state: ReplayTargetState::Archived,
-            source_filters: vec!["filesystem".to_string(), "terminal".to_string()],
+        let scope = ReplayScope {
+            processor_id: "test-processor".to_string(),
             time_window: Some((
                 Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap(),
@@ -702,72 +739,71 @@ mod tests {
         };
 
         // Test round-trip serialization
-        let json = serde_json::to_string(&config).unwrap();
-        let deserialized: ReplayConfig = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: ReplayScope = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(config.batch_size, deserialized.batch_size);
-        assert_eq!(config.source_filters, deserialized.source_filters);
-        assert_eq!(config.time_window, deserialized.time_window);
+        assert_eq!(scope.processor_id, deserialized.processor_id);
+        assert_eq!(scope.time_window, deserialized.time_window);
         assert_eq!(
-            config.material_filter.as_ref().map(|v| v.len()),
+            scope.material_filter.as_ref().map(|v| v.len()),
             deserialized.material_filter.as_ref().map(|v| v.len())
         );
-        assert_eq!(config.filters.len(), deserialized.filters.len());
+        assert_eq!(scope.filters.len(), deserialized.filters.len());
     }
 
     #[test]
-    fn test_replay_result_serialization() {
+    fn test_replay_operation_creation() {
         use sinex_core::types::ulid::Ulid;
+        use std::collections::HashMap;
 
-        let result = ReplayResult {
-            success: true,
-            events_processed: 10000,
-            events_archived: 9500,
-            events_failed: 500,
-            integrity_violations: vec![
-                ViolationType::LiveToArchived,
-                ViolationType::OrphanedAnchor,
-            ],
-            execution_time: std::time::Duration::from_secs(120),
-            final_checkpoint: ReplayCheckpoint {
-                processed_events: 10000,
-                total_events: 10000,
-                last_event_id: Some(Ulid::new()),
-                batch_number: 20,
-                savepoint_id: None,
-            },
+        let scope = ReplayScope {
+            processor_id: "test-processor".to_string(),
+            time_window: None,
+            material_filter: Some(vec![Ulid::new()]),
+            filters: HashMap::new(),
         };
 
-        // Serialize to JSON string
-        let json = serde_json::to_string_pretty(&result).unwrap();
+        let operation_id = Ulid::new();
+        let actor = "test-actor".to_string();
+        let now = Utc::now();
 
-        // Deserialize back
-        let deserialized: ReplayResult = serde_json::from_str(&json).unwrap();
+        let operation = ReplayOperation {
+            operation_id,
+            state: ReplayState::Planning,
+            scope: scope.clone(),
+            preview_summary: None,
+            checkpoint: ReplayCheckpoint::default(),
+            actor: actor.clone(),
+            created_at: now,
+            approved_by: None,
+            approved_at: None,
+            executor_node: None,
+            started_at: None,
+            finished_at: None,
+            outcome: None,
+            error_details: None,
+        };
 
-        // Verify complex nested structures
-        assert_eq!(result.success, deserialized.success);
-        assert_eq!(result.events_processed, deserialized.events_processed);
-        assert_eq!(
-            result.integrity_violations.len(),
-            deserialized.integrity_violations.len()
-        );
-        assert_eq!(result.execution_time, deserialized.execution_time);
-        assert_eq!(
-            result.final_checkpoint.last_event_id,
-            deserialized.final_checkpoint.last_event_id
-        );
+        // Verify operation state
+        assert_eq!(operation.state, ReplayState::Planning);
+        assert_eq!(operation.actor, actor);
+        assert_eq!(operation.scope.processor_id, scope.processor_id);
+        assert!(operation.approved_by.is_none());
+        assert!(operation.finished_at.is_none());
     }
 
     #[test]
     fn test_replay_state_serialization() {
         // Test state serialization for persistence
         let states = vec![
-            ReplayState::Idle,
-            ReplayState::Analyzing,
-            ReplayState::InProgress,
-            ReplayState::Paused,
-            ReplayState::Failed,
+            ReplayState::Planning,
+            ReplayState::Previewed,
+            ReplayState::Approved,
+            ReplayState::Executing,
+            ReplayState::Committing,
             ReplayState::Completed,
+            ReplayState::Failed,
+            ReplayState::Cancelled,
         ];
 
         for state in states {
@@ -776,13 +812,14 @@ mod tests {
 
             // States should serialize to their string representation
             match state {
-                ReplayState::Idle => assert_eq!(json, "\"Idle\""),
-                ReplayState::Analyzing => assert_eq!(json, "\"Analyzing\""),
-                ReplayState::InProgress => assert_eq!(json, "\"InProgress\""),
-                ReplayState::Paused => assert_eq!(json, "\"Paused\""),
-                ReplayState::Failed => assert_eq!(json, "\"Failed\""),
+                ReplayState::Planning => assert_eq!(json, "\"Planning\""),
+                ReplayState::Previewed => assert_eq!(json, "\"Previewed\""),
+                ReplayState::Approved => assert_eq!(json, "\"Approved\""),
+                ReplayState::Executing => assert_eq!(json, "\"Executing\""),
+                ReplayState::Committing => assert_eq!(json, "\"Committing\""),
                 ReplayState::Completed => assert_eq!(json, "\"Completed\""),
-                _ => {}
+                ReplayState::Failed => assert_eq!(json, "\"Failed\""),
+                ReplayState::Cancelled => assert_eq!(json, "\"Cancelled\""),
             }
 
             // Deserialized state should match original

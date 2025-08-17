@@ -295,7 +295,13 @@ impl Drop for TestDatabase {
         // We need to release the advisory lock before closing the pool
         // Use a blocking task to handle this
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create runtime for cleanup: {}", e);
+                    return;
+                }
+            };
             rt.block_on(async {
                 // Try to release the advisory lock with a short timeout
                 match tokio::time::timeout(
@@ -642,7 +648,10 @@ pub async fn acquire_test_database() -> Result<TestDatabase> {
         *pool_lock = Some(pool);
     }
 
-    let pool = pool_lock.as_ref().unwrap().clone();
+    let pool = pool_lock
+        .as_ref()
+        .ok_or_else(|| SinexError::service("Database pool not initialized".to_string()))?
+        .clone();
     drop(pool_lock);
 
     pool.acquire().await
@@ -1417,7 +1426,14 @@ mod benches {
     async fn bench_concurrent_acquisition(arg: usize) -> color_eyre::eyre::Result<()> {
         let concurrency = arg;
         let handles: Vec<_> = (0..concurrency)
-            .map(|_| tokio::spawn(async move { acquire_test_database().await.unwrap() }))
+            .map(|_| {
+                tokio::spawn(async move {
+                    acquire_test_database().await.map_err(|e| {
+                        tracing::error!("Benchmark database acquisition failed: {}", e);
+                        e
+                    })
+                })
+            })
             .collect();
 
         // Wait for all to complete

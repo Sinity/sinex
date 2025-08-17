@@ -2,6 +2,31 @@
 //!
 //! This module provides memory-efficient algorithms for analyzing event dependencies
 //! and planning safe cascade operations during replay.
+//!
+//! ## Algorithm Overview
+//!
+//! The cascade analyzer uses an iterative deepening approach to build dependency graphs:
+//!
+//! 1. **Initialization**: Create a temporary table with initial events at depth 0
+//! 2. **Iterative Deepening**: For each depth level, find all events that depend on
+//!    events at the current depth, up to a configurable maximum depth
+//! 3. **Memory Management**: Process events in batches to avoid memory exhaustion
+//! 4. **Integrity Analysis**: Detect violations where live events would reference archived events
+//! 5. **Circular Dependency Detection**: Use recursive CTEs to find potential cycles
+//!
+//! ## Security Considerations
+//!
+//! - All SQL queries use parameterized binding where possible
+//! - Table names are generated using controlled timestamp-based session IDs
+//! - Memory limits prevent resource exhaustion attacks
+//! - Advisory locks prevent concurrent analysis conflicts
+//!
+//! ## Performance Characteristics
+//!
+//! - Time Complexity: O(V + E) where V is vertices (events) and E is edges (dependencies)
+//! - Space Complexity: O(V) for the temporary analysis table
+//! - Batch processing prevents memory spikes for large dependency graphs
+//! - Early termination on depth or memory limits
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
@@ -328,9 +353,102 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        // For now, delegate to pool version
-        // In production, would implement full transaction support
-        self.build_dependency_graph(table_name).await
+        let mut current_depth = 0;
+        let max_depth = self.config.max_depth;
+        let batch_size = self.config.batch_size;
+
+        loop {
+            // Process events in batches to avoid memory issues
+            let mut total_inserted = 0;
+            let mut batch_offset = 0;
+
+            loop {
+                // Find children of current depth events in batches
+                let query = format!(
+                    r#"
+                    WITH current_level AS (
+                        SELECT id, parent_ids
+                        FROM {}
+                        WHERE depth = $1 AND NOT processed
+                        LIMIT $2 OFFSET $3
+                    ),
+                    children AS (
+                        SELECT DISTINCT e.event_id, e.source_event_ids as parent_ids
+                        FROM core.events e
+                        JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM {} t WHERE t.id = e.event_id
+                        )
+                        LIMIT $2
+                    )
+                    INSERT INTO {} (id, depth, parent_ids)
+                    SELECT event_id, $4, parent_ids
+                    FROM children
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING id
+                    "#,
+                    table_name, table_name, table_name
+                );
+
+                let inserted = sqlx::query(&query)
+                    .bind(current_depth as i32)
+                    .bind(batch_size as i32)
+                    .bind(batch_offset as i32)
+                    .bind((current_depth + 1) as i32)
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(|e| db_error(e, "build dependency graph - insert children"))?;
+
+                let batch_count = inserted.len();
+                total_inserted += batch_count;
+
+                if batch_count < batch_size {
+                    // No more events at this offset
+                    break;
+                }
+
+                batch_offset += batch_size;
+
+                // Check memory limit if configured
+                if let Some(memory_limit) = self.config.memory_limit_bytes {
+                    // Estimate memory usage (rough calculation)
+                    let estimated_rows = self.count_affected_events_tx(tx, table_name).await?;
+                    let estimated_memory = estimated_rows * 64; // ~64 bytes per row estimate
+
+                    if estimated_memory > memory_limit {
+                        warn!(
+                            "Memory limit reached: {} bytes (limit: {} bytes)",
+                            estimated_memory, memory_limit
+                        );
+                        return Err(eyre!("Memory limit exceeded during graph building"));
+                    }
+                }
+            }
+
+            // Mark current depth as processed
+            let update_query = format!(
+                "UPDATE {} SET processed = true WHERE depth = $1",
+                table_name
+            );
+            sqlx::query(&update_query)
+                .bind(current_depth as i32)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| db_error(e, "build dependency graph - mark processed"))?;
+
+            if total_inserted == 0 || current_depth >= max_depth {
+                break;
+            }
+
+            current_depth += 1;
+            debug!(
+                "Processed depth {}, inserted {} new events",
+                current_depth - 1,
+                total_inserted
+            );
+        }
+
+        Ok(current_depth)
     }
 
     /// Calculate depth histogram (transaction version)
@@ -339,7 +457,27 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<HashMap<usize, usize>> {
-        self.calculate_depth_histogram(table_name).await
+        let query = format!(
+            r#"
+            SELECT depth, COUNT(*) as count
+            FROM {}
+            GROUP BY depth
+            ORDER BY depth
+            "#,
+            table_name
+        );
+
+        let rows = sqlx::query_as::<_, (i32, i64)>(&query)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "calculate depth histogram"))?;
+
+        let mut histogram = HashMap::new();
+        for (depth, count) in rows {
+            histogram.insert(depth as usize, count as usize);
+        }
+
+        Ok(histogram)
     }
 
     /// Count affected events (transaction version)
@@ -348,7 +486,14 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        self.count_affected_events(table_name).await
+        let query = format!("SELECT COUNT(*) as count FROM {}", table_name);
+
+        let row = sqlx::query_scalar::<_, i64>(&query)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "count affected events"))?;
+
+        Ok(row as usize)
     }
 
     /// Find integrity violations (transaction version)
@@ -357,7 +502,47 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<IntegrityViolation>> {
-        self.find_integrity_violations(table_name).await
+        // Find live events that would reference archived events
+        let query = format!(
+            r#"
+            WITH archived_set AS (
+                SELECT id FROM {} WHERE depth = 0
+            ),
+            violations AS (
+                SELECT 
+                    e.event_id as live_event_id,
+                    unnest(e.source_event_ids) as archived_event_id
+                FROM core.events e
+                WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
+                AND e.event_id NOT IN (SELECT id FROM {})
+            )
+            SELECT DISTINCT live_event_id, archived_event_id
+            FROM violations
+            LIMIT 100
+            "#,
+            table_name, table_name
+        );
+
+        let rows = sqlx::query_as::<_, (Ulid, Ulid)>(&query)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "find integrity violations"))?;
+
+        let mut violations = Vec::new();
+        for (live_id, archived_id) in rows {
+            violations.push(IntegrityViolation {
+                archived_event_id: archived_id,
+                live_event_id: live_id,
+                violation_type: ViolationType::LiveToArchived,
+                severity: Severity::Critical,
+            });
+        }
+
+        if !violations.is_empty() {
+            warn!("Found {} integrity violations", violations.len());
+        }
+
+        Ok(violations)
     }
 
     /// Detect circular dependencies (transaction version)
@@ -366,7 +551,57 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<CircularDependency>> {
-        self.detect_circular_dependencies(table_name).await
+        // For now, use a simple SQL approach to find potential cycles
+        // In production, would implement proper Tarjan's algorithm
+        let query = format!(
+            r#"
+            WITH RECURSIVE cycle_check AS (
+                SELECT 
+                    id,
+                    parent_ids,
+                    ARRAY[id] as path,
+                    FALSE as has_cycle
+                FROM {}
+                WHERE depth = 0
+                
+                UNION ALL
+                
+                SELECT 
+                    t.id,
+                    t.parent_ids,
+                    cc.path || t.id,
+                    t.id = ANY(cc.path) as has_cycle
+                FROM {} t
+                JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
+                WHERE NOT cc.has_cycle
+                AND array_length(cc.path, 1) < 10
+            )
+            SELECT path
+            FROM cycle_check
+            WHERE has_cycle
+            LIMIT 10
+            "#,
+            table_name, table_name
+        );
+
+        let rows = sqlx::query_as::<_, (Vec<Ulid>,)>(&query)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "detect circular dependencies"))?;
+
+        let mut cycles = Vec::new();
+        for (path,) in rows {
+            cycles.push(CircularDependency {
+                cycle: path,
+                is_strong: true, // Conservative assumption
+            });
+        }
+
+        if !cycles.is_empty() {
+            warn!("Found {} circular dependencies", cycles.len());
+        }
+
+        Ok(cycles)
     }
 
     /// Clean up temp tables (transaction version)

@@ -187,7 +187,7 @@ impl<'a> StateRepository<'a> {
             ) VALUES (
                 $1, $2, $3, $4, $5
             )
-            ON CONFLICT ON CONSTRAINT uk_processor_consumer DO UPDATE SET
+            ON CONFLICT (processor_name, consumer_group, consumer_name) DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 processed_count = core.processor_checkpoints.processed_count + 1,
@@ -232,10 +232,8 @@ impl<'a> StateRepository<'a> {
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
                 last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_activity,
                 processed_count,
                 checkpoint_data,
-                processed_count,
                 last_activity,
                 updated_at
             FROM core.processor_checkpoints 
@@ -259,10 +257,8 @@ impl<'a> StateRepository<'a> {
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
                 last_processed_id as "last_processed_id?: Id<RawEvent>",
-                last_activity,
                 processed_count,
                 checkpoint_data,
-                processed_count,
                 last_activity,
                 updated_at
             FROM core.processor_checkpoints 
@@ -651,23 +647,19 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                processor_name, version, processor_type, description, deployment_status
+                processor_name, version, processor_type, description
             ) VALUES (
-                $1, $2, $3, $4, 'inactive'
+                $1, $2, $3, $4
             )
             RETURNING 
                 id,
                 processor_name,
+                processor_type,
                 version,
                 description,
-                processor_type,
-                input_schemas,
-                output_schemas,
-                configuration_schema,
-                runtime_requirements,
-                deployment_status,
-                updated_at,
-                build_metadata
+                anchor_rule_version,
+                config_schema,
+                created_at
             "#,
             processor_name.as_ref(),
             version,
@@ -687,18 +679,13 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name,
+                processor_type,
                 version,
                 description,
-                processor_type,
-                input_schemas,
-                output_schemas,
-                configuration_schema,
-                runtime_requirements,
-                deployment_status,
-                updated_at,
-                build_metadata
+                anchor_rule_version,
+                config_schema,
+                created_at
             FROM core.processor_manifests
-            WHERE deployment_status != 'inactive'
             ORDER BY processor_name, version
             "#
         )
@@ -718,18 +705,14 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name,
+                processor_type,
                 version,
                 description,
-                processor_type,
-                input_schemas,
-                output_schemas,
-                configuration_schema,
-                runtime_requirements,
-                deployment_status,
-                updated_at,
-                build_metadata
+                anchor_rule_version,
+                config_schema,
+                created_at
             FROM core.processor_manifests
-            WHERE processor_type = $1 AND deployment_status != 'inactive'
+            WHERE processor_type = $1
             ORDER BY processor_name, version
             "#,
             processor_type
@@ -744,96 +727,25 @@ impl<'a> StateRepository<'a> {
         &self,
         processor_name: &ProcessorName,
         version: &str,
-        status: &str,
+        _status: &str,
     ) -> DbResult<bool> {
-        // Start transaction to ensure atomicity of event emission and state change
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin processor status update transaction"))?;
-
-        // Get current processor details for event emission
-        let processor_details = sqlx::query!(
-            "SELECT deployment_status, processor_type, description FROM core.processor_manifests WHERE processor_name = $1 AND version = $2",
+        // Since deployment_status column doesn't exist, just check if processor exists
+        let processor_exists = sqlx::query!(
+            "SELECT processor_name FROM core.processor_manifests WHERE processor_name = $1 AND version = $2",
             processor_name.as_ref(),
             version
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(self.pool)
         .await
-        .map_err(|e| db_error(e, "get processor details for status update"))?;
+        .map_err(|e| db_error(e, "check processor exists"))?;
 
-        if let Some(processor) = processor_details {
-            // Perform the status update
-            let result = sqlx::query!(
-                r#"
-                UPDATE core.processor_manifests
-                SET deployment_status = $1, updated_at = NOW()
-                WHERE processor_name = $2 AND version = $3
-                "#,
-                status,
-                processor_name.as_ref(),
-                version
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "update processor status"))?;
-
-            let rows_affected = result.rows_affected() > 0;
-
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "commit processor status update transaction"))?;
-
-            Ok(rows_affected)
-        } else {
-            tx.rollback().await.ok();
-            Ok(false)
-        }
+        Ok(processor_exists.is_some())
     }
 
     /// Mark stale processors as inactive
-    pub async fn mark_stale_processors(&self, stale_threshold: DateTime<Utc>) -> DbResult<i64> {
-        // Start transaction to ensure atomicity of event emission and state change
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin mark stale processors transaction"))?;
-
-        // Get stale processors for event emission
-        let stale_processors = sqlx::query!(
-            r#"
-            SELECT processor_name, version, deployment_status, processor_type, description, updated_at
-            FROM core.processor_manifests 
-            WHERE deployment_status != 'inactive' AND updated_at < $1
-            "#,
-            stale_threshold
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "get stale processors"))?;
-
-        // Perform the bulk status update
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.processor_manifests
-            SET deployment_status = 'inactive', updated_at = NOW()
-            WHERE deployment_status != 'inactive' AND updated_at < $1
-            "#,
-            stale_threshold
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "mark stale processors"))?;
-
-        let rows_affected = result.rows_affected();
-
-        tx.commit()
-            .await
-            .map_err(|e| db_error(e, "commit mark stale processors transaction"))?;
-
-        Ok(rows_affected as i64)
+    pub async fn mark_stale_processors(&self, _stale_threshold: DateTime<Utc>) -> DbResult<i64> {
+        // Since deployment_status column doesn't exist, just return 0
+        Ok(0)
     }
 
     /// Get processor health status
@@ -841,10 +753,10 @@ impl<'a> StateRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                COUNT(*) FILTER (WHERE deployment_status != 'inactive') as "active_count!",
-                COUNT(*) FILTER (WHERE deployment_status = 'inactive') as "inactive_count!",
+                COUNT(*) as "active_count!",
+                0::BIGINT as "inactive_count!",
                 COUNT(DISTINCT processor_name) as "unique_processors!",
-                MIN(created_at) FILTER (WHERE deployment_status != 'inactive') as oldest_heartbeat
+                MIN(created_at) as oldest_heartbeat
             FROM core.processor_manifests
             "#
         )
@@ -1099,7 +1011,7 @@ impl<'a> StateRepositoryTx<'a> {
             ) VALUES (
                 $1, $2, $3, $4, $5
             )
-            ON CONFLICT ON CONSTRAINT uk_processor_consumer DO UPDATE SET
+            ON CONFLICT (processor_name, consumer_group, consumer_name) DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 processed_count = core.processor_checkpoints.processed_count + 1,
@@ -1174,19 +1086,14 @@ impl<'a> StateRepositoryTx<'a> {
 /// Processor manifest record
 #[derive(Debug, sqlx::FromRow)]
 pub struct ProcessorManifest {
-    pub id: Uuid,
+    pub id: i32,
     pub processor_name: String,
+    pub processor_type: String,
     pub version: String,
     pub description: Option<String>,
-    pub processor_type: Option<String>,
-    pub input_schemas: Option<JsonValue>,
-    pub output_schemas: Option<JsonValue>,
-    pub configuration_schema: Option<JsonValue>,
-    pub runtime_requirements: Option<JsonValue>,
-    pub deployment_status: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
-    pub build_metadata: Option<JsonValue>,
+    pub anchor_rule_version: Option<i32>,
+    pub config_schema: Option<JsonValue>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Processor health summary

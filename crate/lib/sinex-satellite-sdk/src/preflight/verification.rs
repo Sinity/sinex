@@ -551,10 +551,8 @@ async fn verify_service_integration(_messages: &mut Vec<String>) -> Result<Value
             &processor_name,
             &consumer_group,
             &consumer_name,
-            None,
-            Some(Utc::now()),
-            Some(json!({"test": "checkpoint_operations"})),
-            None,
+            None,                                           // last_processed_id
+            Some(json!({"test": "checkpoint_operations"})), // checkpoint_data
         )
         .await
         .wrap_err("Failed to insert test checkpoint")?;

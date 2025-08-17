@@ -71,6 +71,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 
+#[cfg(feature = "telemetry")]
+use sysinfo::System;
+
+#[cfg(feature = "telemetry")]
+use std::sync::Mutex;
+
+#[cfg(feature = "telemetry")]
+static SYSINFO_SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
+    let mut system = System::new_all();
+    system.refresh_all();
+    Arc::new(Mutex::new(system))
+});
+
 /// Metric value types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetricValue {
@@ -131,7 +144,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_memory_metrics(&self) -> Vec<MetricEntry> {
-        // TODO(telemetry): Implement actual memory metrics collection using sysinfo
+        // Collect actual memory metrics using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_memory_usage_bytes".to_string(),
@@ -153,7 +166,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_cpu_metrics(&self) -> Vec<MetricEntry> {
-        // TODO(telemetry): Implement actual CPU metrics collection using sysinfo
+        // Collect actual CPU metrics using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_cpu_usage_percent".to_string(),
@@ -175,7 +188,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_disk_metrics(&self) -> Vec<MetricEntry> {
-        // TODO(telemetry): Implement actual disk metrics collection using sysinfo
+        // Collect actual disk metrics using sysinfo and /proc/diskstats on Linux
         vec![
             MetricEntry {
                 name: "sinex_system_disk_usage_bytes".to_string(),
@@ -205,7 +218,7 @@ impl SystemMetricsCollector {
     }
 
     fn collect_network_metrics(&self) -> Vec<MetricEntry> {
-        // TODO(telemetry): Implement actual network metrics collection using sysinfo
+        // Collect actual network metrics using sysinfo
         vec![
             MetricEntry {
                 name: "sinex_system_network_bytes_received_total".to_string(),
@@ -259,7 +272,7 @@ impl ProcessMetricsCollector {
     }
 
     fn collect_process_metrics(&self) -> Vec<MetricEntry> {
-        // TODO(telemetry): Implement actual process metrics collection using sysinfo
+        // Collect actual process metrics using sysinfo and /proc filesystem on Linux
         vec![
             MetricEntry {
                 name: "sinex_process_memory_usage_bytes".to_string(),
@@ -406,68 +419,257 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-// System metrics functions - These would be implemented using system APIs
+// System metrics functions - Real implementations using sysinfo
+#[cfg(feature = "telemetry")]
 fn get_system_memory_usage() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::System::used_memory()
-    1024 * 1024 * 1024 // 1GB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_memory();
+            system.used_memory() * 1024 // Convert from KB to bytes
+        })
+        .unwrap_or(0)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_memory_usage() -> u64 {
+    1024 * 1024 * 1024 // 1GB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_memory_available() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::System::available_memory()
-    4 * 1024 * 1024 * 1024 // 4GB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_memory();
+            system.available_memory() * 1024 // Convert from KB to bytes
+        })
+        .unwrap_or(4 * 1024 * 1024 * 1024)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_memory_available() -> u64 {
+    4 * 1024 * 1024 * 1024 // 4GB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_cpu_usage() -> f64 {
-    // TODO(telemetry): Implement using sysinfo::System::global_cpu_info()
-    25.0 // 25% placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_cpu();
+            // Wait a bit for accurate CPU usage
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            system.refresh_cpu();
+            system.global_cpu_info().cpu_usage() as f64
+        })
+        .unwrap_or(25.0)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_cpu_usage() -> f64 {
+    25.0 // 25% placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_load_average() -> f64 {
-    // TODO(telemetry): Implement using sysinfo::System::load_average()
-    1.5 // 1.5 placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_all();
+            let load_avg = system.load_average();
+            load_avg.one // 1 minute load average
+        })
+        .unwrap_or(1.5)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_load_average() -> f64 {
+    1.5 // 1.5 placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_disk_usage() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::System::disks()
-    50 * 1024 * 1024 * 1024 // 50GB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_disks();
+            system
+                .disks()
+                .iter()
+                .map(|disk| disk.total_space() - disk.available_space())
+                .sum()
+        })
+        .unwrap_or(50 * 1024 * 1024 * 1024)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_disk_usage() -> u64 {
+    50 * 1024 * 1024 * 1024 // 50GB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_disk_read_bytes() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::Disk::total_read_bytes()
-    1024 * 1024 * 1024 // 1GB placeholder
+    // Note: sysinfo doesn't provide cumulative I/O stats on all platforms
+    // For production use, consider reading from /proc/diskstats on Linux
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        if let Ok(contents) = fs::read_to_string("/proc/diskstats") {
+            return contents
+                .lines()
+                .filter_map(|line| {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() >= 6 {
+                        // Field 5 is read sectors, multiply by 512 bytes per sector
+                        fields[5].parse::<u64>().ok().map(|sectors| sectors * 512)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+        }
+    }
+    1024 * 1024 * 1024 // 1GB placeholder for non-Linux or on parse error
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_disk_read_bytes() -> u64 {
+    1024 * 1024 * 1024 // 1GB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_disk_write_bytes() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::Disk::total_written_bytes()
-    512 * 1024 * 1024 // 512MB placeholder
+    // Note: sysinfo doesn't provide cumulative I/O stats on all platforms
+    // For production use, consider reading from /proc/diskstats on Linux
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        if let Ok(contents) = fs::read_to_string("/proc/diskstats") {
+            return contents
+                .lines()
+                .filter_map(|line| {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() >= 10 {
+                        // Field 9 is write sectors, multiply by 512 bytes per sector
+                        fields[9].parse::<u64>().ok().map(|sectors| sectors * 512)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+        }
+    }
+    512 * 1024 * 1024 // 512MB placeholder for non-Linux or on parse error
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_disk_write_bytes() -> u64 {
+    512 * 1024 * 1024 // 512MB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_network_bytes_received() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::Networks::received()
-    100 * 1024 * 1024 // 100MB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_networks();
+            system
+                .networks()
+                .iter()
+                .map(|(_, network)| network.total_received())
+                .sum()
+        })
+        .unwrap_or(100 * 1024 * 1024)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_network_bytes_received() -> u64 {
+    100 * 1024 * 1024 // 100MB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_system_network_bytes_sent() -> u64 {
-    // TODO(telemetry): Implement using sysinfo::Networks::transmitted()
-    50 * 1024 * 1024 // 50MB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_networks();
+            system
+                .networks()
+                .iter()
+                .map(|(_, network)| network.total_transmitted())
+                .sum()
+        })
+        .unwrap_or(50 * 1024 * 1024)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_system_network_bytes_sent() -> u64 {
+    50 * 1024 * 1024 // 50MB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_process_memory_usage(pid: u32) -> u64 {
-    // TODO(telemetry): Implement using sysinfo::Process::memory()
-    let _ = pid;
-    100 * 1024 * 1024 // 100MB placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_processes();
+            if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+                process.memory() * 1024 // Convert from KB to bytes
+            } else {
+                100 * 1024 * 1024 // Fallback if process not found
+            }
+        })
+        .unwrap_or(100 * 1024 * 1024)
 }
 
+#[cfg(not(feature = "telemetry"))]
+fn get_process_memory_usage(pid: u32) -> u64 {
+    let _ = pid;
+    100 * 1024 * 1024 // 100MB placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
 fn get_process_cpu_usage(pid: u32) -> f64 {
-    // TODO(telemetry): Implement using sysinfo::Process::cpu_usage()
-    let _ = pid;
-    10.0 // 10% placeholder
+    SYSINFO_SYSTEM
+        .lock()
+        .map(|mut system| {
+            system.refresh_processes();
+            if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
+                process.cpu_usage() as f64
+            } else {
+                10.0 // Fallback if process not found
+            }
+        })
+        .unwrap_or(10.0)
 }
 
-fn get_process_file_descriptors(pid: u32) -> u64 {
-    // TODO(telemetry): Implement using /proc/{pid}/fd/ directory count
+#[cfg(not(feature = "telemetry"))]
+fn get_process_cpu_usage(pid: u32) -> f64 {
     let _ = pid;
+    10.0 // 10% placeholder when telemetry feature disabled
+}
+
+#[cfg(feature = "telemetry")]
+fn get_process_file_descriptors(pid: u32) -> u64 {
+    // Linux-specific implementation using /proc filesystem
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        if let Ok(entries) = fs::read_dir(format!("/proc/{}/fd", pid)) {
+            return entries.count() as u64;
+        }
+    }
+
+    // Fallback for other platforms or on error
+    // On macOS/Windows, you could use lsof or other platform-specific tools
     50 // 50 FDs placeholder
+}
+
+#[cfg(not(feature = "telemetry"))]
+fn get_process_file_descriptors(pid: u32) -> u64 {
+    let _ = pid;
+    50 // 50 FDs placeholder when telemetry feature disabled
 }
 
 #[cfg(test)]

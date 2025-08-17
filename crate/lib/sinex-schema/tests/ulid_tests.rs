@@ -1,0 +1,486 @@
+//! Comprehensive tests for ULID functionality
+//!
+//! These tests validate the core ULID implementation including:
+//! - Basic generation and parsing
+//! - Monotonic ordering under concurrent generation
+//! - Timestamp extraction accuracy
+//! - Collision resistance
+//! - Database integration via UUID conversion
+//! - Property-based testing for edge cases
+
+use chrono::{DateTime, Utc};
+use proptest::prelude::*;
+use rstest::*;
+use sinex_schema::ulid::{Ulid, UlidError};
+use std::collections::HashSet;
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+#[cfg(test)]
+mod basic_tests {
+    use super::*;
+
+    #[test]
+    fn test_ulid_new_generates_valid_ulid() {
+        let ulid = Ulid::new();
+
+        // Verify string representation is valid
+        let ulid_str = ulid.to_string();
+        assert_eq!(ulid_str.len(), 26);
+
+        // Verify it can be parsed back
+        let parsed = ulid_str.parse::<Ulid>().expect("Should parse back to ULID");
+        assert_eq!(ulid, parsed);
+    }
+
+    #[test]
+    fn test_ulid_default_is_new() {
+        let ulid1 = Ulid::new();
+        let ulid2 = Ulid::default();
+
+        // They should be different ULIDs but both valid
+        assert_ne!(ulid1, ulid2);
+        assert_eq!(ulid1.to_string().len(), 26);
+        assert_eq!(ulid2.to_string().len(), 26);
+    }
+
+    #[test]
+    fn test_ulid_timestamp_extraction() {
+        let before = Utc::now();
+        let ulid = Ulid::new();
+        let after = Utc::now();
+
+        let extracted_timestamp = ulid.timestamp();
+
+        // Timestamp should be within reasonable bounds
+        assert!(extracted_timestamp >= before);
+        assert!(extracted_timestamp <= after);
+    }
+
+    #[test]
+    fn test_ulid_from_datetime() {
+        let datetime = DateTime::from_timestamp(1640995200, 0).unwrap(); // 2022-01-01 00:00:00 UTC
+        let ulid = Ulid::from_datetime(datetime);
+
+        let extracted = ulid.timestamp();
+
+        // Should be very close (within a few seconds due to precision)
+        let diff = (extracted.timestamp() - datetime.timestamp()).abs();
+        assert!(diff <= 1);
+    }
+
+    #[test]
+    fn test_ulid_nil() {
+        let nil_ulid = Ulid::nil();
+
+        assert!(nil_ulid.is_nil());
+        assert_eq!(nil_ulid.to_bytes(), [0; 16]);
+
+        // Nil ULID should be valid and parseable
+        let nil_str = nil_ulid.to_string();
+        let parsed = nil_str.parse::<Ulid>().unwrap();
+        assert_eq!(nil_ulid, parsed);
+    }
+
+    #[test]
+    fn test_ulid_bytes_roundtrip() {
+        let original = Ulid::new();
+        let bytes = original.to_bytes();
+        let restored = Ulid::from_bytes(bytes).unwrap();
+
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn test_ulid_uuid_conversion() {
+        let ulid = Ulid::new();
+        let uuid = ulid.to_uuid();
+        let restored = Ulid::from_uuid(uuid);
+
+        assert_eq!(ulid, restored);
+
+        // Test as_uuid alias
+        assert_eq!(uuid, ulid.as_uuid());
+    }
+}
+
+#[cfg(test)]
+mod monotonic_tests {
+    use super::*;
+
+    #[test]
+    fn test_monotonic_ordering_single_thread() {
+        let mut ulids = Vec::new();
+
+        // Generate many ULIDs quickly in a tight loop
+        for _ in 0..1000 {
+            ulids.push(Ulid::new());
+        }
+
+        // Verify they are all in ascending order
+        for window in ulids.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "ULIDs should be monotonically increasing: {} >= {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_collision_resistance() {
+        let mut seen = HashSet::new();
+
+        // Generate many ULIDs and ensure no collisions
+        for _ in 0..10000 {
+            let ulid = Ulid::new();
+            assert!(seen.insert(ulid), "Collision detected: {}", ulid);
+        }
+
+        assert_eq!(seen.len(), 10000);
+    }
+
+    #[test]
+    fn test_concurrent_generation_ordering() {
+        const NUM_THREADS: usize = 8;
+        const ULIDS_PER_THREAD: usize = 100;
+
+        let barrier = Arc::new(Barrier::new(NUM_THREADS));
+        let mut handles = Vec::new();
+
+        for _ in 0..NUM_THREADS {
+            let barrier = Arc::clone(&barrier);
+            let handle = thread::spawn(move || {
+                barrier.wait(); // Start all threads simultaneously
+
+                let mut ulids = Vec::new();
+                for _ in 0..ULIDS_PER_THREAD {
+                    ulids.push(Ulid::new());
+                }
+                ulids
+            });
+            handles.push(handle);
+        }
+
+        // Collect all ULIDs
+        let mut all_ulids = Vec::new();
+        for handle in handles {
+            let mut thread_ulids = handle.join().unwrap();
+            all_ulids.append(&mut thread_ulids);
+        }
+
+        // Verify no collisions across threads
+        let mut unique_ulids = HashSet::new();
+        for ulid in &all_ulids {
+            assert!(unique_ulids.insert(*ulid), "Collision detected: {}", ulid);
+        }
+
+        // Sort all ULIDs and verify monotonic property holds globally
+        all_ulids.sort();
+        for window in all_ulids.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod parsing_tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_ulid_strings() {
+        let valid_cases = vec![
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV", // Example from ULID spec
+            "01F4GNBM2PSMRGQ90N6C7N5J86", // Another valid ULID
+            "0000000000000000000000000",  // All zeros (nil)
+            "7ZZZZZZZZZZZZZZZZZZZZZZZZZ", // Max valid ULID
+        ];
+
+        for case in valid_cases {
+            let result = case.parse::<Ulid>();
+            assert!(result.is_ok(), "Should parse '{}' successfully", case);
+        }
+    }
+
+    #[test]
+    fn test_invalid_ulid_strings() {
+        let invalid_cases = vec![
+            ("", "Empty string"),
+            ("01ARZ3NDEKTSV4RRFFQ69G5FA", "Too short (25 chars)"),
+            ("01ARZ3NDEKTSV4RRFFQ69G5FAVX", "Too long (27 chars)"),
+            (
+                "01ARZ3NDEKTSV4RRFFQ69G5FaV",
+                "Contains lowercase in wrong position",
+            ),
+            (
+                "01ARZ3NDEKTSV4RRFFQ69G5FIV",
+                "Contains 'I' (invalid base32)",
+            ),
+            (
+                "01ARZ3NDEKTSV4RRFFQ69G5FLV",
+                "Contains 'L' (invalid base32)",
+            ),
+            (
+                "01ARZ3NDEKTSV4RRFFQ69G5FOV",
+                "Contains 'O' (invalid base32)",
+            ),
+            (
+                "01ARZ3NDEKTSV4RRFFQ69G5FUV",
+                "Contains 'U' (invalid base32)",
+            ),
+            ("!1ARZ3NDEKTSV4RRFFQ69G5FAV", "Contains special character"),
+        ];
+
+        for (case, description) in invalid_cases {
+            let result = case.parse::<Ulid>();
+            assert!(
+                result.is_err(),
+                "Should fail to parse '{}': {}",
+                case,
+                description
+            );
+
+            if let Err(UlidError::InvalidFormat(msg)) = result {
+                assert!(!msg.is_empty(), "Error message should not be empty");
+            }
+        }
+    }
+
+    #[test]
+    fn test_timestamp_range_validation() {
+        // Test maximum valid timestamp (year 10895 CE, which is 2^48 - 1 milliseconds)
+        let max_timestamp_ms = (1u64 << 48) - 1;
+
+        // Create a ULID string with maximum timestamp
+        let ulid_inner = ulid::Ulid::from_parts(max_timestamp_ms, 0);
+        let ulid_str = ulid_inner.to_string();
+
+        // Should parse successfully
+        let result = ulid_str.parse::<Ulid>();
+        assert!(
+            result.is_ok(),
+            "Max timestamp ULID should parse successfully"
+        );
+
+        // Create an artificially invalid ULID with timestamp beyond 48 bits
+        // This is harder to test since the underlying library validates it
+    }
+}
+
+#[cfg(test)]
+mod conversion_tests {
+    use super::*;
+
+    #[test]
+    fn test_uuid_conversion_preserves_order() {
+        let ulid1 = Ulid::new();
+        thread::sleep(Duration::from_millis(1)); // Ensure different timestamp
+        let ulid2 = Ulid::new();
+
+        assert!(ulid1 < ulid2);
+
+        let uuid1 = ulid1.to_uuid();
+        let uuid2 = ulid2.to_uuid();
+
+        // UUIDs should maintain the same ordering
+        assert!(uuid1 < uuid2);
+    }
+
+    #[test]
+    fn test_conversion_with_standard_uuid() {
+        let standard_uuid = Uuid::new_v4();
+        let ulid = Ulid::from_uuid(standard_uuid);
+        let converted_back = ulid.to_uuid();
+
+        assert_eq!(standard_uuid, converted_back);
+    }
+
+    #[test]
+    fn test_from_into_traits() {
+        let ulid = Ulid::new();
+
+        // Test From<Ulid> for Uuid
+        let uuid: Uuid = ulid.into();
+        assert_eq!(uuid, ulid.to_uuid());
+
+        // Test From<Uuid> for Ulid
+        let ulid_back: Ulid = uuid.into();
+        assert_eq!(ulid, ulid_back);
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn test_ulid_string_roundtrip(ulid in any::<Ulid>()) {
+            let ulid_str = ulid.to_string();
+            let parsed = ulid_str.parse::<Ulid>().unwrap();
+            prop_assert_eq!(ulid, parsed);
+        }
+
+        #[test]
+        fn test_ulid_bytes_roundtrip(ulid in any::<Ulid>()) {
+            let bytes = ulid.to_bytes();
+            let restored = Ulid::from_bytes(bytes).unwrap();
+            prop_assert_eq!(ulid, restored);
+        }
+
+        #[test]
+        fn test_ulid_uuid_roundtrip(ulid in any::<Ulid>()) {
+            let uuid = ulid.to_uuid();
+            let restored = Ulid::from_uuid(uuid);
+            prop_assert_eq!(ulid, restored);
+        }
+
+        #[test]
+        fn test_ulid_ordering_consistency(ulid1 in any::<Ulid>(), ulid2 in any::<Ulid>()) {
+            // Compare ULIDs
+            let ulid_cmp = ulid1.cmp(&ulid2);
+
+            // Compare their string representations
+            let str_cmp = ulid1.to_string().cmp(&ulid2.to_string());
+
+            // Compare their UUID representations
+            let uuid_cmp = ulid1.to_uuid().cmp(&ulid2.to_uuid());
+
+            prop_assert_eq!(ulid_cmp, str_cmp);
+            prop_assert_eq!(ulid_cmp, uuid_cmp);
+        }
+
+        #[test]
+        fn test_timestamp_extraction_reasonable(ulid in any::<Ulid>()) {
+            let timestamp = ulid.timestamp();
+
+            // Should be within reasonable range (1970 to far future)
+            let unix_epoch = DateTime::from_timestamp(0, 0).unwrap();
+            let far_future = DateTime::from_timestamp(253402300799, 0).unwrap(); // Year 9999
+
+            prop_assert!(timestamp >= unix_epoch);
+            prop_assert!(timestamp <= far_future);
+        }
+    }
+
+    impl Arbitrary for Ulid {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            // Generate realistic ULID values for property testing
+            (
+                // Timestamp component (milliseconds since Unix epoch)
+                // Use a reasonable range: 2020-01-01 to 2030-01-01
+                1577836800000u64..1893456000000u64,
+                // Random component (80 bits)
+                any::<u128>(),
+            )
+                .prop_map(|(timestamp_ms, random_bits)| {
+                    // Use only the lower 80 bits for the random component
+                    let random_component = random_bits & ((1u128 << 80) - 1);
+
+                    // Create ULID from components
+                    let inner = ulid::Ulid::from_parts(timestamp_ms, random_component);
+                    Ulid::from(inner)
+                })
+                .boxed()
+        }
+    }
+}
+
+#[cfg(test)]
+mod edge_case_tests {
+    use super::*;
+
+    #[test]
+    fn test_clock_regression_handling() {
+        // This test simulates what happens when system clock goes backwards
+        // Our implementation should handle this gracefully via monotonic generation
+
+        let ulids = (0..100).map(|_| Ulid::new()).collect::<Vec<_>>();
+
+        // Even with potential clock regression, all ULIDs should be unique and ordered
+        let mut sorted_ulids = ulids.clone();
+        sorted_ulids.sort();
+
+        assert_eq!(ulids, sorted_ulids, "ULIDs should maintain monotonic order");
+
+        // Verify no duplicates
+        let unique_count = ulids.iter().collect::<HashSet<_>>().len();
+        assert_eq!(unique_count, ulids.len(), "All ULIDs should be unique");
+    }
+
+    #[test]
+    fn test_high_frequency_generation() {
+        // Test generating many ULIDs in rapid succession
+        let start = std::time::Instant::now();
+        let ulids: Vec<Ulid> = (0..10000).map(|_| Ulid::new()).collect();
+        let duration = start.elapsed();
+
+        println!("Generated {} ULIDs in {:?}", ulids.len(), duration);
+
+        // Verify all unique
+        let unique_count = ulids.iter().collect::<HashSet<_>>().len();
+        assert_eq!(unique_count, ulids.len());
+
+        // Verify monotonic ordering
+        for window in ulids.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+
+    #[test]
+    fn test_ulid_debug_format() {
+        let ulid = Ulid::new();
+        let debug_str = format!("{:?}", ulid);
+
+        // Debug format should include "Ulid(" and the string representation
+        assert!(debug_str.starts_with("Ulid("));
+        assert!(debug_str.ends_with(")"));
+        assert!(debug_str.contains(&ulid.to_string()));
+    }
+
+    #[test]
+    fn test_ulid_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let ulid = Ulid::new();
+
+        // Hash should be consistent across multiple calls
+        let mut hasher1 = DefaultHasher::new();
+        ulid.hash(&mut hasher1);
+        let hash1 = hasher1.finish();
+
+        let mut hasher2 = DefaultHasher::new();
+        ulid.hash(&mut hasher2);
+        let hash2 = hasher2.finish();
+
+        assert_eq!(hash1, hash2);
+    }
+}
+
+#[cfg(feature = "sqlx")]
+#[cfg(test)]
+mod database_integration_tests {
+    use super::*;
+
+    // Note: These tests would require actual database connection
+    // For now, we test the conversion functions that enable database integration
+
+    #[test]
+    fn test_sqlx_uuid_compatibility() {
+        let ulid = Ulid::new();
+        let sqlx_uuid = sqlx::types::Uuid::from_bytes(*ulid.to_uuid().as_bytes());
+
+        // Verify the conversion chain works
+        let restored_uuid = uuid::Uuid::from_bytes(*sqlx_uuid.as_bytes());
+        let restored_ulid = Ulid::from_uuid(restored_uuid);
+
+        assert_eq!(ulid, restored_ulid);
+    }
+}

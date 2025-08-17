@@ -145,10 +145,17 @@ impl Default for IngestdFigmentConfig {
 
 impl IngestdFigmentConfig {
     /// Build a figment with common configuration layers
-    fn build_figment_base() -> Figment {
-        Figment::new()
+    fn build_figment_base() -> Result<Figment, figment::Error> {
+        let default_toml = toml::to_string(&Self::default()).map_err(|e| {
+            figment::Error::from(figment::error::Kind::InvalidValue(
+                figment::value::Value::from(format!("Failed to serialize default config: {}", e)),
+                "default_config".to_string(),
+            ))
+        })?;
+
+        Ok(Figment::new()
             // Start with defaults
-            .merge(Toml::string(&toml::to_string(&Self::default()).unwrap()))
+            .merge(Toml::string(&default_toml)))
     }
 
     /// Add common environment variable layers to a figment
@@ -160,7 +167,7 @@ impl IngestdFigmentConfig {
 
     /// Load configuration from multiple sources
     pub fn load() -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base()
+        let figment = Self::build_figment_base()?
             // Load from config file if exists
             .merge(Toml::file("ingestd.toml").nested())
             .merge(Toml::file("/etc/sinex/ingestd.toml").nested());
@@ -170,7 +177,7 @@ impl IngestdFigmentConfig {
 
     /// Load configuration with custom config file
     pub fn load_from(config_file: &str) -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base()
+        let figment = Self::build_figment_base()?
             // Load from specified config file
             .merge(Toml::file(config_file).nested());
 

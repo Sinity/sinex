@@ -223,9 +223,7 @@ impl<'a> CheckpointRepository<'a> {
                 UPDATE core.processor_checkpoints 
                 SET 
                     last_processed_id = $4,
-                    last_activity = $5,
-                    checkpoint_data = $6,
-                    checkpoint_data = $7,
+                    checkpoint_data = $5,
                     processed_count = processed_count + 1,
                     last_activity = NOW(),
                     updated_at = NOW()
@@ -238,21 +236,15 @@ impl<'a> CheckpointRepository<'a> {
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
                     last_processed_id as "last_processed_id: Id<RawEvent>",
-                    last_activity,
                     processed_count as "processed_count!",
                     checkpoint_data,
-                    checkpoint_data,
-                    processed_count as "processed_count!",
                     last_activity as "last_activity!",
-                    created_at as "created_at!",
                     updated_at as "updated_at!"
                 "#,
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
                 last_processed_id.map(|id| *id.as_ulid()) as _,
-                last_activity,
-                checkpoint_data,
                 checkpoint_data
             )
             .fetch_one(self.pool)
@@ -265,9 +257,7 @@ impl<'a> CheckpointRepository<'a> {
                 UPDATE core.processor_checkpoints 
                 SET 
                     last_processed_id = $4,
-                    last_activity = $5,
-                    checkpoint_data = $6,
-                    checkpoint_data = $7,
+                    checkpoint_data = $5,
                     last_activity = NOW(),
                     updated_at = NOW()
                 WHERE processor_name = $1 
@@ -279,21 +269,15 @@ impl<'a> CheckpointRepository<'a> {
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
                     last_processed_id as "last_processed_id: Id<RawEvent>",
-                    last_activity,
                     processed_count as "processed_count!",
                     checkpoint_data,
-                    checkpoint_data,
-                    processed_count as "processed_count!",
                     last_activity as "last_activity!",
-                    created_at as "created_at!",
                     updated_at as "updated_at!"
                 "#,
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
                 last_processed_id.map(|id| *id.as_ulid()) as _,
-                last_activity,
-                checkpoint_data,
                 checkpoint_data
             )
             .fetch_one(self.pool)

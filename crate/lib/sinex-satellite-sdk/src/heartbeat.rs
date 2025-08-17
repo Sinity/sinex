@@ -123,7 +123,10 @@ impl HeartbeatEmitter {
     }
 
     /// Create heartbeat metrics
-    fn create_heartbeat_metrics(&self, metadata: Option<serde_json::Value>) -> HeartbeatMetrics {
+    pub fn create_heartbeat_metrics(
+        &self,
+        metadata: Option<serde_json::Value>,
+    ) -> HeartbeatMetrics {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
 
         let events_processed = {

@@ -29,6 +29,9 @@
 // from `lib.rs` where it is registered with the Migrator.
 pub mod m20241028_000001_create_canonical_schema;
 
+// Additional migrations
+pub mod m20250816_122538_add_associated_blob_ids;
+
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.
 // 2. Add a new line here: `pub mod m<timestamp>_add_new_feature;`.

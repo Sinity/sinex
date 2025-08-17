@@ -99,7 +99,7 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_key = existing.annex_key.clone();
+            let existing_key = existing.annex_key().clone();
             info!(
                 "File already exists in blob store with key: {}",
                 existing_key
@@ -151,18 +151,21 @@ impl BlobManager {
         let filename =
             original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
 
+        // Parse the annex key to get backend and hash
+        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
+            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+
         let blob = Blob::builder()
-            .annex_key(annex_key.key.clone())
+            .annex_backend(backend)
+            .content_hash(annex_key.hash.clone())
             .original_filename(filename.to_string())
             .size_bytes(size_bytes)
             .mime_type(mime_type.clone())
-            .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
-            .storage_backend("git-annex".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_key = blob_metadata.annex_key.clone();
+        let blob_key = blob_metadata.annex_key().clone();
         info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
@@ -202,7 +205,7 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_key = existing.annex_key.clone();
+            let existing_key = existing.annex_key().clone();
             info!(
                 "Content already exists in blob store with key: {}",
                 existing_key
@@ -254,18 +257,21 @@ impl BlobManager {
         // Create blob record in database
         let size_bytes = content.len() as i64;
 
+        // Parse the annex key to get backend and hash
+        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
+            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+
         let blob = Blob::builder()
-            .annex_key(annex_key.key.clone())
+            .annex_backend(backend)
+            .content_hash(annex_key.hash.clone())
             .original_filename(filename.to_string())
             .size_bytes(size_bytes)
             .mime_type(content_type.to_string())
-            .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
-            .storage_backend("git-annex".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_key = blob_metadata.annex_key.clone();
+        let blob_key = blob_metadata.annex_key().clone();
         info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
@@ -328,7 +334,7 @@ impl BlobManager {
         let blob = self.get_blob_metadata(annex_key).await?;
 
         // Ensure content is available locally
-        self.annex.get_content(&blob.annex_key).await?;
+        self.annex.get_content(blob.annex_key()).await?;
 
         // Emit blob retrieved event via ingestd
         let event: RawEvent = Event::new(BlobRetrievedPayload {
@@ -346,7 +352,7 @@ impl BlobManager {
             .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
 
         // Find the symlink path in the repository
-        self.find_symlink_path(&blob.annex_key).await
+        self.find_symlink_path(blob.annex_key()).await
     }
 
     /// Verify blob integrity
@@ -402,9 +408,21 @@ impl BlobManager {
 
     /// Get blob metadata by annex key
     pub async fn get_blob_metadata(&self, annex_key: &str) -> Result<Blob> {
+        // Parse the annex key to get backend and hash
+        let (backend, _, _) = Blob::parse_annex_key(annex_key)
+            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+
+        // Extract the hash from the annex key (between backend and size)
+        // Format: BACKEND-sSize--filename, we need the hash part
+        let hash = annex_key
+            .split("-s")
+            .next()
+            .and_then(|s| s.split('-').last())
+            .ok_or_else(|| eyre::eyre!("Could not extract hash from annex key"))?;
+
         self.db_pool
             .blobs()
-            .get_by_annex_key(annex_key)
+            .get_by_content(&backend, hash)
             .await
             .wrap_err("Failed to get blob metadata")?
             .ok_or_else(|| eyre!("Blob not found with key: {}", annex_key))
@@ -488,7 +506,7 @@ impl BlobManager {
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;
-        let failed_count = 0; // TODO: Add failed_verifications field to StorageStats if needed
+        let failed_count = stats.failed_verifications;
 
         // Insert metric event via ingestd
         let new_event: RawEvent = Event::new(StorageStatisticsPayload {

@@ -252,7 +252,7 @@ impl LeadershipGuard {
             service_name = %self.service_name,
             new_leader_instance_id = %self.instance_id,
             operation_type = %operation_type,
-            previous_leader = ?existing_leader.as_ref().map(|l| l.instance_id),
+            previous_leader = ?existing_leader.as_ref().map(|l| &l.instance_id),
             previous_leader_acquired_at = ?existing_leader.as_ref().map(|l| l.acquired_at),
             "Leadership acquisition intent"
         );
@@ -274,7 +274,7 @@ impl LeadershipGuard {
             service_name = %self.service_name,
             leader_instance_id = %self.instance_id,
             operation_type = %operation_type,
-            previous_leader = ?existing_leader.as_ref().map(|l| l.instance_id),
+            previous_leader = ?existing_leader.as_ref().map(|l| &l.instance_id),
             "Leadership acquired"
         );
 
@@ -293,7 +293,7 @@ impl LeadershipGuard {
         let current_heartbeat = sqlx::query!(
             "SELECT last_heartbeat FROM core.service_leadership WHERE service_name = $1 AND instance_id = $2",
             &self.service_name,
-            &self.instance_id
+            &self.instance_id.to_string()
         )
         .fetch_optional(&mut *tx)
         .await?;
@@ -311,7 +311,7 @@ impl LeadershipGuard {
             let result = sqlx::query!(
                 "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1 AND instance_id = $2",
                 &self.service_name,
-                &self.instance_id
+                &self.instance_id.to_string()
             )
             .execute(&mut *tx)
             .await?;

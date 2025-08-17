@@ -74,7 +74,7 @@ impl BlobRepository {
     /// Get a blob by ID
     #[instrument(skip(self))]
     pub async fn get_by_id(&self, id: Id<Blob>) -> Result<Option<Blob>> {
-        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
@@ -173,7 +173,7 @@ impl BlobRepository {
     /// Update blob verification status
     #[instrument(skip(self))]
     pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> Result<()> {
-        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -197,7 +197,7 @@ impl BlobRepository {
     #[instrument(skip(self))]
     pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> Result<()> {
         // Update the metadata JSON to include the filename in an array
-        let id_uuid = sinex_schema::ulid_conversions::to_db(id.as_ulid());
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -233,7 +233,8 @@ impl BlobRepository {
                     FROM core.blobs 
                     GROUP BY checksum_blake3 
                     HAVING COUNT(*) > 1
-                ) THEN size_bytes ELSE 0 END), 0) as "duplicate_size!"
+                ) THEN size_bytes ELSE 0 END), 0) as "duplicate_size!",
+                COUNT(CASE WHEN verification_status = 'corrupted' THEN 1 END) as "failed_verifications!"
             FROM core.blobs
             "#
         )
@@ -246,6 +247,7 @@ impl BlobRepository {
             total_size_bytes: stats.total_size.to_i64().unwrap_or(0),
             unique_blobs: stats.unique_blobs.to_i64().unwrap_or(0),
             duplicate_size_bytes: stats.duplicate_size.to_i64().unwrap_or(0),
+            failed_verifications: stats.failed_verifications.to_i64().unwrap_or(0),
         })
     }
 }
@@ -257,4 +259,6 @@ pub struct StorageStats {
     pub total_size_bytes: i64,
     pub unique_blobs: i64,
     pub duplicate_size_bytes: i64,
+    /// Number of blobs that failed verification
+    pub failed_verifications: i64,
 }

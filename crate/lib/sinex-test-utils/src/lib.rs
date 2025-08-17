@@ -549,12 +549,14 @@ pub async fn rstest_ctx() -> TestContext {
         .expect("Failed to create test context")
 }
 
-// TODO: Fix tracing_test integration - API has changed
-// #[fixture]
-// pub async fn test_context_with_tracing() -> TestContext {
-//     let _guard = tracing_test::internal::set_test();
-//     TestContext::new().await.expect("Failed to create test context")
-// }
+/// Fixture for test context with tracing enabled
+#[fixture]
+pub async fn test_context_with_tracing() -> TestContext {
+    TestContext::new()
+        .await
+        .expect("Failed to create test context")
+        .with_tracing("debug")
+}
 
 // Re-export main types for direct import - only what should be public
 pub use test_context::TestContext;

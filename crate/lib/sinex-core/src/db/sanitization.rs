@@ -196,7 +196,12 @@ mod tests {
 
         // SQL injection should be preserved in payload as it's just string data
         assert_eq!(
-            event.payload.get("query").unwrap().as_str().unwrap(),
+            event
+                .payload
+                .get("query")
+                .expect("test setup should include query field")
+                .as_str()
+                .expect("query field should be a string"),
             "'; DROP TABLE events; --"
         );
         Ok(())

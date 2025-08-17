@@ -1,0 +1,470 @@
+//! Property-based tests for ULID generation under various conditions
+//!
+//! These tests use property testing to validate ULID behavior under
+//! edge cases, concurrent generation, and stress conditions.
+
+use proptest::prelude::*;
+use sinex_schema::ulid::Ulid;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
+mod ulid_property_tests {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn prop_ulid_string_representation_always_26_chars(ulid in any::<Ulid>()) {
+            let s = ulid.to_string();
+            prop_assert_eq!(s.len(), 26);
+
+            // Should only contain valid Crockford base32 characters
+            for ch in s.chars() {
+                prop_assert!(matches!(ch,
+                    '0'..='9' | 'A'..='H' | 'J'..='K' | 'M'..='N' | 'P'..='T' | 'V'..='Z'
+                ));
+            }
+        }
+
+        #[test]
+        fn prop_ulid_parsing_roundtrip(ulid in any::<Ulid>()) {
+            let s = ulid.to_string();
+            let parsed = s.parse::<Ulid>().unwrap();
+            prop_assert_eq!(ulid, parsed);
+        }
+
+        #[test]
+        fn prop_ulid_bytes_roundtrip(ulid in any::<Ulid>()) {
+            let bytes = ulid.to_bytes();
+            let restored = Ulid::from_bytes(bytes).unwrap();
+            prop_assert_eq!(ulid, restored);
+        }
+
+        #[test]
+        fn prop_ulid_uuid_roundtrip(ulid in any::<Ulid>()) {
+            let uuid = ulid.to_uuid();
+            let restored = Ulid::from_uuid(uuid);
+            prop_assert_eq!(ulid, restored);
+        }
+
+        #[test]
+        fn prop_ulid_ordering_is_consistent(ulid1 in any::<Ulid>(), ulid2 in any::<Ulid>()) {
+            let ord1 = ulid1.cmp(&ulid2);
+            let ord2 = ulid1.to_string().cmp(&ulid2.to_string());
+            let ord3 = ulid1.to_uuid().cmp(&ulid2.to_uuid());
+
+            prop_assert_eq!(ord1, ord2);
+            prop_assert_eq!(ord1, ord3);
+        }
+
+        #[test]
+        fn prop_timestamp_extraction_is_reasonable(ulid in any::<Ulid>()) {
+            let timestamp = ulid.timestamp();
+
+            // Should be within reasonable bounds
+            let min_time = chrono::DateTime::from_timestamp(0, 0).unwrap();
+            let max_time = chrono::DateTime::from_timestamp(253402300799, 0).unwrap(); // Year 9999
+
+            prop_assert!(timestamp >= min_time);
+            prop_assert!(timestamp <= max_time);
+        }
+
+        #[test]
+        fn prop_nil_ulid_behavior(
+            bytes_prefix in prop::collection::vec(0u8, 0..16)
+        ) {
+            // Generate various patterns of bytes
+            let mut test_bytes = [0u8; 16];
+            for (i, &byte) in bytes_prefix.iter().enumerate() {
+                if i < 16 {
+                    test_bytes[i] = byte;
+                }
+            }
+
+            let ulid = Ulid::from_bytes(test_bytes).unwrap();
+
+            if test_bytes.iter().all(|&b| b == 0) {
+                prop_assert!(ulid.is_nil());
+                prop_assert_eq!(ulid, Ulid::nil());
+            } else {
+                prop_assert!(!ulid.is_nil());
+                prop_assert_ne!(ulid, Ulid::nil());
+            }
+        }
+
+        #[test]
+        fn prop_concurrent_generation_produces_unique_ulids(
+            num_threads in 1usize..=8,
+            ulids_per_thread in 1usize..=100
+        ) {
+            let total_ulids = num_threads * ulids_per_thread;
+            prop_assume!(total_ulids <= 1000); // Keep test runtime reasonable
+
+            let handles: Vec<_> = (0..num_threads).map(|_| {
+                thread::spawn(move || {
+                    (0..ulids_per_thread).map(|_| Ulid::new()).collect::<Vec<_>>()
+                })
+            }).collect();
+
+            let mut all_ulids = Vec::new();
+            for handle in handles {
+                all_ulids.extend(handle.join().unwrap());
+            }
+
+            // All ULIDs should be unique
+            let unique_ulids: HashSet<_> = all_ulids.iter().cloned().collect();
+            prop_assert_eq!(unique_ulids.len(), all_ulids.len());
+        }
+
+        #[test]
+        fn prop_rapid_generation_maintains_monotonicity(count in 1usize..=1000) {
+            let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
+
+            // All should be unique
+            let unique_count = ulids.iter().cloned().collect::<HashSet<_>>().len();
+            prop_assert_eq!(unique_count, ulids.len());
+
+            // Should be in ascending order
+            for window in ulids.windows(2) {
+                prop_assert!(window[0] < window[1]);
+            }
+        }
+
+        #[test]
+        fn prop_ulid_with_specific_timestamp_behavior(
+            timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
+        ) {
+            let datetime = chrono::DateTime::from_timestamp_millis(timestamp_ms as i64).unwrap();
+            let ulid = Ulid::from_datetime(datetime);
+
+            let extracted = ulid.timestamp();
+
+            // Should be very close (within a few seconds due to precision)
+            let diff = (extracted.timestamp_millis() - timestamp_ms as i64).abs();
+            prop_assert!(diff <= 1000); // Within 1 second
+        }
+
+        #[test]
+        fn prop_ulid_hash_stability(ulid in any::<Ulid>()) {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+
+            // Hash should be stable across multiple calls
+            let mut hasher1 = DefaultHasher::new();
+            ulid.hash(&mut hasher1);
+            let hash1 = hasher1.finish();
+
+            let mut hasher2 = DefaultHasher::new();
+            ulid.hash(&mut hasher2);
+            let hash2 = hasher2.finish();
+
+            prop_assert_eq!(hash1, hash2);
+
+            // Same ULID should always produce same hash
+            let cloned_ulid = ulid;
+            let mut hasher3 = DefaultHasher::new();
+            cloned_ulid.hash(&mut hasher3);
+            let hash3 = hasher3.finish();
+
+            prop_assert_eq!(hash1, hash3);
+        }
+    }
+
+    // Custom generator for ULID that ensures we test a wide range of values
+    impl Arbitrary for Ulid {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                // Generate completely random ULIDs
+                any::<[u8; 16]>().prop_map(|bytes| Ulid::from_bytes(bytes).unwrap()),
+                // Generate ULIDs with specific timestamp ranges
+                (1577836800000u64..1893456000000u64, any::<u128>()).prop_map(
+                    |(timestamp_ms, random_bits)| {
+                        let random_component = random_bits & ((1u128 << 80) - 1);
+                        let inner = ulid::Ulid::from_parts(timestamp_ms, random_component);
+                        Ulid::from(inner)
+                    }
+                ),
+                // Generate edge case ULIDs
+                Just(Ulid::nil()),
+                // Generate ULIDs with max timestamp
+                any::<u128>().prop_map(|random_bits| {
+                    let max_timestamp = (1u64 << 48) - 1;
+                    let random_component = random_bits & ((1u128 << 80) - 1);
+                    let inner = ulid::Ulid::from_parts(max_timestamp, random_component);
+                    Ulid::from(inner)
+                }),
+                // Generate ULIDs with min timestamp (epoch)
+                any::<u128>().prop_map(|random_bits| {
+                    let random_component = random_bits & ((1u128 << 80) - 1);
+                    let inner = ulid::Ulid::from_parts(0, random_component);
+                    Ulid::from(inner)
+                }),
+            ]
+            .boxed()
+        }
+    }
+}
+
+#[cfg(test)]
+mod stress_tests {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn prop_high_frequency_generation_stress_test(
+            burst_size in 100usize..=1000,
+            num_bursts in 1usize..=10
+        ) {
+            let mut all_ulids = Vec::new();
+
+            for _ in 0..num_bursts {
+                let burst: Vec<_> = (0..burst_size).map(|_| Ulid::new()).collect();
+
+                // Each burst should be monotonic
+                for window in burst.windows(2) {
+                    prop_assert!(window[0] < window[1]);
+                }
+
+                all_ulids.extend(burst);
+
+                // Small delay between bursts
+                thread::sleep(Duration::from_nanos(1));
+            }
+
+            // All ULIDs across all bursts should be unique
+            let unique_count = all_ulids.iter().cloned().collect::<HashSet<_>>().len();
+            prop_assert_eq!(unique_count, all_ulids.len());
+
+            // All ULIDs should be in order across bursts too
+            for window in all_ulids.windows(2) {
+                prop_assert!(window[0] < window[1]);
+            }
+        }
+
+        #[test]
+        fn prop_memory_efficiency_of_ulid_storage(
+            ulids_count in 100usize..=10000
+        ) {
+            prop_assume!(ulids_count <= 5000); // Keep memory usage reasonable
+
+            let ulids: Vec<_> = (0..ulids_count).map(|_| Ulid::new()).collect();
+
+            // Verify we can store many ULIDs efficiently
+            prop_assert_eq!(ulids.len(), ulids_count);
+
+            // All should be unique
+            let unique_count = ulids.iter().cloned().collect::<HashSet<_>>().len();
+            prop_assert_eq!(unique_count, ulids_count);
+
+            // Memory usage should be reasonable (16 bytes per ULID + Vec overhead)
+            let expected_min_bytes = ulids_count * 16;
+            let actual_bytes = std::mem::size_of_val(&ulids[..]);
+            prop_assert!(actual_bytes >= expected_min_bytes);
+        }
+
+        #[test]
+        fn prop_conversion_performance_stability(
+            conversion_count in 100usize..=1000
+        ) {
+            let ulid = Ulid::new();
+
+            // Multiple conversions should be stable
+            let mut uuids = Vec::new();
+            let mut strings = Vec::new();
+            let mut bytes = Vec::new();
+
+            for _ in 0..conversion_count {
+                uuids.push(ulid.to_uuid());
+                strings.push(ulid.to_string());
+                bytes.push(ulid.to_bytes());
+            }
+
+            // All conversions should be identical
+            for uuid in &uuids {
+                prop_assert_eq!(*uuid, ulid.to_uuid());
+            }
+
+            for s in &strings {
+                prop_assert_eq!(*s, ulid.to_string());
+            }
+
+            for b in &bytes {
+                prop_assert_eq!(*b, ulid.to_bytes());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod edge_case_properties {
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn prop_ulid_comparison_transitivity(
+            ulid1 in any::<Ulid>(),
+            ulid2 in any::<Ulid>(),
+            ulid3 in any::<Ulid>()
+        ) {
+            // Test transitivity: if a < b and b < c, then a < c
+            if ulid1 < ulid2 && ulid2 < ulid3 {
+                prop_assert!(ulid1 < ulid3);
+            }
+
+            // Test symmetry: if a < b, then !(b < a)
+            if ulid1 < ulid2 {
+                prop_assert!(!(ulid2 < ulid1));
+            }
+
+            // Test reflexivity: a == a
+            prop_assert_eq!(ulid1.cmp(&ulid1), std::cmp::Ordering::Equal);
+        }
+
+        #[test]
+        fn prop_ulid_json_serialization_stability(ulid in any::<Ulid>()) {
+            // ULIDs should serialize consistently as strings
+            let json1 = serde_json::to_string(&ulid).unwrap();
+            let json2 = serde_json::to_string(&ulid).unwrap();
+            prop_assert_eq!(json1, json2);
+
+            // Should deserialize back to the same ULID
+            let deserialized: Ulid = serde_json::from_str(&json1).unwrap();
+            prop_assert_eq!(ulid, deserialized);
+        }
+
+        #[test]
+        fn prop_ulid_clone_and_copy_semantics(ulid in any::<Ulid>()) {
+            let cloned = ulid.clone();
+            let copied = ulid;
+
+            prop_assert_eq!(ulid, cloned);
+            prop_assert_eq!(ulid, copied);
+            prop_assert_eq!(cloned, copied);
+
+            // All should have same string representation
+            prop_assert_eq!(ulid.to_string(), cloned.to_string());
+            prop_assert_eq!(ulid.to_string(), copied.to_string());
+        }
+
+        #[test]
+        fn prop_ulid_debug_format_consistency(ulid in any::<Ulid>()) {
+            let debug1 = format!("{:?}", ulid);
+            let debug2 = format!("{:?}", ulid);
+
+            prop_assert_eq!(debug1, debug2);
+            prop_assert!(debug1.starts_with("Ulid("));
+            prop_assert!(debug1.ends_with(")"));
+            prop_assert!(debug1.contains(&ulid.to_string()));
+        }
+
+        #[test]
+        fn prop_ulid_from_datetime_precision(
+            timestamp_secs in 1577836800i64..1893456000i64, // 2020-2030
+            nanos in 0u32..1_000_000_000u32
+        ) {
+            let datetime = chrono::DateTime::from_timestamp(timestamp_secs, nanos).unwrap();
+            let ulid = Ulid::from_datetime(datetime);
+            let extracted = ulid.timestamp();
+
+            // Should be within reasonable precision (millisecond level)
+            let diff_ms = (extracted.timestamp_millis() - datetime.timestamp_millis()).abs();
+            prop_assert!(diff_ms <= 1); // Within 1 millisecond
+        }
+    }
+}
+
+#[cfg(test)]
+mod concurrent_property_tests {
+    use super::*;
+    use std::sync::{Arc, Barrier, Mutex};
+
+    proptest! {
+        #[test]
+        fn prop_concurrent_ulid_generation_ordering(
+            num_threads in 2usize..=8,
+            ulids_per_thread in 10usize..=100
+        ) {
+            let barrier = Arc::new(Barrier::new(num_threads));
+            let results = Arc::new(Mutex::new(Vec::new()));
+
+            let handles: Vec<_> = (0..num_threads).map(|thread_id| {
+                let barrier = Arc::clone(&barrier);
+                let results = Arc::clone(&results);
+
+                thread::spawn(move || {
+                    barrier.wait(); // Synchronize start
+
+                    let thread_ulids: Vec<_> = (0..ulids_per_thread)
+                        .map(|_| Ulid::new())
+                        .collect();
+
+                    {
+                        let mut results = results.lock().unwrap();
+                        results.push((thread_id, thread_ulids));
+                    }
+                })
+            }).collect();
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+            let results = results.lock().unwrap();
+            let mut all_ulids = Vec::new();
+
+            // Collect all ULIDs and verify thread-local ordering
+            for (thread_id, thread_ulids) in results.iter() {
+                // Each thread's ULIDs should be in order
+                for window in thread_ulids.windows(2) {
+                    prop_assert!(
+                        window[0] < window[1],
+                        "Thread {} ULIDs should be ordered: {} >= {}",
+                        thread_id, window[0], window[1]
+                    );
+                }
+                all_ulids.extend(thread_ulids.iter().cloned());
+            }
+
+            // All ULIDs across all threads should be unique
+            let unique_count = all_ulids.iter().cloned().collect::<HashSet<_>>().len();
+            prop_assert_eq!(unique_count, all_ulids.len(), "All ULIDs should be unique");
+        }
+
+        #[test]
+        fn prop_timestamp_consistency_under_load(
+            generation_count in 100usize..=1000
+        ) {
+            let start_time = chrono::Utc::now();
+
+            let ulids: Vec<_> = (0..generation_count).map(|_| Ulid::new()).collect();
+
+            let end_time = chrono::Utc::now();
+
+            // All ULIDs should have timestamps within the generation window
+            for ulid in &ulids {
+                let ulid_time = ulid.timestamp();
+                prop_assert!(
+                    ulid_time >= start_time && ulid_time <= end_time,
+                    "ULID timestamp {} should be between {} and {}",
+                    ulid_time, start_time, end_time
+                );
+            }
+
+            // ULIDs should be in chronological order
+            for window in ulids.windows(2) {
+                let time1 = window[0].timestamp();
+                let time2 = window[1].timestamp();
+                prop_assert!(
+                    time1 <= time2,
+                    "ULID timestamps should be non-decreasing: {} > {}",
+                    time1, time2
+                );
+            }
+        }
+    }
+}

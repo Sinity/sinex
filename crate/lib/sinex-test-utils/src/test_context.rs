@@ -48,6 +48,7 @@ use sinex_core::RawEvent;
 use sinex_core::{DbPoolExt, EnhancedRepository};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing_test::traced_test;
 
 /// Test context providing database isolation and test utilities
 ///
@@ -62,6 +63,7 @@ pub struct TestContext {
     start_time: Instant,
     created_events: Arc<Mutex<Vec<Ulid>>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    _tracing_guard: Option<tracing_test::TracingTestGuard>,
 }
 
 impl TestContext {
@@ -82,7 +84,47 @@ impl TestContext {
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
+            _tracing_guard: None,
         })
+    }
+
+    /// Initialize tracing for tests (static method for use without context)
+    pub fn init_tracing(level: &str) -> tracing_test::TracingTestGuard {
+        let level = match level {
+            "trace" => tracing::Level::TRACE,
+            "debug" => tracing::Level::DEBUG,
+            "info" => tracing::Level::INFO,
+            "warn" => tracing::Level::WARN,
+            "error" => tracing::Level::ERROR,
+            _ => tracing::Level::DEBUG,
+        };
+
+        tracing_test::traced_test_with_level(level)
+    }
+
+    /// Enable tracing for this test context
+    pub fn with_tracing(mut self, level: &str) -> Self {
+        self._tracing_guard = Some(Self::init_tracing(level));
+        self
+    }
+
+    /// Check if a log message was captured
+    pub fn assert_logged(&self, message: &str) -> Result<()> {
+        let logs = self.captured_logs.lock();
+        if logs.iter().any(|log| log.contains(message)) {
+            Ok(())
+        } else {
+            Err(color_eyre::eyre::eyre!(
+                "Expected log message '{}' not found in captured logs: {:?}",
+                message,
+                &*logs
+            ))
+        }
+    }
+
+    /// Get all captured log messages
+    pub fn captured_logs(&self) -> Vec<String> {
+        self.captured_logs.lock().clone()
     }
 
     /// Get test name for fixture scoping

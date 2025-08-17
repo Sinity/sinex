@@ -28,7 +28,7 @@ uuid = { workspace = true }
 ulid = { workspace = true }
 
 # Dependencies for ID and ULID modules
-serde = { workspace = true }
+serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 lazy_static = "1.5"
 rand = { workspace = true }
@@ -38,7 +38,15 @@ schemars = { workspace = true, optional = true }
 proptest = { workspace = true, optional = true }
 
 [features]
-default = ["sqlx", "json-schema"]
+default = ["sqlx", "json-schema", "serde"]
 sqlx = []
 arbitrary = ["dep:proptest"]
 json-schema = ["dep:schemars"]
+serde = ["dep:serde"]
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }
+tokio-test = "0.4"
+rstest = { workspace = true }
+pretty_assertions = "1.4"
+tempfile = "3.0"

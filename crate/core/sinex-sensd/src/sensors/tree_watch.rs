@@ -211,18 +211,22 @@ impl TreeWatchSensor {
 
                         // Record ledger entry
                         let entry = LedgerEntry {
-                            material_id,
+                            source_material_id: material_id,
                             offset_start: *total_bytes,
                             offset_end: *total_bytes + file_size,
-                            ts_capture_start: capture_start,
-                            ts_capture_end: capture_end,
-                            slice_hash,
-                            capture_metadata: serde_json::json!({
+                            offset_kind: "byte".to_string(),
+                            ts_capture: capture_start, // Use start time as the capture timestamp
+                            precision: "exact".to_string(),
+                            clock: "wall".to_string(),
+                            source_type: "realtime_capture".to_string(),
+                            note: Some(serde_json::json!({
                                 "path": path.to_string_lossy(),
                                 "size": file_size,
                                 "event_kind": format!("{:?}", event.kind),
                                 "validated": true, // Mark as security validated
-                            }),
+                                "slice_hash": slice_hash,
+                                "capture_duration_ms": (capture_end - capture_start).num_milliseconds(),
+                            }).to_string()),
                         };
 
                         temporal_ledger.record_entry(entry).await?;

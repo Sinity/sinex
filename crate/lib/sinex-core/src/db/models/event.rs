@@ -202,8 +202,11 @@ impl<T> Event<T> {
             host: get_hostname(),
             ingestor_version: get_ingestor_version(),
             payload_schema_id: None,
-            provenance: Provenance::from_synthesis(parent_ids)
-                .expect("from_synthesis requires at least one parent ID"),
+            provenance: Provenance::from_synthesis(parent_ids).unwrap_or_else(|| {
+                panic!(
+                    "from_synthesis requires at least one parent ID - this is a programming error"
+                )
+            }),
             associated_blob_ids: None,
         }
     }
@@ -225,7 +228,9 @@ impl<T> Event<T> {
                 0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 0x00, 0x00,
             ])
-            .expect("hardcoded ULID bytes should be valid"),
+            .unwrap_or_else(|_| {
+                panic!("hardcoded ULID bytes should be valid - this is a programming error")
+            }),
         );
 
         Event {
@@ -257,7 +262,9 @@ impl<T> Event<T> {
                 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
                 0x32, 0x10,
             ])
-            .expect("hardcoded test ULID bytes should be valid"),
+            .unwrap_or_else(|_| {
+                panic!("hardcoded test ULID bytes should be valid - this is a programming error")
+            }),
         );
 
         Self::from_material(source, event_type, payload, test_material_id, 0)
@@ -329,13 +336,12 @@ impl<T> Event<T> {
 
 impl<T: Serialize> Event<T> {
     /// Convert to RawEvent (type erasure)
-    pub fn to_raw(self) -> RawEvent {
+    pub fn to_raw(self) -> Result<RawEvent, serde_json::Error> {
         Event {
             id: None, // New ID for different type
             source: self.source,
             event_type: self.event_type,
-            payload: serde_json::to_value(self.payload)
-                .expect("Failed to serialize payload to JSON"),
+            payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: self.ingestor_version,

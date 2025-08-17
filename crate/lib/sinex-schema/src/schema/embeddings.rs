@@ -50,6 +50,7 @@ impl TableDef for EmbeddingModels {
 }
 
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EmbeddingModelRecord {
     pub id: Ulid,
     pub provider: String,

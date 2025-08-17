@@ -33,6 +33,63 @@
 //! // Event-based
 //! Checkpoint::internal(event_ulid, message_count)
 //! ```
+//!
+//! ## Implementing New Satellites
+//!
+//! To implement a new satellite service using this SDK:
+//!
+//! ### 1. Implement StatefulStreamProcessor
+//!
+//! ```rust,ignore
+//! use sinex_satellite_sdk::prelude::*;
+//!
+//! #[derive(Debug)]
+//! pub struct MyProcessor {
+//!     checkpoint_manager: CheckpointManager,
+//!     work_tracker: Arc<RwLock<WorkTracker>>,
+//! }
+//!
+//! #[async_trait]
+//! impl StatefulStreamProcessor for MyProcessor {
+//!     async fn scan(
+//!         &self,
+//!         from: Checkpoint,
+//!         horizon: TimeHorizon,
+//!         event_sender: EventSender,
+//!     ) -> SatelliteResult<ScanReport> {
+//!         // Track work for graceful shutdown
+//!         let tracker = self.work_tracker.read().await;
+//!         tracker.start_operation();
+//!         
+//!         // Process events based on horizon - implementation specific
+//!         let result = match horizon {
+//!             TimeHorizon::Snapshot => self.scan_current_state(&event_sender).await,
+//!             TimeHorizon::Historical { end_time } => {
+//!                 self.scan_historical(from, end_time, &event_sender).await
+//!             }
+//!             TimeHorizon::Continuous => {
+//!                 self.scan_continuous(from, &event_sender).await
+//!             }
+//!         };
+//!         
+//!         tracker.finish_operation();
+//!         result
+//!     }
+//!
+//!     fn processor_type(&self) -> ProcessorType {
+//!         ProcessorType::Ingestor // or ProcessorType::Automaton
+//!     }
+//!
+//!     fn capabilities(&self) -> ProcessorCapabilities {
+//!         ProcessorCapabilities {
+//!             supports_snapshot: true,
+//!             supports_historical: true,
+//!             supports_continuous: true,
+//!             supports_replay: false,
+//!         }
+//!     }
+//! }
+//! ```
 
 use crate::{
     checkpoint::CheckpointManager,

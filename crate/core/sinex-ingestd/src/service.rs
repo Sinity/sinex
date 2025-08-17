@@ -375,6 +375,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
         let subject_cache = self.subject_cache.clone();
+        let validator = self.validator.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
@@ -392,6 +393,7 @@ impl IngestService {
                         };
 
                         if should_flush {
+                            let validator_guard = validator.lock().await;
                             Self::flush_events_static(
                                 &event_buffer,
                                 &last_flush,
@@ -400,11 +402,13 @@ impl IngestService {
                                 jetstream.as_ref(),
                                 &stats,
                                 Some(&*subject_cache),
+                                Some(&*validator_guard),
                                 ).await;
                         }
                     }
                     _ = shutdown_signal(&shutdown_flag) => {
                         // Final flush on shutdown
+                        let validator_guard = validator.lock().await;
                         Self::flush_events_static(
                             &event_buffer,
                             &last_flush,
@@ -413,6 +417,7 @@ impl IngestService {
                             jetstream.as_ref(),
                             &stats,
                             Some(&*subject_cache),
+                            Some(&*validator_guard),
                         ).await;
                         break;
                     }
@@ -609,6 +614,7 @@ impl IngestService {
         _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
         subject_cache: Option<&SubjectCache>,
+        validator: Option<&EventValidator>,
     ) {
         // Take events from buffer
         let events = {
@@ -634,7 +640,7 @@ impl IngestService {
         // Write to database with transactional outbox pattern
         // This handles both event insertion and outbox entries for NATS publishing
         if let Some(pool) = db_pool {
-            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache).await {
+            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache, validator).await {
                 error!("Failed to write events to database: {}", e);
                 // Note: This is in a static context, so telemetry is not available here
                 // Consider refactoring to pass telemetry if needed
@@ -661,6 +667,7 @@ impl IngestService {
         pool: &PgPool,
         events: &[RawEvent],
         subject_cache: Option<&SubjectCache>,
+        validator: Option<&EventValidator>,
     ) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
@@ -715,9 +722,16 @@ impl IngestService {
             let schema_name = format!("{}.{}", event.source.as_str(), event.event_type.as_str());
             payload_schema_names.push(Some(schema_name));
 
-            // For now, use a placeholder version since we don't have access to the validator here
-            // TODO(schema-validation): Pass validator context to get actual schema version from registry
-            payload_schema_versions.push(Some("1.0.0".to_string()));
+            // Get actual schema version from validator if available
+            let schema_version = if let Some(validator) = validator {
+                validator
+                    .get_schema_version(&event.source, &event.event_type)
+                    .map(|version| version.as_str().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            } else {
+                "unknown".to_string()
+            };
+            payload_schema_versions.push(Some(schema_version));
 
             // Extract provenance into separate database fields
             let (source_event_ids_opt, source_material_id, offset_start, offset_end, anchor_byte) =
@@ -846,6 +860,7 @@ impl IngestService {
         if buffer.len() >= self.config.batch_size {
             drop(buffer); // Release lock before flushing
 
+            let validator_guard = self.validator.lock().await;
             Self::flush_events_static(
                 &self.event_buffer,
                 &self.last_flush,
@@ -854,6 +869,7 @@ impl IngestService {
                 self.jetstream.as_ref(),
                 &self.stats,
                 Some(&self.subject_cache),
+                Some(&*validator_guard),
             )
             .await;
         }
@@ -868,6 +884,7 @@ impl IngestService {
         self.shutdown_flag.store(true, Ordering::Relaxed);
 
         // Final flush
+        let validator_guard = self.validator.lock().await;
         Self::flush_events_static(
             &self.event_buffer,
             &self.last_flush,
@@ -876,6 +893,7 @@ impl IngestService {
             self.jetstream.as_ref(),
             &self.stats,
             Some(&self.subject_cache),
+            Some(&*validator_guard),
         )
         .await;
 

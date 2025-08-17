@@ -539,22 +539,32 @@ impl DirectCaptureToken {
     }
 }
 
-/// Macro to enforce sensd usage by default
+/// Macro to enforce sensd usage by default  
+/// Returns Result<(), SatelliteError> - must be used with ? operator
 #[macro_export]
 macro_rules! ensure_sensd_or_acknowledged {
     ($component:expr, $capture_type:expr) => {{
         use $crate::sensd_client::DirectCaptureAcknowledgment;
+        use $crate::SatelliteError;
 
         // This will fail to compile if the component doesn't have a sensd_client field
         // or a direct_capture_token field
         if let Some(ref token) = $component.direct_capture_token {
-            token.verify().expect("Direct capture token invalid");
+            token.verify().map_err(|e| {
+                SatelliteError::Configuration(format!(
+                    "Direct capture token invalid for {}: {}",
+                    stringify!($component),
+                    e
+                ))
+            })?;
         } else if $component.sensd_client.is_none() {
-            panic!(
+            return Err(SatelliteError::Configuration(format!(
                 "Component {} is attempting {} without sensd client or acknowledgment!",
                 stringify!($component),
                 $capture_type
-            );
+            )));
         }
+
+        Ok::<(), SatelliteError>(())
     }};
 }

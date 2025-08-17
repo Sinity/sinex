@@ -6,14 +6,118 @@
 //! - Hot standby pattern
 //! - Preflight integration
 //! - Failure detection and takeover
+//! - Work tracking for graceful shutdown
+//! - Heartbeat monitoring integration
+//!
+//! ## Satellite Lifecycle States
+//!
+//! Satellites progress through these coordination states:
+//!
+//! ### 1. Startup Phase
+//! - **Initialize**: Create SatelliteCoordination instance
+//! - **Preflight**: Verify service dependencies and configuration
+//! - **Registration**: Register instance in coordination database
+//! - **Standby**: Enter monitoring mode, waiting for leadership opportunity
+//!
+//! ### 2. Leadership Election
+//! - **Version Check**: Compare versions with other instances
+//! - **Advisory Lock**: Attempt to acquire PostgreSQL advisory lock
+//! - **Preflight Recheck**: Verify readiness before accepting leadership
+//! - **Leadership**: Begin processing events if election successful
+//!
+//! ### 3. Active Leadership
+//! - **Event Processing**: Process incoming events via StatefulStreamProcessor
+//! - **Heartbeat**: Emit periodic status via HeartbeatEmitter
+//! - **Work Tracking**: Monitor in-flight operations via WorkTracker
+//! - **Handoff Monitoring**: Watch for newer versions requesting handoff
+//!
+//! ### 4. Graceful Handoff
+//! - **Handoff Request**: Newer version requests leadership transfer
+//! - **Work Completion**: Wait for in-flight operations to complete
+//! - **Signal Ready**: Atomically signal completion and readiness
+//! - **Release**: Release advisory lock and transition to standby
+//!
+//! ### 5. Failure Recovery
+//! - **Failure Detection**: Monitor for critical errors or heartbeat timeouts
+//! - **Immediate Takeover**: Signal other instances for emergency takeover
+//! - **Cleanup**: Attempt graceful cleanup of partial work
+//! - **Restart**: May restart service or transition to standby
+//!
+//! ## Leadership Election Algorithm
+//!
+//! The coordination system uses a hybrid approach combining:
+//!
+//! 1. **Version-Based Priority**: Higher semantic versions take precedence
+//! 2. **Advisory Locking**: PostgreSQL advisory locks prevent split-brain
+//! 3. **Preflight Validation**: Only healthy instances can become leader
+//! 4. **Graceful Handoff**: Work completion before leadership transfer
+//!
+//! ```text
+//! ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+//! │   Instance A        │     │   Instance B        │     │   Instance C        │
+//! │   Version: 1.2.0    │     │   Version: 1.2.1    │     │   Version: 1.1.0    │
+//! │   Status: Leader    │────▶│   Status: Standby   │     │   Status: Standby   │
+//! │                     │     │   (Waiting for      │     │   (Lower version)   │
+//! │   ┌─────────────┐   │     │    handoff)         │     │                     │
+//! │   │ Advisory    │   │     │                     │     │                     │
+//! │   │ Lock Held   │   │     │                     │     │                     │
+//! │   └─────────────┘   │     │                     │     │                     │
+//! └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+//!                                       │                           
+//!                                       ▼                           
+//!                               ┌─────────────────────┐             
+//!                               │ Handoff Request     │             
+//!                               │ B→A: "Please hand   │             
+//!                               │ over leadership"    │             
+//!                               └─────────────────────┘             
+//! ```
+//!
+//! ## Work Tracking for Graceful Shutdown
+//!
+//! The `WorkTracker` component ensures no data loss during leadership transitions:
+//!
+//! - **Operation Counting**: Track in-flight operations with atomic counters
+//! - **Shutdown Signaling**: Coordinate graceful shutdown across components
+//! - **Timeout Handling**: Force shutdown if graceful completion takes too long
+//! - **Heartbeat Integration**: Report work status via heartbeat metrics
+//!
+//! ## Error Recovery Patterns
+//!
+//! ### Heartbeat Timeout Recovery
+//! ```rust
+//! // Standby instances detect leader failure
+//! if leader_heartbeat_age > 30_seconds {
+//!     attempt_leadership_takeover();
+//! }
+//! ```
+//!
+//! ### Critical Failure Recovery
+//! ```rust
+//! // Leader detects critical error
+//! coordination.signal_critical_failure("Database connection lost").await?;
+//! // Standby instances receive signal and attempt takeover
+//! ```
+//!
+//! ### Version Upgrade Handoff
+//! ```rust
+//! // New version starts and requests handoff
+//! let handoff_request = HandoffRequest {
+//!     from_instance: new_instance_id,
+//!     to_version: SatelliteVersion::current(),
+//!     timeout_seconds: 30,
+//! };
+//! send_handoff_request(handoff_request).await?;
+//! ```
 
+use crate::heartbeat::HeartbeatEmitter;
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use sinex_core::types::utils::CoordinationPrimitive;
 use sinex_core::types::{DbPool, Result, SinexError};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Instance mode determines satellite behavior
@@ -37,6 +141,71 @@ pub struct HandoffRequest {
     pub timeout_seconds: u64,
 }
 
+/// Work tracking for graceful shutdown
+#[derive(Debug, Clone)]
+pub struct WorkTracker {
+    /// Number of in-flight operations
+    in_flight_operations: Arc<CoordinationPrimitive>,
+    /// Signal to request graceful shutdown
+    shutdown_requested: Arc<CoordinationPrimitive>,
+    /// Heartbeat emitter for monitoring
+    heartbeat_emitter: Option<Arc<HeartbeatEmitter>>,
+}
+
+impl WorkTracker {
+    pub fn new() -> Self {
+        Self {
+            in_flight_operations: Arc::new(CoordinationPrimitive::event_counter(
+                0,
+                "in_flight_ops",
+            )),
+            shutdown_requested: Arc::new(CoordinationPrimitive::synchronizer("shutdown_signal")),
+            heartbeat_emitter: None,
+        }
+    }
+
+    pub fn with_heartbeat(mut self, heartbeat: Arc<HeartbeatEmitter>) -> Self {
+        self.heartbeat_emitter = Some(heartbeat);
+        self
+    }
+
+    /// Start a new operation (increments in-flight counter)
+    pub fn start_operation(&self) {
+        self.in_flight_operations.add(1);
+        if let Some(heartbeat) = &self.heartbeat_emitter {
+            heartbeat.increment_events_processed(1);
+        }
+    }
+
+    /// Finish an operation (decrements in-flight counter)
+    pub fn finish_operation(&self) {
+        let current = self.in_flight_operations.get();
+        if current > 0 {
+            self.in_flight_operations.subtract(1);
+        }
+    }
+
+    /// Check if shutdown has been requested
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.shutdown_requested.get() > 0
+    }
+
+    /// Request graceful shutdown
+    pub fn request_shutdown(&self) {
+        self.shutdown_requested.signal();
+    }
+
+    /// Get number of in-flight operations
+    pub fn in_flight_count(&self) -> usize {
+        self.in_flight_operations.get()
+    }
+
+    /// Check if all work is complete
+    pub fn is_work_complete(&self) -> bool {
+        self.in_flight_operations.get() == 0
+    }
+}
+
 /// Leadership coordination for a satellite service
 pub struct SatelliteCoordination {
     instance: SatelliteInstance,
@@ -45,6 +214,8 @@ pub struct SatelliteCoordination {
     current_mode: InstanceMode,
     handoff_receiver: Option<mpsc::Receiver<HandoffRequest>>,
     failure_coordinator: CoordinationPrimitive,
+    work_tracker: Arc<RwLock<WorkTracker>>,
+    heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SatelliteCoordination {
@@ -60,6 +231,8 @@ impl SatelliteCoordination {
             instance.service_name
         ));
 
+        let work_tracker = Arc::new(RwLock::new(WorkTracker::new()));
+
         Ok(Self {
             instance,
             pool,
@@ -67,6 +240,8 @@ impl SatelliteCoordination {
             current_mode: InstanceMode::Standby,
             handoff_receiver: None,
             failure_coordinator,
+            work_tracker,
+            heartbeat_handle: None,
         })
     }
 
@@ -341,9 +516,12 @@ impl SatelliteCoordination {
         sender: mpsc::Sender<HandoffRequest>,
     ) -> Result<HandoffRequest> {
         loop {
+            // TODO: The satellite_signals table doesn't exist in the current schema
+            // This coordination mechanism needs to be reimplemented
+            /*
             // Check database for handoff signals
             let signals = sqlx::query!(
-                "SELECT * FROM core.satellite_signals 
+                "SELECT * FROM core.satellite_signals
                  WHERE (target_instance = $1 OR target_instance = 'ALL')
                  AND signal_type = 'handoff_request'
                  AND created_at > NOW() - INTERVAL '1 minute'
@@ -361,6 +539,7 @@ impl SatelliteCoordination {
                     }
                 }
             }
+            */
 
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -508,8 +687,21 @@ impl SatelliteCoordination {
         let timeout = Duration::from_secs(30);
         let start = std::time::Instant::now();
 
-        // Signal any running tasks to complete
-        // TODO: Add heartbeat_handle field and signal_shutdown functionality if needed
+        // Signal any running tasks to complete gracefully
+        {
+            let tracker = self.work_tracker.read().await;
+            tracker.request_shutdown();
+            info!(
+                "Signaled shutdown to {} in-flight operations",
+                tracker.in_flight_count()
+            );
+        }
+
+        // Stop heartbeat if running
+        if let Some(handle) = self.heartbeat_handle.as_ref() {
+            handle.abort();
+            info!("Stopped heartbeat task");
+        }
 
         // Wait for in-flight operations to complete
         while start.elapsed() < timeout {
@@ -525,7 +717,11 @@ impl SatelliteCoordination {
         }
 
         if start.elapsed() >= timeout {
-            warn!("Graceful shutdown timeout reached, some work may not have completed");
+            let tracker = self.work_tracker.read().await;
+            warn!(
+                "Graceful shutdown timeout reached, {} operations may not have completed",
+                tracker.in_flight_count()
+            );
         }
 
         Ok(())
@@ -533,9 +729,17 @@ impl SatelliteCoordination {
 
     /// Check if all critical work is complete
     async fn check_work_complete(&self) -> Result<bool> {
-        // This would check actual work queues/state in a real implementation
-        // For now, just return true after a brief delay
-        Ok(true)
+        let tracker = self.work_tracker.read().await;
+        let is_complete = tracker.is_work_complete();
+
+        if !is_complete {
+            debug!(
+                "Work still in progress: {} operations",
+                tracker.in_flight_count()
+            );
+        }
+
+        Ok(is_complete)
     }
 
     // Getters
@@ -545,5 +749,57 @@ impl SatelliteCoordination {
 
     pub fn current_mode(&self) -> InstanceMode {
         self.current_mode.clone()
+    }
+
+    /// Get work tracker for external use
+    pub fn work_tracker(&self) -> Arc<RwLock<WorkTracker>> {
+        self.work_tracker.clone()
+    }
+
+    /// Initialize heartbeat monitoring
+    pub async fn start_heartbeat(&mut self, interval_seconds: u64) -> Result<()> {
+        let heartbeat_emitter = Arc::new(HeartbeatEmitter::new(
+            self.instance.service_name.clone(),
+            interval_seconds,
+        ));
+
+        // Update work tracker with heartbeat
+        {
+            let mut tracker = self.work_tracker.write().await;
+            *tracker = tracker.clone().with_heartbeat(heartbeat_emitter.clone());
+        }
+
+        // Start heartbeat background task
+        let heartbeat_clone = heartbeat_emitter.clone();
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_seconds));
+            loop {
+                interval.tick().await;
+
+                let metrics = heartbeat_clone.create_heartbeat_metrics(None);
+
+                // Emit structured JSON log to stdout for journald capture
+                let heartbeat_json = serde_json::to_string(&metrics).unwrap_or_else(|_| {
+                    "{\"error\":\"failed_to_serialize_heartbeat\"}".to_string()
+                });
+
+                info!(target: "heartbeat", "{}", heartbeat_json);
+            }
+        });
+
+        self.heartbeat_handle = Some(handle);
+        info!(
+            "Started heartbeat monitoring with {}-second interval",
+            interval_seconds
+        );
+        Ok(())
+    }
+
+    /// Stop heartbeat monitoring
+    pub fn stop_heartbeat(&mut self) {
+        if let Some(handle) = self.heartbeat_handle.take() {
+            handle.abort();
+            info!("Stopped heartbeat monitoring");
+        }
     }
 }

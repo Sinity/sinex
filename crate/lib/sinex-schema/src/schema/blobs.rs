@@ -70,7 +70,13 @@ impl TableDef for Blobs {
 
 /// The Rust struct representation of a row from `core.blobs`.
 /// This is used by `sqlx::query_as!` for deserializing database results.
+///
+/// ## Serialization Support
+///
+/// When the `serde` feature is enabled, this struct supports JSON serialization
+/// and deserialization, making it suitable for API responses and content management.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlobRecord {
     pub id: Ulid,
     pub annex_backend: String,

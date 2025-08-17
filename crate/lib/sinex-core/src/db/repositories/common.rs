@@ -85,10 +85,11 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Count all records in the table
     async fn count_all(&self) -> DbResult<i64> {
-        let query = Query::select()
-            .expr(Expr::cust("COUNT(*)"))
-            .from(Self::Table::table_iden())
-            .to_string(PostgresQueryBuilder);
+        let query = format!(
+            "SELECT COUNT(*) FROM {}.{}",
+            Self::Table::schema_name(),
+            Self::Table::table_name()
+        );
 
         let result: (i64,) = sqlx::query_as(&query)
             .fetch_one(self.pool())

@@ -40,7 +40,7 @@ pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SyncResult> {
 
         for ((source, event_type, version), schema_content) in discovered_schemas {
             // Pre-compute the content hash once
-            let content_hash = compute_content_hash(&schema_content);
+            let content_hash = compute_content_hash(&schema_content)?;
 
             let metadata = SchemaMetadata {
                 source: source.clone(),
@@ -237,11 +237,13 @@ async fn update_schema(pool: &PgPool, id: Ulid, metadata: &SchemaMetadata) -> In
 }
 
 /// Compute SHA-256 hash of schema content
-fn compute_content_hash(content: &serde_json::Value) -> String {
+fn compute_content_hash(content: &serde_json::Value) -> IngestdResult<String> {
     use sha2::{Digest, Sha256};
 
     // Serialize to canonical JSON
-    let canonical = serde_json::to_string(content).expect("Schema must serialize");
+    let canonical = serde_json::to_string(content).map_err(|e| {
+        crate::SinexError::validation(format!("Failed to serialize schema content: {}", e))
+    })?;
 
     // Compute hash
     let mut hasher = Sha256::new();
@@ -249,7 +251,7 @@ fn compute_content_hash(content: &serde_json::Value) -> String {
     let result = hasher.finalize();
 
     // Convert to hex string
-    hex::encode(result)
+    Ok(hex::encode(result))
 }
 
 /// List all discovered payload information
@@ -282,7 +284,7 @@ mod tests {
             }
         });
 
-        let hash = compute_content_hash(&schema);
+        let hash = compute_content_hash(&schema)?;
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // SHA-256 produces 32 bytes = 64 hex chars
         Ok(())

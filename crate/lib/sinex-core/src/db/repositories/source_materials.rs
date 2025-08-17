@@ -364,7 +364,7 @@ impl<'a> SourceMaterialRepository<'a> {
             r#"
             SELECT COUNT(*) as count
             FROM raw.source_material_registry
-            WHERE material_type = $1
+            WHERE material_kind = $1
             "#,
             material_type
         )

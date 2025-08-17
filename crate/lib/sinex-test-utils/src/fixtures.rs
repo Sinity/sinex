@@ -92,7 +92,12 @@ impl FixtureRegistry {
             self.ref_counts
                 .entry(cache_key.clone())
                 .and_modify(|c| *c += 1);
-            return Ok(cached.clone().downcast::<T>().unwrap());
+            return cached.clone().downcast::<T>().map_err(|_| {
+                SinexError::validation(format!(
+                    "Cached fixture has wrong type for key: {}",
+                    cache_key
+                ))
+            });
         }
 
         // Create new fixture with proper error propagation

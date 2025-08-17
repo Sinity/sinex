@@ -330,6 +330,17 @@ impl EventValidator {
         self.schema_lookup.get(&(source_arc, event_type_arc))
     }
 
+    /// Get schema version for a source and event type (latest version)
+    pub fn get_schema_version(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> Option<Arc<String>> {
+        let schema_id = self.get_schema_id(source, event_type)?;
+        let cache_entry = self.schema_cache.get(&schema_id)?;
+        Some(cache_entry.version.clone())
+    }
+
     /// Load all schema versions from database (for validation of historical events)
     pub async fn load_all_schema_versions(&mut self, pool: &PgPool) -> IngestdResult<()> {
         let all_schemas = sqlx::query_as!(
