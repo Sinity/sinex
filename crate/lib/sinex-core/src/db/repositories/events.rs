@@ -786,7 +786,19 @@ impl<'a> EventRepository<'a> {
             );
         }
 
-        // Add payload_contains filter using JSONB containment operator (@>)\n        if let Some(payload_filter) = &filters.payload_contains {\n            query.and_where(\n                Expr::col((\n                    Alias::new(\"core\"),\n                    Alias::new(\"events\"),\n                    Alias::new(\"payload\"),\n                ))\n                // Use PostgreSQL JSONB containment operator @>\n                // This leverages GIN indexes for fast JSONB queries\n                .binary(sea_query::BinOper::Custom(\"@>\".to_string()), Expr::value(payload_filter.clone())),\n            );\n        }
+        // Add payload_contains filter using JSONB containment operator (@>)
+        if let Some(payload_filter) = &filters.payload_contains {
+            query.and_where(
+                Expr::col((
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("payload"),
+                ))
+                // Use PostgreSQL JSONB containment operator @>
+                // This leverages GIN indexes for fast JSONB queries
+                .binary(sea_query::BinOper::Custom("@>"), Expr::value(payload_filter.clone())),
+            );
+        }
 
         let (sql, _values) = query.build(PostgresQueryBuilder);
 

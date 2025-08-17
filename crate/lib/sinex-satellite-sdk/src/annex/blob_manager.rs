@@ -153,7 +153,7 @@ impl BlobManager {
 
         // Parse the annex key to get backend and hash
         let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
-            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+            .ok_or_else(|| eyre!("Invalid annex key format"))?;
 
         let blob = Blob::builder()
             .annex_backend(backend)
@@ -259,7 +259,7 @@ impl BlobManager {
 
         // Parse the annex key to get backend and hash
         let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
-            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+            .ok_or_else(|| eyre!("Invalid annex key format"))?;
 
         let blob = Blob::builder()
             .annex_backend(backend)
@@ -410,7 +410,7 @@ impl BlobManager {
     pub async fn get_blob_metadata(&self, annex_key: &str) -> Result<Blob> {
         // Parse the annex key to get backend and hash
         let (backend, _, _) = Blob::parse_annex_key(annex_key)
-            .ok_or_else(|| eyre::eyre!("Invalid annex key format"))?;
+            .ok_or_else(|| eyre!("Invalid annex key format"))?;
 
         // Extract the hash from the annex key (between backend and size)
         // Format: BACKEND-sSize--filename, we need the hash part
@@ -418,7 +418,7 @@ impl BlobManager {
             .split("-s")
             .next()
             .and_then(|s| s.split('-').last())
-            .ok_or_else(|| eyre::eyre!("Could not extract hash from annex key"))?;
+            .ok_or_else(|| eyre!("Could not extract hash from annex key"))?;
 
         self.db_pool
             .blobs()

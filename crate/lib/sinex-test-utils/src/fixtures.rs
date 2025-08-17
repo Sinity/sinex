@@ -788,11 +788,42 @@ async fn create_performance_dataset_fixture(
         }
     }
 
+    // Calculate distribution statistics
+    let mut source_distribution = HashMap::new();
+    let mut type_distribution = HashMap::new();
+    let payload_sizes = [100, 500, 1000, 5000];
+    
+    for i in 0..event_count {
+        let source = sources[i % sources.len()].to_string();
+        let event_type = event_types[i % event_types.len()].to_string();
+        
+        *source_distribution.entry(source).or_insert(0) += 1;
+        *type_distribution.entry(event_type).or_insert(0) += 1;
+    }
+    
+    // Calculate payload size statistics
+    let total_size: usize = (0..event_count)
+        .map(|i| payload_sizes[i % 4])
+        .sum();
+    let min_size = payload_sizes.iter().min().copied().unwrap_or(0);
+    let max_size = payload_sizes.iter().max().copied().unwrap_or(0);
+    let avg_size = if event_count > 0 { total_size / event_count } else { 0 };
+    
+    let payload_size_stats = PayloadSizeStats {
+        min_size,
+        max_size,
+        avg_size,
+        total_size,
+    };
+
     Ok(PerformanceDatasetFixture {
         event_count,
         event_ids,
         time_range: (start_time, end_time),
         sources: sources.iter().map(|s| s.to_string()).collect(),
+        source_distribution,
+        type_distribution,
+        payload_size_stats,
     })
 }
 
