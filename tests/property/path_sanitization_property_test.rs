@@ -1,10 +1,10 @@
 use proptest::prelude::*;
+use serde_json::json;
 use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::types::validation::{validate_path, ValidationError};
 use sinex_core::models::RawEvent;
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::validation::{validate_path, ValidationError};
 use sinex_test_utils::prelude::*;
-use serde_json::json;
 use std::path::Path;
 
 /// Property tests for path sanitization and validation functions
@@ -102,18 +102,18 @@ fn test_validate_path_neutralizes_traversal() -> color_eyre::eyre::Result<()> {
                 Ok(validated) => {
                     // If accepted, should not contain dangerous sequences
                     let validated_str = validated.as_str();
-                    
+
                     // Should not have effective parent directory traversal
                     prop_assert!(
-                        !path_escapes_root(&validated), 
-                        "Validated path should not escape root: {} -> {}", 
+                        !path_escapes_root(&validated),
+                        "Validated path should not escape root: {} -> {}",
                         malicious_path, validated_str
                     );
-                    
+
                     // Should not contain null bytes
                     prop_assert!(
-                        !validated_str.contains('\0'), 
-                        "Validated path should not contain null bytes: {}", 
+                        !validated_str.contains('\0'),
+                        "Validated path should not contain null bytes: {}",
                         validated_str
                     );
                 }
@@ -141,9 +141,9 @@ fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<(
                         if let Some(filename) = Path::new(&legitimate_path).file_name() {
                             if let Some(validated_filename) = validated.file_name() {
                                 prop_assert_eq!(
-                                    filename.to_string_lossy(), 
+                                    filename.to_string_lossy(),
                                     validated_filename,
-                                    "Filename should be preserved: {} -> {}", 
+                                    "Filename should be preserved: {} -> {}",
                                     legitimate_path, validated.as_str()
                                 );
                             }
@@ -153,8 +153,8 @@ fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<(
                         // Some complex legitimate paths might be rejected - that's acceptable
                         // for security, but the error should be reasonable
                         prop_assert!(
-                            matches!(e, ValidationError::Path(_)), 
-                            "Should fail with path error for legitimate path: {} -> {:?}", 
+                            matches!(e, ValidationError::Path(_)),
+                            "Should fail with path error for legitimate path: {} -> {:?}",
                             legitimate_path, e
                         );
                     }
@@ -165,7 +165,7 @@ fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<(
     Ok(())
 }
 
-#[sinex_test] 
+#[sinex_test]
 fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
     proptest! {
         fn property_event_sanitization_is_idempotent(
@@ -178,16 +178,16 @@ fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
                 json!({"test": "data"}),
             );
             event1.ts_ingest = chrono::Utc::now();
-            
+
             let mut event2 = event1.clone();
-            
+
             let was_modified1 = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
             let was_modified2 = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
-            
+
             // After first sanitization, second should not modify further
             let mut event1_copy = event1.clone();
             let was_modified_again = EventSanitizer::sanitize_event(&mut event1_copy).unwrap_or(false);
-            
+
             prop_assert!(!was_modified_again, "Second sanitization should not modify already-clean event: {}", path);
             prop_assert_eq!(event1.source, event1_copy.source, "Source should be stable after sanitization: {}", path);
         }
@@ -208,23 +208,23 @@ fn test_path_sanitization_removes_dangerous_sequences() -> color_eyre::eyre::Res
                 json!({"path": malicious_path.clone()}),
             );
             event.ts_ingest = chrono::Utc::now();
-            
+
             let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
-            
+
             // Should not contain effective ".." sequences in source
             prop_assert!(
                 !event.source.contains(".."),
                 "Sanitized event source should not contain '..': {} -> {}",
                 malicious_path, event.source.as_str()
             );
-            
+
             // Should not contain null bytes in source
             prop_assert!(
                 !event.source.contains('\0'),
                 "Sanitized event source should not contain null bytes: {} -> {}",
                 malicious_path, event.source.as_str()
             );
-            
+
             // Check payload for path field
             if let Some(path_val) = event.payload.get("path").and_then(|v| v.as_str()) {
                 prop_assert!(
@@ -246,7 +246,7 @@ fn test_path_validation_handles_unicode_safely() -> color_eyre::eyre::Result<()>
         ) {
             // Property: Unicode paths should be handled without crashes
             let result = validate_path(&unicode_path);
-            
+
             // Should not panic
             match result {
                 Ok(validated) => {
@@ -276,16 +276,16 @@ fn test_safe_content_preservation_in_events() -> color_eyre::eyre::Result<()> {
                 json!({"content": safe_string.clone()}),
             );
             event.ts_ingest = chrono::Utc::now();
-            
+
             let original_alphanum: String = safe_string.chars()
                 .filter(|c| c.is_ascii_alphanumeric()).collect();
-            
+
             let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
-            
+
             // Should preserve alphanumeric characters in source
             let sanitized_source_alphanum: String = event.source.chars()
                 .filter(|c| c.is_ascii_alphanumeric()).collect();
-                
+
             prop_assert_eq!(
                 original_alphanum, sanitized_source_alphanum,
                 "Alphanumeric characters should be preserved in source: '{}' -> '{}'",
@@ -305,7 +305,7 @@ fn test_path_length_limits_enforced() -> color_eyre::eyre::Result<()> {
             // Property: Very long paths should be rejected
             let long_path = "a".repeat(path_length);
             let result = validate_path(&long_path);
-            
+
             if path_length > 4096 {
                 // Should be rejected for being too long
                 prop_assert!(
@@ -345,7 +345,7 @@ fn test_path_length_limits_enforced() -> color_eyre::eyre::Result<()> {
 /// Check if a path would escape the intended root directory
 fn path_escapes_root(path: &camino::Utf8Path) -> bool {
     let mut depth = 0i32;
-    
+
     for component in path.components() {
         match component {
             camino::Utf8Component::ParentDir => {
@@ -359,7 +359,7 @@ fn path_escapes_root(path: &camino::Utf8Path) -> bool {
             _ => {}
         }
     }
-    
+
     false
 }
 
@@ -374,32 +374,44 @@ mod unit_tests {
     #[sinex_test]
     fn test_path_escape_detection() -> color_eyre::eyre::Result<()> {
         // Test the helper function itself
-        assert!(path_escapes_root(&camino::Utf8Path::new("../../etc/passwd")));
+        assert!(path_escapes_root(&camino::Utf8Path::new(
+            "../../etc/passwd"
+        )));
         assert!(path_escapes_root(&camino::Utf8Path::new("../../../root")));
-        assert!(!path_escapes_root(&camino::Utf8Path::new("/home/user/file.txt")));
-        assert!(!path_escapes_root(&camino::Utf8Path::new("./local/file.txt")));
+        assert!(!path_escapes_root(&camino::Utf8Path::new(
+            "/home/user/file.txt"
+        )));
+        assert!(!path_escapes_root(&camino::Utf8Path::new(
+            "./local/file.txt"
+        )));
         assert!(!path_escapes_root(&camino::Utf8Path::new("relative/path")));
-        
+
         Ok(())
     }
 
     #[sinex_test]
     fn test_path_generators() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        
+
         // Test malicious path generator
-        let malicious = arb_malicious_path().new_tree(&mut runner).unwrap().current();
+        let malicious = arb_malicious_path()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
         assert!(!malicious.is_empty());
-        
-        // Test file path generator  
+
+        // Test file path generator
         let file_path = arb_file_path().new_tree(&mut runner).unwrap().current();
         assert!(!file_path.is_empty());
-        
+
         // Test edge case generator
-        let edge_case = arb_edge_case_path().new_tree(&mut runner).unwrap().current();
+        let edge_case = arb_edge_case_path()
+            .new_tree(&mut runner)
+            .unwrap()
+            .current();
         // Edge cases can be empty, so just verify it doesn't crash
         assert!(true);
-        
+
         Ok(())
     }
 }

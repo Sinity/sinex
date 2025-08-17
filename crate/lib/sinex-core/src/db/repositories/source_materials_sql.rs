@@ -1,5 +1,5 @@
 //! SQL fragments for source materials repository
-//! 
+//!
 //! This module contains SQL fragments that are reused across multiple queries
 //! to handle ULID to UUID type casting consistently.
 

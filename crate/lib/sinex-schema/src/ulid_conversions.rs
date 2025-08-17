@@ -3,17 +3,119 @@
 //! This module provides conversion functions between ULID and UUID types
 //! specifically for database operations. These are pure schema-level utilities
 //! that handle the boundary between Rust ULID types and PostgreSQL UUID storage.
+//!
+//! ## Architecture Overview
+//!
+//! Sinex uses ULIDs throughout the application for their time-ordering properties,
+//! but stores them as UUIDs in PostgreSQL for compatibility with the pgx_ulid extension.
+//! This module provides efficient, zero-copy conversion utilities to bridge this gap.
+//!
+//! ## Usage Patterns
+//!
+//! ### Basic Conversions
+//!
+//! ```rust
+//! use sinex_schema::ulid::Ulid;
+//! use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid};
+//!
+//! let ulid = Ulid::new();
+//! let db_uuid = ulid_to_uuid(ulid);
+//! let restored_ulid = uuid_to_ulid(db_uuid);
+//! assert_eq!(ulid, restored_ulid);
+//! ```
+//!
+//! ### Extension Trait Usage
+//!
+//! ```rust
+//! use sinex_schema::ulid::Ulid;
+//! use sinex_schema::ulid_conversions::UlidExt;
+//!
+//! let ulid = Ulid::new();
+//! let db_uuid = ulid.to_db();
+//!
+//! // For collections
+//! let ulids = vec![Ulid::new(), Ulid::new()];
+//! let db_uuids = ulids.to_uuid_vec();
+//! ```
+//!
+//! ### Query Parameter Binding
+//!
+//! ```rust,ignore
+//! // In actual database queries
+//! sqlx::query!(
+//!     "SELECT * FROM core.events WHERE id = $1",
+//!     ulid.to_db()  // Convert to SqlxUuid for parameter binding
+//! )
+//! ```
+//!
+//! ## Performance Characteristics
+//!
+//! - **Zero-copy conversions**: ULIDs and UUIDs share the same 16-byte representation
+//! - **Batch operations**: Collection conversions are optimized for large datasets
+//! - **Optional overhead**: Minimal overhead for `Option<T>` handling
+//!
+//! ## Thread Safety
+//!
+//! All conversion functions are pure and thread-safe. No shared state is maintained.
 
 use crate::ulid::Ulid;
 use sqlx::types::Uuid as SqlxUuid;
 
 /// Convert ULID to PostgreSQL UUID type (primary conversion function)
+///
+/// This is the core conversion function for preparing ULIDs for database storage.
+/// PostgreSQL stores ULIDs as UUID types via the pgx_ulid extension, so this
+/// function handles the type conversion while preserving the underlying 16-byte
+/// representation.
+///
+/// ## Performance
+///
+/// This is a zero-copy operation - the same 16 bytes are simply reinterpreted
+/// as a different type. The conversion is essentially free at runtime.
+///
+/// ## Example
+///
+/// ```rust
+/// use sinex_schema::ulid::Ulid;
+/// use sinex_schema::ulid_conversions::ulid_to_uuid;
+///
+/// let ulid = Ulid::new();
+/// let db_uuid = ulid_to_uuid(ulid);
+/// // Now ready for database parameter binding
+/// ```
 #[inline]
 pub fn ulid_to_uuid(ulid: Ulid) -> SqlxUuid {
     SqlxUuid::from_bytes(*ulid.to_uuid().as_bytes())
 }
 
 /// Convert PostgreSQL UUID to ULID (primary conversion function)
+///
+/// This function converts UUIDs retrieved from the database back into ULIDs
+/// for use in application logic. Since PostgreSQL stores ULIDs as UUIDs,
+/// this conversion is needed when deserializing query results.
+///
+/// ## Important Note
+///
+/// This function assumes the UUID was originally a ULID. Converting arbitrary
+/// UUIDs to ULIDs will work technically, but the resulting ULID may not have
+/// valid timestamp or monotonic properties.
+///
+/// ## Performance
+///
+/// Like `ulid_to_uuid`, this is a zero-copy operation that just reinterprets
+/// the 16-byte representation.
+///
+/// ## Example
+///
+/// ```rust
+/// use sinex_schema::ulid::Ulid;
+/// use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid};
+///
+/// let original = Ulid::new();
+/// let db_uuid = ulid_to_uuid(original);
+/// let restored = uuid_to_ulid(db_uuid);
+/// assert_eq!(original, restored);
+/// ```
 #[inline]
 pub fn uuid_to_ulid(uuid: SqlxUuid) -> Ulid {
     Ulid::from_uuid(uuid::Uuid::from_bytes(*uuid.as_bytes()))
@@ -24,11 +126,50 @@ pub use ulid_to_uuid as to_db;
 pub use uuid_to_ulid as from_db;
 
 /// Extension trait for ULID types to provide database conversions
+///
+/// This trait adds convenience methods to ULID types for database operations.
+/// It provides both instance methods and static methods for various conversion
+/// scenarios commonly encountered in database code.
+///
+/// ## Usage
+///
+/// ```rust
+/// use sinex_schema::ulid::Ulid;
+/// use sinex_schema::ulid_conversions::UlidExt;
+///
+/// let ulid = Ulid::new();
+/// let db_uuid = ulid.to_db();
+///
+/// // For optional values
+/// let maybe_uuid = Ulid::to_db_opt(Some(ulid));
+/// ```
 pub trait UlidExt: Sized {
     /// Convert to database UUID representation
+    ///
+    /// This is equivalent to calling `ulid_to_uuid(self)` but provides
+    /// a more fluent API when chaining operations.
     fn to_db(&self) -> SqlxUuid;
 
     /// Convert an optional ULID to optional database UUID
+    ///
+    /// This is a convenience method for handling `Option<Ulid>` values
+    /// without explicit pattern matching. Returns `None` if the input
+    /// is `None`, otherwise converts the contained ULID.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// use sinex_schema::ulid::Ulid;
+    /// use sinex_schema::ulid_conversions::UlidExt;
+    ///
+    /// let some_ulid = Some(Ulid::new());
+    /// let some_uuid = Ulid::to_db_opt(some_ulid);
+    /// assert!(some_uuid.is_some());
+    ///
+    /// let none_ulid: Option<Ulid> = None;
+    /// let none_uuid = Ulid::to_db_opt(none_ulid);
+    /// assert!(none_uuid.is_none());
+    /// ```
     fn to_db_opt(opt: Option<Self>) -> Option<SqlxUuid>;
 }
 

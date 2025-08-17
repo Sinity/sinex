@@ -6,10 +6,10 @@
 #[cfg(feature = "serde")]
 #[cfg(test)]
 mod serde_tests {
-    use sinex_schema::schema::records::*;
-    use sinex_schema::ulid::Ulid;
     use chrono::Utc;
     use serde_json;
+    use sinex_schema::schema::records::*;
+    use sinex_schema::ulid::Ulid;
 
     #[test]
     fn test_event_record_serialization() {
@@ -37,8 +37,8 @@ mod serde_tests {
         assert!(!json.is_empty());
 
         // Test deserialization
-        let deserialized: EventRecord = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: EventRecord =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         // Verify key fields match
         assert_eq!(event.id, deserialized.id);
@@ -64,8 +64,8 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&blob).expect("Should serialize to JSON");
-        let deserialized: BlobRecord = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: BlobRecord =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         assert_eq!(blob.id, deserialized.id);
         assert_eq!(blob.annex_backend, deserialized.annex_backend);
@@ -87,8 +87,8 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&checkpoint).expect("Should serialize to JSON");
-        let deserialized: CheckpointRecord = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: CheckpointRecord =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         assert_eq!(checkpoint.id, deserialized.id);
         assert_eq!(checkpoint.processor_name, deserialized.processor_name);
@@ -108,8 +108,8 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&entity).expect("Should serialize to JSON");
-        let deserialized: EntityRecord = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: EntityRecord =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         assert_eq!(entity.id, deserialized.id);
         assert_eq!(entity.entity_type, deserialized.entity_type);
@@ -131,8 +131,8 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&material).expect("Should serialize to JSON");
-        let deserialized: SourceMaterialRecord = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: SourceMaterialRecord =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         assert_eq!(material.id, deserialized.id);
         assert_eq!(material.file_path, deserialized.file_path);
@@ -162,8 +162,8 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize with nulls");
-        let deserialized: EventRecord = serde_json::from_str(&json)
-            .expect("Should deserialize with nulls");
+        let deserialized: EventRecord =
+            serde_json::from_str(&json).expect("Should deserialize with nulls");
 
         assert_eq!(event.source_material_id, deserialized.source_material_id);
         assert_eq!(event.anchor_byte, deserialized.anchor_byte);
@@ -193,13 +193,13 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string_pretty(&event).expect("Should serialize");
-        
+
         // ULIDs should appear as strings
         assert!(json.contains(&format!("\"{}\"", event.id)));
         if let Some(material_id) = event.source_material_id {
             assert!(json.contains(&format!("\"{}\"", material_id)));
         }
-        
+
         // Arrays of ULIDs should serialize correctly
         if let Some(ref source_event_ids) = event.source_event_ids {
             for ulid in source_event_ids {
@@ -230,13 +230,15 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
-        let deserialized: EventRecord = serde_json::from_str(&json)
-            .expect("Should deserialize");
+        let deserialized: EventRecord = serde_json::from_str(&json).expect("Should deserialize");
 
         // DateTime should round-trip accurately (within microsecond precision)
         let orig_ms = event.ts_orig.timestamp_millis();
         let deser_ms = deserialized.ts_orig.timestamp_millis();
-        assert!((orig_ms - deser_ms).abs() <= 1, "DateTime should round-trip accurately");
+        assert!(
+            (orig_ms - deser_ms).abs() <= 1,
+            "DateTime should round-trip accurately"
+        );
     }
 
     #[test]
@@ -273,8 +275,7 @@ mod serde_tests {
         };
 
         let json = serde_json::to_string(&event).expect("Should serialize");
-        let deserialized: EventRecord = serde_json::from_str(&json)
-            .expect("Should deserialize");
+        let deserialized: EventRecord = serde_json::from_str(&json).expect("Should deserialize");
 
         // JSON payload should be preserved exactly
         assert_eq!(event.payload, deserialized.payload);
@@ -302,16 +303,15 @@ mod serde_tests {
             ingestor_version: Some("1.0.0".to_string()),
         };
 
-        let pretty_json = serde_json::to_string_pretty(&event)
-            .expect("Should serialize pretty");
-        
+        let pretty_json = serde_json::to_string_pretty(&event).expect("Should serialize pretty");
+
         // Pretty-printed JSON should be readable
         assert!(pretty_json.contains('\n')); // Multi-line
         assert!(pretty_json.contains("  ")); // Indentation
-        
+
         // Should still deserialize correctly
-        let deserialized: EventRecord = serde_json::from_str(&pretty_json)
-            .expect("Pretty JSON should deserialize");
+        let deserialized: EventRecord =
+            serde_json::from_str(&pretty_json).expect("Pretty JSON should deserialize");
         assert_eq!(event.id, deserialized.id);
     }
 }
@@ -321,12 +321,15 @@ mod serde_tests {
 mod no_serde_tests {
     // When serde feature is disabled, Record structs should not have serde derives
     // This is enforced at compile time, so these tests mainly document the behavior
-    
+
     #[test]
     fn test_serde_feature_disabled() {
         // This test just documents that without the serde feature,
         // the Record structs don't have serialization capabilities
         // The actual enforcement is at compile time via cfg_attr
-        assert!(true, "Serde feature is disabled - Records do not support serialization");
+        assert!(
+            true,
+            "Serde feature is disabled - Records do not support serialization"
+        );
     }
 }

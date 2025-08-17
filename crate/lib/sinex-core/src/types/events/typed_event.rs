@@ -102,10 +102,13 @@ impl<T: EventPayload> Event<T> {
     where
         I: IntoIterator<Item = Id<RawEvent>>,
     {
-        Self::new(payload).with_provenance(
-            Provenance::from_synthesis(parent_ids)
-                .expect("from_synthesis requires at least one parent ID"),
-        )
+        Self::new(payload).with_provenance(Provenance::from_synthesis(parent_ids).unwrap_or_else(
+            || {
+                panic!(
+                    "from_synthesis requires at least one parent ID - this is a programming error"
+                )
+            },
+        ))
     }
     /// Create a new typed event from a payload
     ///
@@ -175,7 +178,7 @@ impl<T: EventPayload> From<Event<T>> for RawEvent {
     fn from(typed: Event<T>) -> Self {
         // Serialize the typed payload to JSON
         let payload_json = serde_json::to_value(&typed.payload)
-            .expect("EventPayload serialization should never fail");
+            .unwrap_or_else(|e| panic!("EventPayload serialization should never fail: {}", e));
 
         RawEvent {
             // Convert the ID type - this is safe because the underlying Ulid is the same
@@ -194,7 +197,9 @@ impl<T: EventPayload> From<Event<T>> for RawEvent {
                         0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00,
                     ])
-                    .expect("hardcoded ULID bytes should be valid"),
+                    .unwrap_or_else(|_| {
+                        panic!("hardcoded ULID bytes should be valid - this is a programming error")
+                    }),
                 );
                 Provenance::Synthesis {
                     source_event_ids: NonEmptyVec::single(system_bootstrap_id),

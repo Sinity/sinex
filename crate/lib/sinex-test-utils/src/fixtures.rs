@@ -402,6 +402,56 @@ pub(crate) async fn performance_dataset_with_size(
     Ok(fixture)
 }
 
+/// Create schema validation fixture for testing validation scenarios
+pub(crate) async fn schema_validation_fixture(
+    ctx: &TestContext,
+) -> Result<FixtureHandle<SchemaValidationFixture>> {
+    let key = format!("schema_validation_{}", ctx.test_name());
+    let registry = get_registry().await;
+
+    let pool = ctx.pool.clone();
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move { create_schema_validation_fixture(&pool).await }
+        })
+        .await?;
+
+    Ok(fixture)
+}
+
+/// Create concurrency test fixture for testing concurrent operations
+pub(crate) async fn concurrency_test_fixture(
+    ctx: &TestContext,
+    worker_count: usize,
+    operations_per_worker: usize,
+) -> Result<FixtureHandle<ConcurrencyTestFixture>> {
+    let key = format!(
+        "concurrency_test_{}_{}_{}_{}",
+        ctx.test_name(),
+        worker_count,
+        operations_per_worker,
+        uuid::Uuid::new_v4()
+    );
+    let registry = get_registry().await;
+
+    let pool = ctx.pool.clone();
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move {
+                create_concurrency_test_fixture(&pool, worker_count, operations_per_worker).await
+            }
+        })
+        .await?;
+
+    Ok(fixture)
+}
+
 // =============================================================================
 // FIXTURE CREATION HELPERS
 // =============================================================================
@@ -973,6 +1023,120 @@ pub(crate) async fn cleanup_fixture<T: 'static>(key: &str) -> Result<()> {
     registry.ref_counts.remove(&cache_key);
 
     Ok(())
+}
+
+/// Create schema validation fixture with both valid and invalid events
+async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidationFixture> {
+    let mut valid_events = Vec::new();
+    let mut invalid_events = Vec::new();
+    let mut schema_ids = Vec::new();
+    let mut validation_errors = Vec::new();
+
+    // TODO: Implement schema validation fixture creation once schema management is available
+    // For now, create a placeholder fixture
+    
+    // Create some valid events (using standard test events)
+    for i in 0..5 {
+        let event = RawEvent::test_event(
+            EventSource::from("schema_test"),
+            EventType::from("valid.event"),
+            json!({
+                "id": i,
+                "name": format!("valid_event_{}", i),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        );
+        
+        let inserted = pool.events().insert(event).await?;
+        if let Some(id) = inserted.id {
+            valid_events.push(id.as_ulid().clone());
+        }
+    }
+
+    // Note: Invalid events would need schema validation to be properly tested
+    // Currently just creating some events that could be considered invalid in context
+    for i in 0..3 {
+        let event = RawEvent::test_event(
+            EventSource::from("schema_test"),
+            EventType::from("invalid.event"),
+            json!({
+                "malformed_field": null,
+                "missing_required": format!("invalid_{}", i),
+            }),
+        );
+        
+        let inserted = pool.events().insert(event).await?;
+        if let Some(id) = inserted.id {
+            invalid_events.push(id.as_ulid().clone());
+        }
+        validation_errors.push(format!("Invalid event {}: missing required fields", i));
+    }
+
+    Ok(SchemaValidationFixture {
+        valid_events,
+        invalid_events,
+        schema_ids, // Empty for now - would need schema registry implementation
+        validation_errors,
+    })
+}
+
+/// Create concurrency test fixture with worker events and synchronization points
+async fn create_concurrency_test_fixture(
+    pool: &DbPool,
+    worker_count: usize,
+    operations_per_worker: usize,
+) -> Result<ConcurrencyTestFixture> {
+    let mut operation_ids = Vec::new();
+    let mut worker_events = HashMap::new();
+    let mut synchronization_points = Vec::new();
+    let mut conflict_events = Vec::new();
+
+    let start_time = chrono::Utc::now();
+    
+    // Create synchronization points every 10 operations
+    for i in 0..(operations_per_worker / 10).max(1) {
+        synchronization_points.push(start_time + chrono::Duration::seconds(i as i64 * 10));
+    }
+
+    // Create events for each worker
+    for worker_id in 0..worker_count {
+        let worker_name = format!("worker_{}", worker_id);
+        let mut worker_event_ids = Vec::new();
+
+        for op_id in 0..operations_per_worker {
+            let event = RawEvent::test_event(
+                EventSource::from(&worker_name),
+                EventType::from("worker.operation"),
+                json!({
+                    "worker_id": worker_id,
+                    "operation_id": op_id,
+                    "timestamp": (start_time + chrono::Duration::seconds(op_id as i64)).to_rfc3339(),
+                    "resource": format!("resource_{}", op_id % 5), // Potential conflicts on same resource
+                }),
+            );
+            
+            let inserted = pool.events().insert(event).await?;
+            if let Some(id) = inserted.id {
+                let ulid = id.as_ulid().clone();
+                worker_event_ids.push(ulid.clone());
+                operation_ids.push(ulid.clone());
+                
+                // Mark events that operate on the same resource as potential conflicts
+                if op_id % 5 == 0 && worker_id > 0 {
+                    conflict_events.push(ulid);
+                }
+            }
+        }
+
+        worker_events.insert(worker_name, worker_event_ids);
+    }
+
+    Ok(ConcurrencyTestFixture {
+        operation_ids,
+        worker_events,
+        synchronization_points,
+        conflict_events,
+    })
 }
 
 // Additional fixture functions for API completeness
