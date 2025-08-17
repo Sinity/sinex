@@ -64,6 +64,7 @@ impl TableDef for TransactionalOutbox {
 
 /// The Rust struct representation of a row from `core.transactional_outbox`.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OutboxRecord {
     pub id: i64, // Using BIGSERIAL for simple, ordered polling.
     pub event_id: Ulid,

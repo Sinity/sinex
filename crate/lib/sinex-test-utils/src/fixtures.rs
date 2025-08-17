@@ -191,6 +191,36 @@ pub struct PerformanceDatasetFixture {
     pub event_ids: Vec<Ulid>,
     pub time_range: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
     pub sources: Vec<String>,
+    pub source_distribution: HashMap<String, usize>,
+    pub type_distribution: HashMap<String, usize>,
+    pub payload_size_stats: PayloadSizeStats,
+}
+
+/// Statistics about payload sizes in a fixture
+#[derive(Debug, Clone)]
+pub struct PayloadSizeStats {
+    pub min_size: usize,
+    pub max_size: usize,
+    pub avg_size: usize,
+    pub total_size: usize,
+}
+
+/// Fixture data for schema validation testing
+#[derive(Debug, Clone)]
+pub struct SchemaValidationFixture {
+    pub valid_events: Vec<Ulid>,
+    pub invalid_events: Vec<Ulid>,
+    pub schema_ids: Vec<Ulid>,
+    pub validation_errors: Vec<String>,
+}
+
+/// Fixture data for concurrent operations testing
+#[derive(Debug, Clone)]
+pub struct ConcurrencyTestFixture {
+    pub operation_ids: Vec<Ulid>,
+    pub worker_events: HashMap<String, Vec<Ulid>>,
+    pub synchronization_points: Vec<chrono::DateTime<chrono::Utc>>,
+    pub conflict_events: Vec<Ulid>,
 }
 
 // Type aliases for fixture types

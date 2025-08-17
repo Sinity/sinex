@@ -50,6 +50,7 @@ impl TableDef for TemporalLedger {
 
 /// The Rust struct representation of a row from `raw.temporal_ledger`.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TemporalLedgerRecord {
     pub id: Ulid,
     pub source_material_id: Ulid,

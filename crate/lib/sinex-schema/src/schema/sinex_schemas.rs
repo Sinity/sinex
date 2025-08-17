@@ -50,6 +50,7 @@ impl TableDef for EventPayloadSchemas {
 }
 
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EventPayloadSchemaRecord {
     pub id: Ulid,
     pub source: String,
@@ -181,6 +182,7 @@ impl TableDef for ProcessorManifests {
 }
 
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProcessorManifestRecord {
     pub id: i32,
     pub processor_name: String,

@@ -49,6 +49,7 @@ impl TableDef for ProcessorCheckpoints {
 }
 
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CheckpointRecord {
     pub id: Ulid,
     pub processor_name: String,

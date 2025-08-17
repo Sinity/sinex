@@ -72,7 +72,7 @@ use std::time::Duration;
 use tokio::time::interval;
 
 #[cfg(feature = "telemetry")]
-use sysinfo::System;
+use sysinfo::{Disks, Networks, System};
 
 #[cfg(feature = "telemetry")]
 use std::sync::Mutex;
@@ -83,6 +83,14 @@ static SYSINFO_SYSTEM: Lazy<Arc<Mutex<System>>> = Lazy::new(|| {
     system.refresh_all();
     Arc::new(Mutex::new(system))
 });
+
+#[cfg(feature = "telemetry")]
+static SYSINFO_DISKS: Lazy<Arc<Mutex<Disks>>> =
+    Lazy::new(|| Arc::new(Mutex::new(Disks::new_with_refreshed_list())));
+
+#[cfg(feature = "telemetry")]
+static SYSINFO_NETWORKS: Lazy<Arc<Mutex<Networks>>> =
+    Lazy::new(|| Arc::new(Mutex::new(Networks::new_with_refreshed_list())));
 
 /// Metric value types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -473,14 +481,9 @@ fn get_system_cpu_usage() -> f64 {
 
 #[cfg(feature = "telemetry")]
 fn get_system_load_average() -> f64 {
-    SYSINFO_SYSTEM
-        .lock()
-        .map(|mut system| {
-            system.refresh_all();
-            let load_avg = system.load_average();
-            load_avg.one // 1 minute load average
-        })
-        .unwrap_or(1.5)
+    // load_average() is a static method in sysinfo 0.30
+    let load_avg = System::load_average();
+    load_avg.one // 1 minute load average
 }
 
 #[cfg(not(feature = "telemetry"))]
@@ -490,12 +493,11 @@ fn get_system_load_average() -> f64 {
 
 #[cfg(feature = "telemetry")]
 fn get_system_disk_usage() -> u64 {
-    SYSINFO_SYSTEM
+    SYSINFO_DISKS
         .lock()
-        .map(|mut system| {
-            system.refresh_disks();
-            system
-                .disks()
+        .map(|mut disks| {
+            disks.refresh();
+            disks
                 .iter()
                 .map(|disk| disk.total_space() - disk.available_space())
                 .sum()
@@ -570,12 +572,11 @@ fn get_system_disk_write_bytes() -> u64 {
 
 #[cfg(feature = "telemetry")]
 fn get_system_network_bytes_received() -> u64 {
-    SYSINFO_SYSTEM
+    SYSINFO_NETWORKS
         .lock()
-        .map(|mut system| {
-            system.refresh_networks();
-            system
-                .networks()
+        .map(|mut networks| {
+            networks.refresh();
+            networks
                 .iter()
                 .map(|(_, network)| network.total_received())
                 .sum()
@@ -590,12 +591,11 @@ fn get_system_network_bytes_received() -> u64 {
 
 #[cfg(feature = "telemetry")]
 fn get_system_network_bytes_sent() -> u64 {
-    SYSINFO_SYSTEM
+    SYSINFO_NETWORKS
         .lock()
-        .map(|mut system| {
-            system.refresh_networks();
-            system
-                .networks()
+        .map(|mut networks| {
+            networks.refresh();
+            networks
                 .iter()
                 .map(|(_, network)| network.total_transmitted())
                 .sum()

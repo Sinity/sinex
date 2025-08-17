@@ -52,6 +52,7 @@ impl TableDef for SensorJobs {
 
 /// The Rust struct representation of a row from `raw.sensor_jobs`.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SensorJobRecord {
     pub id: Ulid,
     pub sensor_type: String,
@@ -176,6 +177,7 @@ impl TableDef for SensorStates {
 
 /// The Rust struct representation of a row from `raw.sensor_states`.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SensorStateRecord {
     pub job_id: Ulid,
     pub current_position: JsonValue,

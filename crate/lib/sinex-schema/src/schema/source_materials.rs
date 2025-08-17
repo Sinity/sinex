@@ -55,6 +55,7 @@ impl TableDef for SourceMaterialRegistry {
 
 /// The Rust struct representation of a row from `raw.source_material_registry`.
 #[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SourceMaterialRecord {
     pub id: Ulid,
     pub material_kind: String,

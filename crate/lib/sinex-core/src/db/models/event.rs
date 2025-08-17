@@ -337,7 +337,7 @@ impl<T> Event<T> {
 impl<T: Serialize> Event<T> {
     /// Convert to RawEvent (type erasure)
     pub fn to_raw(self) -> Result<RawEvent, serde_json::Error> {
-        Event {
+        Ok(RawEvent {
             id: None, // New ID for different type
             source: self.source,
             event_type: self.event_type,
@@ -348,7 +348,7 @@ impl<T: Serialize> Event<T> {
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             associated_blob_ids: self.associated_blob_ids,
-        }
+        })
     }
 }
 
