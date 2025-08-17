@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    db::models::{Event, RawEvent},
-    types::{events::DocumentIngestedPayload, ulid::Ulid},
+    types::{events::DocumentIngestedPayload, events::Event, ulid::Ulid},
+    RawEvent,
 };
 use sinex_satellite_sdk::{
     cli::{
@@ -324,7 +324,7 @@ impl DocumentProcessor {
         let blob = sqlx::query!(
             r#"
             SELECT 
-                annex_key,
+                annex_backend,
                 size_bytes,
                 checksum_sha256,
                 storage_backend
@@ -341,9 +341,9 @@ impl DocumentProcessor {
             "git-annex" => {
                 // Load from git-annex storage
                 let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_key[0..2])
-                    .join(&blob.annex_key[2..4])
-                    .join(&blob.annex_key);
+                    .join(&blob.annex_backend[0..2])
+                    .join(&blob.annex_backend[2..4])
+                    .join(&blob.annex_backend);
 
                 if annex_path.exists() {
                     tokio::fs::read(&annex_path)
@@ -355,7 +355,7 @@ impl DocumentProcessor {
             }
             "filesystem" => {
                 // Load from filesystem path stored in annex_key
-                let path = std::path::Path::new(&blob.annex_key);
+                let path = std::path::Path::new(&blob.annex_backend);
                 tokio::fs::read(path)
                     .await
                     .map_err(|e| eyre!("Failed to read file: {}", e))

@@ -167,7 +167,7 @@ impl PkmService {
                 .build();
 
             let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)
-                .with_metadata(metadata);
+                .with_properties(serde_json::to_value(metadata)?);
 
             let entity = self.pool.knowledge_graph().create_entity(entity).await?;
 
@@ -207,7 +207,7 @@ impl PkmService {
                     to_entity_id.clone(),
                     relationship_type,
                 )
-                .with_metadata(metadata),
+                .with_properties(serde_json::to_value(metadata)?),
             )
             .await?;
 
@@ -390,7 +390,7 @@ impl PkmService {
         let filtered_materials = if let Some(filter_type) = material_type {
             materials
                 .into_iter()
-                .filter(|m| m.material_type == filter_type)
+                .filter(|m| m.material_kind == filter_type)
                 .collect()
         } else {
             materials
@@ -400,9 +400,9 @@ impl PkmService {
             .into_iter()
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
-                material_type: m.material_type,
-                source_uri: Some(m.source_uri),
-                ingestion_time: m.ingestion_time.unwrap_or_else(|| m.created_at),
+                material_type: m.material_kind,
+                source_uri: Some(m.source_identifier),
+                ingestion_time: m.staged_at,
                 file_size_bytes: m
                     .metadata
                     .as_ref()
@@ -412,7 +412,7 @@ impl PkmService {
                     .as_ref()
                     .and_then(|meta| meta.get("mime_type").cloned()),
                 metadata: m.metadata.unwrap_or(serde_json::json!({})),
-                content_preview: m.content_preview,
+                content_preview: None, // Field doesn't exist in SourceMaterialRecord
             })
             .collect();
 
@@ -438,9 +438,9 @@ impl PkmService {
             .into_iter()
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
-                material_type: m.material_type,
-                source_uri: Some(m.source_uri),
-                ingestion_time: m.ingestion_time.unwrap_or_else(|| m.created_at),
+                material_type: m.material_kind,
+                source_uri: Some(m.source_identifier),
+                ingestion_time: m.staged_at,
                 file_size_bytes: None,
                 mime_type: None,
                 metadata: m.metadata.unwrap_or(serde_json::json!({})),

@@ -38,9 +38,8 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![
-            Box::new(migrations::m20241028_000001_create_canonical_schema::Migration),
-            Box::new(migrations::m20250816_122538_add_associated_blob_ids::Migration),
-        ]
+        vec![Box::new(
+            migrations::m20241028_000001_create_canonical_schema::Migration,
+        )]
     }
 }

@@ -10,8 +10,8 @@ pub mod unified_processor;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
-        types::{events::payloads::*, Id},
+        types::{events::payloads::*, events::Event, Id},
+        RawEvent,
     };
 
     // SDK facade for common processor types
@@ -551,7 +551,7 @@ impl TerminalCommandCanonicalizer {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_synthesis(
+        let event = RawEvent::from_synthesis(
             "terminal-canonicalizer",
             "terminal.command_canonicalized",
             canonical_payload,

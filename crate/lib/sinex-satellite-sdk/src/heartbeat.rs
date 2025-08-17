@@ -42,7 +42,7 @@ pub struct HeartbeatMetrics {
 }
 
 /// Heartbeat emitter that logs structured JSON to stdout
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
     service_name: String,
     start_time: SystemTime,

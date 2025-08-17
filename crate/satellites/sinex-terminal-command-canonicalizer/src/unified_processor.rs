@@ -183,10 +183,10 @@ impl TerminalCommandCanonicalizer {
             "enrichment_history": Vec::<String>::new(),
         });
 
-        use sinex_core::db::models::Event;
+        use sinex_core::types::events::Event;
         use sinex_core::types::{Id, Ulid as CoreUlid};
 
-        let source_event_ids: Vec<Id<Event<_>>> = command_data
+        let source_event_ids: Vec<Id<RawEvent>> = command_data
             .source_events
             .iter()
             .map(|ulid| Id::from_ulid(*ulid))

@@ -8,12 +8,13 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
         types::{
             domain::{EventSource, EventType},
             events::payloads::*,
+            events::Event,
             Id,
         },
+        RawEvent,
     };
 
     // SDK facade for common processor types
@@ -433,13 +434,13 @@ impl HealthAggregator {
         });
 
         // Create synthesized event with proper provenance from recent events
-        let event = Event::from_synthesis(
+        let event = RawEvent::from_synthesis(
             "health-aggregator",
             "health.component_report",
             report_payload,
             health.recent_events.clone(),
         )
-        .with_ts_orig(Some(Utc::now()));
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -493,13 +494,13 @@ impl HealthAggregator {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_synthesis(
+        let event = RawEvent::from_synthesis(
             "health-aggregator",
             "health.system_status",
             system_health_payload,
             all_event_ids,
         )
-        .with_ts_orig(Some(Utc::now()));
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -533,13 +534,13 @@ impl HealthAggregator {
                     "generated_at": Utc::now(),
                 });
 
-                let alert_event = Event::from_synthesis(
+                let alert_event = RawEvent::from_synthesis(
                     "health-aggregator",
                     "health.alert",
                     alert_payload,
                     health.recent_events.clone(),
                 )
-                .with_ts_orig(Some(Utc::now()));
+                .with_timestamp(Utc::now());
 
                 alerts.push(alert_event.into());
             }

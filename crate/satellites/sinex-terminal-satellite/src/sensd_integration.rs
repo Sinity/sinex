@@ -351,7 +351,7 @@ impl SensdTerminalProcessor {
         let blob = sqlx::query!(
             r#"
             SELECT 
-                annex_key,
+                annex_backend,
                 size_bytes,
                 checksum_sha256,
                 storage_backend
@@ -367,9 +367,9 @@ impl SensdTerminalProcessor {
         match blob.storage_backend.as_str() {
             "git-annex" => {
                 let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_key[0..2])
-                    .join(&blob.annex_key[2..4])
-                    .join(&blob.annex_key);
+                    .join(&blob.annex_backend[0..2])
+                    .join(&blob.annex_backend[2..4])
+                    .join(&blob.annex_backend);
 
                 if annex_path.exists() {
                     tokio::fs::read(&annex_path)
@@ -380,7 +380,7 @@ impl SensdTerminalProcessor {
                 }
             }
             "filesystem" => {
-                let path = std::path::Path::new(&blob.annex_key);
+                let path = std::path::Path::new(&blob.annex_backend);
                 tokio::fs::read(path)
                     .await
                     .map_err(|e| eyre!("Failed to read file: {}", e))

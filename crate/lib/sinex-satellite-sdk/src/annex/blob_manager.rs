@@ -334,7 +334,7 @@ impl BlobManager {
         let blob = self.get_blob_metadata(annex_key).await?;
 
         // Ensure content is available locally
-        self.annex.get_content(blob.annex_key()).await?;
+        self.annex.get_content(&blob.annex_key()).await?;
 
         // Emit blob retrieved event via ingestd
         let event: RawEvent = Event::new(BlobRetrievedPayload {
@@ -352,7 +352,7 @@ impl BlobManager {
             .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
 
         // Find the symlink path in the repository
-        self.find_symlink_path(blob.annex_key()).await
+        self.find_symlink_path(&blob.annex_key()).await
     }
 
     /// Verify blob integrity
@@ -408,9 +408,9 @@ impl BlobManager {
 
     /// Get blob metadata by annex key
     pub async fn get_blob_metadata(&self, annex_key: &str) -> Result<Blob> {
-        // Parse the annex key to get backend and hash
-        let (backend, _, _) = Blob::parse_annex_key(annex_key)
-            .ok_or_else(|| eyre!("Invalid annex key format"))?;
+        // Parse the annex key to get backend, size and filename
+        let (backend, size, _) =
+            Blob::parse_annex_key(annex_key).ok_or_else(|| eyre!("Invalid annex key format"))?;
 
         // Extract the hash from the annex key (between backend and size)
         // Format: BACKEND-sSize--filename, we need the hash part
@@ -422,7 +422,7 @@ impl BlobManager {
 
         self.db_pool
             .blobs()
-            .get_by_content(&backend, hash)
+            .get_by_content(&backend, hash, size)
             .await
             .wrap_err("Failed to get blob metadata")?
             .ok_or_else(|| eyre!("Blob not found with key: {}", annex_key))
@@ -430,18 +430,22 @@ impl BlobManager {
 
     /// Update verification status
     async fn update_verification_status(&self, annex_key: &str, status: &str) -> Result<()> {
+        // First get the blob to get its ID
+        let blob = self.get_blob_metadata(annex_key).await?;
         self.db_pool
             .blobs()
-            .update_verification_status(annex_key, status)
+            .update_verification_status(blob.id, status)
             .await
             .wrap_err("Failed to update verification status")
     }
 
     /// Add original filename to existing blob
     async fn add_original_filename(&self, annex_key: &str, filename: &str) -> Result<()> {
+        // First get the blob to get its ID
+        let blob = self.get_blob_metadata(annex_key).await?;
         self.db_pool
             .blobs()
-            .add_original_filename(annex_key, filename)
+            .add_original_filename(blob.id, filename)
             .await
             .wrap_err("Failed to add original filename")
     }

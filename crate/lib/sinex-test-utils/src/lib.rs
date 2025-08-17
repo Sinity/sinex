@@ -32,7 +32,7 @@
 //! ## Core Features
 //!
 //! ### Database Isolation
-//! 
+//!
 //! Each test gets its own isolated database from a 64-database pool using PostgreSQL advisory locks:
 //! - True isolation between parallel tests
 //! - Automatic cleanup after test completion
@@ -53,10 +53,10 @@
 //! ```rust
 //! // Standard user session with mixed event types
 //! let session = fixtures::standard_user_session(&ctx).await?;
-//! 
+//!
 //! // Large dataset for performance testing
 //! let dataset = fixtures::performance_dataset_with_size(&ctx, 10_000).await?;
-//! 
+//!
 //! // Error scenarios for edge case testing
 //! let errors = fixtures::error_scenarios(&ctx).await?;
 //! ```

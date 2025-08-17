@@ -98,9 +98,7 @@ impl TestCheckpointBuilder {
                 &group,
                 &consumer,
                 self.last_processed_id,
-                Some(Utc::now()),
                 self.checkpoint_data,
-                self.state_data,
             )
             .await?;
 

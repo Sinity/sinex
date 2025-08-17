@@ -264,7 +264,7 @@ proptest! {
 
 ### ULID Generation
 
-- **~30% faster** than UUID v4 generation
+- **Efficient generation** with thread-safe implementation
 - **Monotonic guarantee** with minimal synchronization overhead
 - **Zero-copy conversion** to/from UUID
 

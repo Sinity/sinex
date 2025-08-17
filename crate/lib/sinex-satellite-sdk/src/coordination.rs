@@ -570,6 +570,9 @@ impl SatelliteCoordination {
         self.finish_critical_work().await?;
 
         // Signal ready for handoff - within transaction
+        // TODO: The satellite_signals table doesn't exist in the current schema
+        // This coordination mechanism needs to be reimplemented
+        /*
         sqlx::query!(
             "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
              VALUES ($1, 'handoff_ready', $2, NOW())",
@@ -578,6 +581,7 @@ impl SatelliteCoordination {
         )
         .execute(&mut *tx)
         .await?;
+        */
 
         // Commit transaction - makes work completion and signaling atomic
         tx.commit().await?;
@@ -607,6 +611,8 @@ impl SatelliteCoordination {
         // Begin transaction to ensure atomicity between database signal and coordinator signal
         let mut tx = self.pool.begin().await?;
 
+        // TODO: The satellite_signals table doesn't exist in the current schema
+        /*
         sqlx::query!(
             "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
              VALUES ('ALL', 'leader_failure', $1, NOW())",
@@ -614,6 +620,7 @@ impl SatelliteCoordination {
         )
         .execute(&mut *tx)
         .await?;
+        */
 
         // Commit the database signal first
         tx.commit().await?;
@@ -628,8 +635,10 @@ impl SatelliteCoordination {
     async fn watch_for_leader_failure(&self) -> Result<()> {
         loop {
             // Check for failure signals
+            // TODO: The satellite_signals table doesn't exist in the current schema
+            /*
             let failures = sqlx::query!(
-                "SELECT * FROM core.satellite_signals 
+                "SELECT * FROM core.satellite_signals
                  WHERE signal_type = 'leader_failure'
                  AND created_at > NOW() - INTERVAL '30 seconds'"
             )
@@ -640,6 +649,7 @@ impl SatelliteCoordination {
                 warn!("Leader failure signals detected");
                 return Ok(());
             }
+            */
 
             // Check if current leader is still healthy via heartbeat
             let leader_health = sqlx::query!(

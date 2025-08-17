@@ -796,7 +796,10 @@ impl<'a> EventRepository<'a> {
                 ))
                 // Use PostgreSQL JSONB containment operator @>
                 // This leverages GIN indexes for fast JSONB queries
-                .binary(sea_query::BinOper::Custom("@>"), Expr::value(payload_filter.clone())),
+                .binary(
+                    sea_query::BinOper::Custom("@>"),
+                    Expr::value(payload_filter.clone()),
+                ),
             );
         }
 

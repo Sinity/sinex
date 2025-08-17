@@ -93,10 +93,7 @@ impl FixtureRegistry {
                 .entry(cache_key.clone())
                 .and_modify(|c| *c += 1);
             return cached.clone().downcast::<T>().map_err(|_| {
-                SinexError::validation(format!(
-                    "Cached fixture has wrong type for key: {}",
-                    cache_key
-                ))
+                color_eyre::eyre::eyre!("Cached fixture has wrong type for key: {}", key)
             });
         }
 
@@ -792,23 +789,25 @@ async fn create_performance_dataset_fixture(
     let mut source_distribution = HashMap::new();
     let mut type_distribution = HashMap::new();
     let payload_sizes = [100, 500, 1000, 5000];
-    
+
     for i in 0..event_count {
         let source = sources[i % sources.len()].to_string();
         let event_type = event_types[i % event_types.len()].to_string();
-        
+
         *source_distribution.entry(source).or_insert(0) += 1;
         *type_distribution.entry(event_type).or_insert(0) += 1;
     }
-    
+
     // Calculate payload size statistics
-    let total_size: usize = (0..event_count)
-        .map(|i| payload_sizes[i % 4])
-        .sum();
+    let total_size: usize = (0..event_count).map(|i| payload_sizes[i % 4]).sum();
     let min_size = payload_sizes.iter().min().copied().unwrap_or(0);
     let max_size = payload_sizes.iter().max().copied().unwrap_or(0);
-    let avg_size = if event_count > 0 { total_size / event_count } else { 0 };
-    
+    let avg_size = if event_count > 0 {
+        total_size / event_count
+    } else {
+        0
+    };
+
     let payload_size_stats = PayloadSizeStats {
         min_size,
         max_size,
@@ -1065,7 +1064,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
 
     // TODO: Implement schema validation fixture creation once schema management is available
     // For now, create a placeholder fixture
-    
+
     // Create some valid events (using standard test events)
     for i in 0..5 {
         let event = RawEvent::test_event(
@@ -1077,7 +1076,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             }),
         );
-        
+
         let inserted = pool.events().insert(event).await?;
         if let Some(id) = inserted.id {
             valid_events.push(id.as_ulid().clone());
@@ -1095,7 +1094,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
                 "missing_required": format!("invalid_{}", i),
             }),
         );
-        
+
         let inserted = pool.events().insert(event).await?;
         if let Some(id) = inserted.id {
             invalid_events.push(id.as_ulid().clone());
@@ -1123,7 +1122,7 @@ async fn create_concurrency_test_fixture(
     let mut conflict_events = Vec::new();
 
     let start_time = chrono::Utc::now();
-    
+
     // Create synchronization points every 10 operations
     for i in 0..(operations_per_worker / 10).max(1) {
         synchronization_points.push(start_time + chrono::Duration::seconds(i as i64 * 10));
@@ -1136,7 +1135,7 @@ async fn create_concurrency_test_fixture(
 
         for op_id in 0..operations_per_worker {
             let event = RawEvent::test_event(
-                EventSource::from(&worker_name),
+                EventSource::from(worker_name.as_str()),
                 EventType::from("worker.operation"),
                 json!({
                     "worker_id": worker_id,
@@ -1145,13 +1144,13 @@ async fn create_concurrency_test_fixture(
                     "resource": format!("resource_{}", op_id % 5), // Potential conflicts on same resource
                 }),
             );
-            
+
             let inserted = pool.events().insert(event).await?;
             if let Some(id) = inserted.id {
                 let ulid = id.as_ulid().clone();
                 worker_event_ids.push(ulid.clone());
                 operation_ids.push(ulid.clone());
-                
+
                 // Mark events that operate on the same resource as potential conflicts
                 if op_id % 5 == 0 && worker_id > 0 {
                     conflict_events.push(ulid);
