@@ -131,6 +131,25 @@ impl StreamingCascadeAnalyzer {
         Self::with_config(pool, CascadeAnalyzerConfig::default())
     }
 
+    /// Validate session ID to prevent SQL injection
+    fn validate_session_id(session_id: &str) -> Result<()> {
+        // Session ID should only contain alphanumeric characters and underscores
+        // and be reasonable length (max 64 chars)
+        if session_id.len() > 64 {
+            return Err(eyre!("Session ID too long: {} chars", session_id.len()));
+        }
+        
+        if session_id.is_empty() {
+            return Err(eyre!("Session ID cannot be empty"));
+        }
+        
+        if !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(eyre!("Session ID contains invalid characters. Only alphanumeric and underscore allowed."));
+        }
+        
+        Ok(())
+    }
+
     /// Create new analyzer with custom configuration
     pub fn with_config(pool: PgPool, config: CascadeAnalyzerConfig) -> Self {
         Self { pool, config }
@@ -230,25 +249,32 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         session_id: &str,
     ) -> Result<String> {
+        // Validate session_id to prevent SQL injection
+        Self::validate_session_id(session_id)?;
+        
         let table_name = format!("cascade_analysis_{}", session_id);
 
-        let create_table_sql = format!(
-            r#"
-            CREATE TEMP TABLE {} (
+        // Use PostgreSQL's quote_ident() to safely handle the table name
+        let create_table_sql = r#"
+            SELECT 'CREATE TEMP TABLE ' || quote_ident($1) || ' (
                 id ULID PRIMARY KEY,
                 depth INTEGER NOT NULL DEFAULT 0,
-                parent_ids ULID[] DEFAULT '{{}}',
+                parent_ids ULID[] DEFAULT ''{}''::ULID[],
                 processed BOOLEAN DEFAULT FALSE
-            ) ON COMMIT DROP
-            "#,
-            table_name
-        );
+            ) ON COMMIT DROP' AS sql
+        "#;
 
-        sqlx::query(&create_table_sql)
+        let sql_result = sqlx::query_scalar::<_, String>(create_table_sql)
+            .bind(&table_name)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "build safe table creation SQL"))?;
+
+        sqlx::query(&sql_result)
             .execute(&mut **tx)
             .await
             .map_err(|e| {
-                error!("Failed to create temp table {}: {}", table_name, e);
+                tracing::error!("Failed to create temp table {}: {}", table_name, e);
                 db_error(e, "create temp cascade tables")
             })?;
 
@@ -258,32 +284,54 @@ impl StreamingCascadeAnalyzer {
 
     /// Create temporary tables for analysis  
     async fn create_temp_tables(&self, session_id: &str) -> Result<String> {
+        // Validate session_id to prevent SQL injection
+        Self::validate_session_id(session_id)?;
+        
         // Generate unique table name for this session
         let table_name = format!("cascade_analysis_{}", session_id);
 
-        // Note: PostgreSQL temp tables are session-scoped and auto-cleaned
-        // Using TEMPORARY instead of TEMP for clarity
-        let query = format!(
-            r#"
-            CREATE TEMPORARY TABLE IF NOT EXISTS {} (
-                id ULID PRIMARY KEY,  -- Primary key should just be 'id'
+        // Use PostgreSQL's quote_ident() to safely handle table and index names
+        let create_table_sql = r#"
+            SELECT 'CREATE TEMPORARY TABLE IF NOT EXISTS ' || quote_ident($1) || ' (
+                id ULID PRIMARY KEY,
                 depth INT NOT NULL DEFAULT 0,
                 parent_ids ULID[],
                 child_ids ULID[],
                 is_archived BOOLEAN DEFAULT FALSE,
                 is_live BOOLEAN DEFAULT TRUE,
                 processed BOOLEAN DEFAULT FALSE
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_{}_depth ON {} (depth);
-            CREATE INDEX IF NOT EXISTS idx_{}_processed ON {} (processed);
-            "#,
-            table_name, table_name, table_name, table_name, table_name
-        );
+            )' AS sql
+        "#;
 
-        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
-            error!("Failed to create temp table {}: {}", table_name, e);
-            db_error(e, "create temp cascade tables")
+        let table_sql = sqlx::query_scalar::<_, String>(create_table_sql)
+            .bind(&table_name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "build safe table creation SQL"))?;
+
+        let create_indexes_sql = r#"
+            SELECT 'CREATE INDEX IF NOT EXISTS ' || quote_ident('idx_' || $1 || '_depth') || 
+                   ' ON ' || quote_ident($1) || ' (depth); ' ||
+                   'CREATE INDEX IF NOT EXISTS ' || quote_ident('idx_' || $1 || '_processed') || 
+                   ' ON ' || quote_ident($1) || ' (processed)' AS sql
+        "#;
+
+        let indexes_sql = sqlx::query_scalar::<_, String>(create_indexes_sql)
+            .bind(&table_name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "build safe index creation SQL"))?;
+
+        // Execute table creation
+        sqlx::query(&table_sql).execute(&self.pool).await.map_err(|e| {
+            tracing::error!("Failed to create temp table {}: {}", table_name, e);
+            db_error(e, "create temp cascade table")
+        })?;
+
+        // Execute index creation
+        sqlx::query(&indexes_sql).execute(&self.pool).await.map_err(|e| {
+            tracing::error!("Failed to create indexes for table {}: {}", table_name, e);
+            db_error(e, "create temp cascade indexes")
         })?;
 
         debug!("Created temporary table {}", table_name);
@@ -486,9 +534,18 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        let query = format!("SELECT COUNT(*) as count FROM {}", table_name);
+        // Use safe identifier quoting for table name
+        let query_sql = r#"
+            SELECT 'SELECT COUNT(*) FROM ' || quote_ident($1) AS sql
+        "#;
 
-        let row = sqlx::query_scalar::<_, i64>(&query)
+        let safe_query = sqlx::query_scalar::<_, String>(query_sql)
+            .bind(table_name)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "build safe count query"))?;
+
+        let row = sqlx::query_scalar::<_, i64>(&safe_query)
             .fetch_one(&mut **tx)
             .await
             .map_err(|e| db_error(e, "count affected events"))?;
@@ -612,8 +669,17 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<()> {
         // Temp tables created with ON COMMIT DROP will auto-cleanup
         // But we can explicitly drop if needed
-        let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
-        sqlx::query(&drop_sql)
+        let drop_sql_query = r#"
+            SELECT 'DROP TABLE IF EXISTS ' || quote_ident($1) AS sql
+        "#;
+
+        let safe_drop_sql = sqlx::query_scalar::<_, String>(drop_sql_query)
+            .bind(table_name)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "build safe drop table SQL"))?;
+
+        sqlx::query(&safe_drop_sql)
             .execute(&mut **tx)
             .await
             .map_err(|e| db_error(e, "cleanup temp tables"))?;
@@ -768,9 +834,18 @@ impl StreamingCascadeAnalyzer {
 
     /// Count total affected events
     async fn count_affected_events(&self, table_name: &str) -> Result<usize> {
-        let query = format!("SELECT COUNT(*) as count FROM {}", table_name);
+        // Use safe identifier quoting for table name
+        let query_sql = r#"
+            SELECT 'SELECT COUNT(*) FROM ' || quote_ident($1) AS sql
+        "#;
 
-        let row = sqlx::query_scalar::<_, i64>(&query)
+        let safe_query = sqlx::query_scalar::<_, String>(query_sql)
+            .bind(table_name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "build safe count query"))?;
+
+        let row = sqlx::query_scalar::<_, i64>(&safe_query)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| db_error(e, "count affected events"))?;
@@ -883,8 +958,18 @@ impl StreamingCascadeAnalyzer {
 
     /// Clean up temporary tables
     async fn cleanup_temp_tables(&self, table_name: &str) -> Result<()> {
-        let query = format!("DROP TABLE IF EXISTS {}", table_name);
-        sqlx::query(&query)
+        // Use safe identifier quoting for table name
+        let drop_sql_query = r#"
+            SELECT 'DROP TABLE IF EXISTS ' || quote_ident($1) AS sql
+        "#;
+
+        let safe_drop_sql = sqlx::query_scalar::<_, String>(drop_sql_query)
+            .bind(table_name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "build safe drop table SQL"))?;
+
+        sqlx::query(&safe_drop_sql)
             .execute(&self.pool)
             .await
             .map_err(|e| db_error(e, "cleanup temp tables"))?;

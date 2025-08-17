@@ -251,6 +251,10 @@ impl ReplayStateMachine {
             error_details: None,
         };
 
+        // TODO: ARCHITECTURAL VIOLATION - Direct database write bypasses ingestd
+        // This violates the single-writer invariant documented in TARGET_canonical.md
+        // Should route replay operation events through ingestd's gRPC interface instead
+        // Requires coordination with Area 7 (Ingestd) to add replay operation event types
         // Insert into operations_log
         sqlx::query!(
             r#"
