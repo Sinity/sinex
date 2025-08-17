@@ -3,12 +3,12 @@
 //! These tests validate that the sophisticated constraint system works correctly,
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
+use chrono::Utc;
 use rstest::*;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::test_context::TestContext;
 use sqlx::PgPool;
-use chrono::Utc;
 
 #[cfg(test)]
 mod constraint_validation_tests {
@@ -16,14 +16,32 @@ mod constraint_validation_tests {
 
     async fn setup_test_tables(pool: &PgPool) {
         // Create all necessary tables for constraint testing
-        sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        sqlx::query(&EventPayloadSchemas::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        sqlx::query(&Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        sqlx::query(&Blobs::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
+        sqlx::query(
+            &SourceMaterialRegistry::create_table_statement()
+                .to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            &EventPayloadSchemas::create_table_statement()
+                .to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            &Blobs::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -55,7 +73,10 @@ mod constraint_validation_tests {
             Utc::now(),
             material_id.as_uuid()
         ).execute(pool).await;
-        assert!(result.is_ok(), "Should accept event with source_material_id only");
+        assert!(
+            result.is_ok(),
+            "Should accept event with source_material_id only"
+        );
 
         // Test Case 2: Valid - source_event_ids only
         let event_id2 = Ulid::new();
@@ -69,7 +90,10 @@ mod constraint_validation_tests {
             Utc::now(),
             &[event_id1.as_uuid()][..]
         ).execute(pool).await;
-        assert!(result.is_ok(), "Should accept event with source_event_ids only");
+        assert!(
+            result.is_ok(),
+            "Should accept event with source_event_ids only"
+        );
 
         // Test Case 3: Invalid - both source_material_id AND source_event_ids
         let event_id3 = Ulid::new();
@@ -84,7 +108,10 @@ mod constraint_validation_tests {
             material_id.as_uuid(),
             &[event_id1.as_uuid()][..]
         ).execute(pool).await;
-        assert!(result.is_err(), "Should reject event with both provenance types");
+        assert!(
+            result.is_err(),
+            "Should reject event with both provenance types"
+        );
 
         // Test Case 4: Invalid - neither source_material_id NOR source_event_ids
         let event_id4 = Ulid::new();
@@ -205,7 +232,7 @@ mod constraint_validation_tests {
 
         // Test valid offset_kind values
         let valid_kinds = ["byte", "line", "rowid", "logical"];
-        
+
         for (i, kind) in valid_kinds.iter().enumerate() {
             let event_id = Ulid::new();
             let result = sqlx::query!(
@@ -223,8 +250,15 @@ mod constraint_validation_tests {
         }
 
         // Test invalid offset_kind values
-        let invalid_kinds = ["bytes", "lines", "character", "word", "paragraph", "invalid"];
-        
+        let invalid_kinds = [
+            "bytes",
+            "lines",
+            "character",
+            "word",
+            "paragraph",
+            "invalid",
+        ];
+
         for kind in invalid_kinds.iter() {
             let event_id = Ulid::new();
             let result = sqlx::query!(
@@ -238,7 +272,11 @@ mod constraint_validation_tests {
                 material_id.as_uuid(),
                 *kind
             ).execute(pool).await;
-            assert!(result.is_err(), "Should reject invalid offset_kind: {}", kind);
+            assert!(
+                result.is_err(),
+                "Should reject invalid offset_kind: {}",
+                kind
+            );
         }
     }
 
@@ -285,7 +323,10 @@ mod constraint_validation_tests {
             Utc::now(),
             nonexistent_material.as_uuid()
         ).execute(pool).await;
-        assert!(result.is_err(), "Should reject invalid foreign key reference");
+        assert!(
+            result.is_err(),
+            "Should reject invalid foreign key reference"
+        );
 
         // Test Case 3: Cascade behavior (if implemented)
         // This would test what happens when a referenced record is deleted
@@ -293,8 +334,13 @@ mod constraint_validation_tests {
         let delete_result = sqlx::query!(
             "DELETE FROM core.source_material_registry WHERE id = $1",
             material_id.as_uuid()
-        ).execute(pool).await;
-        assert!(delete_result.is_err(), "Should prevent deletion of referenced material");
+        )
+        .execute(pool)
+        .await;
+        assert!(
+            delete_result.is_err(),
+            "Should prevent deletion of referenced material"
+        );
     }
 
     #[tokio::test]
@@ -322,7 +368,7 @@ mod constraint_validation_tests {
 
         let event_id1 = Ulid::new();
         let anchor_byte = 100i64;
-        
+
         // Insert first event with specific anchor_byte
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -349,9 +395,12 @@ mod constraint_validation_tests {
             material_id.as_uuid(),
             anchor_byte
         ).execute(pool).await;
-        
+
         // This should fail due to the unique constraint on (source_material_id, anchor_byte)
-        assert!(result.is_err(), "Should reject duplicate (source_material_id, anchor_byte) combination");
+        assert!(
+            result.is_err(),
+            "Should reject duplicate (source_material_id, anchor_byte) combination"
+        );
 
         // But different anchor_byte should work
         let event_id3 = Ulid::new();
@@ -387,7 +436,7 @@ mod constraint_validation_tests {
 
         // Test missing required fields
         let event_id = Ulid::new();
-        
+
         // Missing source
         let result = sqlx::query(
             "INSERT INTO core.events (id, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6)"
@@ -465,14 +514,18 @@ mod constraint_validation_tests {
                 Utc::now(),
                 material_id.as_uuid()
             ).execute(pool).await;
-            assert!(result.is_ok(), "Should accept valid JSON payload: {:?}", payload);
+            assert!(
+                result.is_ok(),
+                "Should accept valid JSON payload: {:?}",
+                payload
+            );
         }
 
         // Note: Invalid JSON would be caught at the SQLx level before reaching the database,
         // so we don't need to test malformed JSON strings here.
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_array_constraints() {
         let ctx = TestContext::new().await;
         let pool = ctx.db().pool();
@@ -566,12 +619,21 @@ mod performance_constraint_tests {
     async fn test_constraint_check_performance() {
         let ctx = TestContext::new().await;
         let pool = ctx.db().pool();
-        
+
         // Setup tables
-        sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        sqlx::query(&Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
+        sqlx::query(
+            &SourceMaterialRegistry::create_table_statement()
+                .to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         let material_id = Ulid::new();
         sqlx::query!(
@@ -585,7 +647,7 @@ mod performance_constraint_tests {
 
         // Insert many events to test constraint performance under load
         let start = std::time::Instant::now();
-        
+
         for i in 0..100 {
             let event_id = Ulid::new();
             sqlx::query!(
@@ -600,32 +662,44 @@ mod performance_constraint_tests {
                 i as i64
             ).execute(pool).await.unwrap();
         }
-        
+
         let duration = start.elapsed();
         println!("Inserted 100 events with constraints in {:?}", duration);
-        
+
         // Constraint checking should not significantly slow down inserts
-        assert!(duration.as_millis() < 5000, "Constraint checking should be fast");
+        assert!(
+            duration.as_millis() < 5000,
+            "Constraint checking should be fast"
+        );
     }
 
     #[tokio::test]
     async fn test_index_constraint_interaction() {
         let ctx = TestContext::new().await;
         let pool = ctx.db().pool();
-        
+
         // Setup tables with indexes
-        sqlx::query(&Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        
+        sqlx::query(
+            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
         for index_stmt in Events::create_indexes() {
             let sql = index_stmt.to_string(sea_orm_migration::PostgresQueryBuilder);
             let _ = sqlx::query(&sql).execute(pool).await; // May fail if already exists
         }
 
         // Create source material
-        sqlx::query(&SourceMaterialRegistry::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder))
-            .execute(pool).await.unwrap();
-        
+        sqlx::query(
+            &SourceMaterialRegistry::create_table_statement()
+                .to_string(sea_orm_migration::PostgresQueryBuilder),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
         let material_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
@@ -663,7 +737,10 @@ mod performance_constraint_tests {
             material_id.as_uuid(),
             42
         ).execute(pool).await;
-        
-        assert!(result.is_err(), "Unique constraint should work with indexes");
+
+        assert!(
+            result.is_err(),
+            "Unique constraint should work with indexes"
+        );
     }
 }
