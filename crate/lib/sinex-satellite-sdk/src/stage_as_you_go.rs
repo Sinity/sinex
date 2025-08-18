@@ -57,10 +57,9 @@ use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
 use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::events::{Event as TypedEvent, LogLinePayload};
+use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::{ulid::Ulid, Id};
-use sinex_core::DbPoolExt;
-use sinex_core::JsonValue;
+use sinex_core::{DbPoolExt, JsonValue};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -284,8 +283,8 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 .sum::<usize>() as i64;
             let offset_end = offset_start + line.len() as i64;
 
-            // Create event for this log line
-            let typed_event = TypedEvent::new(LogLinePayload {
+            // Create event for this log line directly with unified Event<T>
+            let payload = LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),
@@ -293,22 +292,21 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 offset_start,
                 offset_end,
                 source_material_id: source_material_id.to_string(),
-            })
-            .to_raw();
+            };
 
-            // Convert to database event
-            let event = Event::dynamic(
-                typed_event.source,
-                typed_event.event_type,
-                typed_event.payload,
-            )
-            .with_provenance(sinex_core::Provenance::Synthesis {
-                source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                    sinex_core::EventId::from_ulid(Ulid::new()),
-                ),
-                operation_id: None,
-            })
-            .build();
+            // Create typed event and convert to JsonValue for emission
+            let typed_event = Event::new(
+                payload,
+                sinex_core::Provenance::Synthesis {
+                    source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                        sinex_core::EventId::from_ulid(Ulid::new()),
+                    ),
+                    operation_id: None,
+                },
+            );
+
+            // Convert to JsonValue event for emission
+            let event = typed_event.to_json_event()?;
 
             // Emit with provenance
             let event_id = self

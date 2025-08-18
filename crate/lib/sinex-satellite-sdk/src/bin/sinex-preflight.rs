@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
+use sinex_core::types::domain::EventSource;
 use sinex_core::DbPoolExt;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
