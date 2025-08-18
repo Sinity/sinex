@@ -104,7 +104,7 @@
 //! - Timing utilities
 //!
 //! ## The `#[sinex_test]` Macro
-//! **Always use `#[sinex_test]` instead of `#[sinex_test]`**. This macro:
+//! **Always use `#[sinex_test]` instead of `#[test]`**. This macro:
 //! - Creates and injects TestContext
 //! - Manages database lifecycle
 //! - Handles timeouts intelligently

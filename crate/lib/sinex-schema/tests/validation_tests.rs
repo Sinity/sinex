@@ -53,12 +53,12 @@ mod constraint_validation_tests {
         // Insert required dependencies
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test Case 1: Valid - source_material_id only
@@ -135,12 +135,12 @@ mod constraint_validation_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test Case 1: Empty source should fail
@@ -222,12 +222,12 @@ mod constraint_validation_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test valid offset_kind values
@@ -289,12 +289,12 @@ mod constraint_validation_tests {
         // Test Case 1: Valid foreign key reference
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         let event_id = Ulid::new();
@@ -332,7 +332,7 @@ mod constraint_validation_tests {
         // This would test what happens when a referenced record is deleted
         // Currently our schema doesn't define CASCADE behavior, so we test the default RESTRICT
         let delete_result = sqlx::query!(
-            "DELETE FROM core.source_material_registry WHERE id = $1",
+            "DELETE FROM raw.source_material_registry WHERE id = $1",
             material_id.as_uuid()
         )
         .execute(pool)
@@ -352,12 +352,12 @@ mod constraint_validation_tests {
         // Create a source material and initial event
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Create indexes that enforce unique constraints
@@ -426,12 +426,12 @@ mod constraint_validation_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test missing required fields
@@ -485,12 +485,12 @@ mod constraint_validation_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test valid JSON payloads
@@ -534,12 +534,12 @@ mod constraint_validation_tests {
         // Create initial event for referencing
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         let source_event_id = Ulid::new();
@@ -637,12 +637,12 @@ mod performance_constraint_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Insert many events to test constraint performance under load
@@ -702,12 +702,12 @@ mod performance_constraint_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.source_material_registry (id, file_path, file_size, file_hash, mime_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
             material_id.as_uuid(),
+            "annex",
             "/test/path",
-            1024,
-            "test-hash",
-            "text/plain"
+            "completed",
+            "realtime"
         ).execute(pool).await.unwrap();
 
         // Test that constraints work correctly with indexes present

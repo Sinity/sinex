@@ -394,7 +394,9 @@ impl CheckpointManager {
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                last_processed_id.map(|id| sinex_core::Id::<sinex_core::RawEvent>::from_ulid(id)),
+                last_processed_id.map(|id| {
+                    sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
+                }),
                 Some(checkpoint_data),
             )
             .await?;

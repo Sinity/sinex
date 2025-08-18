@@ -11,9 +11,10 @@
 use chrono::Utc;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
+use sinex_core::db::models::Event;
 use sinex_core::types::Id;
 use sinex_core::DbPoolExt;
-use sinex_core::RawEvent;
+use sinex_core::JsonValue;
 use sinex_core::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -266,7 +267,7 @@ async fn test_transactions(pool: &PgPool, _messages: &mut Vec<String>) -> Result
         .wrap_err("Committed event should have an ID")?;
     let verify_commit = pool
         .events()
-        .get_by_id(Id::<RawEvent>::from(committed_id))
+        .get_by_id(Id::<Event<JsonValue>>::from(committed_id))
         .await?
         .is_some();
 

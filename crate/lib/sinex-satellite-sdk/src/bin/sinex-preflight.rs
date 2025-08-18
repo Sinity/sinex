@@ -546,7 +546,7 @@ async fn generate_verification_report(
     let end_time = chrono::Utc::now();
     let start_time = end_time - chrono::Duration::hours(24);
 
-    let recent_verifications: Vec<RawEvent> = pool
+    let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
         .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
         .await

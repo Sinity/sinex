@@ -54,14 +54,12 @@ impl<T> NonEmptyVec<T> {
 
     /// Get the first element (always exists)
     pub fn first(&self) -> &T {
-        // SAFETY: We maintain the invariant that inner is never empty
-        unsafe { self.inner.get_unchecked(0) }
+        &self.inner[0] // Safe indexing - will panic with clear message if invariant violated
     }
 
     /// Get the last element (always exists)
     pub fn last(&self) -> &T {
-        // SAFETY: We maintain the invariant that inner is never empty
-        unsafe { self.inner.get_unchecked(self.inner.len() - 1) }
+        &self.inner[self.inner.len() - 1] // Safe indexing - will panic with clear message if invariant violated
     }
 
     /// Get the number of elements

@@ -360,7 +360,7 @@ impl SystemdChangeMonitor {
         // Get current units
         let units = self.monitor.list_service_units()?;
 
-        for unit_name in units {
+        for unit_name in units.clone() {
             match self.monitor.get_unit_status(&unit_name) {
                 Ok(current_unit) => {
                     if let Some(known_unit) = self.known_units.get(&unit_name) {

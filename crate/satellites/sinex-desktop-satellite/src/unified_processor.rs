@@ -213,7 +213,7 @@ impl DesktopProcessor {
                     "desktop-satellite".to_string(),
                 )
                 .await
-                .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+                .map_err(|e| SatelliteError::Processing(e.to_string()))?;
 
                 // Submit job for clipboard monitoring if enabled
                 if self.config.clipboard_enabled {
@@ -221,7 +221,7 @@ impl DesktopProcessor {
                     submitter
                         .submit_clipboard_job(self.config.clipboard_poll_interval_secs)
                         .await
-                        .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+                        .map_err(|e| SatelliteError::Processing(e.to_string()))?;
                 }
 
                 // Submit job for window manager monitoring if enabled
@@ -239,7 +239,7 @@ impl DesktopProcessor {
                             socket_path,
                         )
                         .await
-                        .map_err(|e| SatelliteError::ProcessorError(e.to_string()))?;
+                        .map_err(|e| SatelliteError::Processing(e.to_string()))?;
                 }
 
                 // Store monitoring started event as source material
@@ -837,7 +837,7 @@ impl ExplorationProvider for DesktopProcessor {
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         } else {
             // Export configuration if no state available
             let config_data = serde_json::json!({
@@ -853,7 +853,7 @@ impl ExplorationProvider for DesktopProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         }
 
         Ok(())

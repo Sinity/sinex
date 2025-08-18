@@ -35,7 +35,7 @@ use tokio::net::UnixStream;
 use tokio::time::sleep;
 
 /// Supported window manager types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,
 }

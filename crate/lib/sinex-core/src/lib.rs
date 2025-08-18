@@ -86,7 +86,6 @@ pub use types::{
     validation,
     HealthCheck,
     HealthStatus,
-    JsonValue,
     MetricsEntry,
     OptionalTimestamp,
     Result as SinexResult,
@@ -113,14 +112,6 @@ pub mod payloads {
     pub use crate::types::events::payloads::*;
 }
 
-// Type aliases for complex generic types to reduce verbosity
-pub type EventId = Id<RawEvent>;
-pub type BlobId = Id<models::Blob>;
-pub type EntityId = Id<Entity>;
-pub type SourceMaterialId = Id<SourceMaterial>;
-pub type CheckpointId = Id<CheckpointRecord>;
-pub type OperationId = Id<Operation>;
-
 // Database transaction type alias
 pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
@@ -136,10 +127,13 @@ pub use db::{
 };
 
 // Re-export the most commonly used database models at crate root
-pub use db::models::{Blob, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
+pub use db::models::{
+    Blob, Entity, EntityRelation, Event, EventBuilder, EventId, HasProvenance, JsonValue,
+    NoProvenance, Provenance, SourceMaterial,
+};
 
-// Re-export the unified Event type (EventId is already defined above as type alias)
-pub use db::models::event::{Event, OffsetKind};
+// Re-export the unified Event type helpers
+pub use db::models::event::OffsetKind;
 
 // Re-export records from sinex-schema
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
@@ -193,7 +187,7 @@ pub mod prelude {
     pub use crate::{
         BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, Event, EventId,
         EventRecord, EventRepository, EventSource, EventType, HostName, Id, JsonValue,
-        OptionalTimestamp, ProcessorName, Provenance, RawEvent, Repository, SourceMaterial,
+        OptionalTimestamp, ProcessorName, Provenance, Repository, SourceMaterial,
         SourceMaterialRecord, Timestamp, Ulid,
     };
 

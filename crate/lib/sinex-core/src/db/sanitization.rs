@@ -1,4 +1,4 @@
-use crate::models::RawEvent;
+use crate::models::{Event, JsonValue};
 use crate::security::{SecurityError, SecurityValidator};
 use crate::types::domain::EventSource;
 use color_eyre::eyre::Result;
@@ -11,7 +11,7 @@ pub struct EventSanitizer;
 impl EventSanitizer {
     /// Sanitize an event before storage, modifying content to prevent security issues
     /// while preserving the original attack data for security analysis
-    pub fn sanitize_event(event: &mut RawEvent) -> Result<bool> {
+    pub fn sanitize_event(event: &mut Event<JsonValue>) -> Result<bool> {
         let mut was_modified = false;
 
         // Sanitize the source field (where attacks come through in tests)
@@ -139,7 +139,7 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::RawEvent;
+    use crate::models::{Event, JsonValue};
     use crate::types::domain::EventType;
     use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
@@ -148,7 +148,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("../../../etc/passwd"),
             EventType::new("security.test"),
             json!({"path": "../../sensitive/file.txt"}),
@@ -169,7 +169,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("test\0source"),
             EventType::new("security.test"),
             json!({"data": "test\0value"}),
@@ -185,7 +185,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("security.test"),
             EventType::new("sql.injection"),
             json!({"query": "'; DROP TABLE events; --"}),

@@ -210,12 +210,6 @@ async fn generate_schemas(pool: &PgPool, output_dir: &str, sync: bool) -> Result
         process::AutomatonErrorPayload,
         process::SensorActivatedPayload,
         process::SensorDeactivatedPayload,
-        // Telemetry payloads
-        telemetry::EventsProcessedPayload,
-        telemetry::ErrorsSummaryPayload,
-        telemetry::SystemResourcesPayload,
-        telemetry::OperationPerformancePayload,
-        telemetry::ComponentResourceUsagePayload,
         // Blob payloads
         blob::BlobStoredPayload,
         blob::BlobRetrievedPayload,

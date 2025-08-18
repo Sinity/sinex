@@ -7,6 +7,7 @@ use crate::domain::{EventSource, EventType};
 use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use sinex_schema::ulid_conversions::uuid_to_ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,10 +50,10 @@ pub async fn lookup_schema_id(
         }
     }
 
-    // Query database
+    // Query database - fetch as UUID then convert to ULID
     let result = sqlx::query_scalar!(
         r#"
-        SELECT id as "id: Ulid"
+        SELECT id::uuid as "id!"
         FROM sinex_schemas.event_payload_schemas
         WHERE source = $1
           AND event_type = $2
@@ -66,7 +67,8 @@ pub async fn lookup_schema_id(
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten();
+    .flatten()
+    .map(uuid_to_ulid);
 
     // Update cache if found
     if let Some(id) = result {

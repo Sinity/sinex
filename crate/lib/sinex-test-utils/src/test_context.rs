@@ -88,13 +88,26 @@ impl TestContext {
     }
 
     /// Initialize tracing for tests (static method for use without context)
-    pub fn init_tracing(_level: &str) {
-        // Tracing is handled by the #[traced_test] attribute
-        // This is a no-op for compatibility
+    pub fn init_tracing(level: &str) {
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+        // Only initialize if not already initialized
+        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
+
+        TRACING_INIT.call_once(|| {
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+            tracing_subscriber::registry()
+                .with(fmt::layer().with_test_writer())
+                .with(filter)
+                .init();
+        });
     }
 
     /// Enable tracing for this test context
-    pub fn with_tracing(mut self, _level: &str) -> Self {
+    pub fn with_tracing(mut self, level: &str) -> Self {
+        Self::init_tracing(level);
         self._tracing_enabled = true;
         self
     }

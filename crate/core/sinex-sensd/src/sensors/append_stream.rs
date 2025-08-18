@@ -100,7 +100,7 @@ impl AppendStreamSensor {
 
             // Record ledger entry
             let entry = LedgerEntry {
-                material_id: active_material,
+                source_material_id: active_material,
                 offset_start: offset,
                 offset_end: offset + bytes_read as i64,
                 ts_capture: capture_end,

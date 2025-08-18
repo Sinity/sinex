@@ -1,10 +1,28 @@
--- Just for documentation purposes, this file is not executed directly.
+-- ============================================================================
+-- WARNING: THIS FILE IS DEPRECATED AND MAY CONTAIN OUTDATED SCHEMA DEFINITIONS
+-- ============================================================================
+-- 
+-- This DDL.sql file is kept for reference only and should NOT be used for
+-- schema creation or migration. The canonical schema definitions are now
+-- maintained programmatically using sea-query in the Rust schema modules.
+--
+-- For the current, authoritative schema definitions, see:
+-- - src/schema/events.rs        (core.events table)
+-- - src/schema/source_materials.rs (raw.source_material_registry table)
+-- - src/schema/*.rs             (all other tables)
+--
+-- Schema creation should be done via:
+-- - Migration files in src/migrations/
+-- - Table::create_table_statement() methods in schema modules
+--
+-- This file may contain schema drift and inconsistencies compared to the
+-- actual implemented schema. Use it only for historical reference.
+-- ============================================================================
 
 -- =============================================================================
--- SCRIPT:         Sinex Canonical Database Schema v7.1 (Part 1/3)
+-- SCRIPT:         Sinex Canonical Database Schema v7.1 (Part 1/3) [DEPRECATED]
 -- DESCRIPTION:    Core Infrastructure, Raw Data Substrate, and the Event Log.
---                 This script is idempotent and represents the final,
---                 architecturally sound design for the Sinex system's foundation.
+--                 [WARNING: This may not match current programmatic schema]
 -- =============================================================================
 
 -- Set session parameters for a stable and robust migration.
@@ -161,8 +179,9 @@ ALTER TABLE core.events ADD CONSTRAINT events_provenance_xor CHECK ( (source_mat
 COMMENT ON CONSTRAINT events_provenance_xor ON core.events IS 'Enforces that an event has either external (material) or internal (event) provenance, but not both.';
 
 -- Enforce idempotency for ingestors.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_events_material_anchor ON core.events(source_material_id, anchor_byte) WHERE source_material_id IS NOT NULL;
-COMMENT ON INDEX ux_events_material_anchor IS 'Ensures idempotency for events generated from the same anchor byte of the same source material.';
+-- Note: For TimescaleDB hypertables, unique indexes must include the partition key (id)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_events_material_anchor_id ON core.events(source_material_id, anchor_byte, id) WHERE source_material_id IS NOT NULL;
+COMMENT ON INDEX ux_events_material_anchor_id IS 'Ensures idempotency for events generated from the same anchor byte of the same source material. Includes id column for TimescaleDB hypertable compatibility.';
 
 -- Create performance-critical indexes.
 CREATE INDEX IF NOT EXISTS ix_events_ts_orig ON core.events (ts_orig DESC);

@@ -6,7 +6,8 @@
 #[cfg(feature = "nats-bypass")]
 use crate::nats::publisher::NatsPublisher;
 use crate::{grpc_client::IngestClient, SatelliteResult};
-use sinex_core::RawEvent;
+use sinex_core::db::models::Event;
+use sinex_core::JsonValue;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -51,7 +52,7 @@ impl Default for EventProcessorConfig {
 pub struct EventProcessor {
     transport: EventTransport,
     config: EventProcessorConfig,
-    event_receiver: mpsc::UnboundedReceiver<RawEvent>,
+    event_receiver: mpsc::UnboundedReceiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 }
 
@@ -60,7 +61,7 @@ impl EventProcessor {
     pub fn new(
         transport: EventTransport,
         config: EventProcessorConfig,
-        event_receiver: mpsc::UnboundedReceiver<RawEvent>,
+        event_receiver: mpsc::UnboundedReceiver<Event<JsonValue>>,
         shutdown: tokio::sync::oneshot::Receiver<()>,
     ) -> Self {
         Self {
@@ -134,7 +135,7 @@ impl EventProcessor {
     }
 
     /// Send a batch of events
-    async fn send_batch(&mut self, batch: &mut Vec<RawEvent>) {
+    async fn send_batch(&mut self, batch: &mut Vec<Event<JsonValue>>) {
         if batch.is_empty() {
             return;
         }
@@ -183,7 +184,7 @@ impl EventProcessor {
 
     /// Store failed events in dead letter queue
     async fn store_dead_letter_events(
-        events: &[RawEvent],
+        events: &[Event<JsonValue>],
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Write to local file for now - could be enhanced with database storage
         let dead_letter_path = std::env::temp_dir().join("sinex_dead_letter_events.json");
@@ -209,7 +210,7 @@ impl EventProcessor {
 
     /// Send batch via NATS - DEPRECATED: Bypasses ingestd single-writer principle
     #[cfg(feature = "nats-bypass")]
-    async fn send_batch_nats(publisher: &NatsPublisher, events: &[RawEvent]) -> bool {
+    async fn send_batch_nats(publisher: &NatsPublisher, events: &[Event<JsonValue>]) -> bool {
         let mut all_success = true;
 
         for event in events {
@@ -237,7 +238,7 @@ impl EventProcessor {
     }
 
     /// Send batch via gRPC
-    async fn send_batch_grpc(client: &mut IngestClient, events: &[RawEvent]) -> bool {
+    async fn send_batch_grpc(client: &mut IngestClient, events: &[Event<JsonValue>]) -> bool {
         match client.ingest_batch(events).await {
             Ok(result) => {
                 if result.success {
@@ -269,7 +270,7 @@ impl EventProcessor {
 pub fn spawn_event_processor(
     transport: EventTransport,
     config: EventProcessorConfig,
-    event_receiver: mpsc::UnboundedReceiver<RawEvent>,
+    event_receiver: mpsc::UnboundedReceiver<Event<JsonValue>>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<SatelliteResult<()>> {
     tokio::spawn(async move {

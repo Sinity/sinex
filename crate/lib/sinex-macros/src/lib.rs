@@ -65,7 +65,7 @@
 //! }
 //! ```
 
-mod auto_metrics;
+// mod auto_metrics; // REMOVED: telemetry system removed
 // mod config_struct; // REMOVED: Used ValidationChain which is being replaced
 mod database_helpers;
 mod error_context;
@@ -307,99 +307,37 @@ pub fn payload_extractor_derive(input: TokenStream) -> TokenStream {
     satellite_helpers::payload_extractor_derive(input)
 }
 
-/// Automatic function metrics collection
-///
-/// Automatically wraps functions with metrics tracking.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::auto_metrics;
-///
-/// #[auto_metrics]
-/// async fn process_data(data: &str) -> Result<String, Box<dyn std::error::Error>> {
-///     // function body
-/// }
-/// ```
+// Telemetry macros are now no-ops since telemetry system has been removed
+// They remain for backward compatibility but do nothing
+
 #[proc_macro_attribute]
-pub fn auto_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
-    auto_metrics::auto_metrics(attr, item)
+pub fn auto_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // No-op: telemetry system removed, just return the original item
+    item
 }
 
-/// Automatic database operation metrics collection
-///
-/// Automatically wraps database functions with database-specific metrics tracking.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::auto_db_metrics;
-///
-/// #[auto_db_metrics(operation = "user_lookup")]
-/// async fn get_user_by_id(user_id: u64) -> Result<String, Box<dyn std::error::Error>> {
-///     // function body
-/// }
-/// ```
 #[proc_macro_attribute]
-pub fn auto_db_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
-    auto_metrics::auto_db_metrics(attr, item)
+pub fn auto_db_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // No-op: telemetry system removed, just return the original item
+    item
 }
 
-/// Automatic event processing metrics collection
-///
-/// Automatically wraps event processing functions with event-specific metrics tracking.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::auto_event_metrics;
-///
-/// #[auto_event_metrics(event_type = event_types::file::CREATED)]
-/// async fn handle_file_created(event: &str) -> Result<(), Box<dyn std::error::Error>> {
-///     // function body
-/// }
-/// ```
 #[proc_macro_attribute]
-pub fn auto_event_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
-    auto_metrics::auto_event_metrics(attr, item)
+pub fn auto_event_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // No-op: telemetry system removed, just return the original item
+    item
 }
 
-/// Automatic resource usage metrics collection
-///
-/// Automatically wraps functions with resource usage metrics tracking.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::auto_resource_metrics;
-///
-/// #[auto_resource_metrics(track = ["memory", "cpu", "disk"])]
-/// async fn resource_intensive_task(data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-///     // function body
-/// }
-/// ```
 #[proc_macro_attribute]
-pub fn auto_resource_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
-    auto_metrics::auto_resource_metrics(attr, item)
+pub fn auto_resource_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // No-op: telemetry system removed, just return the original item
+    item
 }
 
-/// Automatic satellite metrics collection for trait implementations
-///
-/// Automatically wraps StatefulStreamProcessor implementations with satellite-specific metrics tracking.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::auto_satellite_metrics;
-///
-/// #[auto_satellite_metrics(processor_type = "ingestor", labels = ["source=filesystem"])]
-/// impl StatefulStreamProcessor for FilesystemWatcher {
-///     // implementation
-/// }
-/// ```
 #[proc_macro_attribute]
-pub fn auto_satellite_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
-    auto_metrics::auto_satellite_metrics(attr, item)
+pub fn auto_satellite_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // No-op: telemetry system removed, just return the original item
+    item
 }
 
 /// Macro for defining strongly-typed ID types based on ULID

@@ -138,15 +138,20 @@ impl StreamingCascadeAnalyzer {
         if session_id.len() > 64 {
             return Err(eyre!("Session ID too long: {} chars", session_id.len()));
         }
-        
+
         if session_id.is_empty() {
             return Err(eyre!("Session ID cannot be empty"));
         }
-        
-        if !session_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(eyre!("Session ID contains invalid characters. Only alphanumeric and underscore allowed."));
+
+        if !session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(eyre!(
+                "Session ID contains invalid characters. Only alphanumeric and underscore allowed."
+            ));
         }
-        
+
         Ok(())
     }
 
@@ -251,7 +256,7 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<String> {
         // Validate session_id to prevent SQL injection
         Self::validate_session_id(session_id)?;
-        
+
         let table_name = format!("cascade_analysis_{}", session_id);
 
         // Use PostgreSQL's quote_ident() to safely handle the table name
@@ -286,7 +291,7 @@ impl StreamingCascadeAnalyzer {
     async fn create_temp_tables(&self, session_id: &str) -> Result<String> {
         // Validate session_id to prevent SQL injection
         Self::validate_session_id(session_id)?;
-        
+
         // Generate unique table name for this session
         let table_name = format!("cascade_analysis_{}", session_id);
 
@@ -323,16 +328,22 @@ impl StreamingCascadeAnalyzer {
             .map_err(|e| db_error(e, "build safe index creation SQL"))?;
 
         // Execute table creation
-        sqlx::query(&table_sql).execute(&self.pool).await.map_err(|e| {
-            tracing::error!("Failed to create temp table {}: {}", table_name, e);
-            db_error(e, "create temp cascade table")
-        })?;
+        sqlx::query(&table_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create temp table {}: {}", table_name, e);
+                db_error(e, "create temp cascade table")
+            })?;
 
         // Execute index creation
-        sqlx::query(&indexes_sql).execute(&self.pool).await.map_err(|e| {
-            tracing::error!("Failed to create indexes for table {}: {}", table_name, e);
-            db_error(e, "create temp cascade indexes")
-        })?;
+        sqlx::query(&indexes_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create indexes for table {}: {}", table_name, e);
+                db_error(e, "create temp cascade indexes")
+            })?;
 
         debug!("Created temporary table {}", table_name);
         Ok(table_name)

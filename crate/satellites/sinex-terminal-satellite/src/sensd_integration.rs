@@ -8,6 +8,7 @@ use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::ulid_to_uuid;
 use sinex_core::{
     db::models::{event::OffsetKind, Provenance, RawEvent, SourceMaterial},
     types::{
@@ -15,7 +16,6 @@ use sinex_core::{
         Id, Ulid,
     },
 };
-use sinex_schema::ulid_conversions::ulid_to_uuid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -352,9 +352,8 @@ impl SensdTerminalProcessor {
             r#"
             SELECT 
                 annex_backend,
-                size_bytes,
-                checksum_sha256,
-                storage_backend
+                content_hash,
+                size_bytes
             FROM core.blobs
             WHERE id = $1::uuid
             "#,
@@ -364,8 +363,9 @@ impl SensdTerminalProcessor {
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        match blob.storage_backend.as_str() {
-            "git-annex" => {
+        // Determine storage backend from annex_backend format
+        match blob.annex_backend.as_str() {
+            backend if backend.starts_with("SHA256") => {
                 let annex_path = std::path::Path::new(".git/annex/objects")
                     .join(&blob.annex_backend[0..2])
                     .join(&blob.annex_backend[2..4])
@@ -379,13 +379,17 @@ impl SensdTerminalProcessor {
                     Err(eyre!("Annex file not found at {:?}", annex_path))
                 }
             }
-            "filesystem" => {
+            _ => {
+                // Try as a filesystem path if not a git-annex key
                 let path = std::path::Path::new(&blob.annex_backend);
-                tokio::fs::read(path)
-                    .await
-                    .map_err(|e| eyre!("Failed to read file: {}", e))
+                if path.exists() {
+                    tokio::fs::read(path)
+                        .await
+                        .map_err(|e| eyre!("Failed to read file: {}", e))
+                } else {
+                    Err(eyre!("Unknown storage backend for: {}", blob.annex_backend))
+                }
             }
-            backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }
     }
 

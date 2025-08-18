@@ -10,7 +10,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use sinex_core::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::{Provenance, RawEvent};
+use sinex_core::{Event, JsonValue, Provenance};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
@@ -45,7 +45,7 @@ impl NatsPublisher {
     }
 
     /// Create optimized headers for an event to reduce string allocations
-    fn create_event_headers(event: &RawEvent) -> HeaderMap {
+    fn create_event_headers(event: &Event<JsonValue>) -> HeaderMap {
         let mut headers = HeaderMap::new();
 
         // Pre-allocate headers
@@ -91,7 +91,7 @@ impl NatsPublisher {
     }
 
     /// Publish a raw event
-    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
+    pub async fn publish_event(&self, event: &Event<JsonValue>) -> Result<PublishAck> {
         let subject = StreamManager::event_subject(&event.source, &event.event_type);
 
         // Create optimized headers
@@ -161,28 +161,6 @@ impl NatsPublisher {
         self.jetstream.publish(subject, payload).await
     }
 
-    /// Publish a metric event
-    pub async fn publish_metric(
-        &self,
-        component: &str,
-        metric_type: &str,
-        value: f64,
-        labels: Option<serde_json::Value>,
-    ) -> Result<PublishAck> {
-        let service_name = ServiceName::from(component);
-        let subject = StreamManager::metrics_subject(&service_name, metric_type);
-
-        let metric = serde_json::json!({
-            "component": component,
-            "type": metric_type,
-            "value": value,
-            "labels": labels.unwrap_or(serde_json::json!({})),
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-
-        self.publish(&subject, &metric).await
-    }
-
     /// Publish an alert
     pub async fn publish_alert(
         &self,
@@ -205,7 +183,10 @@ impl NatsPublisher {
     }
 
     /// Batch publish raw events for improved performance
-    pub async fn publish_events_batch(&self, events: &[RawEvent]) -> Result<Vec<PublishAck>> {
+    pub async fn publish_events_batch(
+        &self,
+        events: &[Event<JsonValue>],
+    ) -> Result<Vec<PublishAck>> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -439,7 +420,10 @@ pub struct BufferedPublisher {
 /// Message queued for buffered publishing
 #[derive(Debug)]
 enum BufferedMessage {
-    Event(RawEvent, tokio::sync::oneshot::Sender<Result<PublishAck>>),
+    Event(
+        Event<JsonValue>,
+        tokio::sync::oneshot::Sender<Result<PublishAck>>,
+    ),
     Message(
         String,
         Bytes,
@@ -466,7 +450,7 @@ impl BufferedPublisher {
     }
 
     /// Publish an event (returns immediately, batching happens in background)
-    pub async fn publish_event(&self, event: RawEvent) -> Result<PublishAck> {
+    pub async fn publish_event(&self, event: Event<JsonValue>) -> Result<PublishAck> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         self.sender
@@ -583,7 +567,7 @@ impl BufferedPublisher {
 
     async fn flush_events(
         publisher: &NatsPublisher,
-        event_batch: &mut Vec<RawEvent>,
+        event_batch: &mut Vec<Event<JsonValue>>,
         pending_responses: &mut Vec<Option<tokio::sync::oneshot::Sender<Result<PublishAck>>>>,
     ) {
         if event_batch.is_empty() {

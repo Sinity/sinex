@@ -121,9 +121,70 @@ pub fn uuid_to_ulid(uuid: SqlxUuid) -> Ulid {
     Ulid::from_uuid(uuid::Uuid::from_bytes(*uuid.as_bytes()))
 }
 
+/// Convert PostgreSQL UUID to ULID with validation (safe conversion function)
+///
+/// This function validates that the UUID follows ULID format constraints before
+/// conversion. Use this when you need to ensure the UUID was originally a valid ULID.
+///
+/// ## Returns
+///
+/// - `Ok(Ulid)` if the UUID follows ULID format
+/// - `Err(String)` if the UUID doesn't follow ULID format constraints
+///
+/// ## Example
+///
+/// ```rust
+/// use sinex_schema::ulid::Ulid;
+/// use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid_safe};
+///
+/// // Valid ULID conversion
+/// let original = Ulid::new();
+/// let db_uuid = ulid_to_uuid(original);
+/// let restored = uuid_to_ulid_safe(db_uuid).unwrap();
+/// assert_eq!(original, restored);
+///
+/// // Invalid UUID would return an error
+/// ```
+pub fn uuid_to_ulid_safe(uuid: SqlxUuid) -> Result<Ulid, String> {
+    let uuid_std = uuid::Uuid::from_bytes(*uuid.as_bytes());
+
+    // Validate ULID format: Check if the timestamp part is reasonable
+    // ULIDs have a 48-bit timestamp (milliseconds since Unix epoch)
+    let bytes = uuid_std.as_bytes();
+
+    // Extract the first 6 bytes (48 bits) as the timestamp
+    let timestamp_bytes = [bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]];
+    let timestamp_ms = u64::from_be_bytes([
+        0,
+        0,
+        timestamp_bytes[0],
+        timestamp_bytes[1],
+        timestamp_bytes[2],
+        timestamp_bytes[3],
+        timestamp_bytes[4],
+        timestamp_bytes[5],
+    ]);
+
+    // Reasonable timestamp range: after 2010 and before year 2100
+    const MIN_TIMESTAMP_MS: u64 = 1262304000000; // 2010-01-01
+    const MAX_TIMESTAMP_MS: u64 = 4102444800000; // 2100-01-01
+
+    if timestamp_ms < MIN_TIMESTAMP_MS || timestamp_ms > MAX_TIMESTAMP_MS {
+        return Err(format!(
+            "UUID timestamp {} is outside valid ULID range ({}-{})",
+            timestamp_ms, MIN_TIMESTAMP_MS, MAX_TIMESTAMP_MS
+        ));
+    }
+
+    Ok(Ulid::from_uuid(uuid_std))
+}
+
 // Shorter aliases for common use
 pub use ulid_to_uuid as to_db;
 pub use uuid_to_ulid as from_db;
+
+// Safe conversion alias
+pub use uuid_to_ulid_safe as from_db_safe;
 
 /// Extension trait for ULID types to provide database conversions
 ///

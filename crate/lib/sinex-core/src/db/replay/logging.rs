@@ -2,7 +2,8 @@
 //!
 //! Provides consistent logging patterns with appropriate levels for different scenarios.
 
-use crate::db::models::event::RawEvent;
+use crate::db::models::event::Event;
+use crate::db::models::JsonValue;
 use crate::types::Id;
 use std::fmt::Display;
 use tracing::{debug, error, info, trace, warn};
@@ -32,7 +33,7 @@ impl ReplayLogger {
     }
 
     /// Trace-level logging for very detailed debugging
-    pub fn trace_event(event_id: &Id<RawEvent>, action: &str) {
+    pub fn trace_event(event_id: &Id<Event<JsonValue>>, action: &str) {
         trace!(event_id = %event_id, action = action, "Processing event");
     }
 
@@ -120,7 +121,11 @@ impl ReplayLogger {
     }
 
     /// Log cascade analysis results
-    pub fn cascade_analysis(root_event: &Id<RawEvent>, depth: usize, affected_events: usize) {
+    pub fn cascade_analysis(
+        root_event: &Id<Event<JsonValue>>,
+        depth: usize,
+        affected_events: usize,
+    ) {
         info!(
             root_event = %root_event,
             depth = depth,

@@ -12,7 +12,6 @@ pub mod process;
 pub mod rpc;
 pub mod shell;
 pub mod system;
-pub mod telemetry;
 pub mod window;
 
 // Re-export all payloads for convenience
@@ -25,5 +24,4 @@ pub use process::*;
 pub use rpc::*;
 pub use shell::*;
 pub use system::*;
-pub use telemetry::*;
 pub use window::*;

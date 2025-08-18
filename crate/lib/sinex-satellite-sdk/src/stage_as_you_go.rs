@@ -55,11 +55,12 @@
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
+use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::events::Event;
+use sinex_core::types::events::{Event as TypedEvent, LogLinePayload};
 use sinex_core::types::{ulid::Ulid, Id};
 use sinex_core::DbPoolExt;
-use sinex_core::RawEvent;
+use sinex_core::JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -116,7 +117,7 @@ impl StageAsYouGoContext {
     /// provenance tracking via the source_material_id field.
     pub async fn emit_event_with_provenance(
         &self,
-        mut event: RawEvent,
+        mut event: Event<JsonValue>,
         source_material_id: Ulid,
         offset_start: Option<i64>,
         offset_end: Option<i64>,
@@ -284,8 +285,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             let offset_end = offset_start + line.len() as i64;
 
             // Create event for this log line
-            use sinex_core::types::events::LogLinePayload;
-            let event: RawEvent = Event::new(LogLinePayload {
+            let typed_event = TypedEvent::new(LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),
@@ -294,7 +294,21 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 offset_end,
                 source_material_id: source_material_id.to_string(),
             })
-            .into();
+            .to_raw();
+
+            // Convert to database event
+            let event = Event::dynamic(
+                typed_event.source,
+                typed_event.event_type,
+                typed_event.payload,
+            )
+            .with_provenance(sinex_core::Provenance::Synthesis {
+                source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                    sinex_core::EventId::from_ulid(Ulid::new()),
+                ),
+                operation_id: None,
+            })
+            .build();
 
             // Emit with provenance
             let event_id = self

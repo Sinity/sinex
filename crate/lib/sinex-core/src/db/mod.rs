@@ -38,10 +38,6 @@ pub use sinex_schema::ulid_conversions::{
 // Re-export SeaQuery ULID helpers
 pub use seaquery_helpers::SeaQueryUlidExt;
 
-// Telemetry module (optional feature)
-#[cfg(feature = "telemetry")]
-pub mod telemetry;
-
 // Re-export repository pattern
 pub use repositories::{
     Checkpoint, DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters,

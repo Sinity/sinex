@@ -250,7 +250,7 @@ pub mod proto {
 // Re-export commonly used types from dependencies
 pub use sinex_core::types::error::SinexError;
 pub use sinex_core::types::ulid::Ulid;
-pub use sinex_core::RawEvent;
+// Just use the actual Event type from sinex_core directly - no confusing aliases!
 
 /// Result type for satellite operations
 pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;
@@ -302,7 +302,7 @@ pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;
 /// use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 ///
 /// // Recoverable processing error
-/// fn process_event(event: &RawEvent) -> SatelliteResult<()> {
+/// fn process_event(event: &Event<JsonValue>) -> SatelliteResult<()> {
 ///     if event.payload.is_null() {
 ///         return Err(SatelliteError::Processing(
 ///             "Event payload cannot be null".to_string()

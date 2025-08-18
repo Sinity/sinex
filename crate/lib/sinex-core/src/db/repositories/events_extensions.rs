@@ -1,8 +1,8 @@
 //! Extensions for EventRepository to add missing query methods
 
+use crate::db::models::{Event, JsonValue};
 use crate::db::repositories::common::{db_error, DbResult, Repository};
 use crate::db::repositories::events::{EventRecordExt, EventRepository};
-use crate::models::RawEvent;
 use crate::types::domain::EventSource;
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
@@ -18,7 +18,7 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 

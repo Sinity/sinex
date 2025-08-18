@@ -14,7 +14,8 @@ use async_nats::jetstream::{
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::RawEvent;
+use sinex_core::db::models::Event;
+use sinex_core::JsonValue;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
@@ -167,7 +168,7 @@ impl NatsConsumer {
     /// Start consuming messages
     pub async fn start<F, Fut>(&mut self, handler: F) -> Result<()>
     where
-        F: Fn(RawEvent, Message) -> Fut + Send + Sync + 'static,
+        F: Fn(Event<JsonValue>, Message) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let consumer = self
@@ -220,7 +221,7 @@ impl NatsConsumer {
                                 .map(|v| v.as_str());
 
                             // Deserialize event
-                            match serde_json::from_slice::<RawEvent>(&msg.payload) {
+                            match serde_json::from_slice::<Event<JsonValue>>(&msg.payload) {
                                 Ok(event) => {
                                     // Process the event
                                     match handler(event, msg.clone()).await {
@@ -297,9 +298,9 @@ impl NatsConsumer {
         &mut self,
         batch_size: usize,
         handler: F,
-    ) -> Result<Vec<RawEvent>>
+    ) -> Result<Vec<Event<JsonValue>>>
     where
-        F: Fn(Vec<RawEvent>) -> Fut,
+        F: Fn(Vec<Event<JsonValue>>) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
         let consumer = self
@@ -322,7 +323,7 @@ impl NatsConsumer {
         while let Some(msg) = messages.next().await {
             match msg {
                 Ok(message) => {
-                    match serde_json::from_slice::<RawEvent>(&message.payload) {
+                    match serde_json::from_slice::<Event<JsonValue>>(&message.payload) {
                         Ok(event) => {
                             events.push(event);
                             jet_messages.push(message);

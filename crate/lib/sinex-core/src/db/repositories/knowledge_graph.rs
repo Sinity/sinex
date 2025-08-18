@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use crate::models::{Entity, EntityRelation, RawEvent};
+use crate::models::{Entity, EntityRelation, Event, JsonValue};
 
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ pub struct EntityRecord {
     pub canonical_name: String,
     pub aliases: Vec<String>,
     pub properties: serde_json::Value,
-    pub source_event_ids: Vec<Id<RawEvent>>,
+    pub source_event_ids: Vec<Id<Event<JsonValue>>>,
     pub confidence_score: f64,
     pub is_merged: bool,
     pub merged_into_id: Option<Id<Entity>>,
@@ -61,7 +61,7 @@ pub struct CreateEntity {
     pub canonical_name: Option<String>,
     pub aliases: Option<Vec<String>>,
     pub properties: Option<serde_json::Value>,
-    pub source_event_ids: Option<Vec<Id<RawEvent>>>,
+    pub source_event_ids: Option<Vec<Id<Event<JsonValue>>>>,
     pub confidence_score: Option<f64>,
 }
 
@@ -193,7 +193,7 @@ impl CreateEntity {
     }
 
     /// Fluent method to set source event IDs
-    pub fn with_source_event_ids(mut self, ids: Vec<Id<RawEvent>>) -> Self {
+    pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
@@ -213,7 +213,7 @@ pub struct EntityRelationRecord {
     pub to_entity_id: Id<Entity>,
     pub relation_type: String,
     pub properties: serde_json::Value,
-    pub source_event_ids: Vec<Id<RawEvent>>,
+    pub source_event_ids: Vec<Id<Event<JsonValue>>>,
     pub confidence_score: f64,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
@@ -227,7 +227,7 @@ pub struct CreateEntityRelation {
     pub to_entity_id: Id<Entity>,
     pub relation_type: String,
     pub properties: Option<serde_json::Value>,
-    pub source_event_ids: Option<Vec<Id<RawEvent>>>,
+    pub source_event_ids: Option<Vec<Id<Event<JsonValue>>>>,
     pub confidence_score: Option<f64>,
     pub is_active: Option<bool>,
 }
@@ -257,7 +257,7 @@ impl CreateEntityRelation {
     }
 
     /// Fluent method to set source event IDs
-    pub fn with_source_event_ids(mut self, ids: Vec<Id<RawEvent>>) -> Self {
+    pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
         self.source_event_ids = Some(ids);
         self
     }
@@ -323,7 +323,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
                 merged_into_id as "merged_into_id: Id<Entity>",
@@ -356,7 +356,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
                 merged_into_id as "merged_into_id: Id<Entity>",
@@ -386,7 +386,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
                 merged_into_id as "merged_into_id: Id<Entity>",
@@ -428,7 +428,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_merged as "is_merged!",
                         merged_into_id as "merged_into_id: Id<Entity>",
@@ -466,7 +466,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_merged as "is_merged!",
                         merged_into_id as "merged_into_id: Id<Entity>",
@@ -520,7 +520,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
                 merged_into_id as "merged_into_id: Id<Entity>",
@@ -616,7 +616,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 to_entity_id as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_active as "is_active!",
                 created_at as "created_at!",
@@ -657,7 +657,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -685,7 +685,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -712,7 +712,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -738,7 +738,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -775,7 +775,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 to_entity_id as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<RawEvent>>",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_active as "is_active!",
                 created_at as "created_at!",

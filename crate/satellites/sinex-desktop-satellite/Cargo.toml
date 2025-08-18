@@ -48,4 +48,4 @@ sqlx = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
-sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = [] }

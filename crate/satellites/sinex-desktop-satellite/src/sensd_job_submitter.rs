@@ -12,6 +12,7 @@ use sqlx::PgPool;
 use tracing::{debug, info};
 
 /// Desktop source types that submit to sensd
+#[derive(Debug, Clone)]
 pub enum DesktopSource {
     Clipboard,
     WindowManager,

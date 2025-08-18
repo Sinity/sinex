@@ -447,7 +447,7 @@ impl IngestService {
                             Err(e) => {
                                 error!("Failed to process outbox: {}", e);
                                 if let Some(ref telemetry) = telemetry {
-                                    telemetry.record_error("nats", "outbox_processing");
+                                    telemetry.record_error("nats_outbox_processing");
                                 }
                                 stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                             }

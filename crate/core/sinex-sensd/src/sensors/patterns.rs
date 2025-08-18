@@ -50,7 +50,7 @@ impl BatchedPullSensor {
 
         // Create ledger entry
         let entry = LedgerEntry {
-            material_id,
+            source_material_id: material_id,
             offset_start: offset,
             offset_end: offset + data.len() as i64,
             ts_capture: Utc::now(),
@@ -140,7 +140,12 @@ impl ReplaceSnapshotSensor {
         // Create new material for this snapshot
         let material_id = self
             .temporal_ledger
-            .create_material("replace_snapshot", source_path, Some("application/json"))
+            .create_material(
+                source_path,
+                "replace_snapshot",
+                Some(source_path),
+                Some("application/json"),
+            )
             .await?;
 
         info!(
@@ -151,7 +156,7 @@ impl ReplaceSnapshotSensor {
 
         // Record the snapshot as a single ledger entry
         let entry = LedgerEntry {
-            material_id,
+            source_material_id: material_id,
             offset_start: 0,
             offset_end: snapshot.len() as i64,
             ts_capture: Utc::now(),
@@ -254,7 +259,12 @@ impl MultiFileSensor {
                 } else {
                     // One-shot material per file
                     self.temporal_ledger
-                        .create_material("multi_file", &file_path.to_string_lossy(), None)
+                        .create_material(
+                            &file_path.to_string_lossy(),
+                            "multi_file",
+                            Some(&file_path.to_string_lossy()),
+                            None,
+                        )
                         .await?
                 };
 
@@ -264,7 +274,7 @@ impl MultiFileSensor {
 
                 // Record ledger entry for this file
                 let entry = LedgerEntry {
-                    material_id,
+                    source_material_id: material_id,
                     offset_start: 0,
                     offset_end: file_size,
                     ts_capture: Utc::now(),

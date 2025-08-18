@@ -45,11 +45,11 @@ use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
-    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
+    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
 use sinex_core::types::{ulid::Ulid, validate_path, Id};
 use sinex_core::DbPoolExt;
-use sinex_core::{Blob, RawEvent};
+use sinex_core::{Blob, Event, JsonValue};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -78,6 +78,23 @@ impl BlobManager {
             db_pool,
             ingest_client,
         })
+    }
+
+    /// Helper to create blob events
+    fn create_blob_event<T: serde::Serialize>(event_type: &str, payload: T) -> Event<JsonValue> {
+        use sinex_core::Provenance;
+        Event::dynamic(
+            "blob-manager",
+            event_type,
+            serde_json::to_value(payload).expect("Payload serialization should not fail"),
+        )
+        .with_provenance(Provenance::Synthesis {
+            source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                sinex_core::EventId::from_ulid(Ulid::new()),
+            ),
+            operation_id: None,
+        })
+        .build()
     }
 
     /// Ingest a file into the blob management system
@@ -111,19 +128,20 @@ impl BlobManager {
             }
 
             // Emit deduplication event via ingestd
-            let event: RawEvent = Event::new(BlobIngestedPayload {
-                blob_id: existing_key.clone(),
-                size_bytes: existing.size_bytes,
-                mime_type: existing.mime_type.clone(),
-                checksum_blake3: blake3_hash,
-                deduplicated: true,
-                original_filename: original_filename
-                    .or(existing.original_filename.as_deref())
-                    .unwrap_or("unknown")
-                    .to_string(),
-            })
-            .with_ts_orig(Some(chrono::Utc::now()))
-            .into();
+            let event = Self::create_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: existing_key.clone(),
+                    size_bytes: existing.size_bytes,
+                    mime_type: existing.mime_type.clone(),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: true,
+                    original_filename: original_filename
+                        .or(existing.original_filename.as_deref())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                },
+            );
 
             let mut client = self.ingest_client.clone();
             client
@@ -169,16 +187,17 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
-        let event: RawEvent = Event::new(BlobIngestedPayload {
-            blob_id: blob_key.clone(),
-            size_bytes,
-            mime_type: Some(mime_type),
-            checksum_blake3: blake3_hash,
-            deduplicated: false,
-            original_filename: filename.to_string(),
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.ingested",
+            BlobIngestedPayload {
+                blob_id: blob_key.clone(),
+                size_bytes,
+                mime_type: Some(mime_type),
+                checksum_blake3: blake3_hash,
+                deduplicated: false,
+                original_filename: filename.to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -215,16 +234,17 @@ impl BlobManager {
             self.add_original_filename(&existing_key, filename).await?;
 
             // Emit deduplication event via ingestd
-            let event: RawEvent = Event::new(BlobIngestedPayload {
-                blob_id: existing_key.clone(),
-                size_bytes: existing.size_bytes,
-                mime_type: existing.mime_type.clone(),
-                checksum_blake3: blake3_hash,
-                deduplicated: true,
-                original_filename: filename.to_string(),
-            })
-            .with_ts_orig(Some(chrono::Utc::now()))
-            .into();
+            let event = Self::create_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: existing_key.clone(),
+                    size_bytes: existing.size_bytes,
+                    mime_type: existing.mime_type.clone(),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: true,
+                    original_filename: filename.to_string(),
+                },
+            );
 
             let mut client = self.ingest_client.clone();
             client
@@ -275,16 +295,17 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
-        let event: RawEvent = Event::new(BlobIngestedPayload {
-            blob_id: blob_key.clone(),
-            size_bytes,
-            mime_type: Some(content_type.to_string()),
-            checksum_blake3: blake3_hash,
-            deduplicated: false,
-            original_filename: filename.to_string(),
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.ingested",
+            BlobIngestedPayload {
+                blob_id: blob_key.clone(),
+                size_bytes,
+                mime_type: Some(content_type.to_string()),
+                checksum_blake3: blake3_hash,
+                deduplicated: false,
+                original_filename: filename.to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -311,13 +332,14 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         // Emit blob retrieved event via ingestd
-        let event: RawEvent = Event::new(BlobRetrievedPayload {
-            blob_id: annex_key.to_string(), // Using annex_key as blob identifier
-            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            cache_hit: true, // git-annex get ensures it's local
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.retrieved",
+            BlobRetrievedPayload {
+                blob_id: annex_key.to_string(), // Using annex_key as blob identifier
+                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                cache_hit: true, // git-annex get ensures it's local
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -337,13 +359,14 @@ impl BlobManager {
         self.annex.get_content(&blob.annex_key()).await?;
 
         // Emit blob retrieved event via ingestd
-        let event: RawEvent = Event::new(BlobRetrievedPayload {
-            blob_id: annex_key.to_string(),
-            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            cache_hit: true, // git-annex get ensures it's local
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.retrieved",
+            BlobRetrievedPayload {
+                blob_id: annex_key.to_string(),
+                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                cache_hit: true, // git-annex get ensures it's local
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -371,13 +394,14 @@ impl BlobManager {
         self.update_verification_status(annex_key, status).await?;
 
         // Emit blob verified event via ingestd
-        let event: RawEvent = Event::new(BlobVerifiedPayload {
-            blob_id: annex_key.to_string(),
-            verification_status: status.to_string(),
-            checksum_matched: is_verified,
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.verified",
+            BlobVerifiedPayload {
+                blob_id: annex_key.to_string(),
+                verification_status: status.to_string(),
+                checksum_matched: is_verified,
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -513,14 +537,15 @@ impl BlobManager {
         let failed_count = stats.failed_verifications;
 
         // Insert metric event via ingestd
-        let new_event: RawEvent = Event::new(StorageStatisticsPayload {
-            total_blobs: blob_count,
-            total_size_bytes: total_size,
-            failed_verifications: failed_count,
-            storage_backend: "git-annex".to_string(),
-        })
-        .with_ts_orig(Some(Utc::now()))
-        .into();
+        let new_event = Self::create_blob_event(
+            "storage.statistics",
+            StorageStatisticsPayload {
+                total_blobs: blob_count,
+                total_size_bytes: total_size,
+                failed_verifications: failed_count,
+                storage_backend: "git-annex".to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client

@@ -41,17 +41,8 @@ use validator::{Validate, ValidationError};
 #[cfg(test)]
 mod config_validation_tests;
 
-/// Material slice from sensd (re-export from sensd crate)
-#[derive(Debug, Clone)]
-pub struct MaterialSlice {
-    pub material_id: Ulid,
-    pub offset_start: i64,
-    pub offset_end: i64,
-    pub ts_capture_start: DateTime<Utc>,
-    pub ts_capture_end: DateTime<Utc>,
-    pub data: Vec<u8>,
-    pub metadata: serde_json::Value,
-}
+// Use shared MaterialSlice from sensd crate
+use sinex_sensd::material_stream::MaterialSlice;
 
 /// Filesystem monitoring configuration for sensd integration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]

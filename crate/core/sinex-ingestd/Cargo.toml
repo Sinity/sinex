@@ -66,7 +66,7 @@ hex.workspace = true
 sd-notify.workspace = true
 
 # Local dependencies
-sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = [] }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 
 [dev-dependencies]

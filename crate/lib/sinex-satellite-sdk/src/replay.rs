@@ -6,16 +6,16 @@ use crate::replay_progress::{ProgressTracker, ReplayPhase};
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_core::db::models::Event;
 use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
-use sinex_core::RawEvent;
+use sinex_core::JsonValue;
 use sinex_core::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 /// Get epoch timestamp as a safe fallback
 fn epoch_timestamp() -> DateTime<Utc> {
-    DateTime::from_timestamp(0, 0)
-        .expect("Failed to create epoch timestamp - this should never fail")
+    DateTime::from_timestamp(0, 0).unwrap_or_else(|| DateTime::<Utc>::MIN_UTC)
 }
 
 /// Replay mode configuration
@@ -193,7 +193,7 @@ impl ReplayManager {
         >,
     ) -> SatelliteResult<ReplayResult>
     where
-        F: FnMut(Vec<RawEvent>) -> Fut,
+        F: FnMut(Vec<Event<JsonValue>>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
     {
         if matches!(self.mode, ReplayMode::Live) {
@@ -246,7 +246,7 @@ impl ReplayManager {
             }
 
             // Fetch events using the query system based on mode
-            let events: Vec<RawEvent> = match &self.mode {
+            let events: Vec<Event<JsonValue>> = match &self.mode {
                 ReplayMode::TimeRange {
                     start_time,
                     end_time,
@@ -327,7 +327,7 @@ impl ReplayManager {
                             })
                             .await?
                             .into_iter()
-                            .filter(|event: &RawEvent| {
+                            .filter(|event: &Event<JsonValue>| {
                                 let type_matches =
                                     event_types.iter().any(|t| t == event.event_type.as_str());
                                 let start_matches = start_time.map_or(true, |start| {
@@ -475,7 +475,7 @@ impl ReplayManager {
     /// Process events in replay mode (backwards compatibility)
     pub async fn replay_events<F, Fut>(&mut self, processor: F) -> SatelliteResult<ReplayResult>
     where
-        F: FnMut(Vec<RawEvent>) -> Fut,
+        F: FnMut(Vec<Event<JsonValue>>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
     {
         self.replay_events_with_progress(
@@ -486,7 +486,7 @@ impl ReplayManager {
     }
 
     /// Apply custom filters to an event
-    fn apply_custom_filters(&self, event: &RawEvent, filters: &ReplayFilters) -> bool {
+    fn apply_custom_filters(&self, event: &Event<JsonValue>, filters: &ReplayFilters) -> bool {
         // Check source patterns (simple wildcard matching)
         if let Some(sources) = &filters.sources {
             let source_matches = sources.iter().any(|pattern| {
@@ -740,7 +740,7 @@ impl AggregatedResults {
     }
 
     /// Add event to aggregation
-    pub fn add_event(&mut self, event: &RawEvent) {
+    pub fn add_event(&mut self, event: &Event<JsonValue>) {
         // Count by type
         *self
             .events_by_type

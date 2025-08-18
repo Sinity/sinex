@@ -218,7 +218,7 @@ impl MaterialRotationManager {
 
             // Finalize old material
             self.temporal_ledger
-                .finalize_material(old_id, "rotated", final_bytes)
+                .finalize_material(old_id, "rotated", Some(final_bytes))
                 .await?;
 
             // Transition to normal state with new material
@@ -290,7 +290,12 @@ impl MaterialRotationManager {
             // Create new material first (zero-gap invariant)
             let new_material_id = self
                 .temporal_ledger
-                .create_material(&self.source_type, &self.source_path, None)
+                .create_material(
+                    &self.source_path,
+                    &self.source_type,
+                    Some(&self.source_path),
+                    None,
+                )
                 .await?;
 
             // Get final bytes
@@ -298,7 +303,7 @@ impl MaterialRotationManager {
 
             // Finalize immediately (no overlap for forced rotation)
             self.temporal_ledger
-                .finalize_material(old_material_id, reason, final_bytes)
+                .finalize_material(old_material_id, reason, Some(final_bytes))
                 .await?;
 
             *state = RotationState::Normal {
@@ -322,7 +327,7 @@ impl MaterialRotationManager {
             let final_bytes = self.get_material_bytes(old_material_id).await?;
 
             self.temporal_ledger
-                .finalize_material(old_material_id, reason, final_bytes)
+                .finalize_material(old_material_id, reason, Some(final_bytes))
                 .await?;
 
             *state = RotationState::Normal {

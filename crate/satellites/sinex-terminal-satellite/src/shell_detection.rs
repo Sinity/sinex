@@ -4,12 +4,14 @@
 //! and its capabilities, extracted from sinex-shell-integration.
 
 use camino::Utf8PathBuf;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, sync::RwLock};
 use tracing::info;
 
 /// Cache for command existence checks to avoid repeated which::which() calls
-static COMMAND_CACHE: RwLock<HashMap<String, bool>> = RwLock::new(HashMap::new());
+static COMMAND_CACHE: Lazy<RwLock<HashMap<String, bool>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Supported shell types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

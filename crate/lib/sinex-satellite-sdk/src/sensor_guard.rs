@@ -110,9 +110,9 @@ pub trait MaterialConsumer {
     /// Process material that sensd has already captured
     async fn process_material_slice(
         &self,
-        material_id: crate::types::Ulid,
+        material_id: sinex_core::types::Ulid,
         slice_data: &[u8],
-    ) -> Result<Vec<crate::types::events::Event>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<sinex_core::Event<JsonValue>>, Box<dyn std::error::Error>>;
     
     /// This method is intentionally missing sensor capabilities
     /// to prevent satellites from capturing directly
@@ -134,9 +134,9 @@ mod tests {
     impl MaterialConsumer for TestSatellite {
         async fn process_material_slice(
             &self,
-            _material_id: crate::types::Ulid,
+            _material_id: sinex_core::types::Ulid,
             _slice_data: &[u8],
-        ) -> Result<Vec<crate::types::events::Event>, Box<dyn std::error::Error>> {
+        ) -> Result<Vec<sinex_core::Event<JsonValue>>, Box<dyn std::error::Error>> {
             // Process already-captured material
             Ok(vec![])
         }

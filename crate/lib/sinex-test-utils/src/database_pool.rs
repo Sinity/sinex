@@ -281,56 +281,94 @@ pub struct DatabaseStats {
     pub checkpoint_count: i64,
 }
 
+/// Cleanup task for background processing
+#[derive(Debug)]
+struct CleanupTask {
+    lock_id: i64,
+    pool: DbPool,
+    slot_name: String,
+}
+
+/// Background cleanup manager to handle resource cleanup safely
+struct CleanupManager {
+    sender: tokio::sync::mpsc::UnboundedSender<CleanupTask>,
+}
+
+impl CleanupManager {
+    fn new() -> Self {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<CleanupTask>();
+
+        // Spawn background cleanup task
+        tokio::spawn(async move {
+            while let Some(task) = receiver.recv().await {
+                Self::process_cleanup_task(task).await;
+            }
+        });
+
+        Self { sender }
+    }
+
+    fn schedule_cleanup(&self, task: CleanupTask) {
+        if let Err(_) = self.sender.send(task) {
+            eprintln!("⚠️  Cleanup manager channel closed, cannot schedule cleanup");
+        }
+    }
+
+    async fn process_cleanup_task(task: CleanupTask) {
+        // Try to release the advisory lock with a timeout
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(task.lock_id)
+                .execute(&task.pool),
+        )
+        .await
+        {
+            Ok(Ok(_)) => eprintln!(
+                "✅ Released advisory lock {} for {}",
+                task.lock_id, task.slot_name
+            ),
+            Ok(Err(e)) => {
+                eprintln!(
+                    "⚠️  Failed to release advisory lock {} for {}: {}",
+                    task.lock_id, task.slot_name, e
+                )
+            }
+            Err(_) => eprintln!(
+                "⚠️  Timeout releasing advisory lock {} for {} (pool may be shutting down)",
+                task.lock_id, task.slot_name
+            ),
+        }
+
+        // Close the pool with a timeout
+        let close_future = task.pool.close();
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(2), close_future).await {
+            eprintln!("⚠️  Timeout closing pool for {}", task.slot_name);
+        }
+    }
+}
+
+/// Global cleanup manager
+static CLEANUP_MANAGER: Lazy<CleanupManager> = Lazy::new(|| CleanupManager::new());
+
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        // Release the PostgreSQL advisory lock
+        // Safe, non-blocking cleanup that doesn't create runtimes
         let lock_id = self.lock_id;
-        let pool_clone = self.pool.clone();
 
         eprintln!(
             "🔓 Releasing database slot: {} (lock_id: {})",
             self.name, lock_id
         );
 
-        // We need to release the advisory lock before closing the pool
-        // Use a blocking task to handle this
-        std::thread::spawn(move || {
-            let rt = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt,
-                Err(e) => {
-                    tracing::error!("Failed to create runtime for cleanup: {}", e);
-                    return;
-                }
-            };
-            rt.block_on(async {
-                // Try to release the advisory lock with a short timeout
-                match tokio::time::timeout(
-                    sinex_core::types::timeouts::DEFAULT_TERMINAL_POLL_INTERVAL,
-                    sqlx::query("SELECT pg_advisory_unlock($1)")
-                        .bind(lock_id)
-                        .execute(&pool_clone),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => eprintln!("✅ Released advisory lock {}", lock_id),
-                    Ok(Err(e)) => {
-                        eprintln!("⚠️  Failed to release advisory lock {}: {}", lock_id, e)
-                    }
-                    Err(_) => eprintln!(
-                        "⚠️  Timeout releasing advisory lock {} (pool shutting down)",
-                        lock_id
-                    ),
-                }
+        // Schedule cleanup via the cleanup manager instead of blocking Drop
+        CLEANUP_MANAGER.schedule_cleanup(CleanupTask {
+            lock_id,
+            pool: self.pool.clone(),
+            slot_name: self.name.clone(),
+        });
 
-                // Then close the pool
-                pool_clone.close().await;
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            });
-        })
-        .join()
-        .unwrap_or_else(|_| eprintln!("⚠️  Cleanup thread panicked"));
-
-        // Clear the pool reference
+        // Clear the pool reference immediately
         let mut pool_opt = self.slot.pool.lock();
         *pool_opt = None;
 
@@ -512,8 +550,8 @@ impl DatabasePool {
                 };
 
                 // Try to acquire an advisory lock for this database
-                // Use a unique lock ID based on the slot index
-                let lock_id = 1000 + slot_index as i64;
+                // Use a compound lock ID: slot_index + process_id for better uniqueness
+                let lock_id = (1000 + slot_index as i64) * 100000 + (pid as i64);
                 let lock_acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
                     .bind(lock_id)
                     .fetch_one(&pool)
@@ -532,7 +570,7 @@ impl DatabasePool {
                 );
 
                 // Store lock info in the slot for cleanup
-                slot.in_use.store(true, Ordering::Release);
+                // Immediately mark as in use to prevent intra-process races\n                slot.in_use.store(true, Ordering::SeqCst);\n\n                // Verify we still hold the lock after setting in_use flag\n                let lock_verified: bool = sqlx::query_scalar(\n                    \"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND pid = pg_backend_pid())\"\n                )\n                .bind(lock_id)\n                .fetch_one(&pool)\n                .await?;\n\n                if !lock_verified {\n                    // We lost the lock somehow, mark as not in use and try next\n                    slot.in_use.store(false, Ordering::SeqCst);\n                    pool.close().await;\n                    eprintln!(\"⚠️  Lock verification failed for slot {}, trying next\", slot.name);\n                    continue;\n                }
                 {
                     let mut pool_opt = slot.pool.lock();
                     *pool_opt = Some(pool.clone());

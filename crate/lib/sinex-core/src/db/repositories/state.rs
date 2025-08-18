@@ -9,10 +9,9 @@ use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
 use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use crate::types::error::SinexError;
-use crate::{Id, RawEvent};
+use crate::{Event, Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
@@ -198,7 +197,7 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
+                last_processed_id as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
                 last_activity,
@@ -231,7 +230,7 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
+                last_processed_id as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
                 last_activity,
@@ -256,7 +255,7 @@ impl<'a> StateRepository<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
+                last_processed_id as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
                 last_activity,
@@ -844,8 +843,8 @@ impl<'a> StateRepository<'a> {
         event_type: &str,
         host: &str,
         payload: JsonValue,
-    ) -> DbResult<Id<RawEvent>> {
-        let id = Id::<crate::models::RawEvent>::new();
+    ) -> DbResult<Id<Event<JsonValue>>> {
+        let id = Id::<crate::db::models::Event<JsonValue>>::new();
 
         sqlx::query!(
             r#"
@@ -1022,7 +1021,7 @@ impl<'a> StateRepositoryTx<'a> {
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: Id<RawEvent>",
+                last_processed_id as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
                 last_activity,
@@ -1165,7 +1164,7 @@ mod tests {
         let repo = &ctx.pool.state();
 
         // Create a checkpoint
-        let id = Id::<crate::models::RawEvent>::new();
+        let id = Id::<crate::db::models::Event<JsonValue>>::new();
         let checkpoint = CheckpointInput {
             processor_name: "test-processor".into(),
             consumer_group: None,
@@ -1179,7 +1178,7 @@ mod tests {
         assert_eq!(saved.processed_count, 1);
 
         // Update the checkpoint
-        let new_id = Id::<crate::models::RawEvent>::new();
+        let new_id = Id::<crate::db::models::Event<JsonValue>>::new();
         let update = CheckpointInput::new("test-processor")
             .with_last_processed_id(new_id.clone())
             .with_checkpoint_data(serde_json::json!({ "batch_size": 200 }));
