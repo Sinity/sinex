@@ -112,7 +112,7 @@ pub trait MaterialConsumer {
         &self,
         material_id: sinex_core::types::Ulid,
         slice_data: &[u8],
-    ) -> Result<Vec<sinex_core::Event<JsonValue>>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<sinex_core::db::models::Event<JsonValue>>, Box<dyn std::error::Error>>;
     
     /// This method is intentionally missing sensor capabilities
     /// to prevent satellites from capturing directly
@@ -136,7 +136,7 @@ mod tests {
             &self,
             _material_id: sinex_core::types::Ulid,
             _slice_data: &[u8],
-        ) -> Result<Vec<sinex_core::Event<JsonValue>>, Box<dyn std::error::Error>> {
+        ) -> Result<Vec<sinex_core::db::models::Event<JsonValue>>, Box<dyn std::error::Error>> {
             // Process already-captured material
             Ok(vec![])
         }

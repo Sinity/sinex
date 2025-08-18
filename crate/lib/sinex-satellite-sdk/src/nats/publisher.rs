@@ -10,7 +10,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use sinex_core::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::{Event, JsonValue, Provenance};
+use sinex_core::{db::models::Event, JsonValue, Provenance};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
