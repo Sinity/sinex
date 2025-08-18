@@ -45,11 +45,11 @@ use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
-    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
+    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
 use sinex_core::types::{ulid::Ulid, validate_path, Id};
 use sinex_core::DbPoolExt;
-use sinex_core::{Blob, RawEvent};
+use sinex_core::{Blob, Event, JsonValue};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -80,6 +80,23 @@ impl BlobManager {
         })
     }
 
+    /// Helper to create blob events
+    fn create_blob_event<T: serde::Serialize>(event_type: &str, payload: T) -> Event<JsonValue> {
+        use sinex_core::Provenance;
+        Event::dynamic(
+            "blob-manager",
+            event_type,
+            serde_json::to_value(payload).expect("Payload serialization should not fail"),
+        )
+        .with_provenance(Provenance::Synthesis {
+            source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                sinex_core::EventId::from_ulid(Ulid::new()),
+            ),
+            operation_id: None,
+        })
+        .build()
+    }
+
     /// Ingest a file into the blob management system
     pub async fn ingest_file(
         &self,
@@ -99,31 +116,32 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_id = existing
-                .id
-                .as_ref()
-                .map(|id| *id.as_ulid())
-                .unwrap_or_else(|| Ulid::new());
-            info!("File already exists in blob store with ID: {}", existing_id);
+            let existing_key = existing.annex_key().clone();
+            info!(
+                "File already exists in blob store with key: {}",
+                existing_key
+            );
 
             // Update original_filenames array if this is a new filename
             if let Some(filename) = original_filename {
-                self.add_original_filename(&existing_id, filename).await?;
+                self.add_original_filename(&existing_key, filename).await?;
             }
 
             // Emit deduplication event via ingestd
-            let event: RawEvent = Event::new(BlobIngestedPayload {
-                blob_id: existing_id.to_string(),
-                size_bytes: existing.size_bytes,
-                mime_type: existing.mime_type.clone(),
-                checksum_blake3: blake3_hash,
-                deduplicated: true,
-                original_filename: original_filename
-                    .unwrap_or(&existing.original_filename)
-                    .to_string(),
-            })
-            .with_ts_orig(Some(chrono::Utc::now()))
-            .into();
+            let event = Self::create_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: existing_key.clone(),
+                    size_bytes: existing.size_bytes,
+                    mime_type: existing.mime_type.clone(),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: true,
+                    original_filename: original_filename
+                        .or(existing.original_filename.as_deref())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                },
+            );
 
             let mut client = self.ingest_client.clone();
             client
@@ -151,36 +169,35 @@ impl BlobManager {
         let filename =
             original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
 
+        // Parse the annex key to get backend and hash
+        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
+            .ok_or_else(|| eyre!("Invalid annex key format"))?;
+
         let blob = Blob::builder()
-            .annex_key(annex_key.key.clone())
+            .annex_backend(backend)
+            .content_hash(annex_key.hash.clone())
             .original_filename(filename.to_string())
             .size_bytes(size_bytes)
             .mime_type(mime_type.clone())
-            .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
-            .storage_backend("git-annex".to_string())
-            .verification_status("verified".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_id = blob_metadata
-            .id
-            .as_ref()
-            .map(|id| *id.as_ulid())
-            .unwrap_or_else(Ulid::new);
-        info!("Successfully ingested blob: {}", blob_id);
+        let blob_key = blob_metadata.annex_key().clone();
+        info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
-        let event: RawEvent = Event::new(BlobIngestedPayload {
-            blob_id: blob_id.to_string(),
-            size_bytes,
-            mime_type: Some(mime_type),
-            checksum_blake3: blake3_hash,
-            deduplicated: false,
-            original_filename: filename.to_string(),
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.ingested",
+            BlobIngestedPayload {
+                blob_id: blob_key.clone(),
+                size_bytes,
+                mime_type: Some(mime_type),
+                checksum_blake3: blake3_hash,
+                deduplicated: false,
+                original_filename: filename.to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -207,30 +224,27 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_id = existing
-                .id
-                .as_ref()
-                .map(|id| *id.as_ulid())
-                .unwrap_or_else(|| Ulid::new());
+            let existing_key = existing.annex_key().clone();
             info!(
-                "Content already exists in blob store with ID: {}",
-                existing_id
+                "Content already exists in blob store with key: {}",
+                existing_key
             );
 
             // Update original_filenames array if this is a new filename
-            self.add_original_filename(&existing_id, filename).await?;
+            self.add_original_filename(&existing_key, filename).await?;
 
             // Emit deduplication event via ingestd
-            let event: RawEvent = Event::new(BlobIngestedPayload {
-                blob_id: existing_id.to_string(),
-                size_bytes: existing.size_bytes,
-                mime_type: existing.mime_type.clone(),
-                checksum_blake3: blake3_hash,
-                deduplicated: true,
-                original_filename: filename.to_string(),
-            })
-            .with_ts_orig(Some(chrono::Utc::now()))
-            .into();
+            let event = Self::create_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: existing_key.clone(),
+                    size_bytes: existing.size_bytes,
+                    mime_type: existing.mime_type.clone(),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: true,
+                    original_filename: filename.to_string(),
+                },
+            );
 
             let mut client = self.ingest_client.clone();
             client
@@ -263,36 +277,35 @@ impl BlobManager {
         // Create blob record in database
         let size_bytes = content.len() as i64;
 
+        // Parse the annex key to get backend and hash
+        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
+            .ok_or_else(|| eyre!("Invalid annex key format"))?;
+
         let blob = Blob::builder()
-            .annex_key(annex_key.key.clone())
+            .annex_backend(backend)
+            .content_hash(annex_key.hash.clone())
             .original_filename(filename.to_string())
             .size_bytes(size_bytes)
             .mime_type(content_type.to_string())
-            .checksum_sha256(annex_key.hash.clone())
             .checksum_blake3(blake3_hash.clone())
-            .storage_backend("git-annex".to_string())
-            .verification_status("verified".to_string())
             .build();
 
         let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_id = blob_metadata
-            .id
-            .as_ref()
-            .map(|id| *id.as_ulid())
-            .unwrap_or_else(Ulid::new);
-        info!("Successfully ingested blob: {}", blob_id);
+        let blob_key = blob_metadata.annex_key().clone();
+        info!("Successfully ingested blob: {}", blob_key);
 
         // Emit blob ingested event via ingestd
-        let event: RawEvent = Event::new(BlobIngestedPayload {
-            blob_id: blob_id.to_string(),
-            size_bytes,
-            mime_type: Some(content_type.to_string()),
-            checksum_blake3: blake3_hash,
-            deduplicated: false,
-            original_filename: filename.to_string(),
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.ingested",
+            BlobIngestedPayload {
+                blob_id: blob_key.clone(),
+                size_bytes,
+                mime_type: Some(content_type.to_string()),
+                checksum_blake3: blake3_hash,
+                deduplicated: false,
+                original_filename: filename.to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -319,13 +332,14 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         // Emit blob retrieved event via ingestd
-        let event: RawEvent = Event::new(BlobRetrievedPayload {
-            blob_id: annex_key.to_string(), // Using annex_key as blob identifier
-            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            cache_hit: true, // git-annex get ensures it's local
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.retrieved",
+            BlobRetrievedPayload {
+                blob_id: annex_key.to_string(), // Using annex_key as blob identifier
+                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                cache_hit: true, // git-annex get ensures it's local
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -337,21 +351,22 @@ impl BlobManager {
     }
 
     /// Retrieve a blob's content path
-    pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<Utf8PathBuf> {
+    pub async fn get_blob_path(&self, annex_key: &str) -> Result<Utf8PathBuf> {
         let start = Instant::now();
-        let blob = self.get_blob_metadata(blob_id).await?;
+        let blob = self.get_blob_metadata(annex_key).await?;
 
         // Ensure content is available locally
-        self.annex.get_content(&blob.annex_key).await?;
+        self.annex.get_content(&blob.annex_key()).await?;
 
         // Emit blob retrieved event via ingestd
-        let event: RawEvent = Event::new(BlobRetrievedPayload {
-            blob_id: blob_id.to_string(),
-            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            cache_hit: true, // git-annex get ensures it's local
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.retrieved",
+            BlobRetrievedPayload {
+                blob_id: annex_key.to_string(),
+                retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                cache_hit: true, // git-annex get ensures it's local
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -360,13 +375,13 @@ impl BlobManager {
             .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
 
         // Find the symlink path in the repository
-        self.find_symlink_path(&blob.annex_key).await
+        self.find_symlink_path(&blob.annex_key()).await
     }
 
     /// Verify blob integrity
-    pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
+    pub async fn verify_blob(&self, annex_key: &str) -> Result<bool> {
         let _start = Instant::now();
-        let _blob = self.get_blob_metadata(blob_id).await?;
+        let _blob = self.get_blob_metadata(annex_key).await?;
 
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;
@@ -376,16 +391,17 @@ impl BlobManager {
 
         // Update verification status in database
         let status = if is_verified { "verified" } else { "corrupted" };
-        self.update_verification_status(blob_id, status).await?;
+        self.update_verification_status(annex_key, status).await?;
 
         // Emit blob verified event via ingestd
-        let event: RawEvent = Event::new(BlobVerifiedPayload {
-            blob_id: blob_id.to_string(),
-            verification_status: status.to_string(),
-            checksum_matched: is_verified,
-        })
-        .with_ts_orig(Some(chrono::Utc::now()))
-        .into();
+        let event = Self::create_blob_event(
+            "blob.verified",
+            BlobVerifiedPayload {
+                blob_id: annex_key.to_string(),
+                verification_status: status.to_string(),
+                checksum_matched: is_verified,
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client
@@ -414,36 +430,46 @@ impl BlobManager {
             .wrap_err("Failed to insert blob")
     }
 
-    /// Get blob metadata by ID
-    pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<Blob> {
-        let blob_id = Id::<Blob>::from_ulid(*blob_id);
+    /// Get blob metadata by annex key
+    pub async fn get_blob_metadata(&self, annex_key: &str) -> Result<Blob> {
+        // Parse the annex key to get backend, size and filename
+        let (backend, size, _) =
+            Blob::parse_annex_key(annex_key).ok_or_else(|| eyre!("Invalid annex key format"))?;
+
+        // Extract the hash from the annex key (between backend and size)
+        // Format: BACKEND-sSize--filename, we need the hash part
+        let hash = annex_key
+            .split("-s")
+            .next()
+            .and_then(|s| s.split('-').last())
+            .ok_or_else(|| eyre!("Could not extract hash from annex key"))?;
 
         self.db_pool
             .blobs()
-            .get_by_id(blob_id.clone())
+            .get_by_content(&backend, hash, size)
             .await
             .wrap_err("Failed to get blob metadata")?
-            .ok_or_else(|| eyre!("Blob not found with ID: {}", blob_id))
+            .ok_or_else(|| eyre!("Blob not found with key: {}", annex_key))
     }
 
     /// Update verification status
-    async fn update_verification_status(&self, blob_id: &Ulid, status: &str) -> Result<()> {
-        let blob_id = Id::<Blob>::from_ulid(*blob_id);
-
+    async fn update_verification_status(&self, annex_key: &str, status: &str) -> Result<()> {
+        // First get the blob to get its ID
+        let blob = self.get_blob_metadata(annex_key).await?;
         self.db_pool
             .blobs()
-            .update_verification_status(blob_id, status)
+            .update_verification_status(blob.id, status)
             .await
             .wrap_err("Failed to update verification status")
     }
 
     /// Add original filename to existing blob
-    async fn add_original_filename(&self, blob_id: &Ulid, filename: &str) -> Result<()> {
-        let blob_id = Id::<Blob>::from_ulid(*blob_id);
-
+    async fn add_original_filename(&self, annex_key: &str, filename: &str) -> Result<()> {
+        // First get the blob to get its ID
+        let blob = self.get_blob_metadata(annex_key).await?;
         self.db_pool
             .blobs()
-            .add_original_filename(blob_id, filename)
+            .add_original_filename(blob.id, filename)
             .await
             .wrap_err("Failed to add original filename")
     }
@@ -508,17 +534,18 @@ impl BlobManager {
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;
-        let failed_count = 0; // TODO: Add failed_verifications field to StorageStats if needed
+        let failed_count = stats.failed_verifications;
 
         // Insert metric event via ingestd
-        let new_event: RawEvent = Event::new(StorageStatisticsPayload {
-            total_blobs: blob_count,
-            total_size_bytes: total_size,
-            failed_verifications: failed_count,
-            storage_backend: "git-annex".to_string(),
-        })
-        .with_ts_orig(Some(Utc::now()))
-        .into();
+        let new_event = Self::create_blob_event(
+            "storage.statistics",
+            StorageStatisticsPayload {
+                total_blobs: blob_count,
+                total_size_bytes: total_size,
+                failed_verifications: failed_count,
+                storage_backend: "git-annex".to_string(),
+            },
+        );
 
         let mut client = self.ingest_client.clone();
         client

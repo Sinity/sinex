@@ -143,15 +143,21 @@ impl DbusWatcher {
             .max_delay(Duration::from_secs(30))
             .take(5);
 
-        Retry::spawn(retry_strategy, || async {
-            match Self::monitor_bus_inner(bus_type, &tx, &config).await {
-                Ok(()) => {
-                    warn!("D-Bus {} bus monitoring ended normally", bus_type);
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("D-Bus {} bus monitoring failed: {}", bus_type, e);
-                    Err(e)
+        let tx_clone = tx.clone();
+        let config_clone = config.clone();
+        Retry::spawn(retry_strategy, move || {
+            let tx = tx_clone.clone();
+            let config = config_clone.clone();
+            async move {
+                match Self::monitor_bus_inner(bus_type, &tx, &config).await {
+                    Ok(()) => {
+                        warn!("D-Bus {} bus monitoring ended normally", bus_type);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("D-Bus {} bus monitoring failed: {}", bus_type, e);
+                        Err(e)
+                    }
                 }
             }
         })

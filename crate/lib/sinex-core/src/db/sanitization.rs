@@ -1,4 +1,4 @@
-use crate::models::RawEvent;
+use crate::models::{Event, JsonValue};
 use crate::security::{SecurityError, SecurityValidator};
 use crate::types::domain::EventSource;
 use color_eyre::eyre::Result;
@@ -9,9 +9,64 @@ use std::borrow::Cow;
 pub struct EventSanitizer;
 
 impl EventSanitizer {
+    /// Sanitize any event type before storage, modifying content to prevent security issues
+    /// while preserving the original attack data for security analysis
+    pub fn sanitize_event_generic<T>(event: &mut Event<T>) -> Result<bool>
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let mut was_modified = false;
+
+        // Sanitize the source field (where attacks come through in tests)
+        match SecurityValidator::sanitize_path(event.source.as_str()) {
+            Ok(Cow::Owned(sanitized)) => {
+                if sanitized != event.source.as_str() {
+                    event.source = EventSource::new(sanitized);
+                    was_modified = true;
+                }
+            }
+            Ok(Cow::Borrowed(_)) => {
+                // No change needed
+            }
+            Err(SecurityError::PathTraversal(_)) => {
+                // For path traversal, sanitize by removing dangerous sequences
+                event.source =
+                    EventSource::new(Self::sanitize_path_traversal(event.source.as_str()));
+                was_modified = true;
+            }
+            Err(SecurityError::NullByteInjection) => {
+                // Remove null bytes
+                event.source = EventSource::new(event.source.as_str().replace('\0', ""));
+                was_modified = true;
+            }
+            Err(_) => {
+                // Other security errors - sanitize conservatively
+                event.source =
+                    EventSource::new(Self::sanitize_string_conservative(event.source.as_str()));
+                was_modified = true;
+            }
+        }
+
+        // Sanitize payload content by converting to JSON, sanitizing, and back
+        let mut payload_json = serde_json::to_value(&event.payload)
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to serialize payload: {}", e))?;
+
+        if Self::sanitize_json_payload(&mut payload_json)? {
+            // Convert back to the original type
+            event.payload = serde_json::from_value(payload_json).map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to deserialize sanitized payload: {}", e)
+            })?;
+            was_modified = true;
+        }
+
+        Ok(was_modified)
+    }
+
     /// Sanitize an event before storage, modifying content to prevent security issues
     /// while preserving the original attack data for security analysis
-    pub fn sanitize_event(event: &mut RawEvent) -> Result<bool> {
+    ///
+    /// This is a specialized version for JsonValue events that's more efficient
+    pub fn sanitize_event(event: &mut Event<JsonValue>) -> Result<bool> {
         let mut was_modified = false;
 
         // Sanitize the source field (where attacks come through in tests)
@@ -139,7 +194,7 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::RawEvent;
+    use crate::models::{Event, JsonValue};
     use crate::types::domain::EventType;
     use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
@@ -148,7 +203,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("../../../etc/passwd"),
             EventType::new("security.test"),
             json!({"path": "../../sensitive/file.txt"}),
@@ -169,7 +224,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("test\0source"),
             EventType::new("security.test"),
             json!({"data": "test\0value"}),
@@ -185,7 +240,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = Event::<JsonValue>::schemaless(
             EventSource::new("security.test"),
             EventType::new("sql.injection"),
             json!({"query": "'; DROP TABLE events; --"}),
@@ -196,9 +251,53 @@ mod tests {
 
         // SQL injection should be preserved in payload as it's just string data
         assert_eq!(
-            event.payload.get("query").unwrap().as_str().unwrap(),
+            event
+                .payload
+                .get("query")
+                .expect("test setup should include query field")
+                .as_str()
+                .expect("query field should be a string"),
             "'; DROP TABLE events; --"
         );
+        Ok(())
+    }
+
+    /// Add a test to verify the generic sanitizer works with typed events
+    #[sinex_test]
+    async fn test_generic_sanitizer_with_typed_event(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
+        use crate::types::events::payloads::filesystem::FileCreatedPayload;
+        use crate::types::SanitizedPath;
+
+        // Create a typed event with potentially malicious content
+        let payload = FileCreatedPayload {
+            path: SanitizedPath::from("../../../malicious/file.txt".to_string()),
+            size: 1024,
+            modified_at: chrono::Utc::now(),
+            permissions: Some(0o644),
+        };
+
+        let mut event = Event::dynamic(
+            EventSource::new("../malicious-source"),
+            EventType::new("file.created"),
+            payload,
+        )
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
+
+        let was_modified = EventSanitizer::sanitize_event_generic(&mut event).unwrap();
+        assert!(was_modified);
+
+        // Source should be sanitized
+        assert!(!event.source.as_str().contains(".."));
+        assert!(!event.source.as_str().contains("malicious"));
+
         Ok(())
     }
 }

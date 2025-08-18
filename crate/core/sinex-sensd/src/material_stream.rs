@@ -84,13 +84,13 @@ impl MaterialSliceStream {
         let slices = sqlx::query!(
             r#"
             SELECT 
-                material_id as "material_id: Ulid",
+                source_material_id as "material_id: Ulid",
                 offset_start,
                 offset_end,
                 ts_capture,
                 note
             FROM raw.temporal_ledger
-            WHERE material_id = $1::ulid
+            WHERE source_material_id = $1::ulid
             AND offset_start >= $2
             ORDER BY offset_start
             LIMIT $3
@@ -156,10 +156,9 @@ impl MaterialSliceStream {
         let material = sqlx::query!(
             r#"
             SELECT 
-                data,
                 optional_blob_id as "optional_blob_id: Ulid"
             FROM raw.source_material_registry
-            WHERE blob_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             material_id as Ulid
         )
@@ -167,17 +166,7 @@ impl MaterialSliceStream {
         .await?
         .ok_or_else(|| eyre!("Material not found: {}", material_id))?;
 
-        if let Some(inline_data) = material.data {
-            // Extract slice from inline data
-            let start = offset_start as usize;
-            let end = offset_end as usize;
-
-            if start <= inline_data.len() && end <= inline_data.len() && start <= end {
-                return Ok(inline_data[start..end].to_vec());
-            } else {
-                return Ok(vec![]); // Return empty if slice is out of bounds
-            }
-        } else if let Some(blob_id) = material.optional_blob_id {
+        if let Some(blob_id) = material.optional_blob_id {
             // Load from external blob storage
             match self.load_blob_data(blob_id).await {
                 Ok(blob_data) => {
@@ -201,7 +190,8 @@ impl MaterialSliceStream {
                 }
             }
         } else {
-            // No data available
+            // No blob associated with this material
+            error!("Material {} has no associated blob", material_id);
             Ok(vec![])
         }
     }
@@ -217,9 +207,9 @@ impl MaterialSliceStream {
                 checksum_sha256,
                 storage_backend
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid
             "#,
-            blob_id as Ulid,
+            sinex_core::ulid_to_uuid(blob_id),
         )
         .fetch_optional(&self.db_pool)
         .await?
@@ -249,8 +239,17 @@ impl MaterialSliceStream {
                     .map_err(|e| eyre!("Failed to read file: {}", e))
             }
             "s3" => {
-                // S3 support would go here
-                Err(eyre!("S3 storage backend not yet implemented"))
+                // S3 support requires additional dependencies (AWS SDK)
+                // To implement S3 support:
+                // 1. Add aws-sdk-s3 to Cargo.toml dependencies
+                // 2. Implement S3Client initialization with credentials
+                // 3. Use blob.annex_key as S3 object key to retrieve data
+                Err(eyre!(
+                    "S3 storage backend not implemented. Blob {} uses S3 storage \
+                     but S3 support requires AWS SDK dependencies and configuration. \
+                     Consider using git-annex or filesystem storage backends instead.",
+                    blob_id
+                ))
             }
             backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }

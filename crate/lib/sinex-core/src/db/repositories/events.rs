@@ -1,14 +1,14 @@
 use crate::db::schema::Events;
-use crate::models::{Provenance, RawEvent, SourceMaterial};
-use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use crate::models::{Event, JsonValue, Provenance};
+use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
-use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
+use crate::types::domain::{EventSource, EventType, SchemaVersion};
+use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
-use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
 
@@ -33,12 +33,12 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 
 // Extension methods for EventRecord from sinex-migrations
 pub(crate) trait EventRecordExt {
-    fn to_event(self) -> RawEvent;
+    fn to_event(self) -> Event<JsonValue>;
 }
 
 impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
-    fn to_event(self) -> RawEvent {
+    fn to_event(self) -> Event<JsonValue> {
         use crate::db::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
 
         // Reconstruct provenance from separate fields
@@ -47,67 +47,68 @@ impl EventRecordExt for EventRecord {
             self.source_material_id,
             self.anchor_byte,
         ) {
-            (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
-                source_event_ids: event_ids
+            (Some(event_ids), None, _) if !event_ids.is_empty() => {
+                let ids: Vec<EventId> = event_ids
                     .into_iter()
-                    .map(|uuid| EventId::from(uuid_to_ulid(uuid)))
-                    .collect(),
-                operation_id: None,
-            },
+                    .map(|ulid| EventId::from_ulid(ulid))
+                    .collect();
+                Provenance::Synthesis {
+                    source_event_ids: NonEmptyVec::from_vec(ids)
+                        .expect("already checked non-empty"),
+                    operation_id: None,
+                }
+            }
             (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
-                id: Id::<SourceMaterial>::from(uuid_to_ulid(material_id)),
+                id: Id::<SourceMaterial>::from_ulid(material_id),
                 anchor_byte,
-                offset_start: self.source_material_offset_start,
-                offset_end: self.source_material_offset_end,
+                offset_start: self.offset_start,
+                offset_end: self.offset_end,
                 offset_kind: OffsetKind::default(),
             },
             _ => {
-                // Default to empty synthesis if no provenance (shouldn't happen in production)
-                Provenance::Synthesis {
-                    source_event_ids: vec![],
-                    operation_id: None,
+                // Default to material provenance with placeholder values if no provenance
+                // (shouldn't happen in production, but needed for type safety)
+                Provenance::Material {
+                    id: Id::<SourceMaterial>::new(),
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::default(),
                 }
             }
         };
 
-        let associated_blob_ids = self
-            .associated_blob_ids
-            .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
-
-        RawEvent {
-            id: Some(EventId::from_uuid(self.id)),
+        Event::<JsonValue> {
+            id: Some(EventId::from_ulid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
             payload: self.payload,
-            ts_orig: self.ts_orig,
+            ts_orig: Some(self.ts_orig),
             ingestor_version: self.ingestor_version,
-            payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
+            payload_schema_id: self.payload_schema_id,
             provenance,
-            associated_blob_ids,
+            associated_blob_ids: None,
         }
     }
 }
 
 /// Extract provenance fields from domain Event for database storage
 fn extract_provenance(
-    event: &RawEvent,
+    event: &Event<JsonValue>,
 ) -> (
-    Option<Vec<uuid::Uuid>>, // source_event_ids
-    Option<uuid::Uuid>,      // source_material_id
-    Option<i64>,             // source_material_offset_start
-    Option<i64>,             // source_material_offset_end
-    Option<i64>,             // anchor_byte
+    Option<Vec<sinex_schema::ulid::Ulid>>, // source_event_ids
+    Option<sinex_schema::ulid::Ulid>,      // source_material_id
+    Option<i64>,                           // offset_start
+    Option<i64>,                           // offset_end
+    Option<i64>,                           // anchor_byte
 ) {
     match &event.provenance {
         Provenance::Synthesis {
             source_event_ids, ..
         } => {
-            let uuids = source_event_ids
-                .iter()
-                .map(|id| ulid_to_uuid(*id.as_ulid()))
-                .collect();
-            (Some(uuids), None, None, None, None)
+            let ulids = source_event_ids.iter().map(|id| *id.as_ulid()).collect();
+            (Some(ulids), None, None, None, None)
         }
         Provenance::Material {
             id,
@@ -117,7 +118,7 @@ fn extract_provenance(
             ..
         } => (
             None,
-            Some(ulid_to_uuid(*id.as_ulid())),
+            Some(*id.as_ulid()),
             *offset_start,
             *offset_end,
             Some(*anchor_byte),
@@ -129,36 +130,31 @@ fn extract_provenance(
 #[derive(Debug, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Id<EventPayloadSchema>,
-    pub schema_name: SchemaName,
+    pub source: String,
+    pub event_type: String,
     pub schema_version: SchemaVersion,
     pub schema_content: JsonValue,
+    pub content_hash: String,
     pub is_active: bool,
-    pub event_types: Vec<String>,
-    pub description: Option<String>,
-    pub examples: Option<JsonValue>,
-    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub deprecated_at: Option<DateTime<Utc>>,
-    pub deprecation_reason: Option<String>,
 }
 
 /// New schema input structure
 #[derive(Debug)]
 pub struct NewSchema {
-    pub schema_name: SchemaName,
+    pub source: String,
+    pub event_type: String,
     pub schema_version: SchemaVersion,
     pub schema_content: JsonValue,
+    pub content_hash: String,
     pub is_active: bool,
-    pub event_types: Vec<String>,
-    pub description: Option<String>,
-    pub examples: Option<JsonValue>,
 }
 
 /// Event annotation record
 #[derive(Debug, FromRow)]
 pub struct EventAnnotation {
     pub id: Id<EventAnnotation>,
-    pub event_id: Id<RawEvent>,
+    pub event_id: Id<Event<JsonValue>>,
     pub annotation_type: String,
     pub content: String,
     pub metadata: JsonValue,
@@ -170,7 +166,7 @@ pub struct EventAnnotation {
 /// Invalid payload event record
 #[derive(Debug)]
 pub struct InvalidPayloadEvent {
-    pub event_id: Id<RawEvent>,
+    pub event_id: Id<Event<JsonValue>>,
     pub source: String,
     pub event_type: String,
     pub ts_ingest: DateTime<Utc>,
@@ -180,8 +176,8 @@ pub struct InvalidPayloadEvent {
 /// Batch violation record
 #[derive(Debug, FromRow)]
 pub struct BatchViolation {
-    pub event_id: Option<Id<RawEvent>>,
-    pub prev_event_id: Option<Id<RawEvent>>,
+    pub event_id: Option<Id<Event<JsonValue>>>,
+    pub prev_event_id: Option<Id<Event<JsonValue>>>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub prev_ts_orig: Option<DateTime<Utc>>,
     pub source: String,
@@ -191,7 +187,7 @@ pub struct BatchViolation {
 /// Suspicious event record  
 #[derive(Debug, FromRow)]
 pub struct SuspiciousEvent {
-    pub event_id: Id<RawEvent>,
+    pub event_id: Id<Event<JsonValue>>,
     pub source: String,
     pub event_type: String,
     pub payload: JsonValue,
@@ -202,7 +198,7 @@ pub struct SuspiciousEvent {
 /// Invalid timestamp record
 #[derive(Debug)]
 pub struct InvalidTimestamp {
-    pub event_id: Id<RawEvent>,
+    pub event_id: Id<Event<JsonValue>>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub ts_ingest: DateTime<Utc>,
 }
@@ -232,22 +228,24 @@ pub struct EventTypeCount {
 
 impl<'a> EventRepository<'a> {
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
-    pub async fn insert(&self, mut event: RawEvent) -> DbResult<RawEvent> {
-        let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
+    pub async fn insert(&self, mut event: Event<JsonValue>) -> DbResult<Event<JsonValue>> {
+        let id = event
+            .id
+            .get_or_insert_with(Id::<Event<JsonValue>>::new)
+            .clone();
 
         // Extract provenance into separate fields for database
-        let (
-            source_event_ids,
-            source_material_id,
-            source_material_offset_start,
-            source_material_offset_end,
-            anchor_byte,
-        ) = extract_provenance(&event);
+        let (source_event_ids, source_material_id, offset_start, offset_end, anchor_byte) =
+            extract_provenance(&event);
 
-        let associated_blob_ids = event
+        // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+        let source_event_uuids = source_event_ids
+            .as_ref()
+            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+        let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
         let record = sqlx::query_as!(
             EventRecord,
@@ -255,51 +253,46 @@ impl<'a> EventRepository<'a> {
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
-                source_material_id, source_material_offset_start, source_material_offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                source_material_id, offset_start, offset_end,
+                anchor_byte, associated_blob_ids
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5,
-                $6, $7, $8::uuid, $9::uuid[],
-                $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16
+                $1::uuid::ulid, $2, $3, $4, $5,
+                $6, $7, $8::uuid::ulid, $9::uuid[]::ulid[],
+                $10::uuid::ulid, $11, $12,
+                $13, $14::uuid[]::ulid[]
             )
             RETURNING 
-                id::uuid as "id!",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
                 ts_orig,
                 host as "host!",
                 ingestor_version,
-                payload_schema_id::uuid as payload_schema_id,
+                payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as source_event_ids,
-                source_material_id::uuid as source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                offset_start,
+                offset_end,
+                offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
             "#,
-            id.to_uuid(),
+            id.as_ulid().as_uuid(),
             event.source.as_str(),
             event.event_type.as_str(),
             event.host.as_str(),
             event.payload,
             event.ts_orig,
             event.ingestor_version,
-            event.payload_schema_id.map(ulid_to_uuid),
-            source_event_ids.as_deref(),
-            source_material_id,
-            source_material_offset_start,
-            source_material_offset_end,
+            event.payload_schema_id.map(|id| id.as_uuid()),
+            source_event_uuids.as_deref(),
+            source_material_id.map(|id| id.as_uuid()),
+            offset_start,
+            offset_end,
             anchor_byte,
-            associated_blob_ids.as_deref(),
-            None::<String>, // payload_schema_name
-            None::<String>  // payload_schema_version
+            associated_blob_uuids.as_deref()
         )
         .fetch_one(self.pool)
         .await
@@ -309,7 +302,7 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self), fields(event_id = %id))]
-    pub async fn get_by_id(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
+    pub async fn get_by_id(&self, id: Id<Event<JsonValue>>) -> DbResult<Option<Event<JsonValue>>> {
         let record = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -324,12 +317,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE id = $1
             "#,
@@ -353,7 +344,7 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self), fields(limit = limit))]
-    pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<RawEvent>> {
+    pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<Event<JsonValue>>> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -368,12 +359,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             ORDER BY ts_ingest DESC
             LIMIT $1
@@ -393,7 +382,7 @@ impl<'a> EventRepository<'a> {
         source: &EventSource,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -411,12 +400,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE source = $1
             ORDER BY ts_ingest DESC
@@ -439,7 +426,7 @@ impl<'a> EventRepository<'a> {
         event_type: &EventType,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -457,12 +444,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE event_type = $1
             ORDER BY ts_ingest DESC
@@ -512,7 +497,7 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -531,12 +516,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE ts_ingest >= $1 AND ts_ingest <= $2
             ORDER BY ts_ingest DESC
@@ -583,7 +566,7 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
 
         let records = sqlx::query_as::<_, EventRecord>(
@@ -600,12 +583,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
             ORDER BY ts_ingest DESC
@@ -628,7 +609,7 @@ impl<'a> EventRepository<'a> {
         source: &EventSource,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -643,12 +624,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE source = $1 
               AND event_type = 'process.heartbeat'
@@ -668,7 +647,7 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
-    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<RawEvent>> {
+    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event<JsonValue>>> {
         use crate::db::schema::Events;
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
@@ -677,87 +656,79 @@ impl<'a> EventRepository<'a> {
 
         // Build dynamic query with SeaQuery
         let mut query = Query::select()
+            .column((Alias::new("core"), Alias::new("events"), Alias::new("id")))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ID),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("source"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("event_type"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_TYPE),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("ts_ingest"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_INGEST),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("ts_orig"),
+            ))
+            .column((Alias::new("core"), Alias::new("events"), Alias::new("host")))
+            .column((
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("ingestor_version"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_ORIG),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("payload_schema_id"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::HOST),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("payload"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::INGESTOR_VERSION),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("source_event_ids"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD_SCHEMA_ID),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("source_material_id"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("offset_start"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_EVENT_IDS),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("offset_end"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_ID),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("anchor_byte"),
             ))
             .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_START),
+                Alias::new("core"),
+                Alias::new("events"),
+                Alias::new("associated_blob_ids"),
             ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE_MATERIAL_OFFSET_END),
-            ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ANCHOR_BYTE),
-            ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::ASSOCIATED_BLOB_IDS),
-            ))
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from((Alias::new("core"), Alias::new("events")))
             .order_by(
                 (
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("ts_ingest"),
                 ),
                 sea_query::Order::Desc,
             )
@@ -769,9 +740,9 @@ impl<'a> EventRepository<'a> {
         if let Some(source) = &filters.source {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::SOURCE),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("source"),
                 ))
                 .eq(source.as_str()),
             );
@@ -780,9 +751,9 @@ impl<'a> EventRepository<'a> {
         if let Some(event_type) = &filters.event_type {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_TYPE),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("event_type"),
                 ))
                 .eq(event_type.as_str()),
             );
@@ -790,21 +761,17 @@ impl<'a> EventRepository<'a> {
 
         if let Some(host) = &filters.host {
             query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::HOST),
-                ))
-                .eq(host.as_str()),
+                Expr::col((Alias::new("core"), Alias::new("events"), Alias::new("host")))
+                    .eq(host.as_str()),
             );
         }
 
         if let Some(after) = &filters.after {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("ts_ingest"),
                 ))
                 .gte(after.clone()),
             );
@@ -813,15 +780,30 @@ impl<'a> EventRepository<'a> {
         if let Some(before) = &filters.before {
             query.and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("ts_ingest"),
                 ))
                 .lte(before.clone()),
             );
         }
 
-        // TODO: Add payload_contains filter using JSONB operators and GIN indexes
+        // Add payload_contains filter using JSONB containment operator (@>)
+        if let Some(payload_filter) = &filters.payload_contains {
+            query.and_where(
+                Expr::col((
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("payload"),
+                ))
+                // Use PostgreSQL JSONB containment operator @>
+                // This leverages GIN indexes for fast JSONB queries
+                .binary(
+                    sea_query::BinOper::Custom("@>"),
+                    Expr::value(payload_filter.clone()),
+                ),
+            );
+        }
 
         let (sql, _values) = query.build(PostgresQueryBuilder);
 
@@ -850,34 +832,34 @@ impl<'a> EventRepository<'a> {
                 Func::cust(Alias::new("time_bucket"))
                     .arg(Expr::val(interval))
                     .arg(Expr::col((
-                        Alias::new(Events::SCHEMA),
-                        Alias::new(Events::TABLE),
-                        Alias::new(Events::TS_INGEST),
+                        Alias::new("core"),
+                        Alias::new("events"),
+                        Alias::new("ts_ingest"),
                     ))),
                 Alias::new("bucket"),
             )
             .expr_as(
                 Func::count(Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::ID),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("id"),
                 ))),
                 Alias::new("count"),
             )
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from((Alias::new("core"), Alias::new("events")))
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("ts_ingest"),
                 ))
                 .gte(start),
             )
             .and_where(
                 Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
+                    Alias::new("core"),
+                    Alias::new("events"),
+                    Alias::new("ts_ingest"),
                 ))
                 .lte(end),
             )
@@ -897,23 +879,25 @@ impl<'a> EventRepository<'a> {
     pub async fn insert_with_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        mut event: RawEvent,
-    ) -> DbResult<RawEvent> {
-        let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
+        mut event: Event<JsonValue>,
+    ) -> DbResult<Event<JsonValue>> {
+        let id = event
+            .id
+            .get_or_insert_with(Id::<Event<JsonValue>>::new)
+            .clone();
 
         // Extract provenance into separate fields for database
-        let (
-            source_event_ids,
-            source_material_id,
-            source_material_offset_start,
-            source_material_offset_end,
-            anchor_byte,
-        ) = extract_provenance(&event);
+        let (source_event_ids, source_material_id, offset_start, offset_end, anchor_byte) =
+            extract_provenance(&event);
 
-        let associated_blob_ids = event
+        // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+        let source_event_uuids = source_event_ids
+            .as_ref()
+            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+        let associated_blob_uuids = event
             .associated_blob_ids
             .as_ref()
-            .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
+            .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
         let record = sqlx::query_as!(
             EventRecord,
@@ -921,51 +905,46 @@ impl<'a> EventRepository<'a> {
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
-                source_material_id, source_material_offset_start, source_material_offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                source_material_id, offset_start, offset_end,
+                anchor_byte, associated_blob_ids
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5,
-                $6, $7, $8::uuid, $9::uuid[],
-                $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16
+                $1::uuid::ulid, $2, $3, $4, $5,
+                $6, $7, $8::uuid::ulid, $9::uuid[]::ulid[],
+                $10::uuid::ulid, $11, $12,
+                $13, $14::uuid[]::ulid[]
             )
             RETURNING 
-                id::uuid as "id!",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
                 ts_orig,
                 host as "host!",
                 ingestor_version,
-                payload_schema_id::uuid as payload_schema_id,
+                payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
                 payload as "payload!",
-                source_event_ids::uuid[] as source_event_ids,
-                source_material_id::uuid as source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                source_event_ids::uuid[] as "source_event_ids: Vec<sinex_schema::ulid::Ulid>",
+                source_material_id::uuid as "source_material_id: sinex_schema::ulid::Ulid",
+                offset_start,
+                offset_end,
+                offset_kind,
                 anchor_byte,
-                associated_blob_ids::uuid[] as associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
+                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<sinex_schema::ulid::Ulid>"
             "#,
-            id.to_uuid(),
+            id.as_ulid().as_uuid(),
             event.source.as_str(),
             event.event_type.as_str(),
             event.host.as_str(),
             event.payload,
             event.ts_orig,
             event.ingestor_version,
-            event.payload_schema_id.map(ulid_to_uuid),
-            source_event_ids.as_deref(),
-            source_material_id,
-            source_material_offset_start,
-            source_material_offset_end,
+            event.payload_schema_id.map(|id| id.as_uuid()),
+            source_event_uuids.as_deref(),
+            source_material_id.map(|id| id.as_uuid()),
+            offset_start,
+            offset_end,
             anchor_byte,
-            associated_blob_ids.as_deref(),
-            None::<String>, // payload_schema_name
-            None::<String>  // payload_schema_version
+            associated_blob_uuids.as_deref()
         )
         .fetch_one(&mut **tx)
         .await
@@ -975,7 +954,10 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self, events), fields(batch_size = events.len()))]
-    pub async fn insert_batch(&self, events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
+    pub async fn insert_batch(
+        &self,
+        events: Vec<Event<JsonValue>>,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -1023,7 +1005,10 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Optimized batch insert with transaction batching for better performance
-    async fn insert_batch_unnest(&self, mut events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
+    async fn insert_batch_unnest(
+        &self,
+        mut events: Vec<Event<JsonValue>>,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -1048,7 +1033,7 @@ impl<'a> EventRepository<'a> {
         // Ensure all events have IDs
         for event in &mut events {
             if event.id.is_none() {
-                event.id = Some(Id::<RawEvent>::new());
+                event.id = Some(Id::<Event<JsonValue>>::new());
             }
         }
 
@@ -1058,46 +1043,47 @@ impl<'a> EventRepository<'a> {
             let event_id = event.id.as_ref().unwrap();
 
             // Extract provenance
-            let (source_event_ids, source_material_id, offset_start, offset_end) =
+            let (source_event_ids, source_material_id, offset_start, offset_end, anchor_byte) =
                 extract_provenance(event);
 
-            let associated_blob_ids = event
+            // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+            let source_event_uuids = source_event_ids
+                .as_ref()
+                .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
+            let associated_blob_uuids = event
                 .associated_blob_ids
                 .as_ref()
-                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
+                .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
             sqlx::query!(
                 r#"
                 INSERT INTO core.events (
                     id, source, event_type, host, payload,
                     ts_orig, ingestor_version, payload_schema_id, source_event_ids,
-                    source_material_id, source_material_offset_start, source_material_offset_end,
-                    anchor_byte, associated_blob_ids,
-                    payload_schema_name, payload_schema_version
+                    source_material_id, offset_start, offset_end,
+                    anchor_byte, associated_blob_ids
                 )
                 VALUES (
-                    $1::uuid, $2, $3, $4, $5,
-                    $6, $7, $8::uuid, $9::uuid[],
-                    $10::uuid, $11, $12,
-                    $13, $14::uuid[], $15, $16
+                    $1::uuid::ulid, $2, $3, $4, $5,
+                    $6, $7, $8::uuid::ulid, $9::uuid[]::ulid[],
+                    $10::uuid::ulid, $11, $12,
+                    $13, $14::uuid[]::ulid[]
                 )
                 "#,
-                ulid_to_uuid(*event_id.as_ulid()),
+                event_id.as_ulid().as_uuid(),
                 event.source.as_str(),
                 event.event_type.as_str(),
                 event.host.as_str(),
                 event.payload,
                 event.ts_orig,
                 event.ingestor_version,
-                event.payload_schema_id.map(ulid_to_uuid),
-                source_event_ids.as_deref(),
-                source_material_id,
+                event.payload_schema_id.map(|id| id.as_uuid()),
+                source_event_uuids.as_deref(),
+                source_material_id.map(|id| id.as_uuid()),
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids.as_deref(),
-                None::<String>, // payload_schema_name
-                None::<String>  // payload_schema_version
+                associated_blob_uuids.as_deref()
             )
             .execute(&mut *tx)
             .await
@@ -1111,461 +1097,12 @@ impl<'a> EventRepository<'a> {
         Ok(events)
     }
 
-    // ===== Schema Management Methods =====
-
-    /// Register a new event payload schema
-    pub async fn register_schema(&self, schema: NewSchema) -> DbResult<EventPayloadSchema> {
-        let id = Id::<EventPayloadSchema>::new();
-
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            INSERT INTO sinex_schemas.event_payload_schemas (
-                id, schema_name, schema_version, schema_content,
-                is_active, event_types, description, examples
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
-            )
-            RETURNING 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            "#,
-            *id.as_ulid() as _,
-            schema.schema_name.as_str(),
-            schema.schema_version.as_str(),
-            schema.schema_content,
-            schema.is_active,
-            &schema
-                .event_types
-                .iter()
-                .map(|et| et.as_str().to_string())
-                .collect::<Vec<_>>()[..],
-            schema.description,
-            schema.examples
-        )
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "register schema"))
-    }
-
-    /// Get schema by ID
-    pub async fn get_schema_by_id(
-        &self,
-        id: Id<EventPayloadSchema>,
-    ) -> DbResult<Option<EventPayloadSchema>> {
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            SELECT 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE id = $1
-            "#,
-            *id.as_ulid() as _
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get schema by id"))
-    }
-
-    /// Get active schema for a specific event type
-    pub async fn get_schema_for_event_type(
-        &self,
-        event_type: &EventType,
-    ) -> DbResult<Option<EventPayloadSchema>> {
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            SELECT 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE $1 = ANY(event_types) 
-              AND is_active = true
-            ORDER BY created_at DESC
-            LIMIT 1
-            "#,
-            event_type.as_str()
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get schema for event type"))
-    }
-
-    /// Get schema by name and version
-    pub async fn get_schema_by_name_and_version(
-        &self,
-        schema_name: &SchemaName,
-        schema_version: &SchemaVersion,
-    ) -> DbResult<Option<EventPayloadSchema>> {
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            SELECT 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE schema_name = $1 
-              AND schema_version = $2
-            "#,
-            schema_name.as_str(),
-            schema_version.as_str()
-        )
-        .fetch_optional(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get schema by name and version"))
-    }
-
-    /// Set schema active status
-    pub async fn set_schema_active_status(
-        &self,
-        id: Id<EventPayloadSchema>,
-        is_active: bool,
-    ) -> DbResult<bool> {
-        // Start transaction to ensure atomicity of event emission and state change
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin schema status update transaction"))?;
-
-        // Get current schema details for event emission
-        let schema_details = sqlx::query!(
-            "SELECT schema_name, schema_version, is_active FROM sinex_schemas.event_payload_schemas WHERE id = $1",
-            *id.as_ulid() as _
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "get schema details for status update"))?;
-
-        if let Some(schema) = schema_details {
-            // Emit schema status change intent event BEFORE state change
-            let schema_status_intent_event = RawEvent::system_event(
-                EventSource::new("sinex.schema.lifecycle".to_string()),
-                EventType::new("schema.status_change_intent".to_string()),
-                serde_json::json!({
-                    "schema_id": id.as_ulid().to_string(),
-                    "schema_name": schema.schema_name,
-                    "schema_version": schema.schema_version,
-                    "current_status": schema.is_active,
-                    "new_status": is_active,
-                    "change_type": if is_active { "activate" } else { "deactivate" }
-                }),
-            )
-            .with_host(HostName::new("sinex.schema".to_string()));
-
-            self.insert_with_tx(&mut tx, schema_status_intent_event)
-                .await?;
-
-            // Perform the status update
-            let result = sqlx::query!(
-                "UPDATE sinex_schemas.event_payload_schemas SET is_active = $2, updated_at = NOW() WHERE id = $1",
-                *id.as_ulid() as _,
-                is_active
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "set schema active status"))?;
-
-            let rows_affected = result.rows_affected() > 0;
-
-            if rows_affected {
-                // Emit schema status changed confirmation event after successful update
-                let schema_status_changed_event = RawEvent::system_event(
-                    EventSource::new("sinex.schema.lifecycle".to_string()),
-                    EventType::new("schema.status_changed".to_string()),
-                    serde_json::json!({
-                        "schema_id": id.as_ulid().to_string(),
-                        "schema_name": schema.schema_name,
-                        "schema_version": schema.schema_version,
-                        "previous_status": schema.is_active,
-                        "new_status": is_active,
-                        "change_type": if is_active { "activate" } else { "deactivate" }
-                    }),
-                )
-                .with_host(HostName::new("sinex.schema".to_string()));
-
-                self.insert_with_tx(&mut tx, schema_status_changed_event)
-                    .await?;
-            }
-
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "commit schema status update transaction"))?;
-
-            Ok(rows_affected)
-        } else {
-            tx.rollback().await.ok();
-            Ok(false)
-        }
-    }
-
-    /// Deprecate a schema with reason
-    pub async fn deprecate_schema(
-        &self,
-        id: Id<EventPayloadSchema>,
-        deprecation_reason: &str,
-    ) -> DbResult<bool> {
-        // Start transaction to ensure atomicity of event emission and state change
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin schema deprecation transaction"))?;
-
-        // Get current schema details for event emission
-        let schema_details = sqlx::query!(
-            "SELECT schema_name, schema_version, is_active, deprecated_at FROM sinex_schemas.event_payload_schemas WHERE id = $1",
-            *id.as_ulid() as _
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "get schema details for deprecation"))?;
-
-        if let Some(schema) = schema_details {
-            // Emit schema deprecation intent event BEFORE state change
-            let schema_deprecation_intent_event = RawEvent::system_event(
-                EventSource::new("sinex.schema.lifecycle".to_string()),
-                EventType::new("schema.deprecation_intent".to_string()),
-                serde_json::json!({
-                    "schema_id": id.as_ulid().to_string(),
-                    "schema_name": schema.schema_name,
-                    "schema_version": schema.schema_version,
-                    "current_status": schema.is_active,
-                    "already_deprecated": schema.deprecated_at.is_some(),
-                    "deprecation_reason": deprecation_reason
-                }),
-            )
-            .with_host(HostName::new("sinex.schema".to_string()));
-
-            self.insert_with_tx(&mut tx, schema_deprecation_intent_event)
-                .await?;
-
-            // Perform the deprecation
-            let result = sqlx::query!(
-                r#"
-                UPDATE sinex_schemas.event_payload_schemas 
-                SET 
-                    is_active = false,
-                    deprecated_at = NOW(),
-                    deprecation_reason = $2,
-                    updated_at = NOW()
-                WHERE id = $1
-                "#,
-                *id.as_ulid() as _,
-                deprecation_reason
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "deprecate schema"))?;
-
-            let rows_affected = result.rows_affected() > 0;
-
-            if rows_affected {
-                // Emit schema deprecated confirmation event after successful deprecation
-                let schema_deprecated_event = RawEvent::system_event(
-                    EventSource::new("sinex.schema.lifecycle".to_string()),
-                    EventType::new("schema.deprecated".to_string()),
-                    serde_json::json!({
-                        "schema_id": id.as_ulid().to_string(),
-                        "schema_name": schema.schema_name,
-                        "schema_version": schema.schema_version,
-                        "previous_status": schema.is_active,
-                        "was_already_deprecated": schema.deprecated_at.is_some(),
-                        "deprecation_reason": deprecation_reason
-                    }),
-                )
-                .with_host(HostName::new("sinex.schema".to_string()));
-
-                self.insert_with_tx(&mut tx, schema_deprecated_event)
-                    .await?;
-            }
-
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "commit schema deprecation transaction"))?;
-
-            Ok(rows_affected)
-        } else {
-            tx.rollback().await.ok();
-            Ok(false)
-        }
-    }
-
-    /// List schemas with optional filters
-    pub async fn list_schemas(
-        &self,
-        schema_name: Option<&SchemaName>,
-        event_type: Option<&EventType>,
-        is_active: Option<bool>,
-        limit: Option<i64>,
-    ) -> DbResult<Vec<EventPayloadSchema>> {
-        let limit = limit.unwrap_or(100);
-
-        // For simplicity, using a basic query. A more sophisticated implementation
-        // would build the query dynamically based on which filters are provided
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            SELECT 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE 
-                ($2::text IS NULL OR schema_name = $2) AND
-                ($3::text IS NULL OR $3 = ANY(event_types)) AND
-                ($4::boolean IS NULL OR is_active = $4)
-            ORDER BY created_at DESC
-            LIMIT $1
-            "#,
-            limit,
-            schema_name.map(|n| n.as_str()),
-            event_type.map(|t| t.as_str()),
-            is_active
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "list schemas"))
-    }
-
-    /// Get all versions of a schema
-    pub async fn get_schema_versions(
-        &self,
-        schema_name: &SchemaName,
-    ) -> DbResult<Vec<EventPayloadSchema>> {
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            SELECT 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE schema_name = $1
-            ORDER BY created_at DESC
-            "#,
-            schema_name.as_str()
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get schema versions"))
-    }
-
-    /// Register schema within a transaction
-    pub async fn register_schema_with_tx(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        schema: NewSchema,
-    ) -> DbResult<EventPayloadSchema> {
-        let id = Id::<EventPayloadSchema>::new();
-
-        sqlx::query_as!(
-            EventPayloadSchema,
-            r#"
-            INSERT INTO sinex_schemas.event_payload_schemas (
-                id, schema_name, schema_version, schema_content,
-                is_active, event_types, description, examples
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
-            )
-            RETURNING 
-                id as "id: Id<EventPayloadSchema>",
-                schema_name as "schema_name!: SchemaName",
-                schema_version as "schema_version!: SchemaVersion",
-                schema_content as "schema_content!",
-                is_active as "is_active!",
-                event_types as "event_types!",
-                description,
-                examples,
-                created_at as "created_at!",
-                updated_at as "updated_at!",
-                deprecated_at,
-                deprecation_reason
-            "#,
-            *id.as_ulid() as _,
-            schema.schema_name.as_str(),
-            schema.schema_version.as_str(),
-            schema.schema_content,
-            schema.is_active,
-            &schema
-                .event_types
-                .iter()
-                .map(|et| et.as_str().to_string())
-                .collect::<Vec<_>>()[..],
-            schema.description,
-            schema.examples
-        )
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|e| db_error(e, "register schema with tx"))
-    }
-
     // ========== Event Annotations ==========
 
     /// Add an annotation to an event
     pub async fn add_annotation(
         &self,
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         annotation_type: &str,
         content: &str,
         metadata: serde_json::Value,
@@ -1583,7 +1120,7 @@ impl<'a> EventRepository<'a> {
             )
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1604,13 +1141,16 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Get annotations for an event
-    pub async fn get_annotations(&self, id: Id<RawEvent>) -> DbResult<Vec<EventAnnotation>> {
+    pub async fn get_annotations(
+        &self,
+        id: Id<Event<JsonValue>>,
+    ) -> DbResult<Vec<EventAnnotation>> {
         sqlx::query_as!(
             EventAnnotation,
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1641,7 +1181,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1675,7 +1215,7 @@ impl<'a> EventRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1728,7 +1268,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1775,7 +1315,7 @@ impl<'a> EventRepository<'a> {
         .map(|rows| {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
-                    event_id: Id::<RawEvent>::from_uuid(row.id),
+                    event_id: Id::<Event<JsonValue>>::from_uuid(row.id),
                     source: row.source,
                     event_type: row.event_type,
                     ts_ingest: row.ts_ingest,
@@ -1789,7 +1329,14 @@ impl<'a> EventRepository<'a> {
     pub async fn find_timestamp_regressions(
         &self,
         limit: i64,
-    ) -> DbResult<Vec<(Id<RawEvent>, Id<RawEvent>, DateTime<Utc>, DateTime<Utc>)>> {
+    ) -> DbResult<
+        Vec<(
+            Id<Event<JsonValue>>,
+            Id<Event<JsonValue>>,
+            DateTime<Utc>,
+            DateTime<Utc>,
+        )>,
+    > {
         let rows = sqlx::query!(
             r#"
             WITH ordered_events AS (
@@ -1820,8 +1367,8 @@ impl<'a> EventRepository<'a> {
             .into_iter()
             .map(|r| {
                 (
-                    Id::<RawEvent>::from_uuid(r.id),
-                    Id::<RawEvent>::from_uuid(r.prev_id),
+                    Id::<Event<JsonValue>>::from_uuid(r.id),
+                    Id::<Event<JsonValue>>::from_uuid(r.prev_id),
                     r.ts_orig,
                     r.prev_ts,
                 )
@@ -1854,8 +1401,8 @@ impl<'a> EventRepository<'a> {
                 LIMIT 10000
             )
             SELECT 
-                id as "event_id?: Id<RawEvent>",
-                prev_event_id as "prev_event_id?: Id<RawEvent>",
+                id as "event_id?: Id<Event<JsonValue>>",
+                prev_event_id as "prev_event_id?: Id<Event<JsonValue>>",
                 ts_orig,
                 prev_ts_orig,
                 source,
@@ -1885,7 +1432,7 @@ impl<'a> EventRepository<'a> {
             SuspiciousEvent,
             r#"
             SELECT 
-                id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<Event<JsonValue>>",
                 source as "source!",
                 event_type as "event_type!",
                 payload as "payload!",
@@ -1918,7 +1465,7 @@ impl<'a> EventRepository<'a> {
             InvalidTimestamp,
             r#"
             SELECT 
-                id as "event_id: Id<RawEvent>", 
+                id as "event_id: Id<Event<JsonValue>>", 
                 ts_orig, 
                 ts_ingest as "ts_ingest!"
             FROM core.events
@@ -1944,26 +1491,34 @@ impl<'a> EventRepository<'a> {
         source: &str,
         event_type: &str,
         payload: serde_json::Value,
-    ) -> DbResult<RawEvent> {
-        let event = RawEvent::system_event(
+    ) -> DbResult<Event<JsonValue>> {
+        use crate::models::SourceMaterial;
+
+        // Use proper material provenance for test events
+        let test_material_id = crate::types::Id::<SourceMaterial>::new();
+        let event = Event::dynamic(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
         )
-        .with_host(HostName::new("test-host".to_string()));
+        .with_provenance(Provenance::from_material(test_material_id, 0, None, None))
+        .build();
 
         self.insert(event).await
     }
 
     /// Get a test event by ID
-    pub async fn get_test_event(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
+    pub async fn get_test_event(
+        &self,
+        id: Id<Event<JsonValue>>,
+    ) -> DbResult<Option<Event<JsonValue>>> {
         self.get_by_id(id).await
     }
 
     /// Update test event payload
     pub async fn update_test_event(
         &self,
-        id: Id<RawEvent>,
+        id: Id<Event<JsonValue>>,
         payload: serde_json::Value,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
@@ -1983,7 +1538,7 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Delete a test event (hard delete for test cleanup)
-    pub async fn delete_test_event(&self, id: Id<RawEvent>) -> DbResult<bool> {
+    pub async fn delete_test_event(&self, id: Id<Event<JsonValue>>) -> DbResult<bool> {
         let result = sqlx::query!("DELETE FROM core.events WHERE id = $1", *id.as_ulid() as _)
             .execute(self.pool)
             .await
@@ -2018,18 +1573,103 @@ impl<'a> EventRepository<'a> {
         .await
     }
 
-    /// Cleanup events with audit context (soft delete) - TODO: Implement properly
+    /// Cleanup events with audit context (proper deletion with audit trail)
     pub async fn cleanup_test_events_with_context(
         &self,
         source: Option<&EventSource>,
         event_type: Option<&EventType>,
-        _deleted_by: &str,
-        _deletion_reason: &str,
+        deleted_by: &str,
+        deletion_reason: &str,
     ) -> DbResult<u64> {
-        // Simplified implementation - just return 0 for now
-        // TODO: Implement proper soft delete with audit trail
-        let _ = (source, event_type);
-        Ok(0)
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate a unique operation ID for audit tracking
+        let operation_id = format!(
+            "cleanup_{}_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            rand::random::<u32>()
+        );
+
+        // Begin transaction and set audit context
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin cleanup transaction"))?;
+
+        // Set session variables for audit trail
+        sqlx::query("SET LOCAL sinex.operation_id = $1")
+            .bind(&operation_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set operation_id"))?;
+
+        sqlx::query("SET LOCAL sinex.archived_by = $1")
+            .bind(deleted_by)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set archived_by"))?;
+
+        sqlx::query("SET LOCAL sinex.archive_reason = $1")
+            .bind(deletion_reason)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set archive_reason"))?;
+
+        // Build dynamic DELETE query based on filters
+        let mut query_parts = vec!["DELETE FROM core.events WHERE 1=1".to_string()];
+        let mut bind_index = 1;
+
+        if let Some(source) = source {
+            query_parts.push(format!(" AND source = ${}", bind_index));
+            bind_index += 1;
+        }
+
+        if let Some(event_type) = event_type {
+            query_parts.push(format!(" AND event_type = ${}", bind_index));
+            bind_index += 1;
+        }
+
+        // Add safety constraint to only delete test events
+        query_parts.push(" AND (source LIKE '%test%' OR event_type LIKE '%test%' OR payload @> '{\"test\": true}' OR host LIKE '%test%')".to_string());
+
+        let query_sql = query_parts.join("");
+
+        // Execute the deletion query
+        let mut query = sqlx::query(&query_sql);
+
+        if let Some(source) = source {
+            query = query.bind(source.as_str());
+        }
+
+        if let Some(event_type) = event_type {
+            query = query.bind(event_type.as_str());
+        }
+
+        let result = query
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "delete test events"))?;
+
+        let deleted_count = result.rows_affected();
+
+        // Commit the transaction
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit cleanup transaction"))?;
+
+        tracing::info!(
+            operation_id = %operation_id,
+            deleted_by = %deleted_by,
+            deletion_reason = %deletion_reason,
+            deleted_count = %deleted_count,
+            "Cleaned up test events with audit trail"
+        );
+
+        Ok(deleted_count)
     }
 
     // ========== Analytics Queries ==========
@@ -2295,7 +1935,10 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Get events by multiple IDs efficiently (prevents N+1 queries)
-    pub async fn get_by_ids(&self, ids: &[Id<RawEvent>]) -> DbResult<Vec<RawEvent>> {
+    pub async fn get_by_ids(
+        &self,
+        ids: &[Id<Event<JsonValue>>],
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -2316,12 +1959,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM core.events 
             WHERE id = ANY($1::uuid[])
             ORDER BY ts_ingest DESC
@@ -2340,7 +1981,7 @@ impl<'a> EventRepository<'a> {
         &self,
         sources: &[EventSource],
         limit_per_source: i64,
-    ) -> DbResult<Vec<RawEvent>> {
+    ) -> DbResult<Vec<Event<JsonValue>>> {
         if sources.is_empty() {
             return Ok(Vec::new());
         }
@@ -2361,12 +2002,10 @@ impl<'a> EventRepository<'a> {
                 payload,
                 source_event_ids,
                 source_material_id,
-                source_material_offset_start,
-                source_material_offset_end,
+                offset_start,
+                offset_end,
                 anchor_byte,
                 associated_blob_ids,
-                payload_schema_name,
-                payload_schema_version
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY source ORDER BY ts_ingest DESC) as rn
@@ -2401,15 +2040,23 @@ mod tests {
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
-        // Create an event
-        let event = crate::models::RawEvent::test_event(
+        // Create an event using the new dynamic pattern
+        let event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("test.event"),
             json!({"test": "data"}),
         )
-        .with_host(HostName::new("test-host"));
+        .with_host(HostName::new("test-host"))
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
-        // Insert using repository pattern with EventRecord
+        // TEST-ONLY: Direct repository access bypasses single-writer invariant
+        // In production, all events MUST go through ingestd service
         let inserted = pool.events().insert(event).await?;
 
         // Verify the event was inserted with correct data
@@ -2429,34 +2076,46 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::RawEvent::test_event(
+        let source_event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("source.event"),
             json!({"original": true}),
         )
-        .with_host(HostName::new("test-host"));
+        .with_host(HostName::new("test-host"))
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
+        // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let source = pool.events().insert(source_event).await?;
         let source_id = source.id.unwrap();
 
-        // Create derived event with provenance
-        let derived_event = crate::models::RawEvent::test_event(
+        // Create derived event with provenance using the builder pattern
+        let derived_event = Event::dynamic(
             EventSource::new("test.processor"),
             EventType::new("derived.event"),
             json!({"derived": true}),
         )
         .with_host(HostName::new("test-host"))
-        .with_provenance(crate::models::Provenance::Events(vec![source_id.clone()]));
+        .with_provenance(Provenance::from_synthesis(vec![source_id.clone()]).unwrap())
+        .build();
 
+        // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let inserted = pool.events().insert(derived_event).await?;
 
         // Verify provenance was preserved through EventRecord
-        match inserted.provenance {
-            Some(crate::models::Provenance::Events(ids)) => {
-                assert_eq!(ids.len(), 1);
-                assert_eq!(ids[0], source_id);
+        match &inserted.provenance {
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => {
+                assert_eq!(source_event_ids.len(), 1);
+                assert_eq!(source_event_ids[0], source_id);
             }
-            _ => panic!("Expected Events provenance"),
+            _ => panic!("Expected Synthesis provenance"),
         }
 
         Ok(())

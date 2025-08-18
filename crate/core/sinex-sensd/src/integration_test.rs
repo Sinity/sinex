@@ -24,8 +24,11 @@ impl SensdIntegrationTest {
     /// Create a new integration test instance
     pub async fn new(database_url: &str) -> Result<Self> {
         let db_pool = PgPool::connect(database_url).await?;
-        let temporal_ledger = Arc::new(TemporalLedger::new(db_pool.clone()).await?);
-        let job_manager = Arc::new(JobManager::new(db_pool.clone()).await?);
+        let temporal_ledger =
+            Arc::new(TemporalLedger::new(db_pool.clone(), Default::default()).await?);
+        let job_manager = Arc::new(
+            JobManager::new(db_pool.clone(), temporal_ledger.clone(), Default::default()).await?,
+        );
         let grpc_service = SensdGrpcService::new(
             db_pool.clone(),
             temporal_ledger.clone(),
@@ -85,7 +88,7 @@ impl SensdIntegrationTest {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                blob_id, source_identifier, source_type, 
+                source_material_id, source_identifier, source_type, 
                 total_bytes, content_type, data, status, 
                 created_at, staged_at
             )

@@ -35,15 +35,8 @@ pub use sinex_schema::ulid_conversions::{
     uuid_to_ulid, DbUuidCollectionExt, DbUuidExt, UlidArrayExt, UlidExt,
 };
 
-// Re-export constants from sinex-schema
-pub use sinex_schema::constants;
-
 // Re-export SeaQuery ULID helpers
 pub use seaquery_helpers::SeaQueryUlidExt;
-
-// Telemetry module (optional feature)
-#[cfg(feature = "telemetry")]
-pub mod telemetry;
 
 // Re-export repository pattern
 pub use repositories::{

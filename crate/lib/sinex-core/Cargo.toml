@@ -36,10 +36,10 @@ futures = "0.3"
 num-traits = "0.2"
 
 # Query building
-sea-query = { version = "0.30", features = ["with-uuid", "with-chrono", "with-json", "postgres-array"] }
+sea-query = { workspace = true }
 
 # Migration system  
-sea-orm-migration = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
+sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
 
 # Type dependencies (from sinex-core)
 ulid = { workspace = true }
@@ -64,10 +64,6 @@ clap = { workspace = true, features = ["derive", "env"], optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 
-# Telemetry dependencies (optional)
-prometheus = { version = "0.13", optional = true }
-sysinfo = { version = "0.30", optional = true }
-procfs = { version = "0.16", optional = true }
 parking_lot = "0.12"
 
 [features]
@@ -79,7 +75,6 @@ arbitrary = ["dep:proptest"]
 schema-manager = ["dep:clap", "dep:tracing-subscriber", "dep:sha2"]
 json-schema = []
 testing = []  # Enable test-only methods
-telemetry = ["dep:prometheus", "dep:sysinfo", "dep:procfs", "macros"]
 
 [[bin]]
 name = "sinex-schema"

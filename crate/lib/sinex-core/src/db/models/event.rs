@@ -1,15 +1,17 @@
 //! Unified Event Model
 //!
 //! This module contains the unified Event<T> structure that replaces the old
-//! RawEvent/Event<T> dichotomy.
+//! Event<JsonValue>/Event<T> dichotomy.
 //!
 //! - Event<T> is the generic structure for all events
-//! - RawEvent is an alias for Event<JsonValue>
+//! - Event<JsonValue> is an alias for Event<JsonValue>
 //! - All events MUST have provenance (Material or Synthesis)
 //! - anchor_byte is moved into Material provenance where it belongs
 
 use crate::types::domain::{EventSource, EventType, HostName};
+use crate::types::non_empty::NonEmptyVec;
 use crate::types::{Id, Ulid};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -24,7 +26,7 @@ pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 /// This is the canonical event structure used throughout the system.
 ///
 /// - `Event<T>` provides strongly-typed payloads for homogeneous processing
-/// - `Event<JsonValue>` (aka RawEvent) for heterogeneous processing and storage
+/// - `Event<JsonValue>` (aka Event<JsonValue>) for heterogeneous processing and storage
 /// - ALL events MUST have provenance (Material or Synthesis)
 /// - The id field determines if this is a new event or a persisted one
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,15 +70,27 @@ pub struct Event<T = JsonValue> {
     pub associated_blob_ids: Option<Vec<Ulid>>,
 }
 
-/// Type alias for JSON events (the common case)
-pub type RawEvent = Event<JsonValue>;
-
 /// Type alias for event IDs in references (stable across type parameters)
 pub type EventId = Id<Event<JsonValue>>;
 
 /// Marker type for source material IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceMaterial;
+
+// Typestate markers for EventBuilder
+pub struct NoProvenance;
+pub struct HasProvenance;
+
+/// Event builder with typestate pattern for compile-time safety
+pub struct EventBuilder<T, P = NoProvenance> {
+    payload: T,
+    source: EventSource,
+    event_type: EventType,
+    provenance: Option<Provenance>,
+    ts_orig: Option<Timestamp>,
+    associated_blob_ids: Option<Vec<Ulid>>,
+    _phantom: std::marker::PhantomData<P>,
+}
 
 /// Provenance type for tracking event lineage
 ///
@@ -93,7 +107,7 @@ pub enum Provenance {
     },
     /// Event derived from other events (synthesized event)  
     Synthesis {
-        source_event_ids: Vec<EventId>, // Use stable EventId type
+        source_event_ids: NonEmptyVec<EventId>, // Enforces non-empty at type level!
         operation_id: Option<Id<Operation>>,
     },
 }
@@ -137,18 +151,60 @@ impl Provenance {
     }
 
     /// Create synthesis provenance from parent event IDs
-    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Self {
+    /// Returns None if the iterator is empty (enforces non-empty invariant)
+    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
+        let vec: Vec<EventId> = ids.into_iter().collect();
+        NonEmptyVec::from_vec(vec).map(|source_event_ids| Provenance::Synthesis {
+            source_event_ids,
+            operation_id: None,
+        })
+    }
+
+    /// Create synthesis provenance with at least one parent ID
+    pub fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
         Provenance::Synthesis {
-            source_event_ids: ids.into_iter().collect(),
+            source_event_ids: NonEmptyVec::from_head_tail(first, rest),
             operation_id: None,
         }
     }
 }
 
 impl<T> Event<T> {
-    /// Create a first-order event from Source Material
-    ///
-    /// This ensures the event has proper external provenance from the start.
+    /// Universal constructor - requires all fields explicitly
+    pub fn create(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+        provenance: Provenance,
+    ) -> Self {
+        Self {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: Some(Utc::now()),
+            host: get_hostname(),
+            ingestor_version: get_ingestor_version(),
+            payload_schema_id: None,
+            provenance,
+            associated_blob_ids: None,
+        }
+    }
+
+    /// Modify timestamp after creation
+    pub fn at_time(mut self, ts: DateTime<Utc>) -> Self {
+        self.ts_orig = Some(ts);
+        self
+    }
+
+    /// Add associated blobs after creation
+    pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
+        self.associated_blob_ids = Some(blobs);
+        self
+    }
+
+    // Deprecated constructors for backwards compatibility
+    #[deprecated(since = "0.5.0", note = "Use Event::create() or Event::new() instead")]
     pub fn from_material(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
@@ -156,23 +212,15 @@ impl<T> Event<T> {
         material_id: impl Into<Id<SourceMaterial>>,
         anchor_byte: i64,
     ) -> Self {
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
+        Self::create(
+            source,
+            event_type,
             payload,
-            ts_orig: None,
-            host: get_hostname(),
-            ingestor_version: get_ingestor_version(),
-            payload_schema_id: None,
-            provenance: Provenance::from_material(material_id, anchor_byte, None, None),
-            associated_blob_ids: None,
-        }
+            Provenance::from_material(material_id, anchor_byte, None, None),
+        )
     }
 
-    /// Create a synthesized event from other events
-    ///
-    /// This ensures the event has proper internal provenance from the start.
+    #[deprecated(since = "0.5.0", note = "Use Event::create() or Event::new() instead")]
     pub fn from_synthesis<I>(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
@@ -182,38 +230,35 @@ impl<T> Event<T> {
     where
         I: IntoIterator<Item = EventId>,
     {
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
+        Self::create(
+            source,
+            event_type,
             payload,
-            ts_orig: None,
-            host: get_hostname(),
-            ingestor_version: get_ingestor_version(),
-            payload_schema_id: None,
-            provenance: Provenance::from_synthesis(parent_ids),
-            associated_blob_ids: None,
-        }
+            Provenance::from_synthesis(parent_ids)
+                .unwrap_or_else(|| panic!("from_synthesis requires at least one parent ID")),
+        )
     }
 
-    /// Create a system event synthesized from the system bootstrap
-    ///
-    /// This is a transitional method for system events that don't yet have
-    /// proper Source Material integration. System events should eventually
-    /// be derived from a system metrics Source Material stream.
+    #[deprecated(since = "0.5.0", note = "Events should have real provenance")]
     pub fn system_event(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
         payload: T,
     ) -> Self {
-        // Use a well-known system bootstrap event ID as parent
-        // In practice, this should be replaced with proper sensd integration
-        let system_bootstrap_id = EventId::from_ulid(crate::types::Ulid::from_bytes([
-            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ]));
+        let system_bootstrap_id = EventId::from_ulid(
+            crate::types::Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .unwrap_or_else(|_| panic!("hardcoded ULID bytes should be valid")),
+        );
 
-        Self::from_synthesis(source, event_type, payload, vec![system_bootstrap_id])
+        Self::create(
+            source,
+            event_type,
+            payload,
+            Provenance::from_synthesis_safe(system_bootstrap_id, vec![]),
+        )
     }
 
     #[cfg(feature = "testing")]
@@ -226,12 +271,87 @@ impl<T> Event<T> {
         event_type: impl Into<EventType>,
         payload: T,
     ) -> Self {
-        let test_material_id = Id::<SourceMaterial>::from_ulid(crate::types::Ulid::from_bytes([
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
-            0x32, 0x10,
-        ]));
+        let test_material_id = Id::<SourceMaterial>::from_ulid(
+            crate::types::Ulid::from_bytes([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
+                0x32, 0x10,
+            ])
+            .unwrap_or_else(|_| {
+                panic!("hardcoded test ULID bytes should be valid - this is a programming error")
+            }),
+        );
 
         Self::from_material(source, event_type, payload, test_material_id, 0)
+    }
+}
+
+// Convenience constructors for typed events
+impl<T> Event<T>
+where
+    T: crate::types::events::EventPayload,
+{
+    /// Quick constructor for typed events - derives source/type from payload
+    pub fn new(payload: T, provenance: Provenance) -> Self {
+        Self::create(T::SOURCE, T::EVENT_TYPE, payload, provenance)
+    }
+
+    /// Temporary constructor for telemetry events that haven't gone through sensd yet
+    /// TODO: Telemetry should go through sensd and get proper source material IDs
+    #[deprecated(
+        since = "0.5.0",
+        note = "Telemetry events should go through sensd for proper provenance"
+    )]
+    pub fn new_telemetry(payload: T) -> Self {
+        // Using a well-known telemetry bootstrap event ID
+        // This indicates the telemetry hasn't been properly ingested yet
+        let telemetry_bootstrap_id = EventId::from_ulid(
+            crate::types::Ulid::from_bytes([
+                0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x01,
+            ])
+            .unwrap_or_else(|_| panic!("hardcoded telemetry ULID bytes should be valid")),
+        );
+
+        Self::create(
+            T::SOURCE,
+            T::EVENT_TYPE,
+            payload,
+            Provenance::from_synthesis_safe(telemetry_bootstrap_id, vec![]),
+        )
+    }
+
+    /// Start building a typed event with builder pattern
+    pub fn builder(payload: T) -> EventBuilder<T, NoProvenance> {
+        EventBuilder {
+            payload,
+            source: T::SOURCE,
+            event_type: T::EVENT_TYPE,
+            provenance: None,
+            ts_orig: None,
+            associated_blob_ids: None,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+// Convenience constructors for dynamic events (Event<JsonValue>)
+impl Event<JsonValue> {
+    /// Start building a dynamic event with explicit source and type
+    /// (overrides the generic "system"/"generic" defaults from EventPayload impl)
+    pub fn dynamic(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: JsonValue,
+    ) -> EventBuilder<JsonValue, NoProvenance> {
+        EventBuilder {
+            payload,
+            source: source.into(),
+            event_type: event_type.into(),
+            provenance: None,
+            ts_orig: None,
+            associated_blob_ids: None,
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     /// Set the timestamp
@@ -299,25 +419,24 @@ impl<T> Event<T> {
 }
 
 impl<T: Serialize> Event<T> {
-    /// Convert to RawEvent (type erasure)
-    pub fn to_raw(self) -> RawEvent {
-        Event {
+    /// Convert to Event<JsonValue> (type erasure)
+    pub fn to_json_event(self) -> Result<Event<JsonValue>, serde_json::Error> {
+        Ok(Event {
             id: None, // New ID for different type
             source: self.source,
             event_type: self.event_type,
-            payload: serde_json::to_value(self.payload)
-                .expect("Failed to serialize payload to JSON"),
+            payload: serde_json::to_value(self.payload)?,
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
             associated_blob_ids: self.associated_blob_ids,
-        }
+        })
     }
 }
 
-impl RawEvent {
+impl Event<JsonValue> {
     /// Try to convert to typed event (type recovery)
     pub fn to_typed<T>(&self) -> Result<Event<T>, serde_json::Error>
     where
@@ -335,6 +454,73 @@ impl RawEvent {
             provenance: self.provenance.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
         })
+    }
+}
+
+// EventBuilder implementations
+impl<T> EventBuilder<T, NoProvenance> {
+    /// Set provenance and transition to HasProvenance state
+    pub fn with_provenance(mut self, provenance: Provenance) -> EventBuilder<T, HasProvenance> {
+        self.provenance = Some(provenance);
+        EventBuilder {
+            payload: self.payload,
+            source: self.source,
+            event_type: self.event_type,
+            provenance: self.provenance,
+            ts_orig: self.ts_orig,
+            associated_blob_ids: self.associated_blob_ids,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Convenience: create from material
+    pub fn from_material(
+        self,
+        material_id: impl Into<Id<SourceMaterial>>,
+        anchor: i64,
+    ) -> EventBuilder<T, HasProvenance> {
+        self.with_provenance(Provenance::from_material(material_id, anchor, None, None))
+    }
+
+    /// Convenience: create from parent events
+    pub fn from_parents<I>(self, parents: I) -> EventBuilder<T, HasProvenance>
+    where
+        I: IntoIterator<Item = EventId>,
+    {
+        let ids: Vec<EventId> = parents.into_iter().collect();
+        let provenance = Provenance::from_synthesis(ids)
+            .unwrap_or_else(|| panic!("from_parents requires at least one parent ID"));
+        self.with_provenance(provenance)
+    }
+}
+
+impl<T> EventBuilder<T, HasProvenance> {
+    /// Set timestamp (optional)
+    pub fn at_time(mut self, ts: Timestamp) -> Self {
+        self.ts_orig = Some(ts);
+        self
+    }
+
+    /// Add associated blobs (optional)
+    pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
+        self.associated_blob_ids = Some(blobs);
+        self
+    }
+
+    /// Build the event (only available after provenance is set)
+    pub fn build(self) -> Event<T> {
+        Event {
+            id: None,
+            source: self.source,
+            event_type: self.event_type,
+            payload: self.payload,
+            provenance: self.provenance.expect("guaranteed by typestate"),
+            ts_orig: self.ts_orig.or_else(|| Some(Utc::now())),
+            host: get_hostname(),
+            ingestor_version: get_ingestor_version(),
+            payload_schema_id: None,
+            associated_blob_ids: self.associated_blob_ids,
+        }
     }
 }
 
@@ -391,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_raw_event_alias() {
-        let event: RawEvent = Event::from_material(
+        let event: Event<JsonValue> = Event::from_material(
             "test",
             "test.event",
             json!({"data": "value"}),

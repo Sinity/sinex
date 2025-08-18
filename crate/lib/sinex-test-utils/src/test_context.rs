@@ -62,6 +62,7 @@ pub struct TestContext {
     start_time: Instant,
     created_events: Arc<Mutex<Vec<Ulid>>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    _tracing_enabled: bool,
 }
 
 impl TestContext {
@@ -82,7 +83,52 @@ impl TestContext {
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
+            _tracing_enabled: false,
         })
+    }
+
+    /// Initialize tracing for tests (static method for use without context)
+    pub fn init_tracing(level: &str) {
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+        // Only initialize if not already initialized
+        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
+
+        TRACING_INIT.call_once(|| {
+            let filter =
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
+            tracing_subscriber::registry()
+                .with(fmt::layer().with_test_writer())
+                .with(filter)
+                .init();
+        });
+    }
+
+    /// Enable tracing for this test context
+    pub fn with_tracing(mut self, level: &str) -> Self {
+        Self::init_tracing(level);
+        self._tracing_enabled = true;
+        self
+    }
+
+    /// Check if a log message was captured
+    pub fn assert_logged(&self, message: &str) -> Result<()> {
+        let logs = self.captured_logs.lock();
+        if logs.iter().any(|log| log.contains(message)) {
+            Ok(())
+        } else {
+            Err(color_eyre::eyre::eyre!(
+                "Expected log message '{}' not found in captured logs: {:?}",
+                message,
+                &*logs
+            ))
+        }
+    }
+
+    /// Get all captured log messages
+    pub fn captured_logs(&self) -> Vec<String> {
+        self.captured_logs.lock().clone()
     }
 
     /// Get test name for fixture scoping
@@ -181,25 +227,6 @@ impl TestContext {
     /// Capture log message for testing
     pub fn capture_log(&self, message: String) {
         self.captured_logs.lock().push(message);
-    }
-
-    /// Get captured log messages
-    pub fn captured_logs(&self) -> Vec<String> {
-        self.captured_logs.lock().clone()
-    }
-
-    /// Assert that a log message was captured
-    pub fn assert_logged(&self, expected: &str) -> Result<()> {
-        let logs = self.captured_logs.lock();
-        if logs.iter().any(|log| log.contains(expected)) {
-            Ok(())
-        } else {
-            color_eyre::eyre::bail!(
-                "Expected log message '{}' not found. Captured logs: {:?}",
-                expected,
-                *logs
-            );
-        }
     }
 
     /// Assert that no error-level logs were captured

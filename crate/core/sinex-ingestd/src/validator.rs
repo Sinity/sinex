@@ -154,16 +154,16 @@ impl EventValidator {
         let schemas = sqlx::query_as!(
             SchemaRecord,
             r#"
-            SELECT DISTINCT ON (source, event_type)
+            SELECT DISTINCT ON (source_type, event_type)
                 id as "id: Ulid",
-                source as "source!",
+                source_type as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version DESC
+            ORDER BY source_type, event_type, schema_version DESC
             "#
         )
         .fetch_all(pool)
@@ -330,6 +330,17 @@ impl EventValidator {
         self.schema_lookup.get(&(source_arc, event_type_arc))
     }
 
+    /// Get schema version for a source and event type (latest version)
+    pub fn get_schema_version(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> Option<Arc<String>> {
+        let schema_id = self.get_schema_id(source, event_type)?;
+        let cache_entry = self.schema_cache.get(&schema_id)?;
+        Some(cache_entry.version.clone())
+    }
+
     /// Load all schema versions from database (for validation of historical events)
     pub async fn load_all_schema_versions(&mut self, pool: &PgPool) -> IngestdResult<()> {
         let all_schemas = sqlx::query_as!(
@@ -337,14 +348,14 @@ impl EventValidator {
             r#"
             SELECT 
                 id as "id: Ulid",
-                source as "source!",
+                source_type as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version
+            ORDER BY source_type, event_type, schema_version
             "#
         )
         .fetch_all(pool)

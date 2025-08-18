@@ -3,7 +3,8 @@
 //! This module provides types and functions for validating system invariants
 //! during replay operations to ensure correctness and consistency.
 
-use crate::db::models::event::RawEvent;
+use crate::db::models::event::Event;
+use crate::db::models::JsonValue;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,39 +14,41 @@ use serde::{Deserialize, Serialize};
 pub enum ViolationType {
     /// Event references non-existent parent in provenance chain
     BrokenProvenance {
-        event_id: Id<RawEvent>,
-        missing_parent_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
+        missing_parent_id: Id<Event<JsonValue>>,
     },
 
     /// Circular dependency detected in event graph
-    CircularDependency { event_ids: Vec<Id<RawEvent>> },
+    CircularDependency {
+        event_ids: Vec<Id<Event<JsonValue>>>,
+    },
 
     /// Event timestamp is out of order with its dependencies
     OutOfOrderTimestamp {
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         event_timestamp: DateTime<Utc>,
-        dependency_id: Id<RawEvent>,
+        dependency_id: Id<Event<JsonValue>>,
         dependency_timestamp: DateTime<Utc>,
     },
 
     /// Event has been tampered with (checksum mismatch)
     TamperedEvent {
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         expected_checksum: String,
         actual_checksum: String,
     },
 
     /// Event references a source material anchor that doesn't exist
     OrphanedAnchor {
-        event_id: Id<RawEvent>,
-        material_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
+        material_id: Id<Event<JsonValue>>,
         anchor_byte: i64,
         material_size: i64,
     },
 
     /// Event payload doesn't match its declared schema
     SchemaMismatch {
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         schema_id: Option<uuid::Uuid>,
         schema_name: Option<String>,
         validation_error: String,
@@ -53,25 +56,25 @@ pub enum ViolationType {
 
     /// Event claims to have occurred before its dependencies (time travel)
     TemporalParadox {
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         claimed_time: DateTime<Utc>,
         earliest_possible_time: DateTime<Utc>,
-        conflicting_dependency: Id<RawEvent>,
+        conflicting_dependency: Id<Event<JsonValue>>,
     },
 
     /// Gap detected in continuous material stream
     MaterialGap {
-        material_id: Id<RawEvent>,
+        material_id: Id<Event<JsonValue>>,
         gap_start: i64,
         gap_end: i64,
     },
 
     /// Overlapping material slices
     MaterialOverlap {
-        material_id: Id<RawEvent>,
+        material_id: Id<Event<JsonValue>>,
         overlap_start: i64,
         overlap_end: i64,
-        conflicting_events: Vec<Id<RawEvent>>,
+        conflicting_events: Vec<Id<Event<JsonValue>>>,
     },
 }
 

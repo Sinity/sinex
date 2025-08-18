@@ -61,7 +61,7 @@ which = "6.0"
 urlencoding = "2.1"
 
 # Local dependencies
-sinex-core = { path = "../sinex-core", features = ["telemetry"] }
+sinex-core = { path = "../sinex-core" }
 sinex-macros = { path = "../sinex-macros", optional = true }
 # Removed sinex-preflight - now part of this crate
 # Removed sinex-nats - now part of this crate

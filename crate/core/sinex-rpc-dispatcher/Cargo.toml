@@ -17,3 +17,5 @@ tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 validator = { version = "0.16", features = ["derive"] }
 bon = "2.3"
+clap = { workspace = true }
+tokio = { workspace = true }

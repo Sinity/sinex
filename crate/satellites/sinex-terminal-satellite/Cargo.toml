@@ -36,6 +36,7 @@ chrono.workspace = true
 
 # System integration
 dirs.workspace = true
+once_cell = "1.19"
 
 # Path handling
 camino.workspace = true
@@ -66,7 +67,7 @@ ulid = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
-sinex-core = { path = "../../lib/sinex-core", features = ["macros", "telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }

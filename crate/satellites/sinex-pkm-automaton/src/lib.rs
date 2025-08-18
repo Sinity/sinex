@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -215,22 +212,15 @@ impl PKMAutomaton {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.analysis_window_seconds as i64);
 
-        let events = sqlx::query_as!(
-            RawEvent,
-            r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
-            FROM core.events 
-            WHERE ts_orig >= $1 AND event_type = ANY($2)
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &self.config.knowledge_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query knowledge events: {}", e))?;
+        let events = db_pool
+            .events()
+            .get_recent(
+                1000,
+                Some(window_start),
+                Some(&self.config.knowledge_event_types),
+            )
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
 
         Ok(events)
     }
@@ -524,8 +514,13 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(insights_payload, source_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "pkm-automaton",
+            "pkm.knowledge_extraction",
+            insights_payload,
+            source_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -618,8 +613,13 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_events(session_payload, session.events.clone())
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "pkm-automaton",
+            "pkm.learning_session",
+            session_payload,
+            session.events.clone(),
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -681,8 +681,13 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event =
-                Event::from_events(graph_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+            let graph_event = Event::from_synthesis(
+                "pkm-automaton",
+                "pkm.knowledge_graph",
+                graph_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             graph_events.push(graph_event.into());
         }
@@ -736,8 +741,13 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = Event::from_events(workflow_payload, pattern_event_ids)
-                    .with_ts_orig(Some(Utc::now()));
+                let pattern_event = Event::from_synthesis(
+                    "pkm-automaton",
+                    "pkm.workflow_pattern",
+                    workflow_payload,
+                    pattern_event_ids,
+                )
+                .with_timestamp(Utc::now());
 
                 pattern_events.push(pattern_event.into());
             }

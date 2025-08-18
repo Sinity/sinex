@@ -71,15 +71,13 @@ pub struct RpcDispatcherConfig {
 impl Default for RpcDispatcherConfig {
     fn default() -> Self {
         Self::builder()
-            .max_connections(Some(1000))
-            .request_timeout_secs(Some(30))
-            .historical_scan_hours(Some(24))
-            .server_host(Some("127.0.0.1".to_string()))
-            .server_port(Some(8080))
+            .max_connections(1000)
+            .request_timeout_secs(30)
+            .historical_scan_hours(24)
+            .server_host("127.0.0.1".to_string())
+            .server_port(8080)
             .enable_tls(false)
-            .tls_cert_path(None)
-            .tls_key_path(None)
-            .max_payload_size_mb(Some(64))
+            .max_payload_size_mb(64)
             .build()
     }
 }

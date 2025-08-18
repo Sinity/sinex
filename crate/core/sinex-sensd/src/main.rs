@@ -31,10 +31,13 @@ async fn main() -> Result<()> {
 
     // Set up shutdown handler
     let shutdown = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C handler");
-        info!("Shutdown signal received");
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => info!("Shutdown signal received"),
+            Err(e) => {
+                error!("Failed to install CTRL+C handler: {}", e);
+                // Continue running even if signal handler fails
+            }
+        }
     };
 
     // Run service until shutdown

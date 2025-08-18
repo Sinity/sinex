@@ -69,9 +69,9 @@ mod tests {
 
         // Build a query using SeaQuery and TableDef
         let query = Query::select()
-            .column(Alias::new(Events::ID))
-            .column(Alias::new(Events::SOURCE))
-            .column(Alias::new(Events::EVENT_TYPE))
+            .column(Alias::new(Events::Id))
+            .column(Alias::new(Events::Source))
+            .column(Alias::new(Events::EventType))
             .from(Events::table_iden())
             .limit(1)
             .to_string(PostgresQueryBuilder);

@@ -55,11 +55,11 @@
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
+use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::events::Event;
+use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::{ulid::Ulid, Id};
-use sinex_core::DbPoolExt;
-use sinex_core::RawEvent;
+use sinex_core::{DbPoolExt, JsonValue};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -116,17 +116,19 @@ impl StageAsYouGoContext {
     /// provenance tracking via the source_material_id field.
     pub async fn emit_event_with_provenance(
         &self,
-        mut event: RawEvent,
+        mut event: Event<JsonValue>,
         source_material_id: Ulid,
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> SatelliteResult<String> {
         // Attach source material provenance to the event
-        event.provenance = Some(sinex_core::Provenance::Material {
+        event.provenance = sinex_core::Provenance::Material {
             id: source_material_id.into(),
+            anchor_byte: 0, // Default to beginning of material
             offset_start,
             offset_end,
-        });
+            offset_kind: sinex_core::OffsetKind::default(),
+        };
 
         // Add source material reference to payload metadata if not already present
         if let Some(obj) = event.payload.as_object_mut() {
@@ -173,6 +175,7 @@ impl StageAsYouGoContext {
         // Note: Blob storage is handled separately in the annex system
         // For now, we don't store the actual content in the database
         let blob_id = None;
+        let total_bytes = Some(content.len() as i64);
 
         source_material_repo
             .finalize_in_flight(
@@ -180,6 +183,7 @@ impl StageAsYouGoContext {
                 blob_id,
                 encoding,
                 content_preview,
+                total_bytes,
             )
             .await
             .map_err(|e| {
@@ -279,9 +283,8 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 .sum::<usize>() as i64;
             let offset_end = offset_start + line.len() as i64;
 
-            // Create event for this log line
-            use sinex_core::types::events::LogLinePayload;
-            let event: RawEvent = Event::new(LogLinePayload {
+            // Create event for this log line directly with unified Event<T>
+            let payload = LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),
@@ -289,8 +292,21 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 offset_start,
                 offset_end,
                 source_material_id: source_material_id.to_string(),
-            })
-            .into();
+            };
+
+            // Create typed event and convert to JsonValue for emission
+            let typed_event = Event::new(
+                payload,
+                sinex_core::Provenance::Synthesis {
+                    source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                        sinex_core::EventId::from_ulid(Ulid::new()),
+                    ),
+                    operation_id: None,
+                },
+            );
+
+            // Convert to JsonValue event for emission
+            let event = typed_event.to_json_event()?;
 
             // Emit with provenance
             let event_id = self

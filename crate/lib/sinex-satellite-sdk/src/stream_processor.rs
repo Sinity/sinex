@@ -33,6 +33,63 @@
 //! // Event-based
 //! Checkpoint::internal(event_ulid, message_count)
 //! ```
+//!
+//! ## Implementing New Satellites
+//!
+//! To implement a new satellite service using this SDK:
+//!
+//! ### 1. Implement StatefulStreamProcessor
+//!
+//! ```rust,ignore
+//! use sinex_satellite_sdk::prelude::*;
+//!
+//! #[derive(Debug)]
+//! pub struct MyProcessor {
+//!     checkpoint_manager: CheckpointManager,
+//!     work_tracker: Arc<RwLock<WorkTracker>>,
+//! }
+//!
+//! #[async_trait]
+//! impl StatefulStreamProcessor for MyProcessor {
+//!     async fn scan(
+//!         &self,
+//!         from: Checkpoint,
+//!         horizon: TimeHorizon,
+//!         event_sender: EventSender,
+//!     ) -> SatelliteResult<ScanReport> {
+//!         // Track work for graceful shutdown
+//!         let tracker = self.work_tracker.read().await;
+//!         tracker.start_operation();
+//!         
+//!         // Process events based on horizon - implementation specific
+//!         let result = match horizon {
+//!             TimeHorizon::Snapshot => self.scan_current_state(&event_sender).await,
+//!             TimeHorizon::Historical { end_time } => {
+//!                 self.scan_historical(from, end_time, &event_sender).await
+//!             }
+//!             TimeHorizon::Continuous => {
+//!                 self.scan_continuous(from, &event_sender).await
+//!             }
+//!         };
+//!         
+//!         tracker.finish_operation();
+//!         result
+//!     }
+//!
+//!     fn processor_type(&self) -> ProcessorType {
+//!         ProcessorType::Ingestor // or ProcessorType::Automaton
+//!     }
+//!
+//!     fn capabilities(&self) -> ProcessorCapabilities {
+//!         ProcessorCapabilities {
+//!             supports_snapshot: true,
+//!             supports_historical: true,
+//!             supports_continuous: true,
+//!             supports_replay: false,
+//!         }
+//!     }
+//! }
+//! ```
 
 use crate::{
     checkpoint::CheckpointManager,
@@ -44,10 +101,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::telemetry::telemetry::TelemetryAccumulator;
+use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::RawEvent;
+use sinex_core::JsonValue;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -312,10 +369,10 @@ impl Checkpoint {
 }
 
 /// Stream of events produced by scanning operations
-pub type EventStream = mpsc::UnboundedReceiver<RawEvent>;
+pub type EventStream = mpsc::UnboundedReceiver<Event<JsonValue>>;
 
 /// Sender for events during scanning operations
-pub type EventSender = mpsc::UnboundedSender<RawEvent>;
+pub type EventSender = mpsc::UnboundedSender<Event<JsonValue>>;
 
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,9 +469,6 @@ pub struct StreamProcessorContext {
 
     /// Event sender channel for scan operations
     pub event_sender: EventSender,
-
-    /// Telemetry accumulator for metrics
-    pub telemetry: Option<TelemetryAccumulator>,
 }
 
 impl std::fmt::Debug for StreamProcessorContext {
@@ -424,7 +478,6 @@ impl std::fmt::Debug for StreamProcessorContext {
             .field("host", &self.host)
             .field("work_dir", &self.work_dir)
             .field("dry_run", &self.dry_run)
-            .field("telemetry", &self.telemetry.is_some())
             .finish()
     }
 }
@@ -435,7 +488,7 @@ impl StreamProcessorContext {
         feature = "macros",
         sinex_macros::auto_event_metrics(event_type = "emit")
     )]
-    pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
+    pub async fn emit_event(&self, event: Event<JsonValue>) -> SatelliteResult<()> {
         let start = std::time::Instant::now();
         let event_type = event.event_type.clone();
 
@@ -453,21 +506,11 @@ impl StreamProcessorContext {
             .send(event)
             .map_err(|_| SatelliteError::General(eyre!("Event channel closed")));
 
-        // Record in telemetry
-        if let Some(ref telemetry) = self.telemetry {
-            let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            telemetry.record_event_processed(&event_type, duration_ms);
-
-            if result.is_err() {
-                telemetry.record_error("event_send_failed");
-            }
-        }
-
         result
     }
 
     /// Send multiple events through the event channel
-    pub async fn emit_events(&self, events: Vec<RawEvent>) -> SatelliteResult<()> {
+    pub async fn emit_events(&self, events: Vec<Event<JsonValue>>) -> SatelliteResult<()> {
         for event in events {
             self.emit_event(event).await?;
         }
@@ -641,7 +684,7 @@ pub trait StatefulStreamProcessor: Send + Sync {
     /// Default implementation returns NotImplemented error for non-automata.
     async fn process_event_batch(
         &mut self,
-        events: Vec<RawEvent>,
+        events: Vec<Event<JsonValue>>,
     ) -> SatelliteResult<ProcessingStats> {
         let _ = events; // Suppress unused parameter warning
         Err(SatelliteError::General(eyre!(
@@ -794,7 +837,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -814,36 +857,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create telemetry accumulator
-        let telemetry = if !dry_run {
-            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
-
-            // Spawn task to forward telemetry events to main event channel
-            let main_event_sender = event_sender.clone();
-            tokio::spawn(async move {
-                while let Some(event) = telemetry_rx.recv().await {
-                    if let Err(e) = main_event_sender.send(event) {
-                        warn!("Failed to forward telemetry event: {}", e);
-                    }
-                }
-            });
-
-            let accumulator = TelemetryAccumulator::new(&service_name)
-                .with_event_sender(telemetry_tx)
-                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
-
-            // Set global telemetry
-            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
-
-            // Spawn telemetry emitter
-            accumulator.clone().spawn_emitter();
-
-            Some(accumulator)
-        } else {
-            None
-        };
-
         // Create context with empty legacy config
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
@@ -855,7 +868,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config: HashMap::new(), // Empty legacy config
             event_sender,
-            telemetry,
         };
 
         // Initialize the processor with typed config
@@ -895,7 +907,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -915,36 +927,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create telemetry accumulator
-        let telemetry = if !dry_run {
-            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
-
-            // Spawn task to forward telemetry events to main event channel
-            let main_event_sender = event_sender.clone();
-            tokio::spawn(async move {
-                while let Some(event) = telemetry_rx.recv().await {
-                    if let Err(e) = main_event_sender.send(event) {
-                        warn!("Failed to forward telemetry event: {}", e);
-                    }
-                }
-            });
-
-            let accumulator = TelemetryAccumulator::new(&service_name)
-                .with_event_sender(telemetry_tx)
-                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
-
-            // Set global telemetry
-            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
-
-            // Spawn telemetry emitter
-            accumulator.clone().spawn_emitter();
-
-            Some(accumulator)
-        } else {
-            None
-        };
-
         // Create context
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
@@ -956,7 +938,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config,
             event_sender,
-            telemetry,
         };
 
         // Initialize the processor with legacy config conversion
@@ -996,7 +977,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -1016,40 +997,10 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create telemetry accumulator
-        let telemetry = if !dry_run {
-            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
-
-            // Spawn task to forward telemetry events to main event channel
-            let main_event_sender = event_sender.clone();
-            tokio::spawn(async move {
-                while let Some(event) = telemetry_rx.recv().await {
-                    if let Err(e) = main_event_sender.send(event) {
-                        warn!("Failed to forward telemetry event: {}", e);
-                    }
-                }
-            });
-
-            let accumulator = TelemetryAccumulator::new(&service_name)
-                .with_event_sender(telemetry_tx)
-                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
-
-            // Set global telemetry
-            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
-
-            // Spawn telemetry emitter
-            accumulator.clone().spawn_emitter();
-
-            Some(accumulator)
-        } else {
-            None
-        };
-
         // Create dummy ingest client (not used with NATS)
-        let ingest_client = IngestClient::new("/dev/null")
-            .await
-            .expect("Failed to create dummy ingest client");
+        let ingest_client = IngestClient::new("/dev/null").await.map_err(|e| {
+            SatelliteError::Configuration(format!("Failed to create dummy ingest client: {}", e))
+        })?;
 
         // Create context with empty legacy config
         let context = StreamProcessorContext {
@@ -1062,7 +1013,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config: HashMap::new(), // Empty legacy config
             event_sender,
-            telemetry,
         };
 
         // Initialize the processor with typed config
@@ -1107,7 +1057,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 1000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -1127,40 +1077,10 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create telemetry accumulator
-        let telemetry = if !dry_run {
-            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
-
-            // Spawn task to forward telemetry events to main event channel
-            let main_event_sender = event_sender.clone();
-            tokio::spawn(async move {
-                while let Some(event) = telemetry_rx.recv().await {
-                    if let Err(e) = main_event_sender.send(event) {
-                        warn!("Failed to forward telemetry event: {}", e);
-                    }
-                }
-            });
-
-            let accumulator = TelemetryAccumulator::new(&service_name)
-                .with_event_sender(telemetry_tx)
-                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
-
-            // Set global telemetry
-            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
-
-            // Spawn telemetry emitter
-            accumulator.clone().spawn_emitter();
-
-            Some(accumulator)
-        } else {
-            None
-        };
-
         // Create dummy ingest client (not used with NATS)
-        let ingest_client = IngestClient::new("/dev/null")
-            .await
-            .expect("Failed to create dummy ingest client");
+        let ingest_client = IngestClient::new("/dev/null").await.map_err(|e| {
+            SatelliteError::Configuration(format!("Failed to create dummy ingest client: {}", e))
+        })?;
 
         // Create context
         let context = StreamProcessorContext {
@@ -1173,7 +1093,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config,
             event_sender,
-            telemetry,
         };
 
         // Initialize the processor with legacy config conversion
@@ -1397,7 +1316,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     // async fn read_event_batch_from_nats(
     //     &self,
     //     nats_consumer: &mut NatsStreamConsumer,
-    // ) -> SatelliteResult<Vec<RawEvent>> {
+    // ) -> SatelliteResult<Vec<Event<JsonValue>>> {
     //     // REMOVED: This method used NatsStreamConsumer which has been deprecated
     //     Err(SatelliteError::Processing(
     //         "NATS batch reading not yet implemented after NatsStreamConsumer removal".to_string()

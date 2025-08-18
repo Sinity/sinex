@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -202,22 +199,15 @@ impl SearchAutomaton {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.indexing_window_seconds as i64);
 
-        let events = sqlx::query_as!(
-            RawEvent,
-            r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
-            FROM core.events 
-            WHERE ts_orig >= $1 AND event_type = ANY($2)
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &self.config.searchable_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query searchable events: {}", e))?;
+        let events = db_pool
+            .events()
+            .get_recent(
+                1000,
+                Some(window_start),
+                Some(&self.config.searchable_event_types),
+            )
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
 
         Ok(events)
     }
@@ -487,8 +477,13 @@ impl SearchAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(index_payload, source_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "search-automaton",
+            "search.index_built",
+            index_payload,
+            source_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -514,8 +509,13 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let analytics_event =
-                Event::from_events(analytics_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+            let analytics_event = Event::from_synthesis(
+                "search-automaton",
+                "search.analytics",
+                analytics_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
 
             analytics_events.push(analytics_event.into());
         }
@@ -603,8 +603,13 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let discoverability_event = Event::from_events(discoverability_payload, all_entry_ids)
-                .with_ts_orig(Some(Utc::now()));
+            let discoverability_event = Event::from_synthesis(
+                "search-automaton",
+                "search.content_discoverability",
+                discoverability_payload,
+                all_entry_ids,
+            )
+            .with_timestamp(Utc::now());
 
             discoverability_events.push(discoverability_event.into());
         }

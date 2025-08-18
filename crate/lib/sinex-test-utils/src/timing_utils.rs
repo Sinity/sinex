@@ -7,6 +7,7 @@
 
 use crate::prelude::*;
 use crate::Result;
+use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::*; // Use production primitives from sinex-types
 use sinex_core::*;
@@ -439,7 +440,9 @@ mod tests {
 
         // Wait for all to complete
         for handle in handles {
-            handle.await.unwrap()?;
+            handle
+                .await
+                .map_err(|e| SinexError::service(format!("Task join failed: {}", e)))??;
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), 5);
@@ -502,8 +505,12 @@ mod tests {
         });
 
         // Both should timeout
-        let result1 = handle1.await.unwrap();
-        let result2 = handle2.await.unwrap();
+        let result1 = handle1
+            .await
+            .map_err(|e| SinexError::service(format!("Timeout test task 1 join failed: {}", e)))?;
+        let result2 = handle2
+            .await
+            .map_err(|e| SinexError::service(format!("Timeout test task 2 join failed: {}", e)))?;
 
         assert!(result1.is_err());
         assert!(result2.is_err());
@@ -531,7 +538,9 @@ mod tests {
         assert_eq!(coordinator_clone.worker_ready(), 3);
 
         // Waiter should complete
-        let result = waiter.await.unwrap()?;
+        let result = waiter
+            .await
+            .map_err(|e| SinexError::service(format!("Waiter task join failed: {}", e)))??;
         assert_eq!(result, 3);
 
         Ok(())
@@ -739,8 +748,10 @@ mod tests {
         let h2 = tokio::spawn(async move { b2.wait(Duration::from_secs(5)).await });
 
         // Both should complete
-        h1.await.unwrap()?;
-        h2.await.unwrap()?;
+        h1.await
+            .map_err(|e| SinexError::service(format!("Barrier task 1 join failed: {}", e)))??;
+        h2.await
+            .map_err(|e| SinexError::service(format!("Barrier task 2 join failed: {}", e)))??;
 
         assert_eq!(barrier.generation(), 1);
 
@@ -779,7 +790,9 @@ mod tests {
             .collect();
 
         for handle in handles {
-            handle.await.unwrap();
+            handle
+                .await
+                .map_err(|e| SinexError::service(format!("Concurrent task join failed: {}", e)))?;
         }
 
         assert_eq!(counter.get(), 10);

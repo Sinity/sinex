@@ -86,13 +86,9 @@ fn generate_to_json_event_impl(
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                 // Handle TypedRawEvent<T> variants
                 let field_type = &fields.unnamed[0].ty;
-                if is_typed_raw_event_type(field_type) {
+                if is_event_type(field_type) {
                     quote! {
                         #enum_name::#variant_name(event) => event.to_json_event(),
-                    }
-                } else if is_raw_event_type(field_type) {
-                    quote! {
-                        #enum_name::#variant_name(event) => event,
                     }
                 } else {
                     quote! {
@@ -105,11 +101,12 @@ fn generate_to_json_event_impl(
                 quote! {
                     #enum_name::#variant_name => {
                         // Generate a placeholder event for unit variants
-                        sinex_events::RawEvent::system_event(
-                            "unknown".to_string(),
-                            stringify!(#variant_name).to_string(),
+                        sinex_core::Event::dynamic(
+                            "unknown",
+                            stringify!(#variant_name),
                             serde_json::Value::Null,
                         )
+                        .build()
                     },
                 }
             }
@@ -118,11 +115,12 @@ fn generate_to_json_event_impl(
                 quote! {
                     #enum_name::#variant_name(..) => {
                         // Default conversion for complex variants
-                        sinex_events::RawEvent::system_event(
-                            "unknown".to_string(),
-                            stringify!(#variant_name).to_string(),
+                        sinex_core::Event::dynamic(
+                            "unknown",
+                            stringify!(#variant_name),
                             serde_json::Value::Null,
                         )
+                        .build()
                     },
                 }
             }
@@ -139,8 +137,8 @@ fn generate_to_json_event_impl(
 
     quote! {
         impl #enum_name {
-            /// Convert this event envelope to a raw JSON event
-            pub fn to_json_event(self) -> sinex_events::RawEvent {
+            /// Convert this event envelope to a JSON event
+            pub fn to_json_event(self) -> sinex_core::Event<sinex_core::JsonValue> {
                 match self {
                     #(#match_arms)*
                 }
@@ -174,7 +172,7 @@ fn generate_helper_constructors(
                 let constructor_name =
                     format_ident!("new_{}", variant_name.to_string().to_lowercase());
 
-                if is_typed_raw_event_type(field_type) {
+                if is_event_type(field_type) {
                     Some(quote! {
                         /// Create a new #variant_name variant
                         pub fn #constructor_name(event: #field_type) -> Self {
@@ -262,24 +260,11 @@ fn generate_pattern_matching_utils(
     }
 }
 
-fn is_typed_raw_event_type(ty: &Type) -> bool {
+fn is_event_type(ty: &Type) -> bool {
     match ty {
         Type::Path(type_path) => {
             if let Some(segment) = type_path.path.segments.last() {
-                segment.ident == "TypedRawEvent"
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
-fn is_raw_event_type(ty: &Type) -> bool {
-    match ty {
-        Type::Path(type_path) => {
-            if let Some(segment) = type_path.path.segments.last() {
-                segment.ident == "RawEvent"
+                segment.ident == "Event"
             } else {
                 false
             }
@@ -298,9 +283,9 @@ mod tests {
     fn test_typed_event_envelope_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             pub enum EventEnvelope {
-                FileCreated(TypedRawEvent<FileCreatedPayload>),
-                FileModified(TypedRawEvent<FileModifiedPayload>),
-                Unknown(RawEvent),
+                FileCreated(Event<FileCreatedPayload>),
+                FileModified(Event<FileModifiedPayload>),
+                Unknown(Event<JsonValue>),
             }
         };
 
@@ -316,17 +301,15 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_typed_raw_event_detection() -> color_eyre::eyre::Result<()> {
-        let typed_event: Type = parse_quote!(TypedRawEvent<FileCreatedPayload>);
-        assert!(is_typed_raw_event_type(&typed_event));
-
-        let raw_event: Type = parse_quote!(RawEvent);
-        assert!(is_raw_event_type(&raw_event));
-        assert!(!is_typed_raw_event_type(&raw_event));
+    fn test_event_type_detection() -> color_eyre::eyre::Result<()> {
+        let event_type: Type = parse_quote!(Event<FileCreatedPayload>);
+        assert!(is_event_type(&event_type));
 
         let other_type: Type = parse_quote!(String);
-        assert!(!is_typed_raw_event_type(&other_type));
-        assert!(!is_raw_event_type(&other_type));
+        assert!(!is_event_type(&other_type));
+
+        let json_event: Type = parse_quote!(Event<JsonValue>);
+        assert!(is_event_type(&json_event));
         Ok(())
     }
 }

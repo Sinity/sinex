@@ -8,11 +8,8 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{payloads::*, Event},
-            Id,
-        },
+        db::models::{Event, RawEvent},
+        types::{events::payloads::*, Id},
     };
 
     // SDK facade for common processor types
@@ -183,22 +180,15 @@ impl ContentAutomaton {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
 
-        let events = sqlx::query_as!(
-            RawEvent,
-            r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
-            FROM core.events 
-            WHERE ts_orig >= $1 AND event_type = ANY($2)
-            ORDER BY ts_orig DESC
-            LIMIT 500
-            "#,
-            window_start,
-            &self.config.target_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query content events: {}", e))?;
+        let events = db_pool
+            .events()
+            .get_recent(
+                1000,
+                Some(window_start),
+                Some(&self.config.target_event_types),
+            )
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
 
         Ok(events)
     }
@@ -278,8 +268,13 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(analysis_payload, vec![source_event.id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "content-automaton",
+            "content.analyzed",
+            analysis_payload,
+            vec![source_event.id],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -337,8 +332,13 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(classification_payload, vec![source_event.id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = Event::from_synthesis(
+            "content-automaton",
+            "content.classified",
+            classification_payload,
+            vec![source_event.id],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -373,8 +373,13 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = Event::from_events(similarity_payload, event_ids)
-                    .with_ts_orig(Some(Utc::now()));
+                let similarity_event = Event::from_synthesis(
+                    "content-automaton",
+                    "content.similarity_detected",
+                    similarity_payload,
+                    event_ids,
+                )
+                .with_timestamp(Utc::now());
 
                 similarity_events.push(similarity_event.into());
             }

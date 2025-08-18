@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
+use sinex_core::types::domain::EventSource;
 use sinex_core::DbPoolExt;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -546,7 +547,7 @@ async fn generate_verification_report(
     let end_time = chrono::Utc::now();
     let start_time = end_time - chrono::Duration::hours(24);
 
-    let recent_verifications: Vec<RawEvent> = pool
+    let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
         .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
         .await

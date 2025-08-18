@@ -240,22 +240,26 @@ impl FixtureGenerator {
         }
 
         // Add padding data to reach target size
-        let current_size = serde_json::to_string(&payload).unwrap().len();
+        let current_size = serde_json::to_string(&payload)
+            .map_err(|e| SinexError::validation(format!("Failed to serialize payload: {}", e)))?
+            .len();
         if current_size < payload_size {
             let padding_size = payload_size - current_size;
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_core::*;
+        use sinex_core::types::domain::{EventSource, EventType, HostName};
 
-        RawEvent::builder()
-            .source(EventSource::new(source))
-            .event_type(EventType::new(event_type))
-            .host(HostName::new("fixture_host"))
-            .payload(serde_json::to_value(payload).unwrap())
-            .ts_orig(Some(timestamp))
-            .ingestor_version("fixture_generator/1.0.0".to_string())
-            .build()
+        RawEvent::test_event(
+            EventSource::new(source),
+            EventType::new(event_type),
+            serde_json::to_value(payload).map_err(|e| {
+                SinexError::validation(format!("Failed to convert payload to JSON: {}", e))
+            })?,
+        )
+        .with_host(HostName::new("fixture_host"))
+        .with_timestamp(timestamp)
+        .with_ingestor_version("fixture_generator/1.0.0")
     }
 
     /// Generate SQL for the dataset
@@ -287,18 +291,24 @@ impl FixtureGenerator {
             sql.push_str(&format!("  '{}',\n", event.source));
             sql.push_str(&format!("  '{}',\n", event.event_type));
             sql.push_str(&format!("  '{}',\n", event.host));
-            sql.push_str(&format!(
-                "  '{}',\n",
-                serde_json::to_string(&event.payload)
-                    .unwrap()
-                    .replace('\'', "''")
-            ));
+            let payload_str = serde_json::to_string(&event.payload)
+                .map_err(|e| {
+                    SinexError::validation(format!("Failed to serialize event payload: {}", e))
+                })?
+                .replace('\'', "''");
+
+            sql.push_str(&format!("  '{}',\n", payload_str));
             sql.push_str(&format!("  '{}',\n", event.ts_ingest.to_rfc3339()));
-            sql.push_str(&format!("  '{}',\n", event.ts_orig.unwrap().to_rfc3339()));
-            sql.push_str(&format!(
-                "  '{}'\n",
-                event.ingestor_version.as_ref().unwrap()
-            ));
+
+            let ts_orig = event.ts_orig.ok_or_else(|| {
+                SinexError::validation("Event missing ts_orig timestamp".to_string())
+            })?;
+            sql.push_str(&format!("  '{}',\n", ts_orig.to_rfc3339()));
+
+            let ingestor_version = event.ingestor_version.as_ref().ok_or_else(|| {
+                SinexError::validation("Event missing ingestor_version".to_string())
+            })?;
+            sql.push_str(&format!("  '{}'\n", ingestor_version));
             sql.push_str(");\n");
         }
 

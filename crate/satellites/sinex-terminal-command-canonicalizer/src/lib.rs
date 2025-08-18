@@ -10,11 +10,8 @@ pub mod unified_processor;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{
-            events::{Event, payloads::*},
-            Id,
-        },
+        types::{events::payloads::*, events::Event, ulid::Ulid, Id},
+        RawEvent,
     };
 
     // SDK facade for common processor types
@@ -77,7 +74,7 @@ impl Default for TerminalCommandCanonicalizerConfig {
         rules.insert("md".to_string(), "mkdir".to_string());
         rules.insert("rd".to_string(), "rmdir".to_string());
         rules.insert("del".to_string(), "rm".to_string());
-        
+
         Self {
             terminal_event_types: vec![
                 "command.executed".to_string(),
@@ -151,7 +148,7 @@ pub enum SafetyLevel {
 }
 
 /// Terminal Command Canonicalizer using unified StatefulStreamProcessor architecture
-/// 
+///
 /// Consumes terminal command events and produces canonicalized command insights:
 /// - Command standardization and normalization
 /// - Command intent and safety analysis
@@ -160,7 +157,7 @@ pub enum SafetyLevel {
 pub struct TerminalCommandCanonicalizer {
     context: Option<StreamProcessorContext>,
     config: TerminalCommandCanonicalizerConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::UnboundedSender<RawEvent>>,
     db_pool: Option<PgPool>,
     canonicalized_commands: Vec<CanonicalizedCommand>,
 }
@@ -178,14 +175,22 @@ impl TerminalCommandCanonicalizer {
 
     /// Process terminal command events and generate canonicalized insights
     async fn process_terminal_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self.db_pool.as_ref()
+        let db_pool = self
+            .db_pool
+            .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self.event_sender.as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+        let event_sender = self
+            .event_sender
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?
+            .clone();
 
         // Query recent terminal command events
         let events = self.query_terminal_events(db_pool, from).await?;
-        info!("Processing {} terminal events for canonicalization", events.len());
+        info!(
+            "Processing {} terminal events for canonicalization",
+            events.len()
+        );
 
         // Canonicalize commands from events
         self.canonicalize_commands_from_events(&events).await;
@@ -194,8 +199,9 @@ impl TerminalCommandCanonicalizer {
 
         // Generate canonicalized command events
         for canonical_cmd in &self.canonicalized_commands {
-            if let Ok(canonical_event) = self.generate_canonical_command_event(canonical_cmd).await {
-                if let Err(e) = event_sender.send(canonical_event).await {
+            if let Ok(canonical_event) = self.generate_canonical_command_event(canonical_cmd).await
+            {
+                if let Err(e) = event_sender.send(canonical_event) {
                     warn!("Failed to send canonical command event: {}", e);
                 } else {
                     events_processed += 1;
@@ -207,7 +213,7 @@ impl TerminalCommandCanonicalizer {
         if self.config.enable_pattern_recognition && !self.canonicalized_commands.is_empty() {
             if let Ok(pattern_events) = self.analyze_command_patterns().await {
                 for pattern_event in pattern_events {
-                    if let Err(e) = event_sender.send(pattern_event).await {
+                    if let Err(e) = event_sender.send(pattern_event) {
                         warn!("Failed to send command pattern event: {}", e);
                     } else {
                         events_processed += 1;
@@ -220,7 +226,7 @@ impl TerminalCommandCanonicalizer {
         if self.config.enable_safety_analysis {
             if let Ok(safety_events) = self.analyze_command_safety().await {
                 for safety_event in safety_events {
-                    if let Err(e) = event_sender.send(safety_event).await {
+                    if let Err(e) = event_sender.send(safety_event) {
                         warn!("Failed to send command safety event: {}", e);
                     } else {
                         events_processed += 1;
@@ -232,7 +238,7 @@ impl TerminalCommandCanonicalizer {
         // Generate shell workflow insights
         if let Ok(workflow_events) = self.analyze_shell_workflows().await {
             for workflow_event in workflow_events {
-                if let Err(e) = event_sender.send(workflow_event).await {
+                if let Err(e) = event_sender.send(workflow_event) {
                     warn!("Failed to send shell workflow event: {}", e);
                 } else {
                     events_processed += 1;
@@ -249,32 +255,42 @@ impl TerminalCommandCanonicalizer {
         db_pool: &PgPool,
         _from: &Checkpoint,
     ) -> SatelliteResult<Vec<RawEvent>> {
-        let window_start = Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
-        
-        let events = sqlx::query_as!(
-            RawEvent,
-            r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
-            FROM core.events 
-            WHERE ts_orig >= $1 AND event_type = ANY($2)
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &self.config.terminal_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query terminal events: {}", e))?;
-        
+        let window_start =
+            Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
+
+        use sinex_core::db::repositories::DbPoolExt;
+        use sinex_core::types::domain::EventType;
+
+        // Query terminal command events for each configured type
+        let mut all_events = Vec::new();
+        for event_type_str in &self.config.terminal_event_types {
+            let event_type = EventType::from(event_type_str.as_str());
+            let events = db_pool
+                .events()
+                .get_events_by_type_and_time_range(
+                    &event_type,
+                    window_start,
+                    chrono::Utc::now(),
+                    Some(100),
+                )
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query terminal events: {}", e))?;
+            all_events.extend(events);
+        }
+
+        // Sort by timestamp and limit to 1000 most recent
+        all_events.sort_by(|a, b| b.ts_orig.cmp(&a.ts_orig));
+        all_events.truncate(1000);
+
+        let events = all_events;
+
         Ok(events)
     }
 
     /// Canonicalize commands from terminal events
     async fn canonicalize_commands_from_events(&mut self, events: &[RawEvent]) {
         self.canonicalized_commands.clear();
-        
+
         for event in events {
             if let Some(command) = self.extract_command_from_event(event) {
                 if command.len() >= self.config.min_command_length {
@@ -284,8 +300,11 @@ impl TerminalCommandCanonicalizer {
                 }
             }
         }
-        
-        info!("Canonicalized {} commands from events", self.canonicalized_commands.len());
+
+        info!(
+            "Canonicalized {} commands from events",
+            self.canonicalized_commands.len()
+        );
     }
 
     /// Extract command string from terminal event
@@ -295,26 +314,30 @@ impl TerminalCommandCanonicalizer {
             if let Some(command) = payload.get("command").and_then(|v| v.as_str()) {
                 return Some(command.to_string());
             }
-            
+
             if let Some(command_string) = payload.get("command_string").and_then(|v| v.as_str()) {
                 return Some(command_string.to_string());
             }
-            
+
             if let Some(cmd) = payload.get("cmd").and_then(|v| v.as_str()) {
                 return Some(cmd.to_string());
             }
-            
+
             // For shell history events, try different field names
             if let Some(command_line) = payload.get("command_line").and_then(|v| v.as_str()) {
                 return Some(command_line.to_string());
             }
         }
-        
+
         None
     }
 
     /// Canonicalize a single command
-    fn canonicalize_command(&self, original_command: &str, event: &RawEvent) -> Option<CanonicalizedCommand> {
+    fn canonicalize_command(
+        &self,
+        original_command: &str,
+        event: &RawEvent,
+    ) -> Option<CanonicalizedCommand> {
         let trimmed_command = original_command.trim();
         if trimmed_command.is_empty() {
             return None;
@@ -330,7 +353,9 @@ impl TerminalCommandCanonicalizer {
         let args = parts[1..].to_vec();
 
         // Apply canonicalization rules
-        let canonical_base = self.config.canonicalization_rules
+        let canonical_base = self
+            .config
+            .canonicalization_rules
             .get(base_command)
             .cloned()
             .unwrap_or_else(|| base_command.to_string());
@@ -359,8 +384,11 @@ impl TerminalCommandCanonicalizer {
             arguments,
             flags,
             target_paths,
-            source_event_id: event.id,
-            timestamp: event.ts_orig,
+            source_event_id: event
+                .id
+                .clone()
+                .unwrap_or_else(|| Id::from_ulid(Ulid::new())),
+            timestamp: event.ts_orig.unwrap_or_else(|| Utc::now()),
         })
     }
 
@@ -368,32 +396,43 @@ impl TerminalCommandCanonicalizer {
     fn classify_command(&self, base_command: &str) -> CommandCategory {
         match base_command {
             // File system commands
-            "ls" | "cd" | "pwd" | "mkdir" | "rmdir" | "rm" | "cp" | "mv" | "find" | "locate" | "which" | "chmod" | "chown" | "ln" => CommandCategory::FileSystem,
-            
+            "ls" | "cd" | "pwd" | "mkdir" | "rmdir" | "rm" | "cp" | "mv" | "find" | "locate"
+            | "which" | "chmod" | "chown" | "ln" => CommandCategory::FileSystem,
+
             // Text processing
-            "cat" | "less" | "more" | "head" | "tail" | "grep" | "sed" | "awk" | "sort" | "uniq" | "cut" | "wc" | "diff" | "tr" => CommandCategory::TextProcessing,
-            
+            "cat" | "less" | "more" | "head" | "tail" | "grep" | "sed" | "awk" | "sort"
+            | "uniq" | "cut" | "wc" | "diff" | "tr" => CommandCategory::TextProcessing,
+
             // System info
-            "ps" | "top" | "htop" | "df" | "du" | "free" | "uname" | "uptime" | "whoami" | "id" | "groups" | "lscpu" | "lsblk" | "lsusb" => CommandCategory::SystemInfo,
-            
+            "ps" | "top" | "htop" | "df" | "du" | "free" | "uname" | "uptime" | "whoami" | "id"
+            | "groups" | "lscpu" | "lsblk" | "lsusb" => CommandCategory::SystemInfo,
+
             // Network
-            "ping" | "curl" | "wget" | "ssh" | "scp" | "rsync" | "netstat" | "ss" | "nslookup" | "dig" | "telnet" => CommandCategory::Network,
-            
+            "ping" | "curl" | "wget" | "ssh" | "scp" | "rsync" | "netstat" | "ss" | "nslookup"
+            | "dig" | "telnet" => CommandCategory::Network,
+
             // Development
-            "git" | "cargo" | "npm" | "yarn" | "python" | "python3" | "node" | "ruby" | "java" | "gcc" | "make" | "cmake" => CommandCategory::Development,
-            
+            "git" | "cargo" | "npm" | "yarn" | "python" | "python3" | "node" | "ruby" | "java"
+            | "gcc" | "make" | "cmake" => CommandCategory::Development,
+
             // Package management
-            "apt" | "apt-get" | "yum" | "dnf" | "brew" | "pip" | "pip3" | "gem" | "snap" => CommandCategory::Package,
-            
+            "apt" | "apt-get" | "yum" | "dnf" | "brew" | "pip" | "pip3" | "gem" | "snap" => {
+                CommandCategory::Package
+            }
+
             // Process management
-            "kill" | "killall" | "jobs" | "bg" | "fg" | "nohup" | "screen" | "tmux" => CommandCategory::Process,
-            
+            "kill" | "killall" | "jobs" | "bg" | "fg" | "nohup" | "screen" | "tmux" => {
+                CommandCategory::Process
+            }
+
             // Archive operations
-            "tar" | "zip" | "unzip" | "gzip" | "gunzip" | "7z" | "rar" | "unrar" => CommandCategory::Archive,
-            
+            "tar" | "zip" | "unzip" | "gzip" | "gunzip" | "7z" | "rar" | "unrar" => {
+                CommandCategory::Archive
+            }
+
             // Editors
             "vim" | "vi" | "nano" | "emacs" | "code" | "subl" | "atom" => CommandCategory::Editor,
-            
+
             _ => CommandCategory::Other,
         }
     }
@@ -402,35 +441,42 @@ impl TerminalCommandCanonicalizer {
     fn determine_command_intent(&self, base_command: &str, args: &[&str]) -> CommandIntent {
         match base_command {
             // Read operations
-            "ls" | "cat" | "less" | "more" | "head" | "tail" | "grep" | "find" | "locate" | "ps" | "top" | "df" | "du" => CommandIntent::Read,
-            
+            "ls" | "cat" | "less" | "more" | "head" | "tail" | "grep" | "find" | "locate"
+            | "ps" | "top" | "df" | "du" => CommandIntent::Read,
+
             // Write operations
             "touch" | "mkdir" | "echo" | "tee" => CommandIntent::Write,
-            
+
             // Navigate
             "cd" | "pwd" => CommandIntent::Navigate,
-            
+
             // Search
             "grep" | "find" | "locate" | "which" => CommandIntent::Search,
-            
+
             // Execute
-            "python" | "python3" | "node" | "ruby" | "java" | "bash" | "sh" | "./.*" => CommandIntent::Execute,
-            
+            "python" | "python3" | "node" | "ruby" | "java" | "bash" | "sh" | "./.*" => {
+                CommandIntent::Execute
+            }
+
             // Install
-            "apt" | "apt-get" | "yum" | "dnf" | "brew" | "pip" | "pip3" | "npm" if args.iter().any(|&arg| arg == "install") => CommandIntent::Install,
-            
+            "apt" | "apt-get" | "yum" | "dnf" | "brew" | "pip" | "pip3" | "npm"
+                if args.iter().any(|&arg| arg == "install") =>
+            {
+                CommandIntent::Install
+            }
+
             // Configure
             "chmod" | "chown" | "chgrp" => CommandIntent::Configure,
-            
+
             // Monitor
             "top" | "htop" | "ps" | "netstat" | "ss" => CommandIntent::Monitor,
-            
+
             // Transfer
             "cp" | "mv" | "scp" | "rsync" | "wget" | "curl" => CommandIntent::Transfer,
-            
+
             // Delete
             "rm" | "rmdir" | "unlink" => CommandIntent::Delete,
-            
+
             _ => CommandIntent::Unknown,
         }
     }
@@ -439,21 +485,33 @@ impl TerminalCommandCanonicalizer {
     fn assess_command_safety(&self, base_command: &str, args: &[&str]) -> SafetyLevel {
         match base_command {
             // Critical system commands
-            "rm" if args.iter().any(|&arg| arg == "-rf" || arg == "-r" || arg.contains("*")) => SafetyLevel::Critical,
+            "rm" if args
+                .iter()
+                .any(|&arg| arg == "-rf" || arg == "-r" || arg.contains("*")) =>
+            {
+                SafetyLevel::Critical
+            }
             "dd" | "fdisk" | "mkfs" | "format" => SafetyLevel::Critical,
-            
+
             // Dangerous operations
             "rm" | "rmdir" | "unlink" => SafetyLevel::Dangerous,
-            "chmod" | "chown" if args.iter().any(|&arg| arg == "-R" || arg == "--recursive") => SafetyLevel::Dangerous,
+            "chmod" | "chown" if args.iter().any(|&arg| arg == "-R" || arg == "--recursive") => {
+                SafetyLevel::Dangerous
+            }
             "kill" | "killall" => SafetyLevel::Dangerous,
-            
+
             // Caution level
             "mv" | "cp" | "chmod" | "chown" | "ln" => SafetyLevel::Caution,
-            "apt" | "apt-get" | "yum" | "dnf" | "brew" if args.iter().any(|&arg| arg == "install" || arg == "remove") => SafetyLevel::Caution,
-            
+            "apt" | "apt-get" | "yum" | "dnf" | "brew"
+                if args.iter().any(|&arg| arg == "install" || arg == "remove") =>
+            {
+                SafetyLevel::Caution
+            }
+
             // Safe operations
-            "ls" | "cat" | "less" | "more" | "head" | "tail" | "grep" | "find" | "ps" | "top" | "df" | "du" | "pwd" | "whoami" => SafetyLevel::Safe,
-            
+            "ls" | "cat" | "less" | "more" | "head" | "tail" | "grep" | "find" | "ps" | "top"
+            | "df" | "du" | "pwd" | "whoami" => SafetyLevel::Safe,
+
             _ => SafetyLevel::Caution,
         }
     }
@@ -478,7 +536,10 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Generate canonical command event
-    async fn generate_canonical_command_event(&self, canonical_cmd: &CanonicalizedCommand) -> SatelliteResult<RawEvent> {
+    async fn generate_canonical_command_event(
+        &self,
+        canonical_cmd: &CanonicalizedCommand,
+    ) -> SatelliteResult<RawEvent> {
         let canonical_payload = serde_json::json!({
             "analysis_type": "canonical_command",
             "original_command": canonical_cmd.original_command,
@@ -494,8 +555,13 @@ impl TerminalCommandCanonicalizer {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_events(canonical_payload, vec![canonical_cmd.source_event_id])
-            .with_ts_orig(Some(Utc::now()));
+        let event = RawEvent::from_synthesis(
+            "terminal-canonicalizer",
+            "terminal.command_canonicalized",
+            canonical_payload,
+            vec![canonical_cmd.source_event_id.clone()],
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -503,25 +569,33 @@ impl TerminalCommandCanonicalizer {
     /// Analyze command patterns
     async fn analyze_command_patterns(&self) -> SatelliteResult<Vec<RawEvent>> {
         let mut pattern_events = Vec::new();
-        
+
         // Group commands by category and intent
         let mut category_counts: HashMap<String, usize> = HashMap::new();
         let mut intent_counts: HashMap<String, usize> = HashMap::new();
         let mut safety_counts: HashMap<String, usize> = HashMap::new();
-        
+
         for cmd in &self.canonicalized_commands {
-            *category_counts.entry(format!("{:?}", cmd.command_category)).or_insert(0) += 1;
-            *intent_counts.entry(format!("{:?}", cmd.intent)).or_insert(0) += 1;
-            *safety_counts.entry(format!("{:?}", cmd.safety_level)).or_insert(0) += 1;
+            *category_counts
+                .entry(format!("{:?}", cmd.command_category))
+                .or_insert(0) += 1;
+            *intent_counts
+                .entry(format!("{:?}", cmd.intent))
+                .or_insert(0) += 1;
+            *safety_counts
+                .entry(format!("{:?}", cmd.safety_level))
+                .or_insert(0) += 1;
         }
-        
+
         // Find common command sequences
         let command_sequences = self.find_command_sequences();
-        
-        let all_event_ids: Vec<Id<RawEvent>> = self.canonicalized_commands.iter()
-            .map(|cmd| cmd.source_event_id)
+
+        let all_event_ids: Vec<Id<RawEvent>> = self
+            .canonicalized_commands
+            .iter()
+            .map(|cmd| cmd.source_event_id.clone())
             .collect();
-        
+
         let pattern_payload = serde_json::json!({
             "analysis_type": "command_patterns",
             "total_commands": self.canonicalized_commands.len(),
@@ -532,26 +606,31 @@ impl TerminalCommandCanonicalizer {
             "analysis_window_hours": self.config.processing_window_seconds / 3600,
             "generated_at": Utc::now(),
         });
-        
-        let pattern_event = Event::from_events(pattern_payload, all_event_ids)
-            .with_ts_orig(Some(Utc::now()));
-        
+
+        let pattern_event = RawEvent::from_synthesis(
+            "terminal-canonicalizer",
+            "terminal.command_pattern",
+            pattern_payload,
+            all_event_ids,
+        )
+        .with_timestamp(Utc::now());
+
         pattern_events.push(pattern_event.into());
-        
+
         Ok(pattern_events)
     }
 
     /// Find common command sequences
     fn find_command_sequences(&self) -> Vec<serde_json::Value> {
         let mut sequences = Vec::new();
-        
+
         // Simple sequence detection: look for commands within 5 minutes of each other
         let sequence_threshold = chrono::Duration::minutes(5);
-        let mut current_sequence = Vec::new();
-        
+        let mut current_sequence: Vec<CanonicalizedCommand> = Vec::new();
+
         let mut sorted_commands = self.canonicalized_commands.clone();
         sorted_commands.sort_by_key(|cmd| cmd.timestamp);
-        
+
         for cmd in &sorted_commands {
             if let Some(last_cmd) = current_sequence.last() {
                 if cmd.timestamp - last_cmd.timestamp <= sequence_threshold {
@@ -568,23 +647,24 @@ impl TerminalCommandCanonicalizer {
                 current_sequence.push(cmd.clone());
             }
         }
-        
+
         // Handle final sequence
         if current_sequence.len() >= 3 {
             sequences.push(self.create_sequence_summary(&current_sequence));
         }
-        
+
         sequences
     }
 
     /// Create summary for a command sequence
     fn create_sequence_summary(&self, sequence: &[CanonicalizedCommand]) -> serde_json::Value {
-        let commands: Vec<String> = sequence.iter()
+        let commands: Vec<String> = sequence
+            .iter()
             .map(|cmd| cmd.canonical_command.clone())
             .collect();
-        
+
         let duration = sequence.last().unwrap().timestamp - sequence.first().unwrap().timestamp;
-        
+
         serde_json::json!({
             "commands": commands,
             "command_count": sequence.len(),
@@ -597,17 +677,25 @@ impl TerminalCommandCanonicalizer {
     /// Analyze command safety patterns
     async fn analyze_command_safety(&self) -> SatelliteResult<Vec<RawEvent>> {
         let mut safety_events = Vec::new();
-        
+
         // Count dangerous and critical commands
-        let dangerous_commands: Vec<&CanonicalizedCommand> = self.canonicalized_commands.iter()
-            .filter(|cmd| matches!(cmd.safety_level, SafetyLevel::Dangerous | SafetyLevel::Critical))
+        let dangerous_commands: Vec<&CanonicalizedCommand> = self
+            .canonicalized_commands
+            .iter()
+            .filter(|cmd| {
+                matches!(
+                    cmd.safety_level,
+                    SafetyLevel::Dangerous | SafetyLevel::Critical
+                )
+            })
             .collect();
-        
+
         if !dangerous_commands.is_empty() {
-            let dangerous_event_ids: Vec<Id<RawEvent>> = dangerous_commands.iter()
-                .map(|cmd| cmd.source_event_id)
+            let dangerous_event_ids: Vec<Id<RawEvent>> = dangerous_commands
+                .iter()
+                .map(|cmd| cmd.source_event_id.clone())
                 .collect();
-            
+
             let safety_payload = serde_json::json!({
                 "analysis_type": "command_safety",
                 "total_commands": self.canonicalized_commands.len(),
@@ -621,44 +709,54 @@ impl TerminalCommandCanonicalizer {
                 "safety_recommendations": self.generate_safety_recommendations(&dangerous_commands),
                 "generated_at": Utc::now(),
             });
-            
-            let safety_event = Event::from_events(safety_payload, dangerous_event_ids)
-                .with_ts_orig(Some(Utc::now()));
-            
+
+            let safety_event = RawEvent::from_synthesis(
+                "terminal-canonicalizer",
+                "terminal.safety_analysis",
+                safety_payload,
+                dangerous_event_ids,
+            )
+            .with_timestamp(Utc::now());
+
             safety_events.push(safety_event.into());
         }
-        
+
         Ok(safety_events)
     }
 
     /// Generate safety recommendations
-    fn generate_safety_recommendations(&self, dangerous_commands: &[&CanonicalizedCommand]) -> Vec<String> {
+    fn generate_safety_recommendations(
+        &self,
+        dangerous_commands: &[&CanonicalizedCommand],
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
-        
+
         if !dangerous_commands.is_empty() {
             recommendations.push(format!(
                 "Found {} potentially dangerous commands in recent history",
                 dangerous_commands.len()
             ));
-            
+
             // Count critical commands
-            let critical_count = dangerous_commands.iter()
+            let critical_count = dangerous_commands
+                .iter()
                 .filter(|cmd| matches!(cmd.safety_level, SafetyLevel::Critical))
                 .count();
-            
+
             if critical_count > 0 {
                 recommendations.push(format!(
                     "{} commands are marked as critical and require extra caution",
                     critical_count
                 ));
             }
-            
+
             // Check for common dangerous patterns
-            let rm_commands: Vec<&CanonicalizedCommand> = dangerous_commands.iter()
+            let rm_commands: Vec<&CanonicalizedCommand> = dangerous_commands
+                .iter()
                 .filter(|cmd| cmd.canonical_command.starts_with("rm"))
                 .cloned()
                 .collect();
-            
+
             if !rm_commands.is_empty() {
                 recommendations.push(format!(
                     "Consider using 'trash' or 'rm -i' instead of direct 'rm' for {} deletion commands",
@@ -666,25 +764,29 @@ impl TerminalCommandCanonicalizer {
                 ));
             }
         }
-        
-        recommendations.push("Always backup important data before running destructive commands".to_string());
-        recommendations.push("Use '--dry-run' flags when available to preview command effects".to_string());
-        
+
+        recommendations
+            .push("Always backup important data before running destructive commands".to_string());
+        recommendations
+            .push("Use '--dry-run' flags when available to preview command effects".to_string());
+
         recommendations
     }
 
     /// Analyze shell workflow patterns
     async fn analyze_shell_workflows(&self) -> SatelliteResult<Vec<RawEvent>> {
         let mut workflow_events = Vec::new();
-        
+
         // Analyze workflow patterns
         let workflows = self.identify_workflows();
-        
+
         if !workflows.is_empty() {
-            let all_event_ids: Vec<Id<RawEvent>> = self.canonicalized_commands.iter()
-                .map(|cmd| cmd.source_event_id)
+            let all_event_ids: Vec<Id<RawEvent>> = self
+                .canonicalized_commands
+                .iter()
+                .map(|cmd| cmd.source_event_id.clone())
                 .collect();
-            
+
             let workflow_payload = serde_json::json!({
                 "analysis_type": "shell_workflows",
                 "total_workflows": workflows.len(),
@@ -692,49 +794,57 @@ impl TerminalCommandCanonicalizer {
                 "workflow_efficiency_score": self.calculate_workflow_efficiency(&workflows),
                 "generated_at": Utc::now(),
             });
-            
-            let workflow_event = Event::from_events(workflow_payload, all_event_ids)
-                .with_ts_orig(Some(Utc::now()));
-            
+
+            let workflow_event = RawEvent::from_synthesis(
+                "terminal-canonicalizer",
+                "terminal.workflow_detected",
+                workflow_payload,
+                all_event_ids,
+            )
+            .with_timestamp(Utc::now());
+
             workflow_events.push(workflow_event.into());
         }
-        
+
         Ok(workflow_events)
     }
 
     /// Identify workflow patterns in commands
     fn identify_workflows(&self) -> Vec<serde_json::Value> {
         let mut workflows = Vec::new();
-        
+
         // Look for development workflows
         if let Some(dev_workflow) = self.identify_development_workflow() {
             workflows.push(dev_workflow);
         }
-        
+
         // Look for file management workflows
         if let Some(file_workflow) = self.identify_file_management_workflow() {
             workflows.push(file_workflow);
         }
-        
+
         // Look for system administration workflows
         if let Some(sysadmin_workflow) = self.identify_sysadmin_workflow() {
             workflows.push(sysadmin_workflow);
         }
-        
+
         workflows
     }
 
     /// Identify development workflow patterns
     fn identify_development_workflow(&self) -> Option<serde_json::Value> {
-        let dev_commands: Vec<&CanonicalizedCommand> = self.canonicalized_commands.iter()
+        let dev_commands: Vec<&CanonicalizedCommand> = self
+            .canonicalized_commands
+            .iter()
             .filter(|cmd| matches!(cmd.command_category, CommandCategory::Development))
             .collect();
-        
+
         if dev_commands.len() >= 3 {
-            let git_commands = dev_commands.iter()
+            let git_commands = dev_commands
+                .iter()
                 .filter(|cmd| cmd.canonical_command.starts_with("git"))
                 .count();
-            
+
             Some(serde_json::json!({
                 "workflow_type": "development",
                 "total_dev_commands": dev_commands.len(),
@@ -749,10 +859,12 @@ impl TerminalCommandCanonicalizer {
 
     /// Identify file management workflow patterns
     fn identify_file_management_workflow(&self) -> Option<serde_json::Value> {
-        let file_commands: Vec<&CanonicalizedCommand> = self.canonicalized_commands.iter()
+        let file_commands: Vec<&CanonicalizedCommand> = self
+            .canonicalized_commands
+            .iter()
             .filter(|cmd| matches!(cmd.command_category, CommandCategory::FileSystem))
             .collect();
-        
+
         if file_commands.len() >= 5 {
             Some(serde_json::json!({
                 "workflow_type": "file_management",
@@ -774,10 +886,19 @@ impl TerminalCommandCanonicalizer {
 
     /// Identify system administration workflow patterns
     fn identify_sysadmin_workflow(&self) -> Option<serde_json::Value> {
-        let system_commands: Vec<&CanonicalizedCommand> = self.canonicalized_commands.iter()
-            .filter(|cmd| matches!(cmd.command_category, CommandCategory::SystemInfo | CommandCategory::Process | CommandCategory::Package))
+        let system_commands: Vec<&CanonicalizedCommand> = self
+            .canonicalized_commands
+            .iter()
+            .filter(|cmd| {
+                matches!(
+                    cmd.command_category,
+                    CommandCategory::SystemInfo
+                        | CommandCategory::Process
+                        | CommandCategory::Package
+                )
+            })
             .collect();
-        
+
         if system_commands.len() >= 3 {
             Some(serde_json::json!({
                 "workflow_type": "system_administration",
@@ -797,14 +918,18 @@ impl TerminalCommandCanonicalizer {
     /// Extract development tools from commands
     fn extract_dev_tools(&self, dev_commands: &[&CanonicalizedCommand]) -> Vec<String> {
         let mut tools = std::collections::HashSet::new();
-        
+
         for cmd in dev_commands {
-            let tool = cmd.canonical_command.split_whitespace().next().unwrap_or("");
+            let tool = cmd
+                .canonical_command
+                .split_whitespace()
+                .next()
+                .unwrap_or("");
             if !tool.is_empty() {
                 tools.insert(tool.to_string());
             }
         }
-        
+
         tools.into_iter().collect()
     }
 
@@ -812,10 +937,11 @@ impl TerminalCommandCanonicalizer {
     fn calculate_dev_productivity(&self, dev_commands: &[&CanonicalizedCommand]) -> f64 {
         // Simple productivity metric based on command diversity and git usage
         let unique_tools = self.extract_dev_tools(dev_commands).len();
-        let git_usage = dev_commands.iter()
+        let git_usage = dev_commands
+            .iter()
             .filter(|cmd| cmd.canonical_command.starts_with("git"))
             .count() as f64;
-        
+
         let productivity = (unique_tools as f64 * 0.3) + (git_usage * 0.1);
         productivity.min(10.0) // Cap at 10
     }
@@ -825,7 +951,7 @@ impl TerminalCommandCanonicalizer {
         if workflows.is_empty() {
             return 0.0;
         }
-        
+
         // Simple efficiency metric based on workflow diversity
         workflows.len() as f64 * 2.0
     }
@@ -841,19 +967,19 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         config: Self::Config,
     ) -> SatelliteResult<()> {
         info!("Initializing terminal command canonicalizer");
-        
+
         // Get database pool from context
         self.db_pool = Some(ctx.db_pool.clone());
         self.event_sender = Some(ctx.event_sender.clone());
         self.context = Some(ctx);
         self.config = config;
-        
+
         info!(
             "Terminal command canonicalizer configured - processing {} event types, {} canonicalization rules",
             self.config.terminal_event_types.len(),
             self.config.canonicalization_rules.len()
         );
-        
+
         Ok(())
     }
 
@@ -864,34 +990,54 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = Utc::now();
-        
+
         let events_processed = match until {
             TimeHorizon::Snapshot => {
                 // Perform one-time command canonicalization
                 self.process_terminal_events(&from).await.unwrap_or(0)
-            },
+            }
             TimeHorizon::Historical { .. } => {
                 // Process historical terminal events
                 self.process_terminal_events(&from).await.unwrap_or(0)
-            },
+            }
             TimeHorizon::Continuous => {
                 // Continuous command processing
                 self.process_terminal_events(&from).await.unwrap_or(0)
-            },
+            }
         };
 
         let duration = Utc::now().signed_duration_since(start_time);
-        
+
         Ok(ScanReport {
             events_processed,
             duration: Duration::from_millis(duration.num_milliseconds() as u64),
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
-                ("canonicalized_commands".to_string(), serde_json::Value::Number(self.canonicalized_commands.len().into())),
-                ("canonicalization_rules".to_string(), serde_json::Value::Number(self.config.canonicalization_rules.len().into())),
-                ("intent_analysis_enabled".to_string(), serde_json::Value::Bool(self.config.enable_intent_analysis)),
-                ("safety_analysis_enabled".to_string(), serde_json::Value::Bool(self.config.enable_safety_analysis)),
+                (
+                    "canonicalized_commands".to_string(),
+                    self.canonicalized_commands.len() as u64,
+                ),
+                (
+                    "canonicalization_rules".to_string(),
+                    self.config.canonicalization_rules.len() as u64,
+                ),
+                (
+                    "intent_analysis_enabled".to_string(),
+                    if self.config.enable_intent_analysis {
+                        1
+                    } else {
+                        0
+                    },
+                ),
+                (
+                    "safety_analysis_enabled".to_string(),
+                    if self.config.enable_safety_analysis {
+                        1
+                    } else {
+                        0
+                    },
+                ),
             ]),
             successful_targets: vec!["terminal".to_string()],
             failed_targets: Vec::new(),
@@ -921,23 +1067,50 @@ impl Default for TerminalCommandCanonicalizer {
 
 impl ExplorationProvider for TerminalCommandCanonicalizer {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        let dangerous_commands = self.canonicalized_commands.iter()
-            .filter(|cmd| matches!(cmd.safety_level, SafetyLevel::Dangerous | SafetyLevel::Critical))
+        let dangerous_commands = self
+            .canonicalized_commands
+            .iter()
+            .filter(|cmd| {
+                matches!(
+                    cmd.safety_level,
+                    SafetyLevel::Dangerous | SafetyLevel::Critical
+                )
+            })
             .count();
-        
+
         Ok(SourceState {
-            description: "Terminal command canonicalizer for command standardization and analysis".to_string(),
+            description: "Terminal command canonicalizer for command standardization and analysis"
+                .to_string(),
             last_updated: Utc::now(),
             total_items: Some(self.canonicalized_commands.len() as u64),
             metadata: HashMap::from([
-                ("canonicalized_commands".to_string(), self.canonicalized_commands.len().to_string()),
-                ("canonicalization_rules".to_string(), self.config.canonicalization_rules.len().to_string()),
-                ("dangerous_commands".to_string(), dangerous_commands.to_string()),
-                ("intent_analysis".to_string(), self.config.enable_intent_analysis.to_string()),
-                ("pattern_recognition".to_string(), self.config.enable_pattern_recognition.to_string()),
-                ("safety_analysis".to_string(), self.config.enable_safety_analysis.to_string()),
+                (
+                    "canonicalized_commands".to_string(),
+                    serde_json::Value::Number(self.canonicalized_commands.len().into()),
+                ),
+                (
+                    "canonicalization_rules".to_string(),
+                    serde_json::Value::Number(self.config.canonicalization_rules.len().into()),
+                ),
+                (
+                    "dangerous_commands".to_string(),
+                    serde_json::Value::Number(dangerous_commands.into()),
+                ),
+                (
+                    "intent_analysis".to_string(),
+                    serde_json::Value::Bool(self.config.enable_intent_analysis),
+                ),
+                (
+                    "pattern_recognition".to_string(),
+                    serde_json::Value::Bool(self.config.enable_pattern_recognition),
+                ),
+                (
+                    "safety_analysis".to_string(),
+                    serde_json::Value::Bool(self.config.enable_safety_analysis),
+                ),
             ]),
-            healthy: dangerous_commands as f64 / self.canonicalized_commands.len().max(1) as f64 < 0.3, // Healthy if < 30% dangerous commands
+            healthy: (dangerous_commands as f64 / self.canonicalized_commands.len().max(1) as f64)
+                < 0.3, // Healthy if < 30% dangerous commands
             recent_activity: Vec::new(),
         })
     }
@@ -963,7 +1136,8 @@ impl ExplorationProvider for TerminalCommandCanonicalizer {
             missing_samples: Vec::new(),
             duplicate_count: 0,
             recommendations: vec![
-                "Terminal command canonicalizer standardizes and analyzes shell commands".to_string(),
+                "Terminal command canonicalizer standardizes and analyzes shell commands"
+                    .to_string(),
                 "Add more canonicalization_rules to improve command normalization".to_string(),
                 "Enable safety_analysis to identify potentially dangerous commands".to_string(),
                 "Enable pattern_recognition to detect workflow patterns".to_string(),

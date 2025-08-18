@@ -25,10 +25,11 @@ pub mod proto {
 
 use proto::{
     sensd_service_server::{SensdService as ProtoService, SensdServiceServer},
-    CreateJobRequest, CreateJobResponse, EndOfMaterial, GapIndicator, GetJobStatusRequest,
-    GetMaterialMetadataRequest, GetMaterialStreamRequest, JobStatus as ProtoJobStatus,
-    ListMaterialsRequest, ListMaterialsResponse, MaterialMetadata, MaterialSlice as ProtoSlice,
-    RotationBoundary, StreamFrame as ProtoFrame,
+    CreateJobRequest, CreateJobResponse, DirectCaptureAcknowledgment, DirectCaptureRequest,
+    EndOfMaterial, GapIndicator, GetJobStatusRequest, GetMaterialMetadataRequest,
+    GetMaterialStreamRequest, JobStatus as ProtoJobStatus, ListMaterialsRequest,
+    ListMaterialsResponse, MaterialMetadata, MaterialSlice as ProtoSlice, RotationBoundary,
+    StreamFrame as ProtoFrame,
 };
 
 /// gRPC service implementation
@@ -102,7 +103,7 @@ impl ProtoService for SensdGrpcService {
         let materials = sqlx::query!(
             r#"
             SELECT 
-                blob_id as "material_id: Ulid",
+                source_material_id as "material_id: Ulid",
                 source_identifier,
                 source_type,
                 total_bytes as size_bytes,
@@ -159,7 +160,7 @@ impl ProtoService for SensdGrpcService {
         let material = sqlx::query!(
             r#"
             SELECT 
-                blob_id as "material_id: Ulid",
+                source_material_id as "material_id: Ulid",
                 source_identifier,
                 source_type,
                 total_bytes as size_bytes,
@@ -169,7 +170,7 @@ impl ProtoService for SensdGrpcService {
                 status as lifecycle_status,
                 metadata
             FROM raw.source_material_registry
-            WHERE blob_id = $1::ulid
+            WHERE id = $1::ulid
             "#,
             material_id as Ulid
         )
@@ -298,6 +299,110 @@ impl ProtoService for SensdGrpcService {
             material_id: job.material_id.map(|id| id.to_string()).unwrap_or_default(),
         }))
     }
+
+    #[instrument(skip(self, request))]
+    async fn capture_direct_with_ack(
+        &self,
+        request: Request<DirectCaptureRequest>,
+    ) -> Result<Response<DirectCaptureAcknowledgment>, Status> {
+        let req = request.into_inner();
+
+        // Generate material ID
+        let material_id = Ulid::new();
+        let capture_timestamp = Utc::now();
+
+        // Calculate checksum of the data
+        let checksum = blake3::hash(&req.data).to_hex().to_string();
+
+        // Parse metadata
+        let metadata: serde_json::Value = if req.metadata_json.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&req.metadata_json)
+                .map_err(|e| Status::invalid_argument(format!("Invalid metadata JSON: {}", e)))?
+        };
+
+        // Store the material directly in the database
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                source_material_id, source_identifier, source_type, 
+                content_type, status, total_bytes,
+                created_at, staged_at, metadata, data,
+                material_type, checksum, source_uri, encoding,
+                is_archived, ingestion_time
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+            )
+            RETURNING source_material_id as "id: Ulid"
+            "#,
+            material_id as _,
+            req.source_identifier,
+            req.sensor_type,
+            "application/octet-stream",
+            "completed",
+            req.data.len() as i64,
+            capture_timestamp,
+            capture_timestamp,
+            metadata,
+            req.data,
+            "direct_capture",
+            checksum,
+            format!("direct://{}", req.source_identifier),
+            "binary",
+            false,
+            capture_timestamp
+        )
+        .fetch_one(&self.db_pool)
+        .await
+        .map_err(|e| Status::internal(format!("Failed to store material: {}", e)))?;
+
+        // If acknowledgment is required, ensure data integrity
+        if req.require_acknowledgment {
+            // Verify the data was written correctly by reading it back
+            let verification = sqlx::query!(
+                r#"
+                SELECT checksum, total_bytes 
+                FROM raw.source_material_registry 
+                WHERE id = $1
+                "#,
+                result.id as _
+            )
+            .fetch_optional(&self.db_pool)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to verify material: {}", e)))?;
+
+            if let Some(verify) = verification {
+                if verify.checksum != Some(checksum.clone()) {
+                    return Ok(Response::new(DirectCaptureAcknowledgment {
+                        material_id: material_id.to_string(),
+                        success: false,
+                        error: "Checksum verification failed".to_string(),
+                        bytes_captured: 0,
+                        capture_timestamp: capture_timestamp.to_rfc3339(),
+                        checksum: String::new(),
+                    }));
+                }
+            }
+        }
+
+        info!(
+            material_id = %material_id,
+            bytes = req.data.len(),
+            source = req.source_identifier,
+            "Direct capture with acknowledgment completed"
+        );
+
+        // Return acknowledgment
+        Ok(Response::new(DirectCaptureAcknowledgment {
+            material_id: material_id.to_string(),
+            success: true,
+            error: String::new(),
+            bytes_captured: req.data.len() as i64,
+            capture_timestamp: capture_timestamp.to_rfc3339(),
+            checksum,
+        }))
+    }
 }
 
 /// Load material data from storage backend
@@ -314,7 +419,7 @@ async fn load_material_data(
             data,
             optional_blob_id as "optional_blob_id: Ulid"
         FROM raw.source_material_registry
-        WHERE blob_id = $1::ulid
+        WHERE id = $1::ulid
         "#,
         material_id as Ulid
     )
@@ -332,9 +437,52 @@ async fn load_material_data(
         } else {
             return Ok(vec![]); // Return empty if slice is out of bounds
         }
-    } else if let Some(_blob_id) = material.optional_blob_id {
-        // TODO: Implement external blob storage loading
-        // For now, return empty data
+    } else if let Some(blob_id) = material.optional_blob_id {
+        // Load from external blob storage
+        // Query blob metadata from core.blobs table
+        let blob = sqlx::query!(
+            r#"
+            SELECT 
+                content_hash,
+                size_bytes,
+                stored_at,
+                content_type,
+                metadata
+            FROM core.blobs
+            WHERE id = $1::uuid
+            "#,
+            sinex_core::ulid_to_uuid(blob_id)
+        )
+        .fetch_optional(db_pool)
+        .await?;
+
+        if let Some(blob_record) = blob {
+            // Check if we have a file path in metadata
+            if let Some(metadata) = blob_record.metadata {
+                if let Some(file_path) = metadata.get("file_path").and_then(|v| v.as_str()) {
+                    // Read the file from disk
+                    match tokio::fs::read(file_path).await {
+                        Ok(data) => {
+                            // Extract the requested slice
+                            let start = offset_start as usize;
+                            let end = offset_end as usize;
+                            if start <= data.len() && end <= data.len() && start <= end {
+                                return Ok(data[start..end].to_vec());
+                            } else {
+                                return Ok(vec![]); // Out of bounds
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to read blob file {}: {}", file_path, e);
+                            return Ok(vec![]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we couldn't load from file storage, return empty
+        tracing::warn!("External blob {} not found or couldn't be loaded", blob_id);
         return Ok(vec![]);
     } else {
         // No data available

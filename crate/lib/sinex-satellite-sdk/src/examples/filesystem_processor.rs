@@ -18,8 +18,9 @@ use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::types::events::Event;
-use sinex_core::RawEvent;
+use sinex_core::db::models::Event;
+use sinex_core::types::events::{DirDiscoveredPayload, FileDiscoveredPayload};
+use sinex_core::JsonValue;
 use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use tokio::fs;
@@ -128,7 +129,7 @@ impl FilesystemProcessor {
             if emit_events {
                 use std::os::unix::fs::PermissionsExt;
 
-                let event: RawEvent = if metadata.is_file() {
+                let event = if metadata.is_file() {
                     let modified_time = metadata
                         .modified()
                         .ok()
@@ -138,14 +139,25 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::new(sinex_core::events::FileDiscoveredPayload {
+                    let payload = FileDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
+                    };
+
+                    Event::dynamic(
+                        "filesystem-processor",
+                        "file.discovered",
+                        serde_json::to_value(payload).unwrap(),
+                    )
+                    .with_provenance(sinex_core::Provenance::Synthesis {
+                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                            sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new()),
+                        ),
+                        operation_id: None,
                     })
-                    .with_ts_orig(Some(chrono::Utc::now()))
-                    .into()
+                    .build()
                 } else if metadata.is_dir() {
                     let modified_time = metadata
                         .modified()
@@ -156,12 +168,23 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::new(sinex_core::events::DirDiscoveredPayload {
+                    let payload = DirDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         modified_at: modified_time,
+                    };
+
+                    Event::dynamic(
+                        "filesystem-processor",
+                        "dir.discovered",
+                        serde_json::to_value(payload).unwrap(),
+                    )
+                    .with_provenance(sinex_core::Provenance::Synthesis {
+                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
+                            sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new()),
+                        ),
+                        operation_id: None,
                     })
-                    .with_ts_orig(Some(chrono::Utc::now()))
-                    .into()
+                    .build()
                 } else {
                     continue;
                 };

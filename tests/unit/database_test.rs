@@ -445,12 +445,12 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
 
-    let event = RawEvent::builder()
-        .source(EventSource::from("timestamp-test"))
-        .event_type(EventType::from("time.test"))
-        .ts_orig(Some(original_time))
-        .payload(json!({"test": "timestamp"}))
-        .build();
+    let event = RawEvent::test_event(
+        EventSource::from("timestamp-test"),
+        EventType::from("time.test"),
+        json!({"test": "timestamp"}),
+    )
+    .with_timestamp(original_time);
 
     let before_insert = Utc::now();
     let inserted_event = ctx.pool.events().insert(event).await?;

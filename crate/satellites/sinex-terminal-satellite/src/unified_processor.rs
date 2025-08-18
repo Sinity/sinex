@@ -107,7 +107,7 @@ impl Default for TerminalConfig {
                 .into_iter()
                 .collect(),
             )
-            .atuin_db_path(Some(home.join(".local/share/atuin/history.db")))
+            .atuin_db_path(home.join(".local/share/atuin/history.db"))
             .history_files(vec![
                 home.join(".bash_history"),
                 home.join(".zsh_history"),
@@ -311,7 +311,7 @@ impl TerminalProcessor {
             .unwrap_or(false)
         {
             if let Some(ref atuin_path) = self.config.atuin_db_path {
-                if atuin_path.exists() {
+                if atuin_path.as_path().exists() {
                     info!("Submitting Atuin monitoring job: {}", atuin_path.as_str());
                     sensd_processor
                         .submit_atuin_job(atuin_path.as_str())
@@ -443,7 +443,8 @@ impl TerminalProcessor {
 
         // Check Atuin database
         if let Some(ref atuin_path) = self.config.atuin_db_path {
-            atuin_status = Some(Self::get_atuin_status(atuin_path).await);
+            let sanitized_path = sinex_core::SanitizedPath::new(atuin_path.as_str());
+            atuin_status = Some(Self::get_atuin_status(&sanitized_path).await);
         }
 
         // TODO: Query sensd jobs from database
@@ -509,13 +510,13 @@ impl TerminalProcessor {
 
     /// Helper function to get Atuin database status
     async fn get_atuin_status(atuin_path: &sinex_core::SanitizedPath) -> AtuinStatus {
-        if atuin_path.exists() {
-            let metadata = tokio::fs::metadata(atuin_path).await.ok();
+        if std::path::Path::new(atuin_path.as_str()).exists() {
+            let metadata = tokio::fs::metadata(atuin_path.as_str()).await.ok();
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
 
             // Query actual data from Atuin SQLite database
             let (estimated_entries, last_entry_timestamp) =
-                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_path()) {
+                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_str()) {
                     // Count entries
                     let count: u64 = conn
                         .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
@@ -937,7 +938,7 @@ impl ExplorationProvider for TerminalProcessor {
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            std::fs::write(path.as_path(), content)?;
+            std::fs::write(path.as_str(), content)?;
         } else {
             // Export configuration if no state available
             let config_data = serde_json::json!({
@@ -952,7 +953,7 @@ impl ExplorationProvider for TerminalProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            std::fs::write(path.as_path(), content)?;
+            std::fs::write(path.as_str(), content)?;
         }
 
         Ok(())

@@ -704,17 +704,32 @@ mod tests {
 
         match validation_err {
             SinexError::Validation(_) => assert!(true),
-            _ => panic!("Wrong error type"),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "Expected Validation error, got: {:?}",
+                    validation_err
+                ))
+            }
         }
 
         match database_err {
             SinexError::Database(_) => assert!(true),
-            _ => panic!("Wrong error type"),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "Expected Database error, got: {:?}",
+                    database_err
+                ))
+            }
         }
 
         match service_err {
             SinexError::Service(_) => assert!(true),
-            _ => panic!("Wrong error type"),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "Expected Service error, got: {:?}",
+                    service_err
+                ))
+            }
         }
 
         Ok(())

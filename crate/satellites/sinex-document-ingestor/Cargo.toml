@@ -22,6 +22,7 @@ sqlx = { workspace = true }
 # Sinex dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 sinex-core = { path = "../../lib/sinex-core" }
+sinex-sensd = { path = "../../core/sinex-sensd" }
 
 # Document processing
 mime_guess = "2.0"

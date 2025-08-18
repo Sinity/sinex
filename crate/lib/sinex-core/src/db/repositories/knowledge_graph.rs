@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use crate::models::{Entity, EntityRelation, RawEvent};
+use crate::models::{Entity, EntityRelation, Event, JsonValue};
 
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,11 +44,13 @@ pub struct EntityRecord {
     pub name: String,
     pub canonical_name: String,
     pub aliases: Vec<String>,
-    pub description: Option<String>,
-    pub metadata: serde_json::Value,
+    pub properties: serde_json::Value,
+    pub source_event_ids: Vec<Id<Event<JsonValue>>>,
+    pub confidence_score: f64,
+    pub is_merged: bool,
+    pub merged_into_id: Option<Id<Entity>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub merged_into_id: Option<Id<Entity>>,
 }
 
 /// Entity to create
@@ -58,8 +60,9 @@ pub struct CreateEntity {
     pub name: String,
     pub canonical_name: Option<String>,
     pub aliases: Option<Vec<String>>,
-    pub description: Option<String>,
-    pub metadata: Option<serde_json::Value>,
+    pub properties: Option<serde_json::Value>,
+    pub source_event_ids: Option<Vec<Id<Event<JsonValue>>>>,
+    pub confidence_score: Option<f64>,
 }
 
 impl CreateEntity {
@@ -70,8 +73,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -82,8 +86,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -94,8 +99,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -106,8 +112,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -118,8 +125,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -130,8 +138,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -142,8 +151,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -154,8 +164,9 @@ impl CreateEntity {
             name: name.into(),
             canonical_name: None,
             aliases: None,
-            description: None,
-            metadata: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
         }
     }
 
@@ -175,15 +186,21 @@ impl CreateEntity {
         self
     }
 
-    /// Fluent method to set description
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
+    /// Fluent method to set properties
+    pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
+        self.properties = Some(properties);
         self
     }
 
-    /// Fluent method to set metadata
-    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
-        self.metadata = Some(metadata);
+    /// Fluent method to set source event IDs
+    pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
+        self.source_event_ids = Some(ids);
+        self
+    }
+
+    /// Fluent method to set confidence score
+    pub fn with_confidence_score(mut self, score: f64) -> Self {
+        self.confidence_score = Some(score);
         self
     }
 }
@@ -195,12 +212,12 @@ pub struct EntityRelationRecord {
     pub from_entity_id: Id<Entity>,
     pub to_entity_id: Id<Entity>,
     pub relation_type: String,
-    pub strength: f64,
-    pub metadata: serde_json::Value,
-    pub valid_from: DateTime<Utc>,
-    pub valid_until: Option<DateTime<Utc>>,
+    pub properties: serde_json::Value,
+    pub source_event_ids: Vec<Id<Event<JsonValue>>>,
+    pub confidence_score: f64,
+    pub is_active: bool,
     pub created_at: DateTime<Utc>,
-    pub created_from_event_id: Option<Id<RawEvent>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Entity relation to create
@@ -209,11 +226,10 @@ pub struct CreateEntityRelation {
     pub from_entity_id: Id<Entity>,
     pub to_entity_id: Id<Entity>,
     pub relation_type: String,
-    pub strength: Option<f64>,
-    pub metadata: Option<serde_json::Value>,
-    pub valid_from: Option<DateTime<Utc>>,
-    pub valid_until: Option<DateTime<Utc>>,
-    pub created_from_event_id: Option<Id<RawEvent>>,
+    pub properties: Option<serde_json::Value>,
+    pub source_event_ids: Option<Vec<Id<Event<JsonValue>>>>,
+    pub confidence_score: Option<f64>,
+    pub is_active: Option<bool>,
 }
 
 impl CreateEntityRelation {
@@ -227,41 +243,34 @@ impl CreateEntityRelation {
             from_entity_id,
             to_entity_id,
             relation_type: relation_type.into(),
-            strength: None,
-            metadata: None,
-            valid_from: None,
-            valid_until: None,
-            created_from_event_id: None,
+            properties: None,
+            source_event_ids: None,
+            confidence_score: None,
+            is_active: None,
         }
     }
 
-    /// Fluent method to set strength
-    pub fn with_strength(mut self, strength: f64) -> Self {
-        self.strength = Some(strength);
+    /// Fluent method to set properties
+    pub fn with_properties(mut self, properties: serde_json::Value) -> Self {
+        self.properties = Some(properties);
         self
     }
 
-    /// Fluent method to set metadata
-    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
-        self.metadata = Some(metadata);
+    /// Fluent method to set source event IDs
+    pub fn with_source_event_ids(mut self, ids: Vec<Id<Event<JsonValue>>>) -> Self {
+        self.source_event_ids = Some(ids);
         self
     }
 
-    /// Fluent method to set valid_from
-    pub fn with_valid_from(mut self, valid_from: DateTime<Utc>) -> Self {
-        self.valid_from = Some(valid_from);
+    /// Fluent method to set confidence score
+    pub fn with_confidence_score(mut self, score: f64) -> Self {
+        self.confidence_score = Some(score);
         self
     }
 
-    /// Fluent method to set valid_until
-    pub fn with_valid_until(mut self, valid_until: DateTime<Utc>) -> Self {
-        self.valid_until = Some(valid_until);
-        self
-    }
-
-    /// Fluent method to set created_from_event_id
-    pub fn with_created_from_event(mut self, event_id: Id<RawEvent>) -> Self {
-        self.created_from_event_id = Some(event_id);
+    /// Fluent method to set is_active status
+    pub fn with_is_active(mut self, active: bool) -> Self {
+        self.is_active = Some(active);
         self
     }
 }
@@ -293,37 +302,42 @@ impl<'a> KnowledgeGraphRepository<'a> {
             .canonical_name
             .unwrap_or_else(|| entity.name.to_lowercase().replace(' ', "_"));
         let aliases = entity.aliases.unwrap_or_default();
-        let metadata = entity
-            .metadata
+        let properties = entity
+            .properties
             .unwrap_or(serde_json::Value::Object(Default::default()));
+        let source_event_ids = entity.source_event_ids.unwrap_or_default();
+        let confidence_score = entity.confidence_score.unwrap_or(1.0);
 
         sqlx::query_as!(
             EntityRecord,
             r#"
             INSERT INTO core.entities (
-                id, type, name, canonical_name, aliases, description, metadata
+                id, entity_type, name, canonical_name, aliases, properties, source_event_ids, confidence_score
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7
+                $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
-                description,
-                metadata as "metadata!",
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_merged as "is_merged!",
+                merged_into_id as "merged_into_id: Id<Entity>",
                 created_at as "created_at!",
-                updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: Id<Entity>"
+                updated_at as "updated_at!"
             "#,
             *id.as_ulid() as _,
             entity.entity_type.as_str(),
             entity.name,
             canonical_name,
             &aliases,
-            entity.description,
-            metadata
+            properties,
+            source_event_ids.iter().map(|id| *id.as_ulid()).collect::<Vec<_>>() as _,
+            confidence_score
         )
         .fetch_one(self.pool)
         .await
@@ -337,15 +351,17 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
-                description,
-                metadata as "metadata!",
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_merged as "is_merged!",
+                merged_into_id as "merged_into_id: Id<Entity>",
                 created_at as "created_at!",
-                updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: Id<Entity>"
+                updated_at as "updated_at!"
             FROM core.entities
             WHERE id = $1
             "#,
@@ -365,15 +381,17 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
-                description,
-                metadata as "metadata!",
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_merged as "is_merged!",
+                merged_into_id as "merged_into_id: Id<Entity>",
                 created_at as "created_at!",
-                updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: Id<Entity>"
+                updated_at as "updated_at!"
             FROM core.entities
             WHERE 
                 LOWER(name) = $1 
@@ -405,18 +423,20 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<Entity>",
-                        type as "entity_type!",
+                        entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
-                        description,
-                        metadata as "metadata!",
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_merged as "is_merged!",
+                        merged_into_id as "merged_into_id: Id<Entity>",
                         created_at as "created_at!",
-                        updated_at as "updated_at!",
-                        merged_into_id as "merged_into_id: Id<Entity>"
+                        updated_at as "updated_at!"
                     FROM core.entities
                     WHERE 
-                        type = $3
+                        entity_type = $3
                         AND (
                             LOWER(name) LIKE $1 
                             OR LOWER(canonical_name) LIKE $1
@@ -441,15 +461,17 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<Entity>",
-                        type as "entity_type!",
+                        entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
-                        description,
-                        metadata as "metadata!",
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_merged as "is_merged!",
+                        merged_into_id as "merged_into_id: Id<Entity>",
                         created_at as "created_at!",
-                        updated_at as "updated_at!",
-                        merged_into_id as "merged_into_id: Id<Entity>"
+                        updated_at as "updated_at!"
                     FROM core.entities
                     WHERE 
                         LOWER(name) LIKE $1 
@@ -476,9 +498,9 @@ impl<'a> KnowledgeGraphRepository<'a> {
         &self,
         id: Id<Entity>,
         name: Option<String>,
-        description: Option<String>,
+        properties: Option<serde_json::Value>,
         aliases: Option<Vec<String>>,
-        metadata: Option<serde_json::Value>,
+        confidence_score: Option<f64>,
     ) -> DbResult<EntityRecord> {
         sqlx::query_as!(
             EntityRecord,
@@ -486,28 +508,30 @@ impl<'a> KnowledgeGraphRepository<'a> {
             UPDATE core.entities
             SET 
                 name = COALESCE($2, name),
-                description = COALESCE($3, description),
+                properties = COALESCE($3, properties),
                 aliases = COALESCE($4, aliases),
-                metadata = COALESCE($5, metadata),
+                confidence_score = COALESCE($5, confidence_score),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING 
                 id as "id: Id<Entity>",
-                type as "entity_type!",
+                entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
-                description,
-                metadata as "metadata!",
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_merged as "is_merged!",
+                merged_into_id as "merged_into_id: Id<Entity>",
                 created_at as "created_at!",
-                updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: Id<Entity>"
+                updated_at as "updated_at!"
             "#,
             *id.as_ulid() as _,
             name,
-            description,
+            properties,
             aliases.as_deref(),
-            metadata
+            confidence_score
         )
         .fetch_one(self.pool)
         .await
@@ -570,42 +594,45 @@ impl<'a> KnowledgeGraphRepository<'a> {
         relation: CreateEntityRelation,
     ) -> DbResult<EntityRelationRecord> {
         let id = Id::<EntityRelation>::new();
-        let strength = relation.strength.unwrap_or(1.0);
-        let metadata = relation
-            .metadata
+        let properties = relation
+            .properties
             .unwrap_or(serde_json::Value::Object(Default::default()));
-        let valid_from = relation.valid_from.unwrap_or_else(Utc::now);
+        let source_event_ids = relation.source_event_ids.unwrap_or_default();
+        let confidence_score = relation.confidence_score.unwrap_or(1.0);
+        let is_active = relation.is_active.unwrap_or(true);
 
         sqlx::query_as!(
             EntityRelationRecord,
             r#"
             INSERT INTO core.entity_relations (
                 id, from_entity_id, to_entity_id, relation_type, 
-                strength, metadata, valid_from, valid_until, created_from_event_id
+                properties, source_event_ids, confidence_score, is_active
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9
+                $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
                 id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id: Id<Entity>",
-                to_entity_id as "to_entity_id: Id<Entity>",
+                from_entity_id as "from_entity_id!: Id<Entity>",
+                to_entity_id as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
-                strength as "strength!",
-                metadata as "metadata!",
-                valid_from as "valid_from!",
-                valid_until,
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_active as "is_active!",
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                updated_at as "updated_at!"
             "#,
             *id.as_ulid() as _,
             *relation.from_entity_id.as_ulid() as _,
             *relation.to_entity_id.as_ulid() as _,
             relation.relation_type,
-            strength as f32,
-            metadata,
-            valid_from,
-            relation.valid_until,
-            relation.created_from_event_id.map(|id| *id.as_ulid()) as _
+            properties,
+            source_event_ids
+                .iter()
+                .map(|id| *id.as_ulid())
+                .collect::<Vec<_>>() as _,
+            confidence_score,
+            is_active
         )
         .fetch_one(self.pool)
         .await
@@ -626,20 +653,20 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id!: Id<Entity>",
+                        to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
-                        strength as "strength!",
-                        metadata as "metadata!",
-                        valid_from as "valid_from!",
-                        valid_until,
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_active as "is_active!",
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        updated_at as "updated_at!"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND relation_type = $2
-                        AND (valid_until IS NULL OR valid_until > NOW())
+                        AND is_active = true
                     ORDER BY created_at DESC
                     "#,
                     *entity_id.as_ulid() as _,
@@ -654,15 +681,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id!: Id<Entity>",
+                        to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
-                        strength as "strength!",
-                        metadata as "metadata!",
-                        valid_from as "valid_from!",
-                        valid_until,
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_active as "is_active!",
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        updated_at as "updated_at!"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -681,19 +708,19 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id!: Id<Entity>",
+                        to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
-                        strength as "strength!",
-                        metadata as "metadata!",
-                        valid_from as "valid_from!",
-                        valid_until,
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_active as "is_active!",
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        updated_at as "updated_at!"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
-                        AND (valid_until IS NULL OR valid_until > NOW())
+                        AND is_active = true
                     ORDER BY created_at DESC
                     "#,
                     *entity_id.as_ulid() as _
@@ -707,15 +734,15 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     r#"
                     SELECT 
                         id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id: Id<Entity>",
-                        to_entity_id as "to_entity_id: Id<Entity>",
+                        from_entity_id as "from_entity_id!: Id<Entity>",
+                        to_entity_id as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
-                        strength as "strength!",
-                        metadata as "metadata!",
-                        valid_from as "valid_from!",
-                        valid_until,
+                        properties as "properties!",
+                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        confidence_score as "confidence_score!",
+                        is_active as "is_active!",
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                        updated_at as "updated_at!"
                     FROM core.entity_relations
                     WHERE 
                         from_entity_id = $1 OR to_entity_id = $1
@@ -730,36 +757,36 @@ impl<'a> KnowledgeGraphRepository<'a> {
         .map_err(|e| db_error(e, "get entity relations"))
     }
 
-    /// Update relation validity period
-    pub async fn update_relation_validity(
+    /// Update relation active status
+    pub async fn update_relation_status(
         &self,
         id: Id<EntityRelation>,
-        valid_until: Option<DateTime<Utc>>,
+        is_active: bool,
     ) -> DbResult<EntityRelationRecord> {
         sqlx::query_as!(
             EntityRelationRecord,
             r#"
             UPDATE core.entity_relations
-            SET valid_until = $2
+            SET is_active = $2, updated_at = NOW()
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id: Id<Entity>",
-                to_entity_id as "to_entity_id: Id<Entity>",
+                from_entity_id as "from_entity_id!: Id<Entity>",
+                to_entity_id as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
-                strength as "strength!",
-                metadata as "metadata!",
-                valid_from as "valid_from!",
-                valid_until,
+                properties as "properties!",
+                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                confidence_score as "confidence_score!",
+                is_active as "is_active!",
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<RawEvent>"
+                updated_at as "updated_at!"
             "#,
             *id.as_ulid() as _,
-            valid_until
+            is_active
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "update relation validity"))
+        .map_err(|e| db_error(e, "update relation status"))
     }
 
     /// Find paths between two entities
@@ -881,12 +908,12 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
         &self,
         id: Id<Entity>,
         name: Option<String>,
-        description: Option<String>,
+        properties: Option<serde_json::Value>,
         aliases: Option<Vec<String>>,
-        metadata: Option<serde_json::Value>,
+        confidence_score: Option<f64>,
     ) -> DbResult<EntityRecord> {
         KnowledgeGraphRepository::new(self.pool)
-            .update_entity(id, name, description, aliases, metadata)
+            .update_entity(id, name, properties, aliases, confidence_score)
             .await
     }
 
@@ -920,13 +947,13 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
             .await
     }
 
-    pub async fn update_relation_validity(
+    pub async fn update_relation_status(
         &self,
         id: Id<EntityRelation>,
-        valid_until: Option<DateTime<Utc>>,
+        is_active: bool,
     ) -> DbResult<EntityRelationRecord> {
         KnowledgeGraphRepository::new(self.pool)
-            .update_relation_validity(id, valid_until)
+            .update_relation_status(id, is_active)
             .await
     }
 

@@ -39,7 +39,7 @@ impl ContentService {
 
         // The blob manager has already created the source material record
         // Return the annex key for referencing the stored content
-        Ok(blob_metadata.annex_key)
+        Ok(blob_metadata.annex_backend)
     }
 
     /// Retrieve content by annex key
