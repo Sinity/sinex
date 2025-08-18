@@ -100,7 +100,12 @@ impl MaterialRotationManager {
                 // Need to create initial material
                 let material_id = self
                     .temporal_ledger
-                    .create_material(&self.source_type, &self.source_path, None)
+                    .create_material(
+                        &format!("{}:{}", self.source_type, self.source_path),
+                        &self.source_type,
+                        Some(&self.source_path),
+                        None,
+                    )
                     .await?;
 
                 info!(
@@ -156,7 +161,12 @@ impl MaterialRotationManager {
             // CRITICAL: Create new material BEFORE finalizing old one (zero-gap invariant)
             let new_material_id = self
                 .temporal_ledger
-                .create_material(&self.source_type, &self.source_path, None)
+                .create_material(
+                    &format!("{}:{}", self.source_type, self.source_path),
+                    &self.source_type,
+                    Some(&self.source_path),
+                    None,
+                )
                 .await?;
 
             let overlap_deadline =
@@ -208,7 +218,7 @@ impl MaterialRotationManager {
 
             // Finalize old material
             self.temporal_ledger
-                .finalize_material(old_id, "rotated", final_bytes)
+                .finalize_material(old_id, "rotated", Some(final_bytes))
                 .await?;
 
             // Transition to normal state with new material
@@ -280,7 +290,12 @@ impl MaterialRotationManager {
             // Create new material first (zero-gap invariant)
             let new_material_id = self
                 .temporal_ledger
-                .create_material(&self.source_type, &self.source_path, None)
+                .create_material(
+                    &self.source_path,
+                    &self.source_type,
+                    Some(&self.source_path),
+                    None,
+                )
                 .await?;
 
             // Get final bytes
@@ -288,7 +303,7 @@ impl MaterialRotationManager {
 
             // Finalize immediately (no overlap for forced rotation)
             self.temporal_ledger
-                .finalize_material(old_material_id, reason, final_bytes)
+                .finalize_material(old_material_id, reason, Some(final_bytes))
                 .await?;
 
             *state = RotationState::Normal {
@@ -303,14 +318,16 @@ impl MaterialRotationManager {
             );
             Ok(new_material_id)
         } else {
-            let new_material_id = existing_new_id.unwrap();
+            let new_material_id = existing_new_id.ok_or_else(|| {
+                color_eyre::eyre::eyre!("Invalid rotation state: existing_new_id is None")
+            })?;
             warn!("Forcing completion of ongoing rotation due to: {}", reason);
 
             // Complete the ongoing rotation immediately
             let final_bytes = self.get_material_bytes(old_material_id).await?;
 
             self.temporal_ledger
-                .finalize_material(old_material_id, reason, final_bytes)
+                .finalize_material(old_material_id, reason, Some(final_bytes))
                 .await?;
 
             *state = RotationState::Normal {
@@ -324,11 +341,9 @@ impl MaterialRotationManager {
     }
 
     /// Get total bytes for a material from temporal ledger
-    async fn get_material_bytes(&self, _material_id: Ulid) -> Result<i64> {
-        // Query temporal ledger for total bytes
-        // This would normally query the database
-        // For now, return a placeholder
-        Ok(0)
+    async fn get_material_bytes(&self, material_id: Ulid) -> Result<i64> {
+        // Delegate to the temporal ledger for proper byte counting
+        self.temporal_ledger.get_material_bytes(material_id).await
     }
 
     /// Verify zero-gap invariant is maintained

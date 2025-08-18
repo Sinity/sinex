@@ -10,7 +10,7 @@ license.workspace = true
 # Performance
 mimalloc = { workspace = true }
 
-sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = [] }
 sinex-services = { path = "../../lib/sinex-services" }
 # sinex-annex folded into sinex-satellite-sdk
 # sinex-telemetry folded into sinex-core

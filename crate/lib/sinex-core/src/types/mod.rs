@@ -46,6 +46,7 @@ pub mod domain;
 pub mod error;
 pub mod events;
 pub mod ids;
+pub mod non_empty;
 pub mod utils;
 pub mod validation;
 

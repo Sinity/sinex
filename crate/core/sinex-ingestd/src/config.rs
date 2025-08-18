@@ -276,7 +276,7 @@ fn default_work_dir() -> Utf8PathBuf {
     let work_dir = env.work_directory(base_dir.join("sinex").join("ingestd"));
 
     // Validate the default path
-    match validate_path(work_dir.as_str()) {
+    match validate_path(work_dir.to_str().unwrap_or("/tmp/sinex/ingestd")) {
         Ok(validated) => validated,
         Err(_) => {
             // Fallback to a safe default if validation fails

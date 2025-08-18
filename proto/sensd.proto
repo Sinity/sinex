@@ -108,6 +108,24 @@ message JobStatus {
     string material_id = 8;
 }
 
+// Direct capture acknowledgment (for when explicit ack is required)
+message DirectCaptureRequest {
+    string source_identifier = 1;
+    string sensor_type = 2;
+    bytes data = 3;
+    string metadata_json = 4;
+    bool require_acknowledgment = 5;
+}
+
+message DirectCaptureAcknowledgment {
+    string material_id = 1;
+    bool success = 2;
+    string error = 3;
+    int64 bytes_captured = 4;
+    string capture_timestamp = 5;
+    string checksum = 6;
+}
+
 // Service definition
 service SensdService {
     // Material streaming
@@ -118,4 +136,7 @@ service SensdService {
     // Job management
     rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
     rpc GetJobStatus(GetJobStatusRequest) returns (JobStatus);
+    
+    // Direct capture with acknowledgment (for critical data that needs confirmation)
+    rpc CaptureDirectWithAck(DirectCaptureRequest) returns (DirectCaptureAcknowledgment);
 }

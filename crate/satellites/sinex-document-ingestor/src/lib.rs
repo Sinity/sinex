@@ -9,8 +9,9 @@ use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    types::{events::DocumentIngestedPayload, Event, Ulid},
+    types::{events::DocumentIngestedPayload, events::Event, ulid::Ulid},
     RawEvent,
 };
 use sinex_satellite_sdk::{
@@ -64,17 +65,8 @@ impl Default for DocumentIngestorConfig {
     }
 }
 
-/// Material slice from sensd
-#[derive(Debug, Clone)]
-pub struct MaterialSlice {
-    pub material_id: Ulid,
-    pub offset_start: i64,
-    pub offset_end: i64,
-    pub ts_capture_start: DateTime<Utc>,
-    pub ts_capture_end: DateTime<Utc>,
-    pub data: Vec<u8>,
-    pub metadata: serde_json::Value,
-}
+// Use shared MaterialSlice from sensd crate
+use sinex_sensd::material_stream::MaterialSlice;
 
 /// Document processor that consumes MaterialSliceStream from sensd
 pub struct DocumentProcessor {
@@ -107,20 +99,18 @@ impl DocumentProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config, status
             )
-            VALUES ($1::ulid, 'document_capture', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'document_capture', $2, $3, 'active')
             "#,
             job_id as Ulid,
-            format!("file://{}", file_path),   // target_uri
-            format!("document:{}", file_path), // source_identifier
-            json!({ "mode": "snapshot" }),     // acquisition_mode
+            format!("file://{}", file_path), // target_uri
             json!({
                 "document_type": "file",
                 "max_size": self.config.max_document_size,
                 "supported_types": self.config.supported_mime_types,
-            }), // parameters
+                "mode": "snapshot"
+            }), // config
         )
         .execute(db_pool)
         .await?;
@@ -231,11 +221,11 @@ impl DocumentProcessor {
                         tl.offset_end,
                         tl.ts_capture,
                         tl.note,
-                        sm.optional_blob_id as "blob_id?: Ulid",
+                        sm.optional_blob_id as "optional_blob_id?: Ulid",
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.source_material_id = tl.material_id
+                        ON sm.id = tl.source_material_id
                     WHERE tl.material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
@@ -265,7 +255,7 @@ impl DocumentProcessor {
                                 } else {
                                     inline_data // Return full data if slice bounds are invalid
                                 }
-                            } else if let Some(blob_id) = record.blob_id {
+                            } else if let Some(blob_id) = record.optional_blob_id {
                                 // Load from blob storage
                                 match self.load_blob_data(blob_id, db_pool).await {
                                     Ok(blob_data) => {
@@ -323,26 +313,26 @@ impl DocumentProcessor {
         let blob = sqlx::query!(
             r#"
             SELECT 
-                annex_key,
-                size_bytes,
-                checksum_sha256,
-                storage_backend
+                annex_backend,
+                content_hash,
+                size_bytes
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid
             "#,
-            blob_id as Ulid,
+            ulid_to_uuid(blob_id),
         )
         .fetch_optional(db_pool)
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        match blob.storage_backend.as_str() {
-            "git-annex" => {
+        // Determine storage backend from annex_backend format
+        match blob.annex_backend.as_str() {
+            backend if backend.starts_with("SHA256") => {
                 // Load from git-annex storage
                 let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_key[0..2])
-                    .join(&blob.annex_key[2..4])
-                    .join(&blob.annex_key);
+                    .join(&blob.annex_backend[0..2])
+                    .join(&blob.annex_backend[2..4])
+                    .join(&blob.annex_backend);
 
                 if annex_path.exists() {
                     tokio::fs::read(&annex_path)
@@ -354,7 +344,7 @@ impl DocumentProcessor {
             }
             "filesystem" => {
                 // Load from filesystem path stored in annex_key
-                let path = std::path::Path::new(&blob.annex_key);
+                let path = std::path::Path::new(&blob.annex_backend);
                 tokio::fs::read(path)
                     .await
                     .map_err(|e| eyre!("Failed to read file: {}", e))
@@ -423,15 +413,29 @@ impl DocumentProcessor {
             return Ok(events); // Skip processing oversized documents
         }
 
-        // Create document.ingested event with proper provenance
-        let event: RawEvent = Event::new(DocumentIngestedPayload {
-            file_path: file_path.to_string(),
-            source_material_id: material_id.to_string(),
-            size_bytes: document_data.len() as u64,
-            mime_type,
-            encoding,
-        })
-        .into();
+        // Create document.ingested event with proper material provenance
+        let mut event = RawEvent::from_material(
+            sinex_core::types::domain::EventSource::from("document_ingestor"),
+            sinex_core::types::domain::EventType::from("document.ingested"),
+            serde_json::json!({
+                "file_path": file_path,
+                "source_material_id": material_id.to_string(),
+                "size_bytes": document_data.len() as u64,
+                "mime_type": mime_type,
+                "encoding": encoding,
+            }),
+            material_id,
+            0, // Start offset - document processed as complete unit
+        );
+
+        // Set proper provenance with material information
+        event.provenance = sinex_core::db::models::event::Provenance::Material {
+            id: sinex_core::types::Id::from(material_id),
+            anchor_byte: 0,
+            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+            offset_start: Some(0),
+            offset_end: Some(document_data.len() as i64),
+        };
 
         events.push(event);
 
@@ -463,18 +467,17 @@ impl DocumentProcessor {
             let completed_jobs = sqlx::query!(
                 r#"
                 SELECT 
-                    job_id as "job_id: Ulid",
-                    material_id as "material_id: Ulid"
+                    id as "job_id: Ulid",
+                    NULL::ulid as "material_id: Ulid"
                 FROM raw.sensor_jobs
                 WHERE sensor_type = 'document_capture'
-                AND status = 'completed'
-                AND material_id IS NOT NULL
+                AND status = 'active'
                 AND NOT EXISTS (
                     SELECT 1 FROM core.events e
-                    WHERE e.payload->>'source_material_id' = sensor_jobs.material_id::text
+                    WHERE e.payload->>'source_material_id' = sensor_jobs.target_uri
                     AND e.event_type = 'document.ingested'
                 )
-                ORDER BY completed_at DESC
+                ORDER BY updated_at DESC
                 LIMIT 10
                 "#,
             )
@@ -516,17 +519,18 @@ impl StatefulStreamProcessor for DocumentProcessor {
         // Create event channel
         let (event_sender, mut event_receiver) = mpsc::channel(1000);
 
+        // Clone ingest_client before storing context
+        let ingest_client = ctx.ingest_client.clone();
+
         // Store configuration and resources
         self.config = config;
         self.db_pool = Some(db_pool);
         self.event_sender = Some(event_sender);
-        self.context = Some(ctx.clone());
-
-        // Start background task to forward events to ingestd
-        let ingest_client = ctx.ingest_client.clone();
+        self.context = Some(ctx);
         tokio::spawn(async move {
+            let mut client = ingest_client;
             while let Some(event) = event_receiver.recv().await {
-                if let Err(e) = ingest_client.emit_event(event).await {
+                if let Err(e) = client.ingest_event(&event).await {
                     error!("Failed to emit event to ingestd: {}", e);
                 }
             }
@@ -639,6 +643,33 @@ impl StatefulStreamProcessor for DocumentProcessor {
             supports_concurrent: false,
         }
     }
+
+    async fn estimate_scan_scope(
+        &self,
+        _from: &Checkpoint,
+        until: &TimeHorizon,
+        args: &ScanArgs,
+    ) -> SatelliteResult<sinex_satellite_sdk::stream_processor::ScanEstimate> {
+        let estimated_events = args.targets.len() as u64; // One event per document
+        let warnings = vec!["Document processing depends on sensd job completion".to_string()];
+
+        let (duration_factor, confidence) = match until {
+            TimeHorizon::Snapshot => (1.0, 0.8),
+            TimeHorizon::Historical { .. } => (0.0, 0.0), // Not supported
+            TimeHorizon::Continuous => (0.0, 0.0),        // Not supported
+        };
+
+        let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
+
+        Ok(sinex_satellite_sdk::stream_processor::ScanEstimate {
+            estimated_events: adjusted_events,
+            estimated_duration: std::time::Duration::from_millis(adjusted_events * 500), // 500ms per document
+            estimated_data_size: adjusted_events * 50 * 1024, // 50KB average per document
+            estimated_targets: args.targets.len() as u64,
+            warnings,
+            confidence,
+        })
+    }
 }
 
 impl ExplorationProvider for DocumentProcessor {
@@ -691,7 +722,7 @@ impl ExplorationProvider for DocumentProcessor {
 impl Clone for DocumentProcessor {
     fn clone(&self) -> Self {
         Self {
-            context: self.context.clone(),
+            context: None, // Context cannot be cloned
             config: self.config.clone(),
             db_pool: self.db_pool.clone(),
             event_sender: self.event_sender.clone(),

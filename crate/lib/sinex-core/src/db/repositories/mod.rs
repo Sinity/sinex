@@ -30,11 +30,14 @@ pub mod common;
 pub mod events;
 pub mod events_extensions;
 pub mod knowledge_graph;
+pub mod schema_management;
 pub mod source_materials;
 pub mod state;
 
 #[cfg(test)]
 mod common_test;
+#[cfg(test)]
+mod schema_management_test;
 
 // Re-export main types
 pub use blobs::{BlobRepository, StorageStats};
@@ -51,6 +54,10 @@ pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
+pub use schema_management::{
+    EventPayloadSchema as ManagedEventSchema, NewEventSchema, SchemaManagementRepository,
+    SchemaStatistics, ValidationError, ValidationResult,
+};
 pub use source_materials::{
     material_types, SourceMaterial, SourceMaterialExt, SourceMaterialRepository,
 };
@@ -66,6 +73,7 @@ use sqlx::PgPool;
 /// ```rust
 /// let event = pool.events().get_by_id(event_id).await?;
 /// let checkpoint = pool.checkpoints().get_latest(processor_name).await?;
+/// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
@@ -74,6 +82,7 @@ pub trait DbPoolExt {
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
+    fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
 }
 
 impl DbPoolExt for PgPool {
@@ -99,5 +108,9 @@ impl DbPoolExt for PgPool {
 
     fn state(&self) -> state::StateRepository<'_> {
         state::StateRepository::new(self)
+    }
+
+    fn schemas(&self) -> schema_management::SchemaManagementRepository<'_> {
+        schema_management::SchemaManagementRepository::new(self)
     }
 }

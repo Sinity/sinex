@@ -44,11 +44,12 @@ pub use sinex_core::{
     // Database operations
     DbPool,
     DbPoolExt,
+    // Database models
+    Event,
     EventSource,
     EventType,
     Id,
-    // Database models
-    RawEvent,
+    JsonValue,
     // Error handling
     SinexError,
     Ulid,
@@ -57,6 +58,6 @@ pub use sinex_core::{
 // Additional commonly used external types
 pub use async_trait::async_trait;
 pub use color_eyre::eyre::{eyre, Result as EyreResult};
-pub use serde_json::{json, Value as JsonValue};
+pub use serde_json::json;
 pub use tokio::{sync::mpsc, time::Duration};
 pub use tracing::{debug, error, info, instrument, trace, warn};

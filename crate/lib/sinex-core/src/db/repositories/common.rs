@@ -85,10 +85,13 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Count all records in the table
     async fn count_all(&self) -> DbResult<i64> {
-        let query = Query::select()
-            .expr(Expr::cust("COUNT(*)"))
-            .from(Self::Table::table_iden())
-            .to_string(PostgresQueryBuilder);
+        // SAFE: schema_name() and table_name() return &'static str constants from trait implementations
+        // These are compile-time constants and cannot contain user input, making this safe from SQL injection
+        let query = format!(
+            "SELECT COUNT(*) FROM {}.{}",
+            Self::Table::schema_name(),
+            Self::Table::table_name()
+        );
 
         let result: (i64,) = sqlx::query_as(&query)
             .fetch_one(self.pool())
@@ -100,7 +103,8 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Check if a record exists by primary key
     async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
-        // Use a parameterized query with explicit ULID cast
+        // SAFE: schema_name(), table_name(), and primary_key() return &'static str constants
+        // from trait implementations. User input is properly parameterized via $1::ulid
         let sql = format!(
             "SELECT 1 FROM {}.{} WHERE {} = $1::ulid LIMIT 1",
             Self::Table::schema_name(),

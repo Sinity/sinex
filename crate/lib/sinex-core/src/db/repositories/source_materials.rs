@@ -4,7 +4,8 @@
 //! (files, streams, etc.) that contain events to be processed.
 
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
-use crate::db::schema::SourceMaterials;
+use crate::db::schema::SourceMaterialRegistry;
+use crate::query_helpers::ulid_to_uuid;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -160,7 +161,7 @@ impl<'a> Repository<'a> for SourceMaterialRepository<'a> {
 }
 
 impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
-    type Table = SourceMaterials;
+    type Table = SourceMaterialRegistry;
 }
 
 impl<'a> SourceMaterialRepository<'a> {
@@ -172,43 +173,23 @@ impl<'a> SourceMaterialRepository<'a> {
         let id = Id::<SourceMaterial>::new();
         let metadata = material.metadata.unwrap_or(serde_json::json!({}));
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             INSERT INTO raw.source_material_registry (
-                id,
-                material_type,
-                source_uri,
-                encoding,
-                metadata,
-                content_preview,
-                retention_policy,
-                optional_blob_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            "#,
-            *id.as_ulid() as _,
-            material.material_type,
-            material.source_uri,
-            material.encoding,
-            metadata,
-            material.content_preview,
-            material.retention_policy,
-            material.blob_id.map(|id| *id.as_ulid()) as _
+                id, material_type, source_uri, encoding, metadata, content_preview, optional_blob_id, source_identifier
+            ) VALUES (
+                ($1::uuid)::ulid, $2, $3, $4, $5, $6, ($7::uuid)::ulid, $3
+            )
+            RETURNING *
+            "#
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(material.material_type)
+        .bind(material.source_uri)
+        .bind(material.encoding)
+        .bind(metadata)
+        .bind(material.content_preview)
+        .bind(material.blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "register material"))
@@ -219,28 +200,13 @@ impl<'a> SourceMaterialRepository<'a> {
         &self,
         id: Id<SourceMaterialRecord>,
     ) -> DbResult<Option<SourceMaterialRecord>> {
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
-            WHERE id = $1
+            SELECT * FROM raw.source_material_registry
+            WHERE id::uuid = $1
             "#,
-            *id.as_ulid() as _
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "get material by id"))
@@ -251,28 +217,13 @@ impl<'a> SourceMaterialRepository<'a> {
         &self,
         blob_id: Id<crate::Blob>,
     ) -> DbResult<Option<SourceMaterialRecord>> {
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
-            WHERE optional_blob_id = $1
+            SELECT * FROM raw.source_material_registry
+            WHERE optional_blob_id::uuid = $1
             "#,
-            *blob_id.as_ulid() as _
         )
+        .bind(ulid_to_uuid(*blob_id.as_ulid()))
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "find material by checksum"))
@@ -280,29 +231,14 @@ impl<'a> SourceMaterialRepository<'a> {
 
     /// Get recent materials
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<SourceMaterialRecord>> {
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
-            ORDER BY ingestion_time DESC
+            SELECT * FROM raw.source_material_registry
+            ORDER BY created_at DESC
             LIMIT $1
             "#,
-            limit
         )
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get recent materials"))
@@ -316,31 +252,16 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Vec<SourceMaterialRecord>> {
         let limit = limit.unwrap_or(100);
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE material_type = $1
-            ORDER BY ingestion_time DESC
+            ORDER BY created_at DESC
             LIMIT $2
             "#,
-            material_type,
-            limit
         )
+        .bind(material_type)
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get materials by type"))
@@ -356,31 +277,16 @@ impl<'a> SourceMaterialRepository<'a> {
         let limit = limit.unwrap_or(100);
         let search_obj = serde_json::json!({ key: value });
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE metadata @> $1
-            ORDER BY ingestion_time DESC
+            ORDER BY created_at DESC
             LIMIT $2
             "#,
-            search_obj,
-            limit
         )
+        .bind(search_obj)
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "search materials by metadata"))
@@ -388,17 +294,18 @@ impl<'a> SourceMaterialRepository<'a> {
 
     /// Archive a material
     pub async fn archive_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"
             UPDATE raw.source_material_registry
             SET 
                 is_archived = true,
                 archive_time = NOW(),
+                status = 'archived',
                 updated_at = NOW()
-            WHERE id = $1 AND NOT is_archived
+            WHERE id::uuid = $1
             "#,
-            *id.as_ulid() as _
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "archive material"))?;
@@ -414,32 +321,17 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Vec<SourceMaterialRecord>> {
         let limit = limit.unwrap_or(100);
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
-            SELECT
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
-            FROM raw.source_material_registry
+            SELECT * FROM raw.source_material_registry
             WHERE NOT is_archived 
-              AND ingestion_time < $1
-            ORDER BY ingestion_time ASC
+              AND created_at < $1
+            ORDER BY created_at ASC
             LIMIT $2
             "#,
-            older_than,
-            limit
         )
+        .bind(older_than)
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get materials for archival"))
@@ -451,32 +343,16 @@ impl<'a> SourceMaterialRepository<'a> {
         id: Id<SourceMaterialRecord>,
         metadata: JsonValue,
     ) -> DbResult<Option<SourceMaterialRecord>> {
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             UPDATE raw.source_material_registry
-            SET 
-                metadata = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+            SET metadata = $2, updated_at = NOW()
+            WHERE id::uuid = $1
+            RETURNING *
             "#,
-            *id.as_ulid() as _,
-            metadata
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(metadata)
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "update material metadata"))
@@ -488,7 +364,7 @@ impl<'a> SourceMaterialRepository<'a> {
             r#"
             SELECT COUNT(*) as count
             FROM raw.source_material_registry
-            WHERE material_type = $1
+            WHERE material_kind = $1
             "#,
             material_type
         )
@@ -501,20 +377,20 @@ impl<'a> SourceMaterialRepository<'a> {
 
     /// Get total size of materials by type
     pub async fn get_total_size_by_type(&self, material_type: &str) -> DbResult<i64> {
-        let result = sqlx::query!(
+        let total_size: Option<i64> = sqlx::query_scalar(
             r#"
-            SELECT COALESCE(SUM(b.size_bytes), 0)::BIGINT as total_size
+            SELECT COALESCE(SUM(b.size_bytes), 0)::BIGINT
             FROM raw.source_material_registry sm
-            LEFT JOIN core.blobs b ON sm.optional_blob_id = b.id
+            LEFT JOIN core.blobs b ON sm.optional_blob_id::uuid = b.id::uuid
             WHERE sm.material_type = $1
             "#,
-            material_type
         )
+        .bind(material_type)
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "get total size by type"))?;
 
-        Ok(result.total_size.unwrap_or(0))
+        Ok(total_size.unwrap_or(0))
     }
 
     /// Register in-flight source material (for Stage-as-You-Go pattern)
@@ -527,35 +403,21 @@ impl<'a> SourceMaterialRepository<'a> {
         let id = Id::<SourceMaterial>::new();
         let content_preview = Some("[IN-FLIGHT]".to_string());
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
+        sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             INSERT INTO raw.source_material_registry (
-                id, material_type, source_uri, metadata, content_preview
+                id, material_type, source_uri, metadata, content_preview, source_identifier
             ) VALUES (
-                $1, $2, $3, $4, $5
+                ($1::uuid)::ulid, $2, $3, $4, $5, COALESCE($3, 'in-flight')
             )
-            RETURNING 
-                id as "id: Id<SourceMaterialRecord>",
-                material_type,
-                source_uri,
-                ingestion_time,
-                encoding,
-                metadata,
-                content_preview,
-                is_archived,
-                archive_time,
-                retention_policy,
-                created_at,
-                updated_at,
-                optional_blob_id as "blob_id: Id<crate::models::Blob>"
+            RETURNING *
             "#,
-            *id.as_ulid() as _,
-            material_type,
-            source_uri,
-            metadata,
-            content_preview
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(material_type)
+        .bind(source_uri)
+        .bind(metadata)
+        .bind(content_preview)
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "register in-flight material"))
@@ -568,21 +430,26 @@ impl<'a> SourceMaterialRepository<'a> {
         blob_id: Option<Id<crate::Blob>>,
         encoding: Option<&str>,
         content_preview: Option<String>,
+        total_bytes: Option<i64>,
     ) -> DbResult<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE raw.source_material_registry
-            SET optional_blob_id = $2,
-                encoding = $3,
-                content_preview = $4,
+            SET optional_blob_id = ($2::uuid)::ulid,
+                encoding = COALESCE($3, encoding),
+                content_preview = COALESCE($4, content_preview),
+                total_bytes = COALESCE($5, total_bytes),
+                status = 'finalized',
+                finalized_at = NOW(),
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id::uuid = $1
             "#,
-            *id.as_ulid() as _,
-            blob_id.map(|id| *id.as_ulid()) as _,
-            encoding,
-            content_preview
         )
+        .bind(ulid_to_uuid(*id.as_ulid()))
+        .bind(blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
+        .bind(encoding)
+        .bind(content_preview)
+        .bind(total_bytes)
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "finalize in-flight material"))?;

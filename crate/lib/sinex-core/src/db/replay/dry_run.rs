@@ -2,7 +2,8 @@
 //!
 //! Simulates replay operations without making actual database changes.
 
-use crate::db::models::event::{Provenance, RawEvent};
+use crate::db::models::event::{Event, Provenance};
+use crate::db::models::JsonValue;
 use crate::db::replay::{config::ReplayConfig, logging::ReplayLogger};
 use crate::types::{Id, Ulid};
 use color_eyre::eyre::Result;
@@ -15,11 +16,11 @@ pub struct DryRunResult {
     /// Total events that would be processed
     pub total_events: usize,
     /// Events that would be archived
-    pub events_to_archive: Vec<Id<RawEvent>>,
+    pub events_to_archive: Vec<Id<Event<JsonValue>>>,
     /// Events that would be deleted
-    pub events_to_delete: Vec<Id<RawEvent>>,
+    pub events_to_delete: Vec<Id<Event<JsonValue>>>,
     /// Events that would be modified
-    pub events_to_modify: Vec<Id<RawEvent>>,
+    pub events_to_modify: Vec<Id<Event<JsonValue>>>,
     /// Estimated execution time in milliseconds
     pub estimated_duration_ms: u64,
     /// Operations that would be performed
@@ -61,7 +62,7 @@ impl DryRunExecutor {
     }
 
     /// Simulate archiving an event
-    pub fn simulate_archive(&mut self, event_id: Id<RawEvent>) {
+    pub fn simulate_archive(&mut self, event_id: Id<Event<JsonValue>>) {
         let operation = DryRunOperation {
             operation: "ARCHIVE".to_string(),
             target: event_id.to_string(),
@@ -84,7 +85,7 @@ impl DryRunExecutor {
     }
 
     /// Simulate deleting an event
-    pub fn simulate_delete(&mut self, event_id: Id<RawEvent>) {
+    pub fn simulate_delete(&mut self, event_id: Id<Event<JsonValue>>) {
         let operation = DryRunOperation {
             operation: "DELETE".to_string(),
             target: event_id.to_string(),
@@ -109,7 +110,7 @@ impl DryRunExecutor {
     /// Simulate modifying an event
     pub fn simulate_modify(
         &mut self,
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         changes: HashMap<String, serde_json::Value>,
     ) {
         let operation = DryRunOperation {
@@ -133,7 +134,11 @@ impl DryRunExecutor {
     }
 
     /// Check for potential integrity violations
-    pub fn check_integrity(&mut self, event_id: Id<RawEvent>, dependent_events: Vec<Id<RawEvent>>) {
+    pub fn check_integrity(
+        &mut self,
+        event_id: Id<Event<JsonValue>>,
+        dependent_events: Vec<Id<Event<JsonValue>>>,
+    ) {
         if !dependent_events.is_empty() {
             let warning = format!(
                 "Event {} has {} dependent events that would be affected",
@@ -160,7 +165,7 @@ impl DryRunExecutor {
                 .target
                 .parse::<Ulid>()
                 .ok()
-                .map(Id::<RawEvent>::from_ulid);
+                .map(Id::<Event<JsonValue>>::from_ulid);
             if let Some(id) = event_id {
                 match op.operation.as_str() {
                     "ARCHIVE" => events_to_archive.push(id),
@@ -191,7 +196,10 @@ impl DryRunExecutor {
 }
 
 /// Execute a replay in dry-run mode
-pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Result<DryRunResult> {
+pub async fn execute_dry_run(
+    config: ReplayConfig,
+    events: Vec<Event<JsonValue>>,
+) -> Result<DryRunResult> {
     let mut executor = DryRunExecutor::new(config);
 
     // Simulate processing each event
@@ -206,7 +214,7 @@ pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Res
             } = &event.provenance
             {
                 if !source_event_ids.is_empty() {
-                    let deps: Vec<Id<RawEvent>> = source_event_ids.to_vec();
+                    let deps: Vec<Id<Event<JsonValue>>> = source_event_ids.to_vec();
                     executor.check_integrity(event_id.clone(), deps);
                 }
             }
@@ -230,13 +238,13 @@ mod tests {
 
         let mut executor = DryRunExecutor::new(config);
 
-        let event_id = Id::<RawEvent>::new();
+        let event_id = Id::<Event<JsonValue>>::new();
         executor.simulate_archive(event_id);
-        executor.simulate_delete(Id::<RawEvent>::new());
+        executor.simulate_delete(Id::<Event<JsonValue>>::new());
 
         let mut changes = HashMap::new();
         changes.insert("status".to_string(), serde_json::json!("processed"));
-        executor.simulate_modify(Id::<RawEvent>::new(), changes);
+        executor.simulate_modify(Id::<Event<JsonValue>>::new(), changes);
 
         let result = executor.complete();
 
@@ -252,8 +260,8 @@ mod tests {
         let config = ReplayConfig::default();
         let mut executor = DryRunExecutor::new(config);
 
-        let event_id = Id::<RawEvent>::new();
-        let deps = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
+        let event_id = Id::<Event<JsonValue>>::new();
+        let deps = vec![Id::<Event<JsonValue>>::new(), Id::<Event<JsonValue>>::new()];
 
         executor.check_integrity(event_id, deps);
 

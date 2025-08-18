@@ -1,194 +1,165 @@
-//! Schema definitions for source materials tables
+//! The Canonical Database Schema for the Source Material Registry.
+//!
+//! This module defines the `raw.source_material_registry` table, which is the
+//! universal manifest for all external data artifacts captured by the system.
+//! A record in this table is the "birth certificate" for any piece of information
+//! entering Sinex and is the root of all external provenance chains.
 
+use crate::schema::{Blobs, TableDef};
+use crate::ulid::Ulid;
+use chrono::{DateTime, Utc};
 use sea_orm_migration::prelude::*;
+use serde_json::Value as JsonValue;
+use sqlx::FromRow;
 
-#[derive(Iden)]
-pub enum SourceMaterials {
-    #[iden = "source_material_registry"]
+// =============================================================================
+// The `raw.source_material_registry` Table
+// =============================================================================
+
+/// **Table: `raw.source_material_registry`**
+///
+/// This table is the manifest for all captured external data artifacts. It is
+/// exclusively managed by the `sensd` daemon and implements the "Stage-as-you-go"
+/// pattern. An entry is created with `status = 'sensing'` before the data is
+/// fully captured, providing a stable `id` that ingestors can immediately use
+/// for event provenance. The record is then updated to `status = 'completed'`
+/// upon finalization.
+#[derive(Iden, Copy, Clone)]
+pub enum SourceMaterialRegistry {
     Table,
-    #[iden = "blob_id"]
-    BlobId,
-    #[iden = "checksum"]
-    Checksum,
-    #[iden = "source_identifier"]
+    Id,
+    MaterialKind,
     SourceIdentifier,
-    #[iden = "source_type"]
-    SourceType,
-    #[iden = "source_path"]
-    SourcePath,
-    #[iden = "content_type"]
-    ContentType,
-    #[iden = "status"]
     Status,
-    #[iden = "total_bytes"]
-    TotalBytes,
-    #[iden = "created_at"]
-    CreatedAt,
-    #[iden = "finalized_at"]
-    FinalizedAt,
-    #[iden = "staged_at"]
-    StagedAt,
-    #[iden = "metadata"]
+    TimingInfoType,
     Metadata,
-    #[iden = "data"]
-    Data,
-    #[iden = "optional_blob_id"]
+    StagedAt,
+    StartTime,
+    EndTime,
+    StagedBy,
+    StagedOnHost,
     OptionalBlobId,
 }
 
-impl SourceMaterials {
-    pub fn create_table() -> String {
-        Table::create()
-            .table((Alias::new("raw"), SourceMaterials::Table))
-            .if_not_exists()
-            // Primary key - ULID for time-ordered distribution
-            .col(
-                ColumnDef::new(SourceMaterials::BlobId)
-                    .custom(Alias::new("ULID"))
-                    .not_null()
-                    .primary_key(),
-            )
-            // Content integrity
-            .col(ColumnDef::new(SourceMaterials::Checksum).text())
-            // Source identification
-            .col(
-                ColumnDef::new(SourceMaterials::SourceIdentifier)
-                    .text()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new(SourceMaterials::SourceType)
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
-            .col(ColumnDef::new(SourceMaterials::ContentType).text())
-            // Lifecycle status
-            .col(
-                ColumnDef::new(SourceMaterials::Status)
-                    .text()
-                    .not_null()
-                    .default("'sensing'"),
-            )
-            // Size tracking
-            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
-            // Timestamps
-            .col(
-                ColumnDef::new(SourceMaterials::CreatedAt)
-                    .timestamp_with_time_zone()
-                    .not_null()
-                    .default(Expr::current_timestamp()),
-            )
-            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
-            // Flexible metadata
-            .col(
-                ColumnDef::new(SourceMaterials::Metadata)
-                    .json_binary()
-                    .default("{}"),
-            )
-            // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).binary())
-            // Optional reference to external blob storage
-            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
-            .to_owned()
-            .to_string(sea_query::PostgresQueryBuilder)
+impl TableDef for SourceMaterialRegistry {
+    fn table_name() -> &'static str {
+        "source_material_registry"
     }
-
-    pub fn create_check_constraints() -> Vec<String> {
-        vec![
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_source_materials_status 
-                   CHECK (status IN ('sensing', 'completed', 'failed', 'archived'))"#,
-                SourceMaterials::Table.to_string()
-            ),
-            format!(
-                r#"ALTER TABLE raw.{} ADD CONSTRAINT chk_source_materials_data_xor_blob 
-                   CHECK ((data IS NULL) <> (optional_blob_id IS NULL))"#,
-                SourceMaterials::Table.to_string()
-            ),
-        ]
+    fn schema_name() -> &'static str {
+        "raw"
     }
-
-    pub fn create_indexes() -> Vec<String> {
-        vec![
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_sm_registry_checksum 
-                   ON raw.{} (checksum) WHERE checksum IS NOT NULL"#,
-                SourceMaterials::Table.to_string()
-            ),
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_sm_registry_srcid 
-                   ON raw.{} (source_identifier, staged_at DESC)"#,
-                SourceMaterials::Table.to_string()
-            ),
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_sm_registry_status 
-                   ON raw.{} (status, created_at)"#,
-                SourceMaterials::Table.to_string()
-            ),
-            format!(
-                r#"CREATE INDEX IF NOT EXISTS ix_sm_registry_source_type 
-                   ON raw.{} (source_type)"#,
-                SourceMaterials::Table.to_string()
-            ),
-        ]
+    fn primary_key() -> &'static str {
+        "id"
     }
+}
 
+/// The Rust struct representation of a row from `raw.source_material_registry`.
+#[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SourceMaterialRecord {
+    pub id: Ulid,
+    pub material_kind: String,
+    pub source_identifier: String,
+    pub status: String,
+    pub timing_info_type: String,
+    pub metadata: JsonValue,
+    pub staged_at: DateTime<Utc>,
+    pub start_time: Option<DateTime<Utc>>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub staged_by: Option<String>,
+    pub staged_on_host: Option<String>,
+    pub optional_blob_id: Option<Ulid>,
+}
+
+impl SourceMaterialRegistry {
+    /// Generates the `CREATE TABLE` statement for `raw.source_material_registry`.
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
-            .table((Alias::new("raw"), SourceMaterials::Table))
+            .table(Self::table_iden())
             .if_not_exists()
-            // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(SourceMaterials::BlobId)
+                ColumnDef::new(SourceMaterialRegistry::Id)
                     .custom(Alias::new("ULID"))
-                    .not_null()
-                    .primary_key(),
+                    .primary_key()
+                    .extra("DEFAULT gen_ulid()"),
             )
-            // Content integrity
-            .col(ColumnDef::new(SourceMaterials::Checksum).text())
-            // Source identification
             .col(
-                ColumnDef::new(SourceMaterials::SourceIdentifier)
+                ColumnDef::new(SourceMaterialRegistry::MaterialKind)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust("material_kind IN ('annex', 'git')")),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::SourceIdentifier)
                     .text()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(SourceMaterials::SourceType)
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(SourceMaterials::SourcePath).text())
-            .col(ColumnDef::new(SourceMaterials::ContentType).text())
-            // Lifecycle status
-            .col(
-                ColumnDef::new(SourceMaterials::Status)
+                ColumnDef::new(SourceMaterialRegistry::Status)
                     .text()
                     .not_null()
-                    .default("'sensing'"),
+                    .check(Expr::cust(
+                        "status IN ('sensing', 'completed', 'recovered_partial', 'failed')",
+                    )),
             )
-            // Size tracking
-            .col(ColumnDef::new(SourceMaterials::TotalBytes).big_integer())
-            // Timestamps
             .col(
-                ColumnDef::new(SourceMaterials::CreatedAt)
+                ColumnDef::new(SourceMaterialRegistry::TimingInfoType)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust(
+                        "timing_info_type IN ('realtime', 'intrinsic', 'inferred')",
+                    )),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::Metadata)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::StagedAt)
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(SourceMaterials::FinalizedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(SourceMaterials::StagedAt).timestamp_with_time_zone())
-            // Flexible metadata
-            .col(
-                ColumnDef::new(SourceMaterials::Metadata)
-                    .json_binary()
-                    .default("{}"),
+            .col(ColumnDef::new(SourceMaterialRegistry::StartTime).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterialRegistry::EndTime).timestamp_with_time_zone())
+            .col(ColumnDef::new(SourceMaterialRegistry::StagedBy).text())
+            .col(ColumnDef::new(SourceMaterialRegistry::StagedOnHost).text())
+            .col(ColumnDef::new(SourceMaterialRegistry::OptionalBlobId).custom(Alias::new("ULID")))
+            .foreign_key(
+                ForeignKey::create()
+                    .from(Self::table_iden(), SourceMaterialRegistry::OptionalBlobId)
+                    .to(Blobs::table_iden(), Alias::new("id")) // `Blobs::Iden` is fine
+                    .on_delete(ForeignKeyAction::SetNull),
             )
-            // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).binary())
-            // Optional reference to external blob storage
-            .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
             .to_owned()
+    }
+
+    /// Generates indexes for `raw.source_material_registry`.
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            // Unique constraint on source identifier
+            Index::create()
+                .name("uk_sm_registry_source_identifier")
+                .table(Self::table_iden())
+                .col(SourceMaterialRegistry::SourceIdentifier)
+                .unique()
+                .to_owned(),
+            // Index to efficiently query materials by their source and time.
+            Index::create()
+                .name("ix_sm_registry_identifier_staged")
+                .table(Self::table_iden())
+                .col(SourceMaterialRegistry::SourceIdentifier)
+                .col((SourceMaterialRegistry::StagedAt, IndexOrder::Desc))
+                .to_owned(),
+            // Partial index to quickly find materials that have been finalized and have associated blob content.
+            Index::create()
+                .name("ix_sm_registry_blob_id")
+                .table(Self::table_iden())
+                .col(SourceMaterialRegistry::OptionalBlobId)
+                .cond_where(Expr::col(SourceMaterialRegistry::OptionalBlobId).is_not_null())
+                .to_owned(),
+        ]
     }
 }

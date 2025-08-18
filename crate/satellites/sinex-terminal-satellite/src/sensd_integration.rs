@@ -8,8 +8,9 @@ use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    db::models::{Provenance, RawEvent},
+    db::models::{event::OffsetKind, Provenance, RawEvent, SourceMaterial},
     types::{
         domain::{EventSource, EventType},
         Id, Ulid,
@@ -268,11 +269,11 @@ impl SensdTerminalProcessor {
                         tl.offset_end,
                         tl.ts_capture,
                         tl.note,
-                        sm.optional_blob_id as "blob_id?: Ulid",
+                        sm.optional_blob_id as "optional_blob_id?: Ulid",
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.source_material_id = tl.material_id
+                        ON sm.source_material_id::uuid = tl.material_id::uuid
                     WHERE tl.material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
@@ -295,7 +296,7 @@ impl SensdTerminalProcessor {
                             // Load data from storage
                             let data = if let Some(inline_data) = record.inline_data {
                                 inline_data
-                            } else if let Some(blob_id) = record.blob_id {
+                            } else if let Some(blob_id) = record.optional_blob_id {
                                 match self.load_blob_data(blob_id).await {
                                     Ok(blob_data) => {
                                         let start = record.offset_start as usize;
@@ -350,25 +351,25 @@ impl SensdTerminalProcessor {
         let blob = sqlx::query!(
             r#"
             SELECT 
-                annex_key,
-                size_bytes,
-                checksum_sha256,
-                storage_backend
+                annex_backend,
+                content_hash,
+                size_bytes
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid
             "#,
-            blob_id as Ulid,
+            ulid_to_uuid(blob_id),
         )
         .fetch_optional(&self.db_pool)
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        match blob.storage_backend.as_str() {
-            "git-annex" => {
+        // Determine storage backend from annex_backend format
+        match blob.annex_backend.as_str() {
+            backend if backend.starts_with("SHA256") => {
                 let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_key[0..2])
-                    .join(&blob.annex_key[2..4])
-                    .join(&blob.annex_key);
+                    .join(&blob.annex_backend[0..2])
+                    .join(&blob.annex_backend[2..4])
+                    .join(&blob.annex_backend);
 
                 if annex_path.exists() {
                     tokio::fs::read(&annex_path)
@@ -378,13 +379,17 @@ impl SensdTerminalProcessor {
                     Err(eyre!("Annex file not found at {:?}", annex_path))
                 }
             }
-            "filesystem" => {
-                let path = std::path::Path::new(&blob.annex_key);
-                tokio::fs::read(path)
-                    .await
-                    .map_err(|e| eyre!("Failed to read file: {}", e))
+            _ => {
+                // Try as a filesystem path if not a git-annex key
+                let path = std::path::Path::new(&blob.annex_backend);
+                if path.exists() {
+                    tokio::fs::read(path)
+                        .await
+                        .map_err(|e| eyre!("Failed to read file: {}", e))
+                } else {
+                    Err(eyre!("Unknown storage backend for: {}", blob.annex_backend))
+                }
             }
-            backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }
     }
 
@@ -425,25 +430,29 @@ impl SensdTerminalProcessor {
         if let Ok(entries) = serde_json::from_str::<serde_json::Value>(&data_str) {
             if let Some(entries_array) = entries.as_array() {
                 for entry in entries_array {
-                    let event = RawEvent::builder()
-                        .event_type(EventType::from("terminal.atuin_command_executed"))
-                        .source(EventSource::from("terminal"))
-                        .payload(json!({
+                    let mut event = RawEvent::from_material(
+                        EventSource::from("terminal"),
+                        EventType::from("terminal.atuin_command_executed"),
+                        json!({
                             "command": entry.get("command").unwrap_or(&json!("")),
                             "cwd": entry.get("cwd").unwrap_or(&json!("")),
                             "exit_code": entry.get("exit_code").unwrap_or(&json!(0)),
                             "duration_ns": entry.get("duration_ns").unwrap_or(&json!(0)),
                             "hostname": entry.get("hostname").unwrap_or(&json!("")),
                             "timestamp_ns": entry.get("timestamp_ns").unwrap_or(&json!(0)),
-                        }))
-                        .ts_orig(Some(slice.ts_capture_start))
-                        .provenance(Provenance::Material {
-                            id: Id::from(slice.material_id),
-                            anchor_byte: slice.offset_start,
-                            offset_start: Some(slice.offset_start),
-                            offset_end: Some(slice.offset_end),
-                        })
-                        .build();
+                        }),
+                        slice.material_id,
+                        slice.offset_start,
+                    );
+                    event.ts_orig = Some(slice.ts_capture_start);
+                    // Update provenance with full offset information
+                    event.provenance = Provenance::Material {
+                        id: Id::from(slice.material_id),
+                        anchor_byte: slice.offset_start,
+                        offset_kind: OffsetKind::Byte,
+                        offset_start: Some(slice.offset_start),
+                        offset_end: Some(slice.offset_end),
+                    };
 
                     events.push(event);
                 }
@@ -479,23 +488,26 @@ impl SensdTerminalProcessor {
                 "terminal.bash_historical_command"
             };
 
-            let event = RawEvent::builder()
-                .event_type(EventType::from(event_type))
-                .source(EventSource::from("terminal"))
-                .payload(json!({
+            let mut event = RawEvent::from_material(
+                EventSource::from("terminal"),
+                EventType::from(event_type),
+                json!({
                     "command_string": line,
                     "source_file": file_path,
                     "line_number": line_num,
-                }))
-                .ts_orig(Some(slice.ts_capture_start))
-                .provenance(Provenance::Material {
-                    id: Id::from(slice.material_id),
-                    anchor_byte: slice.offset_start + line.as_ptr() as i64
-                        - slice.data.as_ptr() as i64,
-                    offset_start: Some(slice.offset_start),
-                    offset_end: Some(slice.offset_end),
-                })
-                .build();
+                }),
+                slice.material_id,
+                slice.offset_start + line.as_ptr() as i64 - slice.data.as_ptr() as i64,
+            );
+            event.ts_orig = Some(slice.ts_capture_start);
+            // Update provenance with full offset information
+            event.provenance = Provenance::Material {
+                id: Id::from(slice.material_id),
+                anchor_byte: slice.offset_start + line.as_ptr() as i64 - slice.data.as_ptr() as i64,
+                offset_kind: OffsetKind::Byte,
+                offset_start: Some(slice.offset_start),
+                offset_end: Some(slice.offset_end),
+            };
 
             events.push(event);
         }
@@ -521,22 +533,26 @@ impl SensdTerminalProcessor {
 
         match event_type {
             "CREATE" => {
-                let event = RawEvent::builder()
-                    .event_type(EventType::from("terminal.recording_started"))
-                    .source(EventSource::from("terminal"))
-                    .payload(json!({
+                let mut event = RawEvent::from_material(
+                    EventSource::from("terminal"),
+                    EventType::from("terminal.recording_started"),
+                    json!({
                         "recording_file": file_path,
                         "session_id": ulid::Ulid::new().to_string(),
                         "terminal_type": "asciinema",
-                    }))
-                    .ts_orig(Some(slice.ts_capture_start))
-                    .provenance(Provenance::Material {
-                        id: Id::from(slice.material_id),
-                        anchor_byte: slice.offset_start,
-                        offset_start: Some(slice.offset_start),
-                        offset_end: Some(slice.offset_end),
-                    })
-                    .build();
+                    }),
+                    slice.material_id,
+                    slice.offset_start,
+                );
+                event.ts_orig = Some(slice.ts_capture_start);
+                // Update provenance with full offset information
+                event.provenance = Provenance::Material {
+                    id: Id::from(slice.material_id),
+                    anchor_byte: slice.offset_start,
+                    offset_kind: OffsetKind::Byte,
+                    offset_start: Some(slice.offset_start),
+                    offset_end: Some(slice.offset_end),
+                };
 
                 events.push(event);
             }
@@ -544,21 +560,25 @@ impl SensdTerminalProcessor {
                 // Recording file was updated - could indicate session progress
             }
             "DELETE" => {
-                let event = RawEvent::builder()
-                    .event_type(EventType::from("terminal.recording_ended"))
-                    .source(EventSource::from("terminal"))
-                    .payload(json!({
+                let mut event = RawEvent::from_material(
+                    EventSource::from("terminal"),
+                    EventType::from("terminal.recording_ended"),
+                    json!({
                         "recording_file": file_path,
                         "terminal_type": "asciinema",
-                    }))
-                    .ts_orig(Some(slice.ts_capture_start))
-                    .provenance(Provenance::Material {
-                        id: Id::from(slice.material_id),
-                        anchor_byte: slice.offset_start,
-                        offset_start: Some(slice.offset_start),
-                        offset_end: Some(slice.offset_end),
-                    })
-                    .build();
+                    }),
+                    slice.material_id,
+                    slice.offset_start,
+                );
+                event.ts_orig = Some(slice.ts_capture_start);
+                // Update provenance with full offset information
+                event.provenance = Provenance::Material {
+                    id: Id::from(slice.material_id),
+                    anchor_byte: slice.offset_start,
+                    offset_kind: OffsetKind::Byte,
+                    offset_start: Some(slice.offset_start),
+                    offset_end: Some(slice.offset_end),
+                };
 
                 events.push(event);
             }
@@ -588,18 +608,22 @@ impl SensdTerminalProcessor {
                     // Process window/tab listings
                     if let Some(windows) = kitty_data.as_array() {
                         for window in windows {
-                            let event = RawEvent::builder()
-                                .event_type(EventType::from("terminal.kitty_window_state"))
-                                .source(EventSource::from("terminal"))
-                                .payload(window.clone())
-                                .ts_orig(Some(slice.ts_capture_start))
-                                .provenance(Provenance::Material {
-                                    id: Id::from(slice.material_id),
-                                    anchor_byte: slice.offset_start,
-                                    offset_start: Some(slice.offset_start),
-                                    offset_end: Some(slice.offset_end),
-                                })
-                                .build();
+                            let mut event = RawEvent::from_material(
+                                EventSource::from("terminal"),
+                                EventType::from("terminal.kitty_window_state"),
+                                window.clone(),
+                                slice.material_id,
+                                slice.offset_start,
+                            );
+                            event.ts_orig = Some(slice.ts_capture_start);
+                            // Update provenance with full offset information
+                            event.provenance = Provenance::Material {
+                                id: Id::from(slice.material_id),
+                                anchor_byte: slice.offset_start,
+                                offset_kind: OffsetKind::Byte,
+                                offset_start: Some(slice.offset_start),
+                                offset_end: Some(slice.offset_end),
+                            };
 
                             events.push(event);
                         }
@@ -607,21 +631,25 @@ impl SensdTerminalProcessor {
                 }
                 "get-text" => {
                     // Process scrollback content
-                    let event = RawEvent::builder()
-                        .event_type(EventType::from("terminal.kitty_content_captured"))
-                        .source(EventSource::from("terminal"))
-                        .payload(json!({
+                    let mut event = RawEvent::from_material(
+                        EventSource::from("terminal"),
+                        EventType::from("terminal.kitty_content_captured"),
+                        json!({
                             "scrollback_content": kitty_data.get("text").unwrap_or(&json!("")),
                             "window_id": slice.metadata.get("window_id").unwrap_or(&json!("")),
-                        }))
-                        .ts_orig(Some(slice.ts_capture_start))
-                        .provenance(Provenance::Material {
-                            id: Id::from(slice.material_id),
-                            anchor_byte: slice.offset_start,
-                            offset_start: Some(slice.offset_start),
-                            offset_end: Some(slice.offset_end),
-                        })
-                        .build();
+                        }),
+                        slice.material_id,
+                        slice.offset_start,
+                    );
+                    event.ts_orig = Some(slice.ts_capture_start);
+                    // Update provenance with full offset information
+                    event.provenance = Provenance::Material {
+                        id: Id::from(slice.material_id),
+                        anchor_byte: slice.offset_start,
+                        offset_kind: OffsetKind::Byte,
+                        offset_start: Some(slice.offset_start),
+                        offset_end: Some(slice.offset_end),
+                    };
 
                     events.push(event);
                 }

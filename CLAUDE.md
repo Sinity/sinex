@@ -267,3 +267,6 @@ just errors                # Show compilation errors
 just warnings              # Show compilation warnings
 just recent-changes        # Show recent git changes for context
 ```
+
+# Rules for Claude
+- Avoid reporting through arbitrary markdown files, prefer to output a direct report. If you create a markdown, do so in docs/, not in the project root.

@@ -3,12 +3,13 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_core::db::repositories::source_materials::SourceMaterial;
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
 use sinex_core::Entity as DbEntity;
 use sinex_core::RawEvent;
-use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
+use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
 use std::collections::HashMap;
 use std::convert::From;
 use tracing::{debug, info};
@@ -166,7 +167,7 @@ impl PkmService {
                 .build();
 
             let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)
-                .with_metadata(metadata);
+                .with_properties(serde_json::to_value(metadata)?);
 
             let entity = self.pool.knowledge_graph().create_entity(entity).await?;
 
@@ -206,7 +207,7 @@ impl PkmService {
                     to_entity_id.clone(),
                     relationship_type,
                 )
-                .with_metadata(metadata),
+                .with_properties(serde_json::to_value(metadata)?),
             )
             .await?;
 
@@ -243,7 +244,7 @@ impl PkmService {
             let existing_material = self
                 .pool
                 .source_materials()
-                .find_by_blob_id(blob.id.unwrap())
+                .find_by_blob_id(blob.id)
                 .await?;
 
             if let Some(material) = existing_material {
@@ -357,9 +358,10 @@ impl PkmService {
             .source_materials()
             .finalize_in_flight(
                 id.into(),
-                inserted_blob.id, // blob_id
-                None,             // encoding
+                Some(inserted_blob.id), // blob_id
+                None,                   // encoding
                 content_preview,
+                Some(content.len() as i64), // total_bytes
             )
             .await?;
 
@@ -388,7 +390,7 @@ impl PkmService {
         let filtered_materials = if let Some(filter_type) = material_type {
             materials
                 .into_iter()
-                .filter(|m| m.material_type == filter_type)
+                .filter(|m| m.material_kind == filter_type)
                 .collect()
         } else {
             materials
@@ -398,13 +400,19 @@ impl PkmService {
             .into_iter()
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
-                material_type: m.material_type,
-                source_uri: m.source_uri,
-                ingestion_time: m.ingestion_time,
-                file_size_bytes: m.metadata.get("file_size_bytes").cloned(),
-                mime_type: m.metadata.get("mime_type").cloned(),
-                metadata: m.metadata,
-                content_preview: m.content_preview,
+                material_type: m.material_kind,
+                source_uri: Some(m.source_identifier),
+                ingestion_time: m.staged_at,
+                file_size_bytes: m
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("file_size_bytes").cloned()),
+                mime_type: m
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get("mime_type").cloned()),
+                metadata: m.metadata.unwrap_or(serde_json::json!({})),
+                content_preview: None, // Field doesn't exist in SourceMaterialRecord
             })
             .collect();
 
@@ -430,12 +438,12 @@ impl PkmService {
             .into_iter()
             .map(|m| MaterialSummary {
                 blob_id: m.id.to_string(),
-                material_type: m.material_type,
-                source_uri: m.source_uri,
-                ingestion_time: m.ingestion_time,
+                material_type: m.material_kind,
+                source_uri: Some(m.source_identifier),
+                ingestion_time: m.staged_at,
                 file_size_bytes: None,
                 mime_type: None,
-                metadata: m.metadata,
+                metadata: m.metadata.unwrap_or(serde_json::json!({})),
                 content_preview: None,
             })
             .collect();

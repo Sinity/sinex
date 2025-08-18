@@ -3,7 +3,6 @@
 //! Provides access to core.blobs table for managing binary large objects
 //! stored in git-annex with metadata in PostgreSQL.
 
-use crate::{Id, Ulid};
 use chrono::Utc;
 use color_eyre::eyre::{Context, Result};
 use num_traits::ToPrimitive;
@@ -11,6 +10,7 @@ use sqlx::PgPool;
 use tracing::instrument;
 
 use crate::models::Blob;
+use crate::types::Id;
 use crate::BlobRecord;
 
 /// Repository for blob operations
@@ -34,34 +34,31 @@ impl BlobRepository {
             BlobRecord,
             r#"
             INSERT INTO core.blobs (
-                id, annex_key, original_filename, size_bytes, mime_type,
-                checksum_sha256, checksum_blake3, storage_backend, metadata,
+                annex_backend, content_hash, original_filename, size_bytes, 
+                mime_type, checksum_blake3, metadata,
                 created_at, last_verified_at, verification_status
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id,
-                annex_key,
+                id as "id: sinex_schema::ulid::Ulid",
+                annex_backend,
+                content_hash,
                 original_filename,
                 size_bytes,
                 mime_type,
-                checksum_sha256,
                 checksum_blake3,
-                storage_backend,
                 metadata,
                 created_at,
                 last_verified_at,
                 verification_status
             "#,
-            record.id as uuid::Uuid,
-            record.annex_key,
+            record.annex_backend,
+            record.content_hash,
             record.original_filename,
             record.size_bytes,
             record.mime_type,
-            record.checksum_sha256,
             record.checksum_blake3,
-            record.storage_backend,
             record.metadata,
             record.created_at,
             record.last_verified_at,
@@ -77,18 +74,18 @@ impl BlobRepository {
     /// Get a blob by ID
     #[instrument(skip(self))]
     pub async fn get_by_id(&self, id: Id<Blob>) -> Result<Option<Blob>> {
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
             SELECT 
-                id,
-                annex_key,
+                id as "id: sinex_schema::ulid::Ulid",
+                annex_backend,
+                content_hash,
                 original_filename,
                 size_bytes,
                 mime_type,
-                checksum_sha256,
                 checksum_blake3,
-                storage_backend,
                 metadata,
                 created_at,
                 last_verified_at,
@@ -96,11 +93,48 @@ impl BlobRepository {
             FROM core.blobs
             WHERE id = $1
             "#,
-            id.as_uuid()
+            id_uuid as _
         )
         .fetch_optional(&self.pool)
         .await
-        .wrap_err("Failed to get blob by ID")?;
+        .wrap_err("Failed to get blob by id")?;
+
+        Ok(result.map(Into::into))
+    }
+
+    /// Get a blob by content hash and backend (reconstruct annex key)
+    #[instrument(skip(self))]
+    pub async fn get_by_content(
+        &self,
+        backend: &str,
+        hash: &str,
+        size: i64,
+    ) -> Result<Option<Blob>> {
+        let result = sqlx::query_as!(
+            BlobRecord,
+            r#"
+            SELECT 
+                id as "id: sinex_schema::ulid::Ulid",
+                annex_backend,
+                content_hash,
+                original_filename,
+                size_bytes,
+                mime_type,
+                checksum_blake3,
+                metadata,
+                created_at,
+                last_verified_at,
+                verification_status
+            FROM core.blobs
+            WHERE annex_backend = $1 AND content_hash = $2 AND size_bytes = $3
+            "#,
+            backend,
+            hash,
+            size
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .wrap_err("Failed to get blob by content")?;
 
         Ok(result.map(Into::into))
     }
@@ -112,14 +146,13 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id,
-                annex_key,
+                id as "id: sinex_schema::ulid::Ulid",
+                annex_backend,
+                content_hash,
                 original_filename,
                 size_bytes,
                 mime_type,
-                checksum_sha256,
                 checksum_blake3,
-                storage_backend,
                 metadata,
                 created_at,
                 last_verified_at,
@@ -137,40 +170,10 @@ impl BlobRepository {
         Ok(result.map(Into::into))
     }
 
-    /// Find blob by annex key
-    #[instrument(skip(self))]
-    pub async fn find_by_annex_key(&self, annex_key: &str) -> Result<Option<Blob>> {
-        let result = sqlx::query_as!(
-            BlobRecord,
-            r#"
-            SELECT 
-                id,
-                annex_key,
-                original_filename,
-                size_bytes,
-                mime_type,
-                checksum_sha256,
-                checksum_blake3,
-                storage_backend,
-                metadata,
-                created_at,
-                last_verified_at,
-                verification_status
-            FROM core.blobs
-            WHERE annex_key = $1
-            "#,
-            annex_key
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .wrap_err("Failed to find blob by annex key")?;
-
-        Ok(result.map(Into::into))
-    }
-
     /// Update blob verification status
     #[instrument(skip(self))]
     pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> Result<()> {
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -181,7 +184,7 @@ impl BlobRepository {
             "#,
             status,
             Utc::now(),
-            id.as_uuid()
+            id_uuid as _
         )
         .execute(&self.pool)
         .await
@@ -194,6 +197,7 @@ impl BlobRepository {
     #[instrument(skip(self))]
     pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> Result<()> {
         // Update the metadata JSON to include the filename in an array
+        let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
             UPDATE core.blobs
@@ -206,7 +210,7 @@ impl BlobRepository {
             WHERE id = $2
             "#,
             filename,
-            id.as_uuid()
+            id_uuid as _
         )
         .execute(&self.pool)
         .await
@@ -229,7 +233,8 @@ impl BlobRepository {
                     FROM core.blobs 
                     GROUP BY checksum_blake3 
                     HAVING COUNT(*) > 1
-                ) THEN size_bytes ELSE 0 END), 0) as "duplicate_size!"
+                ) THEN size_bytes ELSE 0 END), 0) as "duplicate_size!",
+                COUNT(CASE WHEN verification_status = 'corrupted' THEN 1 END) as "failed_verifications!"
             FROM core.blobs
             "#
         )
@@ -238,30 +243,22 @@ impl BlobRepository {
         .wrap_err("Failed to get storage statistics")?;
 
         Ok(StorageStats {
-            total_blobs: stats.total_blobs,
+            total_blobs: stats.total_blobs.to_i64().unwrap_or(0),
             total_size_bytes: stats.total_size.to_i64().unwrap_or(0),
-            unique_blobs: stats.unique_blobs,
+            unique_blobs: stats.unique_blobs.to_i64().unwrap_or(0),
             duplicate_size_bytes: stats.duplicate_size.to_i64().unwrap_or(0),
+            failed_verifications: stats.failed_verifications.to_i64().unwrap_or(0),
         })
     }
 }
 
-/// Storage statistics for blobs
-#[derive(Debug, Clone)]
+/// Storage statistics
+#[derive(Debug)]
 pub struct StorageStats {
     pub total_blobs: i64,
     pub total_size_bytes: i64,
     pub unique_blobs: i64,
     pub duplicate_size_bytes: i64,
-}
-
-impl StorageStats {
-    /// Calculate deduplication ratio
-    pub fn deduplication_ratio(&self) -> f64 {
-        if self.total_size_bytes == 0 {
-            0.0
-        } else {
-            self.duplicate_size_bytes as f64 / self.total_size_bytes as f64
-        }
-    }
+    /// Number of blobs that failed verification
+    pub failed_verifications: i64,
 }

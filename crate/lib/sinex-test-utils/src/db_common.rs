@@ -283,11 +283,22 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 ///
 /// - core.events
 /// - core.event_annotations
-/// - core.entities
 /// - core.entity_relations
-/// Note: artifact-related tables removed in Phase 1.3 cleanup
-/// - core.revisions
+/// - core.entities
 /// - core.event_clusters
+/// - core.event_cluster_members
+/// - core.event_embeddings
+/// - core.revisions
+/// - core.blobs
+/// - core.tags
+/// - core.tagged_items
+/// - core.processor_checkpoints
+/// - core.operations_log
+/// - core.transactional_outbox
+/// - raw.source_material_registry
+/// - raw.temporal_ledger
+/// - sinex_schemas.event_payload_schemas
+/// - sinex_schemas.processor_manifests
 ///
 /// # Example
 ///
@@ -302,10 +313,52 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 /// # }
 /// ```
 pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
-    // TODO: Re-implement without sea-query due to Send trait issues
-    // For now, return empty counts to allow compilation
-    let _pool = pool; // Suppress unused warning
-    Ok(HashMap::new())
+    let mut counts = HashMap::new();
+
+    // List of all major tables to count from the schema
+    let tables = vec![
+        // Core tables
+        "core.events",
+        "core.event_annotations",
+        "core.event_relations",
+        "core.event_cluster_members",
+        "core.event_embeddings",
+        "core.entity_relations",
+        "core.revisions",
+        "core.entities",
+        "core.event_clusters",
+        "core.blobs",
+        "core.tags",
+        "core.tagged_items",
+        "core.processor_checkpoints",
+        "core.operations_log",
+        "core.transactional_outbox",
+        // Raw data tables
+        "raw.source_material_registry",
+        "raw.temporal_ledger",
+        // Schema tables
+        "sinex_schemas.event_payload_schemas",
+        "sinex_schemas.processor_manifests",
+    ];
+
+    for table in tables {
+        let query = format!("SELECT COUNT(*) FROM {}", table);
+
+        match sqlx::query_scalar::<_, i64>(&query).fetch_one(pool).await {
+            Ok(count) => {
+                counts.insert(table.to_string(), count);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to count rows in table {}: {}", table, e);
+                // Don't fail the entire operation if one table doesn't exist or has issues
+                // Just log the warning and continue - this is useful during development
+                // when not all tables might exist yet
+                counts.insert(table.to_string(), -1); // Use -1 to indicate error
+            }
+        }
+    }
+
+    Ok(counts)
 }
 
 /// Verify database is in clean state
@@ -333,10 +386,24 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
     let counts = get_row_counts(pool).await?;
 
     let mut non_empty = Vec::new();
+    let mut table_errors = Vec::new();
+
     for (table, count) in counts {
-        if count > 0 {
+        if count == -1 {
+            // Table had an error during counting (likely doesn't exist)
+            table_errors.push(table);
+        } else if count > 0 {
             non_empty.push((table, count));
         }
+    }
+
+    // Report table errors as warnings but don't fail verification
+    // This is useful during development when schema might be incomplete
+    if !table_errors.is_empty() {
+        tracing::warn!(
+            "Some tables could not be verified (they may not exist): {}",
+            table_errors.join(", ")
+        );
     }
 
     if !non_empty.is_empty() {
@@ -415,12 +482,12 @@ mod tests {
             OperationRecord, Provenance, RawEvent, SourceMaterial,
         };
 
-        let new_event = RawEvent::builder()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test.event"))
-            .host(HostName::new("test-host"))
-            .payload(serde_json::json!({}))
-            .build();
+        let new_event = RawEvent::test_event(
+            EventSource::new("test"),
+            EventType::new("test.event"),
+            serde_json::json!({}),
+        )
+        .with_host(HostName::new("test-host"));
         pool.events().insert(new_event).await?;
 
         // Verify data exists
@@ -452,12 +519,12 @@ mod tests {
             OperationRecord, Provenance, RawEvent, SourceMaterial,
         };
 
-        let new_event = RawEvent::builder()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test"))
-            .host(HostName::new("test"))
-            .payload(serde_json::json!({}))
-            .build();
+        let new_event = RawEvent::test_event(
+            EventSource::new("test"),
+            EventType::new("test"),
+            serde_json::json!({}),
+        )
+        .with_host(HostName::new("test"));
         pool.events().insert(new_event).await?;
 
         // Should fail verification

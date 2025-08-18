@@ -24,6 +24,7 @@ pub enum ResetBehavior {
 }
 
 /// Unified coordination primitive with threshold-based signaling
+#[derive(Debug)]
 pub struct CoordinationPrimitive {
     state: Arc<AtomicUsize>,
     threshold: usize,
@@ -82,6 +83,26 @@ impl CoordinationPrimitive {
         let new_state = self.state.fetch_add(amount, Ordering::AcqRel) + amount;
         self.check_threshold_and_notify(new_state);
         new_state
+    }
+
+    /// Subtract from the state atomically (saturating at 0)
+    pub fn subtract(&self, amount: usize) -> usize {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            let new = current.saturating_sub(amount);
+            match self.state.compare_exchange_weak(
+                current,
+                new,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    self.check_threshold_and_notify(new);
+                    return new;
+                }
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     /// Set state to specific value

@@ -1,4 +1,8 @@
 // Test Fixture Management System
+
+use sinex_core::types::domain::CommandText;
+use sinex_core::types::events::payloads::shell::KittyCommandExecutedPayload;
+use sinex_core::types::events::payloads::window::HyprlandWindowFocusedPayload;
 //
 // Provides reusable test data with proper lifecycle management for Sinex tests.
 // Features:
@@ -29,11 +33,11 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
+use sinex_core::db::models::Event;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
-use sinex_core::types::events::Event;
 use sinex_core::{
     Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
     OperationRecord, Provenance, RawEvent, SourceMaterial,
@@ -88,7 +92,9 @@ impl FixtureRegistry {
             self.ref_counts
                 .entry(cache_key.clone())
                 .and_modify(|c| *c += 1);
-            return Ok(cached.clone().downcast::<T>().unwrap());
+            return cached.clone().downcast::<T>().map_err(|_| {
+                color_eyre::eyre::eyre!("Cached fixture has wrong type for key: {}", key)
+            });
         }
 
         // Create new fixture with proper error propagation
@@ -182,6 +188,36 @@ pub struct PerformanceDatasetFixture {
     pub event_ids: Vec<Ulid>,
     pub time_range: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
     pub sources: Vec<String>,
+    pub source_distribution: HashMap<String, usize>,
+    pub type_distribution: HashMap<String, usize>,
+    pub payload_size_stats: PayloadSizeStats,
+}
+
+/// Statistics about payload sizes in a fixture
+#[derive(Debug, Clone)]
+pub struct PayloadSizeStats {
+    pub min_size: usize,
+    pub max_size: usize,
+    pub avg_size: usize,
+    pub total_size: usize,
+}
+
+/// Fixture data for schema validation testing
+#[derive(Debug, Clone)]
+pub struct SchemaValidationFixture {
+    pub valid_events: Vec<Ulid>,
+    pub invalid_events: Vec<Ulid>,
+    pub schema_ids: Vec<Ulid>,
+    pub validation_errors: Vec<String>,
+}
+
+/// Fixture data for concurrent operations testing
+#[derive(Debug, Clone)]
+pub struct ConcurrencyTestFixture {
+    pub operation_ids: Vec<Ulid>,
+    pub worker_events: HashMap<String, Vec<Ulid>>,
+    pub synchronization_points: Vec<chrono::DateTime<chrono::Utc>>,
+    pub conflict_events: Vec<Ulid>,
 }
 
 // Type aliases for fixture types
@@ -363,6 +399,56 @@ pub(crate) async fn performance_dataset_with_size(
     Ok(fixture)
 }
 
+/// Create schema validation fixture for testing validation scenarios
+pub(crate) async fn schema_validation_fixture(
+    ctx: &TestContext,
+) -> Result<FixtureHandle<SchemaValidationFixture>> {
+    let key = format!("schema_validation_{}", ctx.test_name());
+    let registry = get_registry().await;
+
+    let pool = ctx.pool.clone();
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move { create_schema_validation_fixture(&pool).await }
+        })
+        .await?;
+
+    Ok(fixture)
+}
+
+/// Create concurrency test fixture for testing concurrent operations
+pub(crate) async fn concurrency_test_fixture(
+    ctx: &TestContext,
+    worker_count: usize,
+    operations_per_worker: usize,
+) -> Result<FixtureHandle<ConcurrencyTestFixture>> {
+    let key = format!(
+        "concurrency_test_{}_{}_{}_{}",
+        ctx.test_name(),
+        worker_count,
+        operations_per_worker,
+        uuid::Uuid::new_v4()
+    );
+    let registry = get_registry().await;
+
+    let pool = ctx.pool.clone();
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move {
+                create_concurrency_test_fixture(&pool, worker_count, operations_per_worker).await
+            }
+        })
+        .await?;
+
+    Ok(fixture)
+}
+
 // =============================================================================
 // FIXTURE CREATION HELPERS
 // =============================================================================
@@ -378,12 +464,16 @@ async fn create_user_session_fixture(
 
     // Create filesystem events
     for i in 0..event_count / 3 {
-        let event = Event::new(FileCreatedPayload {
-            path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
-            size: 0,
-            created_at: Utc::now(),
-            permissions: None,
-        })
+        let event = Event::test_event(
+            "test-filesystem",
+            "file.created",
+            FileCreatedPayload {
+                path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
+                size: 0,
+                created_at: Utc::now(),
+                permissions: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
@@ -410,17 +500,21 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = Event::new(KittyCommandCompletedPayload {
-            command: CommandText::from(cmd.to_string()),
-            working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
-            exit_status: 0,
-            duration_ms: 100 + i as u64 * 10,
-            shell_pid: 1000 + i as u32,
-            kitty_window_id: "window_1".to_string(),
-            kitty_tab_id: "tab_1".to_string(),
-            output_lines: Some(10),
-            error_output: None,
-        })
+        let event = Event::test_event(
+            "test-terminal",
+            "command.completed",
+            KittyCommandCompletedPayload {
+                command: CommandText::from(cmd.to_string()),
+                working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
+                exit_status: 0,
+                duration_ms: 100 + i as u64 * 10,
+                shell_pid: 1000 + i as u32,
+                kitty_window_id: "window_1".to_string(),
+                kitty_tab_id: "tab_1".to_string(),
+                output_lines: Some(10),
+                error_output: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
@@ -440,20 +534,24 @@ async fn create_user_session_fixture(
     // Create clipboard events
     for i in 0..event_count / 3 {
         let text = format!("Clipboard content {}", i);
-        let event = Event::new(ClipboardCopiedPayload {
-            operation: "copy".to_string(),
-            content_type: "text/plain".to_string(),
-            content_size: text.len(),
-            text_preview: Some(text.clone()),
-            file_count: None,
-            file_paths: None,
-            source_app: Some("test_app".to_string()),
-            window_title: Some("Test Window".to_string()),
-            content_hash: format!("hash_{}", i),
-            original_hash: None,
-            annex_key: None,
-            blob_id: None,
-        })
+        let event = Event::test_event(
+            "test-clipboard",
+            "clipboard.copied",
+            ClipboardCopiedPayload {
+                operation: "copy".to_string(),
+                content_type: "text/plain".to_string(),
+                content_size: text.len(),
+                text_preview: Some(text.clone()),
+                file_count: None,
+                file_paths: None,
+                source_app: Some("test_app".to_string()),
+                window_title: Some("Test Window".to_string()),
+                content_hash: format!("hash_{}", i),
+                original_hash: None,
+                annex_key: None,
+                blob_id: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
@@ -637,7 +735,10 @@ async fn create_performance_dataset_fixture(
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     // Use source constants from payload types
-    use sinex_core::types::*;
+    use sinex_core::types::events::payloads::{
+        clipboard::ClipboardCopiedPayload, filesystem::FileCreatedPayload,
+        shell::KittyCommandExecutedPayload, window::HyprlandWindowFocusedPayload,
+    };
 
     let sources = vec![
         FileCreatedPayload::SOURCE,
@@ -673,7 +774,7 @@ async fn create_performance_dataset_fixture(
                 "data": "x".repeat(payload_size)
             }),
         )
-        .with_ts_orig(Some(start_time + time_step * i as i32));
+        .with_timestamp(start_time + time_step * i as i32);
         batch.push(event);
     }
 
@@ -696,11 +797,44 @@ async fn create_performance_dataset_fixture(
         }
     }
 
+    // Calculate distribution statistics
+    let mut source_distribution = HashMap::new();
+    let mut type_distribution = HashMap::new();
+    let payload_sizes = [100, 500, 1000, 5000];
+
+    for i in 0..event_count {
+        let source = sources[i % sources.len()].to_string();
+        let event_type = event_types[i % event_types.len()].to_string();
+
+        *source_distribution.entry(source).or_insert(0) += 1;
+        *type_distribution.entry(event_type).or_insert(0) += 1;
+    }
+
+    // Calculate payload size statistics
+    let total_size: usize = (0..event_count).map(|i| payload_sizes[i % 4]).sum();
+    let min_size = payload_sizes.iter().min().copied().unwrap_or(0);
+    let max_size = payload_sizes.iter().max().copied().unwrap_or(0);
+    let avg_size = if event_count > 0 {
+        total_size / event_count
+    } else {
+        0
+    };
+
+    let payload_size_stats = PayloadSizeStats {
+        min_size,
+        max_size,
+        avg_size,
+        total_size,
+    };
+
     Ok(PerformanceDatasetFixture {
         event_count,
         event_ids,
         time_range: (start_time, end_time),
         sources: sources.iter().map(|s| s.to_string()).collect(),
+        source_distribution,
+        type_distribution,
+        payload_size_stats,
     })
 }
 
@@ -931,6 +1065,120 @@ pub(crate) async fn cleanup_fixture<T: 'static>(key: &str) -> Result<()> {
     registry.ref_counts.remove(&cache_key);
 
     Ok(())
+}
+
+/// Create schema validation fixture with both valid and invalid events
+async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidationFixture> {
+    let mut valid_events = Vec::new();
+    let mut invalid_events = Vec::new();
+    let mut schema_ids = Vec::new();
+    let mut validation_errors = Vec::new();
+
+    // TODO: Implement schema validation fixture creation once schema management is available
+    // For now, create a placeholder fixture
+
+    // Create some valid events (using standard test events)
+    for i in 0..5 {
+        let event = RawEvent::test_event(
+            EventSource::from("schema_test"),
+            EventType::from("valid.event"),
+            json!({
+                "id": i,
+                "name": format!("valid_event_{}", i),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        );
+
+        let inserted = pool.events().insert(event).await?;
+        if let Some(id) = inserted.id {
+            valid_events.push(id.as_ulid().clone());
+        }
+    }
+
+    // Note: Invalid events would need schema validation to be properly tested
+    // Currently just creating some events that could be considered invalid in context
+    for i in 0..3 {
+        let event = RawEvent::test_event(
+            EventSource::from("schema_test"),
+            EventType::from("invalid.event"),
+            json!({
+                "malformed_field": null,
+                "missing_required": format!("invalid_{}", i),
+            }),
+        );
+
+        let inserted = pool.events().insert(event).await?;
+        if let Some(id) = inserted.id {
+            invalid_events.push(id.as_ulid().clone());
+        }
+        validation_errors.push(format!("Invalid event {}: missing required fields", i));
+    }
+
+    Ok(SchemaValidationFixture {
+        valid_events,
+        invalid_events,
+        schema_ids, // Empty for now - would need schema registry implementation
+        validation_errors,
+    })
+}
+
+/// Create concurrency test fixture with worker events and synchronization points
+async fn create_concurrency_test_fixture(
+    pool: &DbPool,
+    worker_count: usize,
+    operations_per_worker: usize,
+) -> Result<ConcurrencyTestFixture> {
+    let mut operation_ids = Vec::new();
+    let mut worker_events = HashMap::new();
+    let mut synchronization_points = Vec::new();
+    let mut conflict_events = Vec::new();
+
+    let start_time = chrono::Utc::now();
+
+    // Create synchronization points every 10 operations
+    for i in 0..(operations_per_worker / 10).max(1) {
+        synchronization_points.push(start_time + chrono::Duration::seconds(i as i64 * 10));
+    }
+
+    // Create events for each worker
+    for worker_id in 0..worker_count {
+        let worker_name = format!("worker_{}", worker_id);
+        let mut worker_event_ids = Vec::new();
+
+        for op_id in 0..operations_per_worker {
+            let event = RawEvent::test_event(
+                EventSource::from(worker_name.as_str()),
+                EventType::from("worker.operation"),
+                json!({
+                    "worker_id": worker_id,
+                    "operation_id": op_id,
+                    "timestamp": (start_time + chrono::Duration::seconds(op_id as i64)).to_rfc3339(),
+                    "resource": format!("resource_{}", op_id % 5), // Potential conflicts on same resource
+                }),
+            );
+
+            let inserted = pool.events().insert(event).await?;
+            if let Some(id) = inserted.id {
+                let ulid = id.as_ulid().clone();
+                worker_event_ids.push(ulid.clone());
+                operation_ids.push(ulid.clone());
+
+                // Mark events that operate on the same resource as potential conflicts
+                if op_id % 5 == 0 && worker_id > 0 {
+                    conflict_events.push(ulid);
+                }
+            }
+        }
+
+        worker_events.insert(worker_name, worker_event_ids);
+    }
+
+    Ok(ConcurrencyTestFixture {
+        operation_ids,
+        worker_events,
+        synchronization_points,
+        conflict_events,
+    })
 }
 
 // Additional fixture functions for API completeness

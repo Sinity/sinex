@@ -46,6 +46,16 @@ impl fmt::Display for SensorType {
     }
 }
 
+impl From<String> for SensorType {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "append_stream" => SensorType::AppendStream,
+            "tree_watch" => SensorType::TreeWatch,
+            _ => SensorType::AppendStream, // Default fallback
+        }
+    }
+}
+
 impl FromStr for SensorType {
     type Err = String;
 
@@ -74,7 +84,6 @@ pub struct SensorJob {
 }
 
 /// Job manager
-#[derive(Clone)]
 pub struct JobManager {
     db_pool: PgPool,
     temporal_ledger: Arc<TemporalLedger>,

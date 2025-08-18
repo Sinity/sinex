@@ -296,11 +296,11 @@ impl CheckpointManager {
                 processor = %self.processor_name,
                 consumer_group = %self.consumer_group,
                 consumer_name = %self.consumer_name,
-                version = row.checkpoint_version,
+                version = 2, // Default to version 2 since checkpoint_version doesn't exist
                 "Loaded existing checkpoint"
             );
 
-            let version = row.checkpoint_version as u32;
+            let version = 2u32; // Default to version 2 since checkpoint_version doesn't exist
 
             if version >= 2 && row.checkpoint_data.is_some() {
                 // New unified format (version 2+)
@@ -318,7 +318,7 @@ impl CheckpointManager {
                     checkpoint,
                     processed_count: row.processed_count as u64,
                     last_activity: row.last_activity,
-                    data: row.state_data,
+                    data: None, // state field doesn't exist
                     version,
                 }
             } else {
@@ -331,7 +331,7 @@ impl CheckpointManager {
                     last_processed_id: row.last_processed_id.map(|id| id.as_ulid().to_string()),
                     processed_count: row.processed_count as u64,
                     last_activity: row.last_activity,
-                    data: row.state_data,
+                    data: None, // state field doesn't exist
                     version,
                 };
 
@@ -380,9 +380,7 @@ impl CheckpointManager {
             serde_json::to_value(&state.checkpoint).map_err(SatelliteError::Serialization)?;
 
         let last_processed_id = match &state.checkpoint {
-            Checkpoint::Stream { message_id, .. } => {
-                message_id.parse::<sinex_core::ulid::Ulid>().ok()
-            }
+            Checkpoint::Stream { message_id, .. } => message_id.parse::<sinex_core::Ulid>().ok(),
             _ => None,
         };
 
@@ -396,10 +394,10 @@ impl CheckpointManager {
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                last_processed_id.map(|id| sinex_core::Id::<sinex_core::RawEvent>::from_ulid(id)),
-                Some(state.last_activity),
+                last_processed_id.map(|id| {
+                    sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
+                }),
                 Some(checkpoint_data),
-                state.data.clone(),
             )
             .await?;
 

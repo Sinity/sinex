@@ -42,12 +42,24 @@ fn arbitrary_context() -> impl Strategy<Value = String> {
 fn arbitrary_io_error() -> impl Strategy<Value = IoError> {
     prop_oneof![
         Just(IoError::new(ErrorKind::NotFound, "file not found")),
-        Just(IoError::new(ErrorKind::PermissionDenied, "permission denied")),
-        Just(IoError::new(ErrorKind::ConnectionRefused, "connection refused")),
+        Just(IoError::new(
+            ErrorKind::PermissionDenied,
+            "permission denied"
+        )),
+        Just(IoError::new(
+            ErrorKind::ConnectionRefused,
+            "connection refused"
+        )),
         Just(IoError::new(ErrorKind::TimedOut, "operation timed out")),
         Just(IoError::new(ErrorKind::InvalidData, "invalid data")),
-        Just(IoError::new(ErrorKind::UnexpectedEof, "unexpected end of file")),
-        Just(IoError::new(ErrorKind::Interrupted, "operation interrupted")),
+        Just(IoError::new(
+            ErrorKind::UnexpectedEof,
+            "unexpected end of file"
+        )),
+        Just(IoError::new(
+            ErrorKind::Interrupted,
+            "operation interrupted"
+        )),
         // Custom error messages
         arbitrary_error_message().prop_map(|msg| IoError::new(ErrorKind::Other, msg)),
     ]
@@ -86,12 +98,12 @@ proptest! {
     ) {
         let original_message = io_error.to_string();
         let satellite_error = io_error_with_context(io_error, &context);
-        
+
         match satellite_error {
             sinex_satellite_sdk::SatelliteError::Processing(message) => {
                 // Error message should be non-empty
                 prop_assert!(!message.is_empty(), "Error message should not be empty");
-                
+
                 // If context is non-empty, it should be in the message
                 if !context.is_empty() {
                     prop_assert!(
@@ -101,11 +113,11 @@ proptest! {
                         context
                     );
                 }
-                
+
                 // Original error info should be preserved (unless it was empty)
                 if !original_message.is_empty() {
                     prop_assert!(
-                        message.contains(&original_message) || 
+                        message.contains(&original_message) ||
                         message.len() > context.len() + 2, // At least some original info
                         "Error message should preserve original information"
                     );
@@ -123,15 +135,15 @@ proptest! {
         context in arbitrary_context()
     ) {
         let satellite_error = io_error_with_context(io_error, &context);
-        
+
         match satellite_error {
             sinex_satellite_sdk::SatelliteError::Processing(message) => {
                 // Message should be valid UTF-8 (guaranteed by String type)
                 prop_assert!(message.is_valid_utf8());
-                
+
                 // Message should not contain null bytes (which could break logging)
                 prop_assert!(!message.contains('\0'), "Error message should not contain null bytes");
-                
+
                 // Message should have reasonable length (not empty, not extremely long)
                 prop_assert!(message.len() <= 10000, "Error message should not be excessively long");
             }
@@ -152,13 +164,13 @@ proptest! {
         // Create a consistent UTF-8 error for testing
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD];
         let utf8_error = String::from_utf8(invalid_utf8).unwrap_err();
-        
+
         let satellite_error = utf8_error_with_context(utf8_error, &context);
-        
+
         match satellite_error {
             sinex_satellite_sdk::SatelliteError::Processing(message) => {
                 prop_assert!(!message.is_empty(), "Error message should not be empty");
-                
+
                 if !context.is_empty() {
                     prop_assert!(
                         message.contains(&context),
@@ -172,7 +184,7 @@ proptest! {
 }
 
 // =============================================================================
-// Property Tests for JSON Error Handling  
+// Property Tests for JSON Error Handling
 // =============================================================================
 
 proptest! {
@@ -185,15 +197,15 @@ proptest! {
         if serde_json::from_str::<serde_json::Value>(&json_str).is_ok() {
             return Ok(()); // Skip valid JSON for this test
         }
-        
+
         // If parsing failed, we have a JSON error to test with
         if let Err(json_error) = serde_json::from_str::<serde_json::Value>(&json_str) {
             let satellite_error = json_error_with_context(json_error, &context);
-            
+
             match satellite_error {
                 sinex_satellite_sdk::SatelliteError::Processing(message) => {
                     prop_assert!(!message.is_empty(), "Error message should not be empty");
-                    
+
                     if !context.is_empty() {
                         prop_assert!(
                             message.contains(&context),
@@ -202,7 +214,7 @@ proptest! {
                             context
                         );
                     }
-                    
+
                     // Message should be well-formed
                     prop_assert!(message.len() <= 10000, "Error message should not be excessively long");
                     prop_assert!(!message.contains('\0'), "Error message should not contain null bytes");
@@ -223,7 +235,7 @@ proptest! {
         message in arbitrary_error_message()
     ) {
         let error = processing_error(&message);
-        
+
         match error {
             sinex_satellite_sdk::SatelliteError::Processing(result_message) => {
                 prop_assert_eq!(result_message, message, "Processing error should preserve message exactly");
@@ -234,18 +246,18 @@ proptest! {
 }
 
 proptest! {
-    #[test] 
+    #[test]
     fn prop_processing_error_fmt_handles_various_formats(
         value in any::<i32>(),
         text in "[a-zA-Z0-9 ]{0,20}"
     ) {
         let formatted_message = format!("Value {} with text '{}'", value, text);
         let error = processing_error_fmt(format_args!("Value {} with text '{}'", value, text));
-        
+
         match error {
             sinex_satellite_sdk::SatelliteError::Processing(result_message) => {
                 prop_assert_eq!(
-                    result_message, 
+                    result_message,
                     formatted_message,
                     "Formatted processing error should match expected format"
                 );
@@ -265,17 +277,17 @@ proptest! {
         message in arbitrary_error_message()
     ) {
         let error = processing_error(&message);
-        
+
         // Test Display implementation
         let display_str = format!("{}", error);
         prop_assert!(!display_str.is_empty(), "Display string should not be empty");
         prop_assert!(display_str.len() <= 20000, "Display string should be reasonable length");
-        
+
         // Test Debug implementation
         let debug_str = format!("{:?}", error);
         prop_assert!(!debug_str.is_empty(), "Debug string should not be empty");
         prop_assert!(debug_str.len() <= 20000, "Debug string should be reasonable length");
-        
+
         // Debug should contain more structure than Display
         prop_assert!(
             debug_str.len() >= display_str.len() || debug_str.contains("Processing"),

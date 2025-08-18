@@ -102,10 +102,10 @@ impl DesktopSensdProcessor {
             SELECT 
                 source_material_id as "material_id: Ulid",
                 source_identifier,
-                acquired_at,
+                created_at as acquired_at,
                 data,
-                size_bytes,
-                mime_type,
+                total_bytes as size_bytes,
+                content_type as mime_type,
                 metadata
             FROM raw.source_material_registry
             WHERE source_material_id = $1::ulid
@@ -243,10 +243,10 @@ impl DesktopSensdProcessor {
         };
 
         // Create clipboard event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from(event_type))
-            .source(EventSource::from("desktop_clipboard"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("desktop_clipboard"),
+            EventType::from(event_type),
+            json!({
                 "selection_type": selection_type,
                 "content_type": content_type,
                 "content_size": data.get("content_size").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -257,14 +257,18 @@ impl DesktopSensdProcessor {
                 "material_id": slice.material_id.to_string(),
                 "offset_start": slice.offset_start,
                 "offset_end": slice.offset_end,
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
         Ok(events)
@@ -295,10 +299,10 @@ impl DesktopSensdProcessor {
         };
 
         // Create window manager event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from(event_type))
-            .source(EventSource::from("desktop_window_manager"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("desktop_window_manager"),
+            EventType::from(event_type),
+            json!({
                 "event_type": event_type_str,
                 "event_data": data.get("event_data"),
                 "wm_type": data.get("wm_type"),
@@ -306,14 +310,18 @@ impl DesktopSensdProcessor {
                 "material_id": slice.material_id.to_string(),
                 "offset_start": slice.offset_start,
                 "offset_end": slice.offset_end,
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
         Ok(events)
@@ -328,10 +336,10 @@ impl DesktopSensdProcessor {
         let mut events = Vec::new();
 
         // Create desktop snapshot event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from("desktop.snapshot_taken"))
-            .source(EventSource::from("desktop"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("desktop"),
+            EventType::from("desktop.snapshot_taken"),
+            json!({
                 "snapshot_type": data.get("snapshot_type"),
                 "enabled_sources": data.get("enabled_sources"),
                 "source_count": data.get("source_count"),
@@ -340,14 +348,18 @@ impl DesktopSensdProcessor {
                 "material_id": slice.material_id.to_string(),
                 "offset_start": slice.offset_start,
                 "offset_end": slice.offset_end,
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
         Ok(events)
@@ -373,10 +385,10 @@ impl DesktopSensdProcessor {
         };
 
         // Create desktop monitoring event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from(event_type))
-            .source(EventSource::from("desktop"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("desktop"),
+            EventType::from(event_type),
+            json!({
                 "event_type": event_type_str,
                 "clipboard_enabled": data.get("clipboard_enabled"),
                 "window_manager_enabled": data.get("window_manager_enabled"),
@@ -386,14 +398,18 @@ impl DesktopSensdProcessor {
                 "material_id": slice.material_id.to_string(),
                 "offset_start": slice.offset_start,
                 "offset_end": slice.offset_end,
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
         Ok(events)
@@ -417,9 +433,9 @@ impl DesktopSensdProcessor {
                 WHERE source_identifier IN ('desktop_clipboard', 'desktop_window_manager', 'desktop_snapshot', 'desktop_monitoring')
                 AND NOT EXISTS (
                     SELECT 1 FROM core.events 
-                    WHERE material_id = source_material_registry.source_material_id
+                    WHERE source_material_id::ulid = source_material_registry.source_material_id
                 )
-                ORDER BY acquired_at DESC
+                ORDER BY created_at DESC
                 LIMIT 10
                 "#,
             )

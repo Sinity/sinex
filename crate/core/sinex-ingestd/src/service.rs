@@ -15,6 +15,7 @@ use crate::{
 // External crates
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
+use sinex_core::environment as sinex_environment;
 use sinex_core::{
     db::{
         models::{Provenance, RawEvent},
@@ -84,12 +85,14 @@ impl SubjectCache {
             }
         }
 
-        // Slow path: create and cache the subject
-        let subject = Arc::new(format!(
+        // Slow path: create and cache the subject, namespaced by environment
+        let env = sinex_environment();
+        let base = format!(
             "events.{}.{}",
             source.replace('.', "_"),
             event_type.replace('.', "_")
-        ));
+        );
+        let subject = Arc::new(env.nats_subject(&base));
 
         let mut cache = self.cache.lock().await;
         // Double-check in case another task inserted while we were waiting
@@ -149,10 +152,11 @@ impl IngestService {
             })?;
             let js = jetstream::new(client.clone());
 
-            // Create or get the events stream
+            // Create or get the events stream (subjects namespaced by environment)
+            let env = sinex_environment();
             let stream_config = jetstream::stream::Config {
                 name: config.nats_stream_name.clone(),
-                subjects: vec!["events.>".to_string()],
+                subjects: vec![env.nats_subject("events.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
                 max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days
@@ -202,7 +206,7 @@ impl IngestService {
         let telemetry = None;
 
         let service = Self {
-            config,
+            config: config.clone(),
             db_pool,
             nats_client,
             jetstream,
@@ -354,7 +358,7 @@ impl IngestService {
             .map_err(|e| {
                 SinexError::service(format!("gRPC server error: {}", e))
                     .with_operation("service.start_grpc_server")
-                    .with_context("socket_path", config.socket_path.clone())
+                    .with_context("socket_path", self.config.socket_path.clone())
             })?;
 
         info!("Ingestion service stopped");
@@ -371,6 +375,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
         let subject_cache = self.subject_cache.clone();
+        let validator = self.validator.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(1));
@@ -388,6 +393,7 @@ impl IngestService {
                         };
 
                         if should_flush {
+                            let validator_guard = validator.lock().await;
                             Self::flush_events_static(
                                 &event_buffer,
                                 &last_flush,
@@ -396,11 +402,13 @@ impl IngestService {
                                 jetstream.as_ref(),
                                 &stats,
                                 Some(&*subject_cache),
+                                Some(&*validator_guard),
                                 ).await;
                         }
                     }
                     _ = shutdown_signal(&shutdown_flag) => {
                         // Final flush on shutdown
+                        let validator_guard = validator.lock().await;
                         Self::flush_events_static(
                             &event_buffer,
                             &last_flush,
@@ -409,6 +417,7 @@ impl IngestService {
                             jetstream.as_ref(),
                             &stats,
                             Some(&*subject_cache),
+                            Some(&*validator_guard),
                         ).await;
                         break;
                     }
@@ -438,7 +447,7 @@ impl IngestService {
                             Err(e) => {
                                 error!("Failed to process outbox: {}", e);
                                 if let Some(ref telemetry) = telemetry {
-                                    telemetry.record_error("nats", "outbox_processing");
+                                    telemetry.record_error("nats_outbox_processing");
                                 }
                                 stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                             }
@@ -482,7 +491,7 @@ impl IngestService {
         // Read and lock pending outbox entries (limit 100 for batching)
         // Use SELECT FOR UPDATE to prevent concurrent processing of same entries
         let pending = sqlx::query_as::<_, OutboxEntry>(
-            "SELECT id, event_id, subject, payload, created_at FROM core.outbox 
+            "SELECT id, event_id, destination as subject, payload, created_at FROM core.outbox 
              ORDER BY created_at 
              LIMIT 100 
              FOR UPDATE SKIP LOCKED",
@@ -605,6 +614,7 @@ impl IngestService {
         _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
         subject_cache: Option<&SubjectCache>,
+        validator: Option<&EventValidator>,
     ) {
         // Take events from buffer
         let events = {
@@ -630,7 +640,7 @@ impl IngestService {
         // Write to database with transactional outbox pattern
         // This handles both event insertion and outbox entries for NATS publishing
         if let Some(pool) = db_pool {
-            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache).await {
+            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache, validator).await {
                 error!("Failed to write events to database: {}", e);
                 // Note: This is in a static context, so telemetry is not available here
                 // Consider refactoring to pass telemetry if needed
@@ -657,6 +667,7 @@ impl IngestService {
         pool: &PgPool,
         events: &[RawEvent],
         subject_cache: Option<&SubjectCache>,
+        validator: Option<&EventValidator>,
     ) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
@@ -711,36 +722,40 @@ impl IngestService {
             let schema_name = format!("{}.{}", event.source.as_str(), event.event_type.as_str());
             payload_schema_names.push(Some(schema_name));
 
-            // For now, use a placeholder version since we don't have access to the validator here
-            // TODO(schema-validation): Pass validator context to get actual schema version from registry
-            payload_schema_versions.push(Some("1.0.0".to_string()));
+            // Get actual schema version from validator if available
+            let schema_version = if let Some(validator) = validator {
+                validator
+                    .get_schema_version(&event.source, &event.event_type)
+                    .map(|version| version.as_str().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            } else {
+                "unknown".to_string()
+            };
+            payload_schema_versions.push(Some(schema_version));
 
             // Extract provenance into separate database fields
-            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
-                match &event.provenance {
-                    Some(Provenance::Events(ids)) => {
-                        let uuids: Vec<sqlx::types::Uuid> =
-                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
-                        (Some(uuids), None, None, None)
-                    }
-                    Some(Provenance::Material {
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end, anchor_byte) =
+                match event.provenance {
+                    Provenance::Material {
                         id,
+                        anchor_byte,
                         offset_start,
                         offset_end,
-                    }) => (
+                        ..  // Ignore other fields
+                    } => (
                         None,
                         Some(ulid_to_uuid(*id.as_ulid())),
-                        *offset_start,
-                        *offset_end,
+                        offset_start,
+                        offset_end,
+                        anchor_byte,
                     ),
-                    None => (None, None, None, None),
                 };
 
             source_event_id_arrays.push(source_event_ids_opt);
             source_material_ids.push(source_material_id);
             source_material_offset_starts.push(offset_start);
             source_material_offset_ends.push(offset_end);
-            anchor_bytes.push(event.anchor_byte);
+            anchor_bytes.push(anchor_byte);
 
             let blob_uuids = event
                 .associated_blob_ids
@@ -749,16 +764,19 @@ impl IngestService {
             associated_blob_id_arrays.push(blob_uuids);
 
             // Prepare outbox entry for NATS publishing - use cached subject if available
+            // Subjects are namespaced by environment
             let subject = if let Some(cache) = subject_cache {
                 cache
                     .get_subject(event.source.as_str(), event.event_type.as_str())
                     .await
             } else {
-                Arc::new(format!(
+                let env = sinex_environment();
+                let base = format!(
                     "events.{}.{}",
                     event.source.as_str().replace('.', "_"),
                     event.event_type.as_str().replace('.', "_")
-                ))
+                );
+                Arc::new(env.nats_subject(&base))
             };
             outbox_entries.push((event_id, (*subject).clone(), serde_json::to_value(event)?));
         }
@@ -805,7 +823,7 @@ impl IngestService {
         // Insert outbox entries for NATS publishing
         for (event_id, subject, payload) in outbox_entries {
             sqlx::query!(
-                "INSERT INTO core.outbox (event_id, subject, payload) VALUES ($1::ulid, $2, $3)",
+                "INSERT INTO core.outbox (id, event_id, destination, payload) VALUES (gen_ulid()::ulid, $1::ulid, $2, $3)",
                 ulid_to_uuid(event_id) as sqlx::types::Uuid,
                 subject,
                 payload
@@ -842,6 +860,7 @@ impl IngestService {
         if buffer.len() >= self.config.batch_size {
             drop(buffer); // Release lock before flushing
 
+            let validator_guard = self.validator.lock().await;
             Self::flush_events_static(
                 &self.event_buffer,
                 &self.last_flush,
@@ -850,6 +869,7 @@ impl IngestService {
                 self.jetstream.as_ref(),
                 &self.stats,
                 Some(&self.subject_cache),
+                Some(&*validator_guard),
             )
             .await;
         }
@@ -864,6 +884,7 @@ impl IngestService {
         self.shutdown_flag.store(true, Ordering::Relaxed);
 
         // Final flush
+        let validator_guard = self.validator.lock().await;
         Self::flush_events_static(
             &self.event_buffer,
             &self.last_flush,
@@ -872,6 +893,7 @@ impl IngestService {
             self.jetstream.as_ref(),
             &self.stats,
             Some(&self.subject_cache),
+            Some(&*validator_guard),
         )
         .await;
 
@@ -1164,17 +1186,15 @@ impl IngestServiceImpl {
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
-        let builder = RawEvent::builder()
-            .source(source)
-            .event_type(event_type)
-            .host(HostName::new(proto.host))
-            .payload(payload)
-            .ingestor_version(INGESTOR_VERSION);
+        let mut event = RawEvent::system_event(source, event_type, payload);
+        event = event
+            .with_host(HostName::new(proto.host))
+            .with_ingestor_version(INGESTOR_VERSION);
 
         Ok(if let Some(id) = schema_id {
-            builder.payload_schema_id(id).build()
+            event.with_schema_id(id)
         } else {
-            builder.build()
+            event
         })
     }
 }

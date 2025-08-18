@@ -100,7 +100,8 @@ class ReplayPlanner:
     """Plan and execute event replays with control gates"""
     
     def __init__(self, db_url: Optional[str] = None):
-        self.db_url = db_url or os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex')
+        # Default to development database; production uses 'sinex'
+        self.db_url = db_url or os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex_dev')
         
     def get_connection(self):
         """Get database connection"""

@@ -66,3 +66,17 @@ pub trait EventPayload: Serialize + JsonSchema + Send + Sync + 'static {
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 pub type JsonValue = serde_json::Value;
+
+// Special implementation for JsonValue to support heterogeneous event processing
+impl EventPayload for serde_json::Value {
+    const SOURCE: EventSource = EventSource::from_static("system");
+    const EVENT_TYPE: EventType = EventType::from_static("generic");
+    const VERSION: &'static str = "1.0.0";
+
+    fn try_from_legacy(value: serde_json::Value, _version: &str) -> Result<Self, SinexError>
+    where
+        Self: Sized + serde::de::DeserializeOwned,
+    {
+        Ok(value)
+    }
+}

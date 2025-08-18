@@ -34,6 +34,7 @@ ulid = "1.1"
 chrono = { version = "0.4", features = ["serde"] }
 camino = "1.1"
 bytes = "1.9"
+blake3 = "1.5"
 
 # File system watching
 notify = { version = "7.0", features = ["serde"] }
@@ -44,6 +45,7 @@ async-stream = "0.3"
 
 # gRPC
 tonic = "0.12"
+prost = "0.13"
 
 # Configuration
 config = "0.14"

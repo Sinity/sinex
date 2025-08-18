@@ -8,6 +8,7 @@ use crate::{
     job_manager::{SensorJob, SensorType},
     temporal_ledger::{LedgerEntry, TemporalLedger},
 };
+use blake3;
 use camino::Utf8Path;
 use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
@@ -62,14 +63,14 @@ impl TreeWatchSensor {
         job: &SensorJob,
         temporal_ledger: &Arc<TemporalLedger>,
     ) -> Result<Ulid> {
-        info!("Processing tree_watch job for {}", job.target_path);
+        info!("Processing tree_watch job for {}", job.target_uri);
 
         // SECURITY: Validate the target path before processing
         let validated_path =
-            validate_watch_path(&job.target_path, &self.security_policy).map_err(|e| {
+            validate_watch_path(&job.target_uri, &self.security_policy).map_err(|e| {
                 eyre!(
                     "Security validation failed for path '{}': {}",
-                    job.target_path,
+                    job.target_uri,
                     e
                 )
             })?;
@@ -78,7 +79,12 @@ impl TreeWatchSensor {
 
         // Create material record using validated path
         let material_id = temporal_ledger
-            .create_material("tree_watch", validated_path.as_str(), Some("directory"))
+            .create_material(
+                &format!("tree_watch:{}", validated_path.as_str()),
+                "tree_watch",
+                Some(validated_path.as_str()),
+                Some("directory"),
+            )
             .await?;
 
         // Set up file watcher
@@ -185,22 +191,42 @@ impl TreeWatchSensor {
                         let metadata = fs::metadata(&path).await?;
                         let file_size = metadata.len() as i64;
 
+                        // Read file content for hashing (only for small files to avoid memory issues)
+                        let slice_hash = if file_size <= 10_485_760 {
+                            // 10MB limit
+                            match fs::read(&path).await {
+                                Ok(content) => Some(blake3::hash(&content).to_hex().to_string()),
+                                Err(e) => {
+                                    warn!("Failed to read file for hashing: {}", e);
+                                    None
+                                }
+                            }
+                        } else {
+                            // For large files, hash just the metadata
+                            let meta_hash = blake3::hash(path.to_string_lossy().as_bytes());
+                            Some(meta_hash.to_hex().to_string())
+                        };
+
                         let capture_end = Utc::now();
 
                         // Record ledger entry
                         let entry = LedgerEntry {
-                            material_id,
+                            source_material_id: material_id,
                             offset_start: *total_bytes,
                             offset_end: *total_bytes + file_size,
-                            ts_capture_start: capture_start,
-                            ts_capture_end: capture_end,
-                            slice_hash: None,
-                            capture_metadata: serde_json::json!({
+                            offset_kind: "byte".to_string(),
+                            ts_capture: capture_start, // Use start time as the capture timestamp
+                            precision: "exact".to_string(),
+                            clock: "wall".to_string(),
+                            source_type: "realtime_capture".to_string(),
+                            note: Some(serde_json::json!({
                                 "path": path.to_string_lossy(),
                                 "size": file_size,
                                 "event_kind": format!("{:?}", event.kind),
                                 "validated": true, // Mark as security validated
-                            }),
+                                "slice_hash": slice_hash,
+                                "capture_duration_ms": (capture_end - capture_start).num_milliseconds(),
+                            }).to_string()),
                         };
 
                         temporal_ledger.record_entry(entry).await?;
@@ -233,16 +259,21 @@ mod tests {
     #[tokio::test]
     async fn test_tree_watch_sensor_security_validation() {
         // Test that the sensor rejects dangerous paths
-        let temp_ledger = Arc::new(TemporalLedger::new_in_memory().await.unwrap());
+        let temp_ledger = Arc::new(
+            TemporalLedger::new_in_memory()
+                .await
+                .expect("Failed to create in-memory temporal ledger for testing"),
+        );
         let config = SensorConfig::default();
 
-        let sensor = TreeWatchSensor::new(temp_ledger.clone(), config).unwrap();
+        let sensor = TreeWatchSensor::new(temp_ledger.clone(), config)
+            .expect("Failed to create TreeWatchSensor for testing");
 
         // Create a test job with a dangerous path
         let dangerous_job = SensorJob {
             job_id: Ulid::new(),
             sensor_type: SensorType::TreeWatch,
-            target_path: "/etc/passwd".to_string(), // This should be rejected
+            target_uri: "/etc/passwd".to_string(), // This should be rejected
             config: serde_json::Value::Null,
             status: crate::job_manager::JobStatus::Pending,
             created_at: Utc::now(),
@@ -263,22 +294,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_tree_watch_sensor_valid_path() {
-        let temp_ledger = Arc::new(TemporalLedger::new_in_memory().await.unwrap());
+        let temp_ledger = Arc::new(
+            TemporalLedger::new_in_memory()
+                .await
+                .expect("Failed to create in-memory temporal ledger for testing"),
+        );
         let config = SensorConfig::default();
 
         // Use permissive policy for testing
         let permissive_policy = FileWatchingSecurityPolicy::permissive();
-        let sensor =
-            TreeWatchSensor::with_policy(temp_ledger.clone(), config, permissive_policy).unwrap();
+        let sensor = TreeWatchSensor::with_policy(temp_ledger.clone(), config, permissive_policy)
+            .expect("Failed to create TreeWatchSensor with permissive policy for testing");
 
         // Create temporary directory for testing
-        let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temporary directory for testing");
+        let temp_path = temp_dir
+            .path()
+            .to_str()
+            .expect("Failed to convert temp path to string");
 
         let safe_job = SensorJob {
             job_id: Ulid::new(),
             sensor_type: SensorType::TreeWatch,
-            target_path: temp_path.to_string(),
+            target_uri: temp_path.to_string(),
             config: serde_json::Value::Null,
             status: crate::job_manager::JobStatus::Pending,
             created_at: Utc::now(),

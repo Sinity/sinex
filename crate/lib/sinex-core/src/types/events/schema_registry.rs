@@ -7,6 +7,7 @@ use crate::domain::{EventSource, EventType};
 use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use sinex_schema::ulid_conversions::uuid_to_ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,22 +50,25 @@ pub async fn lookup_schema_id(
         }
     }
 
-    // Query database
+    // Query database - fetch as UUID then convert to ULID
     let result = sqlx::query_scalar!(
         r#"
-        SELECT id as "id: Ulid"
+        SELECT id::uuid as "id!"
         FROM sinex_schemas.event_payload_schemas
-        WHERE schema_name = $1
+        WHERE source = $1
+          AND event_type = $2
           AND schema_version = 'v1'
           AND is_active = true
         LIMIT 1
         "#,
-        &schema_name
+        source.as_str(),
+        event_type.as_str()
     )
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten();
+    .flatten()
+    .map(uuid_to_ulid);
 
     // Update cache if found
     if let Some(id) = result {
@@ -174,7 +178,8 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
         r#"
         SELECT 
             id as "id: Ulid", 
-            schema_name,
+            source,
+            event_type,
             schema_version
         FROM sinex_schemas.event_payload_schemas
         WHERE is_active = true
@@ -187,7 +192,8 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
     let mut version_cache = VERSION_CACHE.write();
 
     for schema in &schemas {
-        cache.insert(schema.schema_name.clone(), schema.id);
+        let schema_name = format!("{}.{}", schema.source, schema.event_type);
+        cache.insert(schema_name, schema.id);
         version_cache.insert(schema.id, Arc::new(schema.schema_version.clone()));
     }
 

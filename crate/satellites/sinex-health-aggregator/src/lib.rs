@@ -8,11 +8,13 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
         types::{
-            events::{payloads::*, Event},
+            domain::{EventSource, EventType},
+            events::payloads::*,
+            events::Event,
             Id,
         },
+        RawEvent,
     };
 
     // SDK facade for common processor types
@@ -21,6 +23,7 @@ mod common {
             ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
             IngestionHistoryEntry, MissingItem, SourceState,
         },
+        grpc_client::IngestClient,
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
             StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -106,7 +109,7 @@ pub enum HealthStatus {
 pub struct HealthAggregator {
     context: Option<StreamProcessorContext>,
     config: HealthAggregatorConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    ingest_client: Option<IngestClient>,
     db_pool: Option<PgPool>,
     component_health: HashMap<String, ComponentHealth>,
 }
@@ -116,7 +119,7 @@ impl HealthAggregator {
         Self {
             context: None,
             config: HealthAggregatorConfig::default(),
-            event_sender: None,
+            ingest_client: None,
             db_pool: None,
             component_health: HashMap::new(),
         }
@@ -128,10 +131,11 @@ impl HealthAggregator {
             .db_pool
             .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
+        let mut ingest_client = self
+            .ingest_client
             .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+            .ok_or_else(|| color_eyre::eyre::eyre!("Ingest client not initialized"))?
+            .clone();
 
         // Query recent health events
         let health_events = self.query_health_events(db_pool, from).await?;
@@ -152,7 +156,7 @@ impl HealthAggregator {
                     .generate_component_health_report(component_name, health)
                     .await
                 {
-                    if let Err(e) = event_sender.send(health_report).await {
+                    if let Err(e) = ingest_client.ingest_event(&health_report).await {
                         warn!(
                             "Failed to send component health report for {}: {}",
                             component_name, e
@@ -167,7 +171,7 @@ impl HealthAggregator {
         // Generate system-wide health status if enabled
         if self.config.enable_system_health_status {
             if let Ok(system_health) = self.generate_system_health_status().await {
-                if let Err(e) = event_sender.send(system_health).await {
+                if let Err(e) = ingest_client.ingest_event(&system_health).await {
                     warn!("Failed to send system health status: {}", e);
                 } else {
                     events_processed += 1;
@@ -178,7 +182,7 @@ impl HealthAggregator {
         // Generate health alerts for unhealthy components
         let alert_events = self.generate_health_alerts().await?;
         for alert_event in alert_events {
-            if let Err(e) = event_sender.send(alert_event).await {
+            if let Err(e) = ingest_client.ingest_event(&alert_event).await {
                 warn!("Failed to send health alert: {}", e);
             } else {
                 events_processed += 1;
@@ -209,23 +213,31 @@ impl HealthAggregator {
             "service.error".to_string(),
         ];
 
-        let events = sqlx::query_as!(
-            RawEvent,
-            r#"
-            SELECT event_id as "id: Id<RawEvent>", source as "source: _", event_type as "event_type: _",
-                   payload, ts_orig, host as "host: _", ingestor_version, payload_schema_id as "payload_schema_id: _",
-                   provenance as "provenance: _", anchor_byte, associated_blob_ids as "associated_blob_ids: _"
-            FROM core.events 
-            WHERE ts_orig >= $1 
-            AND (event_type = ANY($2) OR payload::text ILIKE '%health%' OR payload::text ILIKE '%status%')
-            ORDER BY ts_orig DESC
-            LIMIT 1000
-            "#,
-            window_start,
-            &health_event_types
-        )
-        .fetch_all(db_pool).await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;
+        use sinex_core::db::repositories::DbPoolExt;
+        use sinex_core::types::domain::EventType;
+
+        // Query health events for each type
+        let mut all_events = Vec::new();
+        for event_type_str in &health_event_types {
+            let event_type = EventType::from(event_type_str.as_str());
+            let events = db_pool
+                .events()
+                .get_events_by_type_and_time_range(
+                    &event_type,
+                    window_start,
+                    chrono::Utc::now(),
+                    Some(100),
+                )
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;
+            all_events.extend(events);
+        }
+
+        // Sort by timestamp and limit to 1000 most recent
+        all_events.sort_by(|a, b| b.ts_orig.cmp(&a.ts_orig));
+        all_events.truncate(1000);
+
+        let events = all_events;
 
         Ok(events)
     }
@@ -239,17 +251,19 @@ impl HealthAggregator {
                     .entry(component_info.component_name.clone())
                     .or_insert_with(|| ComponentHealth {
                         component_name: component_info.component_name.clone(),
-                        last_seen: event.ts_orig,
+                        last_seen: event.ts_orig.unwrap_or_else(Utc::now),
                         status: HealthStatus::Unknown,
                         metrics: HashMap::new(),
                         recent_events: Vec::new(),
                     });
 
                 // Update health information
-                component_health.last_seen = event.ts_orig;
+                component_health.last_seen = event.ts_orig.unwrap_or_else(Utc::now);
                 component_health.status = component_info.status;
                 component_health.metrics.extend(component_info.metrics);
-                component_health.recent_events.push(event.id);
+                if let Some(event_id) = &event.id {
+                    component_health.recent_events.push(event_id.clone());
+                }
 
                 // Keep only recent events (last 10)
                 if component_health.recent_events.len() > 10 {
@@ -421,8 +435,13 @@ impl HealthAggregator {
         });
 
         // Create synthesized event with proper provenance from recent events
-        let event = Event::from_events(report_payload, health.recent_events.clone())
-            .with_ts_orig(Some(Utc::now()));
+        let event = RawEvent::from_synthesis(
+            "health-aggregator",
+            "health.component_report",
+            report_payload,
+            health.recent_events.clone(),
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -476,8 +495,13 @@ impl HealthAggregator {
             "generated_at": Utc::now(),
         });
 
-        let event =
-            Event::from_events(system_health_payload, all_event_ids).with_ts_orig(Some(Utc::now()));
+        let event = RawEvent::from_synthesis(
+            "health-aggregator",
+            "health.system_status",
+            system_health_payload,
+            all_event_ids,
+        )
+        .with_timestamp(Utc::now());
 
         Ok(event.into())
     }
@@ -511,8 +535,13 @@ impl HealthAggregator {
                     "generated_at": Utc::now(),
                 });
 
-                let alert_event = Event::from_events(alert_payload, health.recent_events.clone())
-                    .with_ts_orig(Some(Utc::now()));
+                let alert_event = RawEvent::from_synthesis(
+                    "health-aggregator",
+                    "health.alert",
+                    alert_payload,
+                    health.recent_events.clone(),
+                )
+                .with_timestamp(Utc::now());
 
                 alerts.push(alert_event.into());
             }
@@ -540,9 +569,9 @@ impl StatefulStreamProcessor for HealthAggregator {
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
 
-        // Get database pool from context
+        // Get database pool and ingest client from context
         self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
+        self.ingest_client = Some(ctx.ingest_client.clone());
         self.context = Some(ctx);
         self.config = config;
 
@@ -586,33 +615,24 @@ impl StatefulStreamProcessor for HealthAggregator {
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
-                (
-                    "health_events_processed".to_string(),
-                    serde_json::Value::Number(events_processed.into()),
-                ),
+                ("health_events_processed".to_string(), events_processed),
                 (
                     "monitored_components".to_string(),
-                    serde_json::Value::Number(self.component_health.len().into()),
+                    self.component_health.len() as u64,
                 ),
                 (
                     "healthy_components".to_string(),
-                    serde_json::Value::Number(
-                        self.component_health
-                            .values()
-                            .filter(|h| matches!(h.status, HealthStatus::Healthy))
-                            .count()
-                            .into(),
-                    ),
+                    self.component_health
+                        .values()
+                        .filter(|h| matches!(h.status, HealthStatus::Healthy))
+                        .count() as u64,
                 ),
                 (
                     "critical_components".to_string(),
-                    serde_json::Value::Number(
-                        self.component_health
-                            .values()
-                            .filter(|h| matches!(h.status, HealthStatus::Critical))
-                            .count()
-                            .into(),
-                    ),
+                    self.component_health
+                        .values()
+                        .filter(|h| matches!(h.status, HealthStatus::Critical))
+                        .count() as u64,
                 ),
             ]),
             successful_targets: vec!["health".to_string()],
@@ -657,16 +677,23 @@ impl ExplorationProvider for HealthAggregator {
             metadata: HashMap::from([
                 (
                     "monitored_components".to_string(),
-                    total_components.to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(total_components)),
                 ),
-                ("healthy_components".to_string(), healthy_count.to_string()),
+                (
+                    "healthy_components".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(healthy_count)),
+                ),
                 (
                     "aggregation_window_seconds".to_string(),
-                    self.config.aggregation_window_seconds.to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.config.aggregation_window_seconds,
+                    )),
                 ),
                 (
                     "unhealthy_threshold_minutes".to_string(),
-                    self.config.unhealthy_threshold_minutes.to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.config.unhealthy_threshold_minutes,
+                    )),
                 ),
             ]),
             healthy: total_components == 0 || healthy_count as f64 / total_components as f64 > 0.5,

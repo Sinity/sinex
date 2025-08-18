@@ -40,7 +40,8 @@ console = Console()
 
 def get_db_connection():
     """Get database connection using environment variable or default."""
-    db_url = os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex')
+    # Default to development database name; production uses 'sinex'
+    db_url = os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex_dev')
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 
@@ -1680,7 +1681,7 @@ def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
                 # Step 1: Verify blob exists
                 cur.execute(
                     "SELECT blob_id, source_identifier, user_comment, staged_at, staged_by_user "
-                    "FROM raw.source_material_registry WHERE blob_id = %s::uuid",
+                    "FROM raw.source_material_registry WHERE source_material_id = %s::uuid",
                     (blob_id,)
                 )
                 blob_info = cur.fetchone()
@@ -1798,7 +1799,7 @@ def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
                 
                 # Step 9: Mark blob as archived in source material registry
                 cur.execute(
-                    "UPDATE raw.source_material_registry SET processing_status = 'archived' WHERE blob_id = %s::uuid",
+                    "UPDATE raw.source_material_registry SET processing_status = 'archived' WHERE source_material_id = %s::uuid",
                     (blob_id,)
                 )
                 

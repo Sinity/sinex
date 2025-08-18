@@ -11,7 +11,7 @@ use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::{
-    db::models::{Provenance, RawEvent},
+    db::models::{event::OffsetKind, Provenance, RawEvent},
     types::{
         domain::{EventSource, EventType},
         Id, Ulid,
@@ -41,17 +41,8 @@ use validator::{Validate, ValidationError};
 #[cfg(test)]
 mod config_validation_tests;
 
-/// Material slice from sensd (re-export from sensd crate)
-#[derive(Debug, Clone)]
-pub struct MaterialSlice {
-    pub material_id: Ulid,
-    pub offset_start: i64,
-    pub offset_end: i64,
-    pub ts_capture_start: DateTime<Utc>,
-    pub ts_capture_end: DateTime<Utc>,
-    pub data: Vec<u8>,
-    pub metadata: serde_json::Value,
-}
+// Use shared MaterialSlice from sensd crate
+use sinex_sensd::material_stream::MaterialSlice;
 
 /// Filesystem monitoring configuration for sensd integration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -279,24 +270,28 @@ impl FilesystemProcessor {
         };
 
         // Create event with material provenance
-        let raw_event = RawEvent::builder()
-            .event_type(EventType::from(event_type))
-            .source(EventSource::from("filesystem"))
-            .payload(json!({
+        let mut raw_event = RawEvent::from_material(
+            EventSource::from("filesystem"),
+            EventType::from(event_type),
+            json!({
                 "path": path,
                 "size": file_size,
                 "is_directory": is_directory,
                 "event_kind": event_kind,
                 "material_id": slice.material_id.to_string(),
                 "offset_range": [slice.offset_start, slice.offset_end],
-            }))
-            .ts_orig(Some(slice.ts_capture_start))
-            .provenance(Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start,
-                offset_kind: "byte".to_string(),
-            })
-            .build();
+            }),
+            slice.material_id,
+            slice.offset_start,
+        );
+        raw_event.ts_orig = Some(slice.ts_capture_start);
+        raw_event.provenance = Provenance::Material {
+            id: Id::from(slice.material_id),
+            anchor_byte: slice.offset_start,
+            offset_kind: OffsetKind::Byte,
+            offset_start: Some(slice.offset_start),
+            offset_end: Some(slice.offset_end),
+        };
 
         events.push(raw_event);
 
@@ -333,7 +328,7 @@ impl FilesystemProcessor {
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.blob_id = tl.material_id
+                        ON sm.source_material_id = tl.material_id
                     WHERE tl.material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
@@ -858,7 +853,7 @@ impl ExplorationProvider for FilesystemProcessor {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,
                 ExportFormat::Csv => {
-                    let mut csv = "job_id,target_path\n".to_string();
+                    let mut csv = "job_id,target_uri\n".to_string();
                     for (job_id, path) in &state.active_jobs {
                         csv.push_str(&format!("{},{}\n", job_id, path));
                     }

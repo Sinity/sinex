@@ -7,9 +7,7 @@
 mod event_payload;
 pub use event_payload::*;
 
-// Typed event representation
-mod typed_event;
-pub use typed_event::Event;
+// Typed event representation removed - use db::models::Event instead
 
 // Blanket implementations
 mod blanket_impls;

@@ -53,106 +53,60 @@ impl SearchService {
         // Build dynamic query using SeaQuery for type safety and SQL injection prevention
         let mut select_query = Query::select()
             .expr_as(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::ID),
-                ))
-                .cast_as(Alias::new("text")),
+                Expr::col((Alias::new("core"), Events::Table, Events::Id))
+                    .cast_as(Alias::new("text")),
                 Alias::new("event_id"),
             )
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::SOURCE),
-            ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_TYPE),
-            ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::TS_INGEST),
-            ))
-            .column((
-                Alias::new(Events::SCHEMA),
-                Alias::new(Events::TABLE),
-                Alias::new(Events::PAYLOAD),
-            ))
+            .column((Alias::new("core"), Events::Table, Events::Source))
+            .column((Alias::new("core"), Events::Table, Events::EventType))
+            .column((Alias::new("core"), Events::Table, Events::TsIngest))
+            .column((Alias::new("core"), Events::Table, Events::Payload))
             .expr_as(Expr::val(1.0_f64), Alias::new("score"))
-            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .from(Events::table_iden())
             .to_owned();
 
         // Add source filter using proper parameterization
         if !query.sources.is_empty() {
             select_query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::SOURCE),
-                ))
-                .is_in(query.sources.iter().cloned()),
+                Expr::col((Alias::new("core"), Events::Table, Events::Source))
+                    .is_in(query.sources.iter().cloned()),
             );
         }
 
         // Add event type filter using proper parameterization
         if !query.event_types.is_empty() {
             select_query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_TYPE),
-                ))
-                .is_in(query.event_types.iter().cloned()),
+                Expr::col((Alias::new("core"), Events::Table, Events::EventType))
+                    .is_in(query.event_types.iter().cloned()),
             );
         }
 
         // Add time range filters with proper type handling
         if let Some(start) = query.start_time {
             select_query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
-                ))
-                .gte(start),
+                Expr::col((Alias::new("core"), Events::Table, Events::TsIngest)).gte(start),
             );
         }
 
         if let Some(end) = query.end_time {
             select_query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
-                ))
-                .lte(end),
+                Expr::col((Alias::new("core"), Events::Table, Events::TsIngest)).lte(end),
             );
         }
 
         // Add text search with proper parameterization (SeaQuery prevents SQL injection)
         if let Some(text) = &query.text {
             select_query.and_where(
-                Expr::col((
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::PAYLOAD),
-                ))
-                .cast_as(Alias::new("text"))
-                .ilike(Expr::val(format!("%{}%", text))),
+                Expr::col((Alias::new("core"), Events::Table, Events::Payload))
+                    .cast_as(Alias::new("text"))
+                    .ilike(Expr::val(format!("%{}%", text))),
             );
         }
 
         // Add ordering and limits
         select_query
             .order_by(
-                (
-                    Alias::new(Events::SCHEMA),
-                    Alias::new(Events::TABLE),
-                    Alias::new(Events::TS_INGEST),
-                ),
+                (Alias::new("core"), Events::Table, Events::TsIngest),
                 sea_query::Order::Desc,
             )
             .limit(query.limit as u64)

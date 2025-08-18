@@ -429,24 +429,29 @@ impl SchemaVersion {
 // Custom implementations for types with validation
 
 impl SanitizedPath {
-    /// Validate and create a sanitized path
+    /// Validate and create a sanitized path using lexical cleaning
     pub fn validate(path: &str) -> Result<Utf8PathBuf, String> {
         if path.is_empty() {
             return Err("Path cannot be empty".into());
         }
 
-        // Check for directory traversal attempts
-        if path.contains("..") {
-            return Err("Path cannot contain directory traversal sequences (..)".into());
+        // Parse as UTF-8 path for validation
+        let utf8_path = Utf8Path::new(path);
+
+        // Lexically clean the path without filesystem access
+        let cleaned = normalize_path_lexically(utf8_path);
+
+        // Check for directory traversal after normalization
+        if path_contains_traversal(&cleaned) {
+            return Err("Path contains directory traversal sequences".into());
         }
 
-        // Ensure path is valid UTF-8 by parsing it
-        let utf8_path = Utf8Path::new(path);
-        let canonical = utf8_path
-            .canonicalize_utf8()
-            .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
+        // Check for null bytes which could be used for path injection
+        if path.contains('\0') {
+            return Err("Path cannot contain null bytes".into());
+        }
 
-        Ok(canonical)
+        Ok(cleaned)
     }
 
     /// Create a validated sanitized path from a string
@@ -536,6 +541,32 @@ impl Blake3Hash {
             return Err("BLAKE3 hash must contain only hexadecimal characters".into());
         }
 
+        // Check for obviously invalid patterns
+        let lower_hash = hash.to_lowercase();
+        if lower_hash.chars().all(|c| c == '0') {
+            return Err("Hash appears to be a zero placeholder".into());
+        }
+        if lower_hash.chars().all(|c| c == 'f') {
+            return Err("Hash appears to be an all-F placeholder".into());
+        }
+
+        // Check for suspiciously repetitive patterns (same character repeating)
+        let mut prev_char = '\0';
+        let mut same_char_count = 0;
+        let mut max_same_char_run = 0;
+        for c in lower_hash.chars() {
+            if c == prev_char {
+                same_char_count += 1;
+                max_same_char_run = max_same_char_run.max(same_char_count);
+            } else {
+                same_char_count = 1;
+                prev_char = c;
+            }
+        }
+        if max_same_char_run > 8 {
+            return Err("Hash contains suspiciously long runs of the same character".into());
+        }
+
         Ok(())
     }
 }
@@ -562,6 +593,32 @@ impl Sha256Hash {
 
         if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("SHA256 hash must contain only hexadecimal characters".into());
+        }
+
+        // Check for obviously invalid patterns
+        let lower_hash = hash.to_lowercase();
+        if lower_hash.chars().all(|c| c == '0') {
+            return Err("Hash appears to be a zero placeholder".into());
+        }
+        if lower_hash.chars().all(|c| c == 'f') {
+            return Err("Hash appears to be an all-F placeholder".into());
+        }
+
+        // Check for suspiciously repetitive patterns (same character repeating)
+        let mut prev_char = '\0';
+        let mut same_char_count = 0;
+        let mut max_same_char_run = 0;
+        for c in lower_hash.chars() {
+            if c == prev_char {
+                same_char_count += 1;
+                max_same_char_run = max_same_char_run.max(same_char_count);
+            } else {
+                same_char_count = 1;
+                prev_char = c;
+            }
+        }
+        if max_same_char_run > 8 {
+            return Err("Hash contains suspiciously long runs of the same character".into());
         }
 
         Ok(())
@@ -736,6 +793,83 @@ mod sqlx_impl {
     impl_sqlx_for_string_type!(JobId);
     impl_sqlx_for_string_type!(AnnexKey);
     impl_sqlx_for_string_type!(NatsSubject);
+}
+
+/// Helper function to normalize a path lexically (without filesystem access)
+fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
+    let mut components = Vec::new();
+
+    for component in path.components() {
+        match component {
+            camino::Utf8Component::Normal(name) => {
+                if name == ".." {
+                    // Pop the last component if it's not a ".." itself
+                    if let Some(last) = components.last() {
+                        if *last != ".." {
+                            components.pop();
+                            continue;
+                        }
+                    }
+                } else if name == "." {
+                    // Skip current directory references
+                    continue;
+                }
+                components.push(name);
+            }
+            camino::Utf8Component::RootDir => {
+                components.clear();
+                components.push("/");
+            }
+            camino::Utf8Component::CurDir => {
+                // Skip current directory references
+                continue;
+            }
+            camino::Utf8Component::ParentDir => {
+                // Treat as ".." component
+                if let Some(last) = components.last() {
+                    if *last != ".." && *last != "/" {
+                        components.pop();
+                        continue;
+                    }
+                }
+                components.push("..");
+            }
+            camino::Utf8Component::Prefix(_) => {
+                // Handle Windows prefixes by keeping them
+                components.push(component.as_str());
+            }
+        }
+    }
+
+    if components.is_empty() {
+        Utf8PathBuf::from(".")
+    } else {
+        Utf8PathBuf::from(components.join("/"))
+    }
+}
+
+/// Check if a normalized path contains directory traversal attempts
+fn path_contains_traversal(path: &Utf8PathBuf) -> bool {
+    let path_str = path.as_str();
+
+    // Check for obvious traversal patterns
+    if path_str.contains("../") || path_str.starts_with("..") || path_str.ends_with("..") {
+        return true;
+    }
+
+    // Check for components that are exactly ".."
+    for component in path.components() {
+        if let camino::Utf8Component::ParentDir = component {
+            return true;
+        }
+        if let camino::Utf8Component::Normal(name) = component {
+            if name == ".." {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]

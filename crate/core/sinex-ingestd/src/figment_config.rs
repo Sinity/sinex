@@ -4,6 +4,15 @@
 //! using Figment for multi-source configuration loading.
 
 use camino::Utf8PathBuf;
+
+// Default configuration constants
+const DEFAULT_POOL_SIZE: u32 = 50;
+const DEFAULT_BATCH_SIZE: usize = 1000;
+const DEFAULT_BATCH_TIMEOUT: u64 = 5;
+const DEFAULT_VALIDATE_SCHEMAS: bool = true;
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const DEFAULT_SOCKET_PATH: &str = "/tmp/sinex-ingestd.sock";
+const DEFAULT_NATS_CONSUMER_NAME: &str = "ingestd";
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -100,7 +109,7 @@ fn default_socket_path() -> String {
     DEFAULT_SOCKET_PATH.to_string()
 }
 fn default_nats_stream_name() -> String {
-    DEFAULT_NATS_STREAM_NAME.to_string()
+    "EVENTS".to_string()
 }
 fn default_nats_consumer_name() -> String {
     DEFAULT_NATS_CONSUMER_NAME.to_string()
@@ -136,10 +145,17 @@ impl Default for IngestdFigmentConfig {
 
 impl IngestdFigmentConfig {
     /// Build a figment with common configuration layers
-    fn build_figment_base() -> Figment {
-        Figment::new()
+    fn build_figment_base() -> Result<Figment, figment::Error> {
+        let default_toml = toml::to_string(&Self::default()).map_err(|e| {
+            figment::Error::from(figment::error::Kind::InvalidValue(
+                figment::value::Value::from(format!("Failed to serialize default config: {}", e)),
+                "default_config".to_string(),
+            ))
+        })?;
+
+        Ok(Figment::new()
             // Start with defaults
-            .merge(Toml::string(&toml::to_string(&Self::default()).unwrap()))
+            .merge(Toml::string(&default_toml)))
     }
 
     /// Add common environment variable layers to a figment
@@ -151,7 +167,7 @@ impl IngestdFigmentConfig {
 
     /// Load configuration from multiple sources
     pub fn load() -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base()
+        let figment = Self::build_figment_base()?
             // Load from config file if exists
             .merge(Toml::file("ingestd.toml").nested())
             .merge(Toml::file("/etc/sinex/ingestd.toml").nested());
@@ -161,7 +177,7 @@ impl IngestdFigmentConfig {
 
     /// Load configuration with custom config file
     pub fn load_from(config_file: &str) -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base()
+        let figment = Self::build_figment_base()?
             // Load from specified config file
             .merge(Toml::file(config_file).nested());
 
