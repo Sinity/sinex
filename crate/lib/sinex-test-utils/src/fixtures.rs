@@ -33,11 +33,11 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
+use sinex_core::db::models::Event;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
-use sinex_core::types::events::Event;
 use sinex_core::{
     Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
     OperationRecord, Provenance, RawEvent, SourceMaterial,
@@ -464,12 +464,16 @@ async fn create_user_session_fixture(
 
     // Create filesystem events
     for i in 0..event_count / 3 {
-        let event = Event::new(FileCreatedPayload {
-            path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
-            size: 0,
-            created_at: Utc::now(),
-            permissions: None,
-        })
+        let event = Event::test_event(
+            "test-filesystem",
+            "file.created",
+            FileCreatedPayload {
+                path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
+                size: 0,
+                created_at: Utc::now(),
+                permissions: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
@@ -496,17 +500,21 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = Event::new(KittyCommandCompletedPayload {
-            command: CommandText::from(cmd.to_string()),
-            working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
-            exit_status: 0,
-            duration_ms: 100 + i as u64 * 10,
-            shell_pid: 1000 + i as u32,
-            kitty_window_id: "window_1".to_string(),
-            kitty_tab_id: "tab_1".to_string(),
-            output_lines: Some(10),
-            error_output: None,
-        })
+        let event = Event::test_event(
+            "test-terminal",
+            "command.completed",
+            KittyCommandCompletedPayload {
+                command: CommandText::from(cmd.to_string()),
+                working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
+                exit_status: 0,
+                duration_ms: 100 + i as u64 * 10,
+                shell_pid: 1000 + i as u32,
+                kitty_window_id: "window_1".to_string(),
+                kitty_tab_id: "tab_1".to_string(),
+                output_lines: Some(10),
+                error_output: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
@@ -526,20 +534,24 @@ async fn create_user_session_fixture(
     // Create clipboard events
     for i in 0..event_count / 3 {
         let text = format!("Clipboard content {}", i);
-        let event = Event::new(ClipboardCopiedPayload {
-            operation: "copy".to_string(),
-            content_type: "text/plain".to_string(),
-            content_size: text.len(),
-            text_preview: Some(text.clone()),
-            file_count: None,
-            file_paths: None,
-            source_app: Some("test_app".to_string()),
-            window_title: Some("Test Window".to_string()),
-            content_hash: format!("hash_{}", i),
-            original_hash: None,
-            annex_key: None,
-            blob_id: None,
-        })
+        let event = Event::test_event(
+            "test-clipboard",
+            "clipboard.copied",
+            ClipboardCopiedPayload {
+                operation: "copy".to_string(),
+                content_type: "text/plain".to_string(),
+                content_size: text.len(),
+                text_preview: Some(text.clone()),
+                file_count: None,
+                file_paths: None,
+                source_app: Some("test_app".to_string()),
+                window_title: Some("Test Window".to_string()),
+                content_hash: format!("hash_{}", i),
+                original_hash: None,
+                annex_key: None,
+                blob_id: None,
+            },
+        )
         .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
