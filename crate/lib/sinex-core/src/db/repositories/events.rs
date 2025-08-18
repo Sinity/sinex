@@ -1,10 +1,10 @@
 use crate::db::schema::Events;
-use crate::models::{Event, JsonValue, Provenance, SourceMaterial};
-use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use crate::models::{Event, JsonValue, Provenance};
+use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
-use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
+use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
@@ -1492,12 +1492,17 @@ impl<'a> EventRepository<'a> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> DbResult<Event<JsonValue>> {
-        let event = Event::<JsonValue>::system_event(
+        use crate::models::SourceMaterial;
+
+        // Use proper material provenance for test events
+        let test_material_id = crate::types::Id::<SourceMaterial>::new();
+        let event = Event::dynamic(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
         )
-        .with_host(HostName::new("test-host".to_string()));
+        .with_provenance(Provenance::from_material(test_material_id, 0, None, None))
+        .build();
 
         self.insert(event).await
     }
@@ -2035,13 +2040,20 @@ mod tests {
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
-        // Create an event
-        let event = crate::models::Event::<JsonValue>::test_event(
+        // Create an event using the new dynamic pattern
+        let event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("test.event"),
             json!({"test": "data"}),
         )
-        .with_host(HostName::new("test-host"));
+        .with_host(HostName::new("test-host"))
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         // In production, all events MUST go through ingestd service
@@ -2064,36 +2076,46 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::Event::<JsonValue>::test_event(
+        let source_event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("source.event"),
             json!({"original": true}),
         )
-        .with_host(HostName::new("test-host"));
+        .with_host(HostName::new("test-host"))
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let source = pool.events().insert(source_event).await?;
         let source_id = source.id.unwrap();
 
-        // Create derived event with provenance
-        let derived_event = crate::models::Event::<JsonValue>::test_event(
+        // Create derived event with provenance using the builder pattern
+        let derived_event = Event::dynamic(
             EventSource::new("test.processor"),
             EventType::new("derived.event"),
             json!({"derived": true}),
         )
         .with_host(HostName::new("test-host"))
-        .with_provenance(crate::models::Provenance::Events(vec![source_id.clone()]));
+        .with_provenance(Provenance::from_synthesis(vec![source_id.clone()]).unwrap())
+        .build();
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let inserted = pool.events().insert(derived_event).await?;
 
         // Verify provenance was preserved through EventRecord
-        match inserted.provenance {
-            Some(crate::models::Provenance::Events(ids)) => {
-                assert_eq!(ids.len(), 1);
-                assert_eq!(ids[0], source_id);
+        match &inserted.provenance {
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => {
+                assert_eq!(source_event_ids.len(), 1);
+                assert_eq!(source_event_ids[0], source_id);
             }
-            _ => panic!("Expected Events provenance"),
+            _ => panic!("Expected Synthesis provenance"),
         }
 
         Ok(())

@@ -303,6 +303,62 @@ impl<'a> SchemaManagementRepository<'a> {
             .collect())
     }
 
+    /// Validate a typed event payload using its built-in source/type information
+    pub async fn validate_typed_event<T>(&self, event: &Event<T>) -> DbResult<ValidationResult>
+    where
+        T: crate::types::events::EventPayload + serde::Serialize,
+    {
+        // For typed events, we can use the type's constants directly
+        let schema = self
+            .get_active_schema(T::SOURCE.as_str(), T::EVENT_TYPE.as_str())
+            .await?;
+
+        // Serialize the typed payload to JSON for validation
+        let payload_json = serde_json::to_value(&event.payload).map_err(|e| {
+            crate::repositories::common::db_error(
+                sqlx::Error::Decode(Box::new(e)),
+                "serialize typed payload",
+            )
+        })?;
+
+        // Validate using jsonschema
+        let result = match jsonschema::JSONSchema::compile(&schema.schema_content) {
+            Ok(compiled) => match compiled.validate(&payload_json) {
+                Ok(_) => ValidationResult {
+                    is_valid: true,
+                    errors: vec![],
+                    warnings: vec![],
+                },
+                Err(errors) => {
+                    let validation_errors: Vec<ValidationError> = errors
+                        .map(|e| ValidationError {
+                            path: e.instance_path.to_string(),
+                            message: e.to_string(),
+                            error_type: "schema_validation".to_string(),
+                        })
+                        .collect();
+
+                    ValidationResult {
+                        is_valid: false,
+                        errors: validation_errors,
+                        warnings: vec![],
+                    }
+                }
+            },
+            Err(e) => ValidationResult {
+                is_valid: false,
+                errors: vec![ValidationError {
+                    path: "".to_string(),
+                    message: format!("Invalid schema: {}", e),
+                    error_type: "schema_error".to_string(),
+                }],
+                warnings: vec![],
+            },
+        };
+
+        Ok(result)
+    }
+
     /// Validate an event payload against a schema using basic JSON Schema validation
     pub async fn validate_event_payload(
         &self,

@@ -159,9 +159,7 @@ pub use types::domain::{
 #[cfg(feature = "migration")]
 pub use db::migration;
 
-// Re-export telemetry if enabled
-#[cfg(feature = "telemetry")]
-pub use db::telemetry;
+// Telemetry system has been removed - keeping this comment for historical context
 
 // Re-export query helpers for easier access
 pub use query_helpers::{

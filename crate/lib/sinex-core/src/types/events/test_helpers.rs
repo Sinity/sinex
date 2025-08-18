@@ -60,15 +60,24 @@ pub fn test_event_with_version<P: EventPayload>(
     payload: P,
     schema_id: sinex_core::types::ulid::Ulid,
     version: &str,
-) -> Event {
+) -> Event<P> {
     use crate::schema_registry::cache_schema_version;
 
     // Cache the version for this test
     cache_schema_version(schema_id, version.to_string());
 
-    let mut event: Event<JsonValue> = Event::new(payload.into().into();
-    event.payload_schema_id = Some(schema_id);
-    event
+    // Use the new Event::new pattern with proper provenance
+    Event::new(
+        payload,
+        crate::models::Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ),
+    )
+    .with_payload_schema_id(schema_id)
+    .build()
 }
 */
 
