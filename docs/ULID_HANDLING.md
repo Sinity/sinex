@@ -1,5 +1,7 @@
 # ULID Handling in SQLx
 
+See also: `docs/architecture/DataSubstrate_Architecture.md` (PostgreSQL + `pgx_ulid` overview) for system‑wide context.
+
 ## Overview
 The Sinex project uses ULID (Universally Unique Lexicographically Sortable Identifier) as the primary key type throughout the database. ULID provides time-ordered, lexicographically sortable identifiers that are superior to UUIDs for our use case.
 
