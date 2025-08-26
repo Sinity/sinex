@@ -2,7 +2,7 @@
 
 *   **Version:** 2.0
 *   **Date:** 2025-07-17
-*   **Implementation Status:** ✅ **OPERATIONAL** - Gateway, CLI, and query service operational with command/response patterns via Redis Streams
+*   **Implementation Status:** ✅ **OPERATIONAL** - Gateway, CLI, and query service operational with command/response patterns via NATS JetStream
 *   **Purpose:** This document describes the user interaction architecture for Sinex, focusing on the working gateway, CLI, and query systems. It outlines how users interact with the system through the operational interfaces.
 *   **Scope:** Covers gateway architecture, CLI interface, query service, and command/response patterns as currently implemented.
 
@@ -22,7 +22,7 @@ Sinex provides user interaction through a unified gateway architecture that hand
 
 ## 2. Gateway Architecture: Unified API and Native Messaging
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via Redis Streams
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via NATS JetStream
 
 Sinex provides user interaction through a unified gateway architecture that handles API requests, native messaging, and orchestrates responses through the satellite constellation.
 
@@ -38,7 +38,7 @@ The `sinex-gateway` service acts as the central API hub, translating user reques
     *   **Async by Default:** ✅ **OPERATIONAL** - All operations inherently asynchronous with timeout handling
     *   **Native Messaging:** ✅ **OPERATIONAL** - Browser extension communication through native messaging protocol
 
-### 2.2. Command/Response Pattern via Redis Streams
+### 2.2. Command/Response Pattern via NATS JetStream
 
 > **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Full request/response lifecycle working through message bus
 
@@ -46,7 +46,7 @@ User interactions follow a standardized command/response pattern that provides a
 *   **Request Flow:**
     1. **API Request** - User calls gateway endpoint or CLI command
     2. **Command Event** - Gateway generates `api.command.*` event with unique request ID
-    3. **Service Processing** - Appropriate service automaton processes command from Redis Streams
+    3. **Service Processing** - Appropriate service automaton processes command from NATS JetStream
     4. **Response Event** - Service emits `api.response.*` event with request ID
     5. **Response Delivery** - Gateway matches response and returns to client
 *   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `core.events`
@@ -109,7 +109,7 @@ exo query --payload-filter '{"exit_status": 0}'
 **Optimization Strategies:**
 *   **TimescaleDB Indexing:** ✅ **OPERATIONAL** - Time-based partitioning for efficient queries
 *   **JSONB Indexing:** ✅ **OPERATIONAL** - GIN indexes for payload queries
-*   **Query Caching:** ✅ **OPERATIONAL** - Redis-based caching for frequent queries
+*   **Query Caching:** ✅ **OPERATIONAL** - Cache layer for frequent queries (in-memory or external)
 *   **Batch Processing:** ✅ **OPERATIONAL** - Efficient batch query processing
 
 **Performance Characteristics:**

@@ -7,7 +7,7 @@ This document outlines the key architectural principles that guide all design an
 ### Satellite Constellation
 Independent services orchestrated by systemd/NixOS with StatefulStreamProcessor interface. Each satellite operates autonomously while participating in the larger system through well-defined interfaces.
 
-### Redis Streams Message Bus
+### NATS JetStream Message Bus
 Durable, real-time event distribution with consumer groups and checkpointing. Provides reliable message delivery, automatic recovery, and horizontal scalability.
 
 ### Unified Events Table
@@ -36,7 +36,7 @@ PostgreSQL advisory locks provide distributed coordination without architectural
 These principles are not just theoretical - they directly influence implementation:
 
 1. **Every service** must implement StatefulStreamProcessor
-2. **All communication** flows through Redis Streams  
+2. **All communication** flows through NATS JetStream  
 3. **All state changes** create events in core.events (via satellites only)
 4. **All identifiers** use ULID format
 5. **All schemas** live in the /schemas directory

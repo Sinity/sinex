@@ -1,7 +1,12 @@
+> Superseded by `REFACTORING_UNIFIED.md`
+
+This file previously contained long-form refactoring analysis. The canonical and up-to-date refactoring plan now lives in `docs/REFACTORING_UNIFIED.md`.
+
+Please update that document instead of adding content here. If you discover new insights that aren't covered there, open an issue in `SINEX_ISSUES_ACTIONABLE.md` and propose an addition to `REFACTORING_UNIFIED.md`.
 
 ---
 
-### Architectural Spiral: Deep Dive Analysis
+### Architectural Spiral: Deep Dive Analysis (Historical)
 
 The analysis will proceed in the following order, from the innermost core to the outermost application layer:
 
@@ -14,7 +19,7 @@ The analysis will proceed in the following order, from the innermost core to the
 
 ---
 
-### Spiral Layer 1: `sinex-types` - The System's DNA
+### Spiral Layer 1: `sinex-types` - The System's DNA (Historical)
 
 **Architectural Role:** This crate is the absolute foundation of the Sinex system. It defines the universal language and the conceptual model. It has zero dependencies on any other Sinex crate and is a dependency of *every* other Sinex crate. Its stability and clarity are paramount, as any change here ripples throughout the entire system.
 

@@ -1,5 +1,7 @@
 # Sinex Issues - Actionable Inventory
 
+Note: This file is a roll‑up for quick scanning. The source of truth for ownership and status is the issue tracker; mirror high‑priority items there. Cross‑link with `REMAINING_IMPLEMENTATIONS.md` when items originate from refactoring plans.
+
 **Total:** 130+ issues | **Fixed:** 23 | **Documented Only:** 15 | **Unfixed:** 92+
 
 ---
@@ -302,4 +304,3 @@ This seems kinda artificial. Maybe can be somehow handled more elegantly? Frankl
 3. **Provenance Constraint** - Data integrity
 4. **Sensd Tables** - Service fails on startup
 5. **Satellite Rewrites** - Restore architecture
-

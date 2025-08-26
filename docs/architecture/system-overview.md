@@ -20,7 +20,7 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 └────────────────────────┬────────────────────────────────────────┘
                          │
 ┌────────────────────────┴────────────────────────────────────────┐
-│                   Message Bus (Redis Streams)                    │
+│                   Message Bus (NATS JetStream)                   │
 │      Real-time Event Distribution & Consumer Groups              │
 └───┬────────────────────┴────────────────────────────────────┬───┐
     │                                                        │   │
@@ -47,8 +47,8 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 ```
 
 ### Key Architectural Principles
-- **Satellite Constellation** - Independent services orchestrated by systemd/NixOS with StatefulStreamProcessor interface
-- **Redis Streams Message Bus** - Durable, real-time event distribution with consumer groups and checkpointing
+- **Satellite Constellation** - Independent services orchestrated by systemd/NixOS
+- **NATS JetStream Message Bus** - Durable internal messaging (older docs mentioning Redis Streams are historical)
 - **Unified Events Table** - Single source of truth with comprehensive provenance tracking
 - **Time-Ordered Keys** - ULID primary keys for natural chronological ordering and distributed generation
 - **GitOps Schema Management** - Version-controlled JSON Schema validation with automatic deployment
@@ -73,7 +73,7 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
 - **Processor Manifests** (`sinex_schemas.processor_manifests`) - GitOps-driven processor registration and metadata
 - **Schema Registry** (`sinex_schemas.event_payload_schemas`) - Versioned JSON schemas with GitOps management
 - **Checkpoint System** (`core.automaton_checkpoints`) - Stateful processor recovery with unified interface
-- **Message Bus** - Redis Streams for real-time event distribution with consumer groups
+- **Message Bus** - NATS JetStream for real-time event distribution
 
 ### Knowledge Representation (Future)
 - **Knowledge Graph** (`core.entities`, `core.entity_relations`)
@@ -122,14 +122,14 @@ Event-driven processing system with distributed workers.
 ### Satellite Constellation
 - **Independent Services** - Each satellite runs as separate systemd service
 - **StatefulStreamProcessor Pattern** - Unified scan(from: Checkpoint, until: TimeHorizon) interface
-- **Message Streaming** - Redis Streams for real-time event distribution
+- **Message Streaming** - NATS JetStream for real-time event distribution
 - **Consumer Groups** - Horizontal scaling with exactly-once guarantees
 
 ### Processing Stages
 1. **Raw Capture** - Satellites capture events with minimal processing
 2. **Validation** - Schema validation at ingestion
 3. **Storage** - Atomic writes to PostgreSQL
-4. **Distribution** - Redis Streams fan-out
+4. **Distribution** - NATS JetStream events fan-out
 5. **Processing** - Automata create synthesis events
 6. **Enrichment** - Knowledge graph updates
 
@@ -137,7 +137,7 @@ Event-driven processing system with distributed workers.
 
 ### ✅ Operational Components (>70% Complete)
 - **Satellite Architecture** (80%) - Independent satellite services operational, StatefulStreamProcessor interface implemented
-- **Message Bus** (75%) - Redis Streams fully operational with consumer groups, checkpoint management, command/response patterns
+- **Message Bus** (75%) - NATS JetStream operational with durable consumers, checkpoint management, command/response patterns
 - **Data Substrate** (70%) - PostgreSQL + TimescaleDB with ULID keys, core.events table operational, comprehensive provenance tracking
 
 ### 🚧 In Progress Components (25-70% Complete)

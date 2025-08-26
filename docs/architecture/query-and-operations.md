@@ -57,13 +57,29 @@ Infrastructure for reliable, secure operation.
 - **Git-Annex** - Distributed blob backup
 - **Configuration** - Version-controlled NixOS
 
+## Checkpoint & Replay
+
+Sinex persists processor checkpoints in Postgres to enable fast restarts and targeted reprocessing without scanning the entire event log.
+
+- Storage: `core.processor_checkpoints` holds `processor_name`, `consumer_group`, `consumer_name`, `last_processed_id`, `processed_count`, `checkpoint_data`, and activity timestamps.
+- Semantics: processors advance `last_processed_id` atomically; replay tools can resume from the last checkpoint or override via time/id filters.
+- Operations:
+  - Inspect: list recent checkpoints ordered by `updated_at`.
+  - Reset: delete a checkpoint for a processor/consumer to force full replay.
+  - Update: upsert on progress (increments `processed_count`, updates activity timestamps).
+
+Best practices
+- Keep consumer group/name stable; prefer `default` unless isolation is required.
+- During incident replay, write via ingestd to maintain invariants; do not mutate `core.events` directly.
+- Instrument processors with tracing spans (`processor_name`, `advance_count`, `lag`).
+
 ## Processing Pipeline Details
 
 ### Processing Stages
 1. **Raw Capture** - Satellites capture events with minimal processing
 2. **Validation** - Schema validation at ingestion
 3. **Storage** - Atomic writes to PostgreSQL
-4. **Distribution** - Redis Streams fan-out
+4. **Distribution** - NATS JetStream events fan-out via transactional outbox
 5. **Processing** - Automata create synthesis events
 6. **Enrichment** - Knowledge graph updates
 

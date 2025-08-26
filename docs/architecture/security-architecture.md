@@ -66,7 +66,7 @@ Current approach may be sufficient as:
 1. **User ↔ System**: Full trust (single-user system)
 2. **Satellites ↔ ingestd**: Unix socket permissions
 3. **ingestd ↔ Database**: PostgreSQL role separation
-4. **Automata ↔ Redis**: Consumer group isolation
+4. **Automata ↔ NATS JetStream**: Durable consumer isolation
 5. **External APIs**: API keys from environment
 
 ### Data Classification
@@ -117,7 +117,7 @@ Current approach may be sufficient as:
 ### 📋 Nice to Have
 5. **Implement TLS for IPC**
    - Between satellites and ingestd
-   - For Redis connections
+   - For NATS connections
    - For PostgreSQL if remote
 
 6. **Security scanning**

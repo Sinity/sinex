@@ -1,5 +1,7 @@
 # PostgreSQL-Native Monitoring for Sinex
 
+Note: This document focuses on practical monitoring queries and views. For the broader operational model and observability patterns, see `docs/architecture/SystemOperations_And_Integrity_Architecture.md` and `docs/architecture/streaming-architecture.md`.
+
 ## Overview
 
 Sinex has transitioned from a telemetry-based monitoring system to a PostgreSQL-native approach that leverages the database as the single source of truth for all monitoring needs.

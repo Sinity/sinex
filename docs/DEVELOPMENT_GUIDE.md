@@ -198,6 +198,20 @@ Role-based guides for finding appropriate entry points into Sinex development.
 
 #### Recommended Starting Points
 - **Beginner**: Ollama API integration
+
+## Engineering Checklist (Quick Pass)
+
+- Build & lint: `just pre-commit` passes; no clippy warnings (pedantic/nursery).
+- SQLx offline: after schema changes run `just sqlx-prepare`; commit `.sqlx/` updates.
+- Event invariants: only `sinex-ingestd` writes to `core.events`; tests don’t bypass invariants.
+- Errors: public APIs return `Result`; no panics; add context (`anyhow`/`thiserror`).
+- Concurrency: timeouts, cancellation, and bounded concurrency; handle `JoinHandle` results.
+- Tracing: instrument hot paths with spans/fields; avoid noisy logs in tight loops.
+- Schemas: bump schema ID semver on shape changes; update validators; add tests.
+- Migrations: ensure forward/backward compatibility; indexes on hot paths; `just migrate` locally.
+- Tests: use `#[sinex_test]` and `TestContext`; add property tests for invariants; snapshot complex JSON.
+- Security: sanitize external inputs; file path validation; secrets scanning passes; no accidental large files.
+- Performance: avoid blocking I/O in async; cache regex/parsers; keep channels bounded.
 - **Intermediate**: Embedding generation pipeline
 - **Advanced**: Semantic search implementation
 

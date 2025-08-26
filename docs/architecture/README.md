@@ -2,10 +2,13 @@
 
 This directory contains comprehensive technical architecture documentation for the Sinex system.
 
+Note: Internal messaging uses NATS JetStream. Any references to Redis Streams in older documents are historical and superseded by the streaming design in `streaming-architecture.md`.
+
 ## Core Architecture Documents
 
 ### System Architecture
-- **[Data Substrate Architecture](DataSubstrate_Architecture.md)** - Foundation of Sinex including PostgreSQL, TimescaleDB, Redis Streams, and the satellite constellation
+- **[Data Substrate Architecture](DataSubstrate_Architecture.md)** - Foundation of Sinex including PostgreSQL, TimescaleDB, NATS JetStream, and the satellite constellation
+- **[Streaming Architecture & Backpressure](streaming-architecture.md)** - NATS JetStream staging/events, transactional outbox, and producer/consumer guidance
 - **[Ingestion Architecture](IngestionArchitecture_And_TelemetrySources.md)** - Event sources, telemetry patterns, and ingestion pipeline
 - **[System Operations Architecture](SystemOperations_And_Integrity_Architecture.md)** - Operational concerns, monitoring, backup, and integrity
 - **[User Interaction Architecture](UserInteraction_And_Query_Architecture.md)** - Query interfaces, CLI, and future UI systems
@@ -19,14 +22,14 @@ This directory contains comprehensive technical architecture documentation for t
 
 ### 1. Satellite Constellation
 - Independent systemd services for each data source
-- Unified communication via Redis Streams
+- Unified communication via NATS JetStream
 - Checkpoint-based processing with exactly-once semantics
 - StatefulStreamProcessor interface for all components
 
 ### 2. Data Substrate
 - PostgreSQL + TimescaleDB for time-series storage
 - ULID primary keys for distributed ordering
-- Redis Streams for real-time event distribution
+- NATS JetStream for real-time event distribution
 - Git-annex for large file management
 
 ### 3. Event Processing

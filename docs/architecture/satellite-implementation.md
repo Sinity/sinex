@@ -132,8 +132,8 @@ checkpoint_interval_secs = 60
 [ingestd]
 endpoint = "http://localhost:50051"
 
-[redis]
-url = "redis://localhost:6379"
+[nats]
+url = "nats://localhost:4222"
 
 [satellite.custom]
 # Satellite-specific settings
@@ -143,13 +143,13 @@ scan_paths = ["/home/user/Documents"]
 ### Environment Variables
 - `SINEX_SATELLITE_NAME`: Override configured name
 - `SINEX_INGESTD_ENDPOINT`: Override ingestd location
-- `SINEX_REDIS_URL`: Override Redis connection
+- `SINEX_NATS_URL`: Override NATS connection
 
 ## Error Handling and Resilience
 
 ### Automatic Reconnection
 - gRPC clients reconnect on connection loss
-- Redis clients handle transient failures
+- NATS clients handle transient failures
 - Exponential backoff for retries
 
 ### Checkpoint Recovery

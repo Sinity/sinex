@@ -1,5 +1,7 @@
 # Sensor Architecture: Preventing Common Mistakes
 
+Note: This is an enforcement summary. For end‑to‑end architecture and data flow, see `docs/architecture/IngestionArchitecture_And_TelemetrySources.md` and `docs/architecture/system-overview.md`.
+
 ## The Golden Rule: Only sensd Captures Source Material
 
 **⚠️ CRITICAL: Satellites must NEVER directly capture source material!**

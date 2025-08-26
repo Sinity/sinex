@@ -1,7 +1,7 @@
 # Remaining Implementations from Architecture & Refactoring Documents
 
 **Generated:** 2025-08-17  
-**Sources:** refac.md, REFACTORING_UNIFIED.md, cancer_analysis.md (deleted)
+**Sources:** REFACTORING_UNIFIED.md (canonical), refac.md (historical)
 
 ---
 
@@ -19,10 +19,9 @@
 **Action Required:** 6 enhancements remaining  
 **Purpose:** Type system improvements and architectural enhancements
 
-### cancer_analysis.md
+### Tracking & Ownership
 
-**Status:** ❌ Deleted/Superseded  
-**Action Required:** None (issues migrated to SINEX_ISSUES_ACTIONABLE.md)
+Open items should be mirrored in `SINEX_ISSUES_ACTIONABLE.md` and tracked as issues. Treat this document as a transient roll‑up; the source of truth is the issue tracker and `REFACTORING_UNIFIED.md`.
 
 ---
 

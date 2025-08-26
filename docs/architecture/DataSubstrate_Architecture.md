@@ -4,7 +4,7 @@
 *   **Date:** 2025-07-17
 *   **Implementation Status:** ✅ **OPERATIONAL** - Core substrate fully functional with satellite constellation architecture
 *   **Purpose:** This document provides the comprehensive technical architecture of Sinex's data foundation, satellite constellation, event processing, and storage systems. It serves as the single authoritative source for the operational system architecture.
-*   **Current State:** PostgreSQL + TimescaleDB operational, Redis Streams mature, satellite constellation operational, checkpoint-based processing complete, unified events table with provenance tracking
+*   **Current State:** PostgreSQL + TimescaleDB operational, NATS JetStream operational, satellite constellation operational, checkpoint-based processing complete, unified events table with provenance tracking
 *   **Relationship to Other Docs:** This is the primary technical reference. See IngestionArchitecture_And_TelemetrySources.md for domain-specific telemetry patterns, SystemOperations_And_Integrity_Architecture.md for operational concerns, and UserInteraction_And_Query_Architecture.md for interface systems.
 
 ## 1. System Architecture Overview
@@ -16,15 +16,15 @@
 Sinex implements a satellite constellation architecture where independent systemd services capture, process, and respond to events through a unified message bus and data substrate. This architecture provides:
 
 *   **Independent Services:** Each satellite runs as a separate systemd service with isolated resources
-*   **Unified Communication:** All satellites communicate through Redis Streams and PostgreSQL
+*   **Unified Communication:** All satellites communicate through NATS JetStream and PostgreSQL
 *   **Deep Symmetry:** Both ingestors and automata use the same StatefulStreamProcessor interface
-*   **Scalable Processing:** Horizontal scaling through Redis consumer groups and checkpoint management
+*   **Scalable Processing:** Horizontal scaling through JetStream durable consumers and checkpoint management
 *   **Fault Tolerance:** Service isolation with automatic restart and recovery
 
 **Architecture Flow:**
-1. **Satellite Services** → **sinex-ingestd** (gRPC) → **PostgreSQL** (`core.events`) + **Redis Streams** (`sinex:events`)
-2. **Automaton Services** → **Redis Streams** (consumer groups) → **Event Processing** → **sinex-ingestd** (results)
-3. **Gateway Service** → **Redis Streams** (commands) → **Service Automata** → **Redis Streams** (responses)
+1. **Satellite Services** → **sinex-ingestd** (gRPC) → **PostgreSQL** (`core.events`) + **NATS JetStream** (`events.*`)
+2. **Automaton Services** → **NATS JetStream** (durable consumers) → **Event Processing** → **sinex-ingestd** (results)
+3. **Gateway Service** → **NATS JetStream** (commands/responses) → **Service Automata**
 
 ### 1.2. Current Operational Services
 
@@ -65,7 +65,7 @@ trait StatefulStreamProcessor {
 
 **Checkpoint Types:**
 - **External Cursors:** File offsets, timestamps, API cursors for ingestors
-- **Stream Positions:** Redis Stream message IDs for automata
+- **Stream Positions:** JetStream sequence/consumer state for automata
 - **Hybrid State:** JSONB data for processor-specific state
 
 **Benefits:**
@@ -86,7 +86,7 @@ trait StatefulStreamProcessor {
 
 **Core Infrastructure:**
 *   **PostgreSQL 16 + TimescaleDB:** Primary database with time-series hypertables
-*   **Redis 7:** Message bus with Streams for real-time event distribution
+*   **NATS JetStream:** Message bus for real-time event distribution
 *   **NixOS + systemd:** Declarative service orchestration and lifecycle management
 *   **gRPC:** High-performance satellite communication protocol
 
@@ -100,13 +100,13 @@ trait StatefulStreamProcessor {
 *   **Rust:** Primary language for all satellite services
 *   **systemd:** Service lifecycle, dependencies, and resource management
 *   **journald:** Unified logging with structured log ingestion
-*   **Redis Consumer Groups:** Horizontal scaling and load balancing
+*   **JetStream Durable Consumers:** Horizontal scaling and load balancing
 
-## 2. Redis Streams Message Bus Architecture
+## 2. NATS JetStream Message Bus Architecture
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Production-ready message bus with consumer groups
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Production-ready message bus with durable consumers
 
-Redis Streams serve as the central nervous system of the satellite constellation, providing high-performance, durable message passing between all services.
+NATS JetStream serves as the central nervous system of the satellite constellation, providing high‑performance, durable message passing between all services.
 
 ### 2.1. Stream Architecture
 
@@ -123,19 +123,21 @@ Redis Streams serve as the central nervous system of the satellite constellation
 
 ### 2.2. Consumer Group Management
 
-**Automatic Consumer Groups:**
-- Each automaton service automatically creates and joins consumer groups
-- Consumer group names match service names (e.g., `sinex-health-aggregator`)
+**Durable Consumers:**
+- Each automaton service attaches to a durable consumer
+- Consumer names match service names (e.g., `sinex-health-aggregator`)
 - Load balancing across multiple instances of the same service
-- Automatic message redelivery for failed processing
+- Automatic redelivery for failed processing
 
 **Processing Semantics:**
-- **Exactly-once processing:** Redis acknowledgment + PostgreSQL checkpoints
+- **Exactly-once processing:** JetStream acknowledgment + PostgreSQL checkpoints
 - **At-least-once delivery:** Failed messages redelivered until acknowledged
 - **Ordered processing:** Messages processed in stream order within consumer groups
 - **Backpressure handling:** Automatic slow consumer detection and remediation
 
 ### 2.3. Stream Operations
+
+Note: The historical examples below used Redis Stream syntax. See `docs/architecture/streaming-architecture.md` for NATS JetStream publish/consume patterns and updated guidance.
 
 **Message Production:**
 ```rust
@@ -996,4 +998,3 @@ git annex group . "client"
 - Integrity checking and validation
 
 This architecture provides a robust, scalable foundation for comprehensive personal data capture, processing, and knowledge management.
-

@@ -34,12 +34,12 @@ The satellite constellation implements an elegant observability pattern where sy
 *   **Automatic Service Discovery:** ✅ **OPERATIONAL** - systemd service metadata automatically tracked through journal entries
 *   **Health Inference:** ✅ **OPERATIONAL** - Regular log output creates implicit heartbeat pattern without explicit heartbeat events
 *   **Meta-Observability:** ✅ **OPERATIONAL** - System health becomes queryable Sinex data, enabling self-analysis and alerting
-*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, Redis, satellites) monitored through single journald channel
+*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, message bus, satellites) monitored through single journald channel
 
 ### 2.2. Operational Metrics
 
 *   **Satellite Service Health:** ✅ **OPERATIONAL** - systemd service status, restart counts, resource usage per satellite
-*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - Redis Streams lag, consumer group positions, checkpoint ages, DLQ sizes
+*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - NATS JetStream lag, durable consumer positions, checkpoint ages, DLQ sizes
 *   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, gRPC latency
 *   **Automaton Processing:** ✅ **OPERATIONAL** - Processing rates, error rates, checkpoint intervals per automaton
 
@@ -51,7 +51,7 @@ The satellite constellation implements an elegant observability pattern where sy
 
 *   **Satellite Service Orchestration:** ✅ **OPERATIONAL** - All satellites run as independent systemd services with NixOS-managed configuration
 *   **Resource Isolation:** ✅ **OPERATIONAL** - Per-service memory and CPU limits enforced through systemd cgroups
-*   **Service Dependencies:** ✅ **OPERATIONAL** - Proper startup ordering ensures ingestd and Redis available before satellites
+*   **Service Dependencies:** ✅ **OPERATIONAL** - Proper startup ordering ensures ingestd and NATS available before satellites
 *   **Configuration Management:** ✅ **OPERATIONAL** - Declarative NixOS configuration with service orchestration
 
 ### 3.2. Basic Security Measures
@@ -85,7 +85,7 @@ The satellite constellation implements an elegant observability pattern where sy
 
 ### 5.1. Scalability Patterns
 
-*   **Horizontal Scaling:** ✅ **OPERATIONAL** - Redis consumer groups enable horizontal scaling of automaton processing
+*   **Horizontal Scaling:** ✅ **OPERATIONAL** - NATS JetStream durable consumers enable horizontal scaling of automaton processing
 *   **Asynchronous Processing:** ✅ **OPERATIONAL** - Batch processing and asynchronous operations implemented
 *   **TimescaleDB Partitioning:** ✅ **OPERATIONAL** - Automatic time-based partitioning for efficient queries
 *   **Checkpoint-Based Recovery:** ✅ **OPERATIONAL** - Reliable state management enables service scaling
@@ -120,10 +120,9 @@ The satellite constellation implements an elegant observability pattern where sy
 - Version-controlled configuration management
 
 **Performance and Scalability:**
-- Horizontal scaling through Redis consumer groups
+- Horizontal scaling through NATS JetStream durable consumers
 - TimescaleDB partitioning for efficient queries
 - Asynchronous processing with checkpoint recovery
 - JSONB flexibility for schema evolution
 
 This operational architecture provides a robust foundation for the Sinex system, focusing on proven patterns that are currently operational rather than speculative future features.
-
