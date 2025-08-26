@@ -8,7 +8,7 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
+        db::models::Event,
         types::{events::payloads::*, Id},
     };
 
@@ -87,7 +87,7 @@ impl Default for ContentAutomatonConfig {
 pub struct ContentAutomaton {
     context: Option<StreamProcessorContext>,
     config: ContentAutomatonConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
 }
 
@@ -176,7 +176,7 @@ impl ContentAutomaton {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
 
@@ -194,7 +194,7 @@ impl ContentAutomaton {
     }
 
     /// Extract content from event payload for analysis
-    fn extract_content_from_event(&self, event: &RawEvent) -> Option<String> {
+    fn extract_content_from_event(&self, event: &Event<JsonValue>) -> Option<String> {
         // This is a simplified content extraction - in reality we'd need
         // sophisticated content extraction based on event type and payload structure
 
@@ -227,8 +227,8 @@ impl ContentAutomaton {
     async fn analyze_text_content(
         &self,
         content: &str,
-        source_event: &RawEvent,
-    ) -> SatelliteResult<RawEvent> {
+        source_event: &Event<JsonValue>,
+    ) -> SatelliteResult<Event<JsonValue>> {
         // Simple text analysis - in reality this would be much more sophisticated
         let word_count = content.split_whitespace().count();
         let char_count = content.chars().count();
@@ -268,7 +268,7 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_synthesis(
+        let event = Event::new(
             "content-automaton",
             "content.analyzed",
             analysis_payload,
@@ -283,8 +283,8 @@ impl ContentAutomaton {
     async fn classify_content(
         &self,
         content: &str,
-        source_event: &RawEvent,
-    ) -> SatelliteResult<RawEvent> {
+        source_event: &Event<JsonValue>,
+    ) -> SatelliteResult<Event<JsonValue>> {
         // Simple content classification heuristics
         let mut categories = Vec::new();
 
@@ -332,7 +332,7 @@ impl ContentAutomaton {
         });
 
         // Create synthesized event with proper provenance
-        let event = Event::from_synthesis(
+        let event = Event::new(
             "content-automaton",
             "content.classified",
             classification_payload,
@@ -346,12 +346,12 @@ impl ContentAutomaton {
     /// Analyze content similarity between events
     async fn analyze_content_similarity(
         &self,
-        events: &[RawEvent],
-    ) -> SatelliteResult<Vec<RawEvent>> {
+        events: &[Event<JsonValue>],
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut similarity_events = Vec::new();
 
         // Simple similarity analysis - compare content lengths and detect potential duplicates
-        let mut content_map: HashMap<String, Vec<Id<RawEvent>>> = HashMap::new();
+        let mut content_map: HashMap<String, Vec<Id<Event<JsonValue>>>> = HashMap::new();
 
         for event in events {
             if let Some(content) = self.extract_content_from_event(event) {
@@ -373,7 +373,7 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = Event::from_synthesis(
+                let similarity_event = Event::new(
                     "content-automaton",
                     "content.similarity_detected",
                     similarity_payload,

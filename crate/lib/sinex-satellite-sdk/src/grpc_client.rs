@@ -27,8 +27,7 @@
 //! ```
 
 use crate::proto::{
-    ingest_service_client::IngestServiceClient, EventBatch, HealthRequest,
-    RawEvent as ProtoRawEvent,
+    ingest_service_client::IngestServiceClient, EventBatch, HealthRequest, RawEvent as ProtoEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
 use sinex_core::{db::models::Event, environment::environment, JsonValue};
@@ -394,14 +393,14 @@ impl IngestClient {
     }
 
     /// Convert Event to protobuf format
-    fn convert_to_proto(&self, event: &Event<JsonValue>) -> SatelliteResult<ProtoRawEvent> {
+    fn convert_to_proto(&self, event: &Event<JsonValue>) -> SatelliteResult<ProtoEvent> {
         Self::convert_to_proto_static(event)
     }
 
-    fn convert_to_proto_static(event: &Event<JsonValue>) -> SatelliteResult<ProtoRawEvent> {
+    fn convert_to_proto_static(event: &Event<JsonValue>) -> SatelliteResult<ProtoEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
-        Ok(ProtoRawEvent {
+        Ok(ProtoEvent {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
             host: event.host.to_string(),

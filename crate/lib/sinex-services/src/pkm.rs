@@ -7,8 +7,8 @@ use sinex_core::db::repositories::source_materials::SourceMaterial;
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
-use sinex_core::Entity as DbEntity;
-use sinex_core::RawEvent;
+use sinex_core::{Entity as DbEntity, Event, JsonValue};
+
 use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
 use std::collections::HashMap;
 use std::convert::From;
@@ -106,7 +106,7 @@ impl PkmService {
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         content: &str,
         tags: Vec<String>,
         created_by: &str,

@@ -5,8 +5,10 @@
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
 use crate::Result;
+use sinex_core::db::models::event::Event;
 use sinex_core::types::error::SinexError;
-use sinex_core::RawEvent;
+use serde_json::Value as JsonValue;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,7 +85,7 @@ pub struct PerformanceMetrics {
 
 /// Enhanced event sender with comprehensive monitoring and error reporting
 pub struct EnhancedEventSender {
-    inner: mpsc::Sender<RawEvent>,
+    inner: mpsc::Sender<Event<JsonValue>>,
     monitor: Arc<ChannelMonitor>,
     source_name: String,
     performance_tracker: Arc<PerformanceTracker>,
@@ -91,7 +93,7 @@ pub struct EnhancedEventSender {
 
 impl EnhancedEventSender {
     /// Create a new enhanced event sender
-    pub fn new(sender: mpsc::Sender<RawEvent>, source_name: String) -> Self {
+    pub fn new(sender: mpsc::Sender<Event<JsonValue>>, source_name: String) -> Self {
         Self {
             inner: sender,
             monitor: Arc::new(ChannelMonitor::new()),
@@ -101,7 +103,7 @@ impl EnhancedEventSender {
     }
 
     /// Send an event with enhanced monitoring and error reporting
-    pub async fn send_event(&self, event: RawEvent, context: &str) -> Result<()> {
+    pub async fn send_event(&self, event: Event<JsonValue>, context: &str) -> Result<()> {
         let start_time = Instant::now();
         let event_type = event.event_type.clone();
 
@@ -143,7 +145,7 @@ impl EnhancedEventSender {
     /// Send event with timeout and enhanced error reporting
     pub async fn send_event_timeout(
         &self,
-        event: RawEvent,
+        event: Event<JsonValue>,
         timeout_duration: Duration,
         context: &str,
     ) -> Result<()> {
@@ -187,7 +189,7 @@ impl EnhancedEventSender {
 
 /// Create an enhanced event sender
 pub fn create_enhanced_event_sender(
-    sender: mpsc::Sender<RawEvent>,
+    sender: mpsc::Sender<Event<JsonValue>>,
     source_name: String,
 ) -> EnhancedEventSender {
     EnhancedEventSender::new(sender, source_name)
@@ -228,14 +230,13 @@ pub struct DiagnosticsReport {
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use sinex_core::RawEvent;
 
     #[sinex_test]
     async fn test_enhanced_event_sender() -> color_eyre::eyre::Result<()> {
-        let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
+        let (tx, mut rx) = mpsc::channel::<Event<JsonValue>>(10);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
-        let event = RawEvent::test_event(
+        let event = Event::<JsonValue>::test_event(
             sinex_core::EventSource::new("test_source"),
             sinex_core::EventType::new("test_event"),
             serde_json::json!({}),
@@ -264,11 +265,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_enhanced_sender_timeout() -> color_eyre::eyre::Result<()> {
-        let (tx, _rx) = mpsc::channel::<RawEvent>(1);
+        let (tx, _rx) = mpsc::channel::<Event<JsonValue>>(1);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
         // Fill the channel
-        let event1 = RawEvent::test_event(
+        let event1 = Event::<JsonValue>::test_event(
             sinex_core::EventSource::new("test_source"),
             sinex_core::EventType::new("test_event"),
             serde_json::json!({}),
@@ -276,7 +277,7 @@ mod tests {
         let _ = sender.send_event(event1, "fill channel").await;
 
         // This should timeout
-        let event2 = RawEvent::test_event(
+        let event2 = Event::<JsonValue>::test_event(
             sinex_core::EventSource::new("test_source"),
             sinex_core::EventType::new("test_event"),
             serde_json::json!({}),

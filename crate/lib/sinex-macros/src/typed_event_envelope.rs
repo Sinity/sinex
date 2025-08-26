@@ -13,15 +13,15 @@ use syn::{parse_macro_input, Attribute, DataEnum, DeriveInput, Fields, Ident, Ty
 /// ```rust
 /// #[typed_event_envelope]
 /// pub enum EventEnvelope {
-///     FileCreated(TypedRawEvent<FileCreatedPayload>),
-///     FileModified(TypedRawEvent<FileModifiedPayload>),
-///     FileDeleted(TypedRawEvent<FileDeletedPayload>),
-///     Unknown(RawEvent),
+///     FileCreated(Event<FileCreatedPayload>),
+///     FileModified(Event<FileModifiedPayload>),
+///     FileDeleted(Event<FileDeletedPayload>),
+///     Unknown(Event<JsonValue>),
 /// }
 /// ```
 ///
 /// This generates:
-/// - `to_json_event()` method that converts each variant to RawEvent
+/// - `to_json_event()` method that converts each variant to Event<JsonValue>
 /// - Helper constructors for each variant
 /// - Pattern matching utilities
 /// - Serialization support
@@ -84,7 +84,7 @@ fn generate_to_json_event_impl(
 
         match &variant.fields {
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
-                // Handle TypedRawEvent<T> variants
+                // Handle Event<T> variants
                 let field_type = &fields.unnamed[0].ty;
                 if is_event_type(field_type) {
                     quote! {

@@ -68,19 +68,16 @@ impl FromStr for SensorType {
     }
 }
 
-/// Sensor job record
+/// Sensor job record (matches raw.sensor_jobs table)
 #[derive(Debug, Clone)]
 pub struct SensorJob {
-    pub job_id: Ulid,
-    pub sensor_type: SensorType,
+    pub id: Ulid,
+    pub sensor_type: String,
     pub target_uri: String,
     pub config: Value,
-    pub status: JobStatus,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub error_message: Option<String>,
-    pub material_id: Option<Ulid>,
+    pub status: String,
+    pub priority: i32,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Job manager
@@ -149,24 +146,21 @@ impl JobManager {
             return Ok(());
         }
 
-        // Query for pending jobs
+        // Query for pending jobs (active status in the schema)
         let pending_jobs = sqlx::query_as!(
             SensorJob,
             r#"
             SELECT 
-                job_id as "job_id: Ulid",
+                id as "id: Ulid",
                 sensor_type,
                 target_uri,
-                parameters as config,
-                status as "status: JobStatus",
-                created_at,
-                started_at,
-                completed_at,
-                error_message,
-                material_id as "material_id: Ulid"
+                config,
+                status,
+                priority,
+                updated_at
             FROM raw.sensor_jobs
-            WHERE status = 'pending'
-            ORDER BY created_at
+            WHERE status = 'active'
+            ORDER BY priority DESC, updated_at
             LIMIT $1
             "#,
             (self.config.max_concurrent_jobs - active_count) as i64
@@ -175,14 +169,14 @@ impl JobManager {
         .await?;
 
         for job in pending_jobs {
-            debug!("Processing job: {} for {}", job.job_id, job.target_uri);
+            debug!("Processing job: {} for {}", job.id, job.target_uri);
 
-            // Mark job as running
-            self.update_job_status(&job.job_id, JobStatus::Running, None)
+            // Mark job as running (using 'paused' as a running state)
+            self.update_job_status(&job.id, "paused".to_string(), None)
                 .await?;
 
             // Add to active jobs
-            self.active_jobs.write().await.push(job.job_id);
+            self.active_jobs.write().await.push(job.id);
 
             // Spawn job processor
             let job_manager = self.clone();
@@ -209,9 +203,11 @@ impl JobManager {
         append_sensor: Option<Arc<AppendStreamSensor>>,
         tree_sensor: Option<Arc<TreeWatchSensor>>,
     ) -> Result<()> {
-        info!("Executing job {} for {}", job.job_id, job.target_uri);
+        info!("Executing job {} for {}", job.id, job.target_uri);
 
-        let result = match job.sensor_type {
+        let sensor_type = SensorType::from_str(&job.sensor_type)
+            .map_err(|e| eyre!("Invalid sensor type: {}", e))?;
+        let result = match sensor_type {
             SensorType::AppendStream => {
                 if let Some(sensor) = append_sensor {
                     sensor.process_job(&job, &self.temporal_ledger).await
@@ -233,22 +229,19 @@ impl JobManager {
             Ok(material_id) => {
                 info!(
                     "Job {} completed successfully, material: {}",
-                    job.job_id, material_id
+                    job.id, material_id
                 );
-                self.update_job_status(&job.job_id, JobStatus::Completed, Some(material_id))
+                self.update_job_status(&job.id, "retired".to_string(), Some(material_id))
                     .await?;
             }
             Err(e) => {
-                error!("Job {} failed: {}", job.job_id, e);
-                self.update_job_error(&job.job_id, &e.to_string()).await?;
+                error!("Job {} failed: {}", job.id, e);
+                self.update_job_error(&job.id, &e.to_string()).await?;
             }
         }
 
         // Remove from active jobs
-        self.active_jobs
-            .write()
-            .await
-            .retain(|id| *id != job.job_id);
+        self.active_jobs.write().await.retain(|id| *id != job.id);
 
         Ok(())
     }
@@ -257,23 +250,25 @@ impl JobManager {
     async fn update_job_status(
         &self,
         job_id: &Ulid,
-        status: JobStatus,
-        material_id: Option<Ulid>,
+        status: String,
+        _material_id: Option<Ulid>,
     ) -> Result<()> {
-        let status_str = serde_json::to_string(&status)?;
+        // Map to valid status values: 'active', 'paused', 'retired'
+        let db_status = match status.as_str() {
+            "running" | "paused" => "paused",
+            "completed" | "failed" => "retired",
+            _ => "active",
+        };
 
         sqlx::query!(
             r#"
             UPDATE raw.sensor_jobs
             SET status = $2::text,
-                started_at = CASE WHEN $2 = 'running' THEN NOW() ELSE started_at END,
-                completed_at = CASE WHEN $2 IN ('completed', 'failed') THEN NOW() ELSE completed_at END,
-                material_id = COALESCE($3, material_id)
-            WHERE job_id = $1::ulid
+                updated_at = NOW()
+            WHERE id = $1::ulid
             "#,
             *job_id as Ulid,
-            status_str.trim_matches('"'),
-            material_id as Option<Ulid>,
+            db_status,
         )
         .execute(&self.db_pool)
         .await?;
@@ -281,21 +276,37 @@ impl JobManager {
         Ok(())
     }
 
-    /// Update job error
+    /// Update job error (store error in sensor_states table)
     async fn update_job_error(&self, job_id: &Ulid, error: &str) -> Result<()> {
+        // Update job status to retired
         sqlx::query!(
             r#"
             UPDATE raw.sensor_jobs
-            SET status = 'failed',
-                completed_at = NOW(),
-                error_message = $2
-            WHERE job_id = $1::ulid
+            SET status = 'retired',
+                updated_at = NOW()
+            WHERE id = $1::ulid
             "#,
             *job_id as Ulid,
-            error,
         )
         .execute(&self.db_pool)
         .await?;
+
+        // Update error count in sensor_states
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.sensor_states (job_id, error_count)
+            VALUES ($1::ulid, 1)
+            ON CONFLICT (job_id) 
+            DO UPDATE SET error_count = sensor_states.error_count + 1,
+                         updated_at = NOW()
+            "#,
+            *job_id as Ulid,
+        )
+        .execute(&self.db_pool)
+        .await?;
+
+        // Log the error since we can't store it in the table
+        error!("Job {} failed: {}", job_id, error);
 
         Ok(())
     }
@@ -310,13 +321,13 @@ impl JobManager {
             return Ok(());
         }
 
-        // Query to check which jobs are actually still running
+        // Query to check which jobs are actually still active/paused
         let still_running: Vec<Ulid> = sqlx::query_scalar!(
             r#"
-            SELECT job_id as "job_id: Ulid"
+            SELECT id as "id: Ulid"
             FROM raw.sensor_jobs
-            WHERE job_id = ANY($1::ulid[])
-            AND status = 'running'
+            WHERE id = ANY($1::ulid[])
+            AND status IN ('active', 'paused')
             "#,
             &active.clone() as &[Ulid],
         )

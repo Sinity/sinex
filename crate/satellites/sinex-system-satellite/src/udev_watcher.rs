@@ -2,12 +2,12 @@
 //!
 //! Monitors hardware device events via udev
 
-use sinex_core::RawEvent;
-
 use sinex_core::types::events::{
-    Event, UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
+    UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
+use sinex_core::db::models::event::Event;
+use sinex_core::JsonValue;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -57,7 +57,7 @@ impl UdevWatcher {
         device_path: &str,
         device_type: &str,
         properties: std::collections::HashMap<String, String>,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<JsonValue>> {
         // Extract common properties
         let subsystem = properties.get("SUBSYSTEM").cloned();
         let devtype = properties.get("DEVTYPE").cloned();
@@ -147,7 +147,7 @@ impl UdevWatcher {
     /// Monitor udev events using netlink socket (fallback implementation)
     async fn monitor_udev_events(
         &self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting udev event monitoring via filesystem polling");
 
@@ -253,7 +253,7 @@ impl UdevWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting udev event streaming");
 

@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::DbPool;
 use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-    OperationRecord, Provenance, RawEvent, SourceMaterial,
+    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue,
+    Operation, OperationRecord, Provenance, SourceMaterial,
+};
+use sinex_core::events::{
+    FileCreatedPayload, KittyCommandExecutedPayload, ClipboardCopiedPayload,
+    HyprlandWindowFocusedPayload, SystemdUnitStartedPayload, DbusSignalPayload,
 };
 
 use camino::Utf8Path;
@@ -116,7 +120,7 @@ impl FixtureGenerator {
     }
 
     /// Generate events for the dataset
-    pub fn generate_events(&mut self) -> Vec<RawEvent> {
+    pub fn generate_events(&mut self) -> Vec<Event<JsonValue>> {
         let mut events = Vec::with_capacity(self.config.event_count);
 
         // Pre-generate sources and event types
@@ -134,7 +138,8 @@ impl FixtureGenerator {
             let payload_size = self.select_payload_size();
             let timestamp = start_time + time_step * i as i32;
 
-            let event = self.create_event(source, event_type, payload_size, timestamp, i);
+            let event = self.create_event(source, event_type, payload_size, timestamp, i)
+                .expect("Failed to create test event");
             events.push(event);
         }
 
@@ -143,7 +148,6 @@ impl FixtureGenerator {
 
     /// Generate source names
     fn generate_sources(&self) -> Vec<String> {
-        use sinex_core::types::*;
         let base_sources = vec![
             FileCreatedPayload::SOURCE.to_string(),
             KittyCommandExecutedPayload::SOURCE.to_string(),
@@ -166,7 +170,6 @@ impl FixtureGenerator {
 
     /// Generate event types
     fn generate_event_types(&self) -> Vec<String> {
-        use sinex_core::types::*;
         let base_types = vec![
             FileCreatedPayload::EVENT_TYPE.to_string(),
             KittyCommandExecutedPayload::EVENT_TYPE.to_string(),
@@ -205,7 +208,7 @@ impl FixtureGenerator {
         payload_size: usize,
         timestamp: DateTime<Utc>,
         index: usize,
-    ) -> RawEvent {
+    ) -> Result<Event<JsonValue>> {
         use sinex_core::types::*;
         let mut payload = HashMap::new();
 
@@ -248,22 +251,22 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_core::types::domain::{EventSource, EventType, HostName};
+        use sinex_core::types::domain::{EventSource, EventType};
 
-        RawEvent::test_event(
+        let mut event = Event::<JsonValue>::test_event(
             EventSource::new(source),
             EventType::new(event_type),
             serde_json::to_value(payload).map_err(|e| {
                 SinexError::validation(format!("Failed to convert payload to JSON: {}", e))
             })?,
-        )
-        .with_host(HostName::new("fixture_host"))
-        .with_timestamp(timestamp)
-        .with_ingestor_version("fixture_generator/1.0.0")
+        );
+        event.ts_orig = Some(timestamp);
+        event.ingestor_version = Some("fixture_generator/1.0.0".to_string());
+        Ok(event)
     }
 
     /// Generate SQL for the dataset
-    pub fn generate_sql(&mut self, events: &[RawEvent]) -> String {
+    pub fn generate_sql(&mut self, events: &[Event<JsonValue>]) -> Result<String> {
         let mut sql = String::new();
 
         // Header
@@ -282,7 +285,7 @@ impl FixtureGenerator {
                 sql.push_str(&format!("\n-- Progress: {}/{}\n", i, events.len()));
             }
 
-            sql.push_str("INSERT INTO core.events (id, source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version) VALUES (\n");
+            sql.push_str("INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, ingestor_version) VALUES (\n");
             if let Some(id) = &event.id {
                 sql.push_str(&format!("  '{}',\n", id.as_ulid().to_uuid()));
             } else {
@@ -298,7 +301,6 @@ impl FixtureGenerator {
                 .replace('\'', "''");
 
             sql.push_str(&format!("  '{}',\n", payload_str));
-            sql.push_str(&format!("  '{}',\n", event.ts_ingest.to_rfc3339()));
 
             let ts_orig = event.ts_orig.ok_or_else(|| {
                 SinexError::validation("Event missing ts_orig timestamp".to_string())
@@ -362,11 +364,11 @@ impl FixtureGenerator {
         }
 
         sql.push_str("\nCOMMIT;\n");
-        sql
+        Ok(sql)
     }
 
     /// Generate JSON dataset
-    pub fn generate_json(&mut self, events: &[RawEvent]) -> serde_json::Value {
+    pub fn generate_json(&mut self, events: &[Event<JsonValue>]) -> serde_json::Value {
         json!({
             "metadata": {
                 "dataset": self.config.name,

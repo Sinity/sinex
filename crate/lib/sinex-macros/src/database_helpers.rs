@@ -15,11 +15,11 @@ use syn::{
 ///
 /// ```rust
 /// db_query! {
-///     async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<RawEvent> {
+///     async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<Event<JsonValue>> {
 ///         "SELECT * FROM raw.events WHERE id = $1::uuid"
 ///     }
 ///     
-///     async fn get_events_by_source(pool: &PgPool, source: &str, limit: i32) -> Vec<RawEvent> {
+///     async fn get_events_by_source(pool: &PgPool, source: &str, limit: i32) -> Vec<Event<JsonValue>> {
 ///         "SELECT * FROM raw.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2"
 ///     }
 /// }
@@ -52,7 +52,7 @@ pub fn db_query(input: TokenStream) -> TokenStream {
 ///
 /// ```rust
 /// db_transaction! {
-///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
+///     async fn insert_multiple_events(pool: &PgPool, events: Vec<Event<JsonValue>>) -> Result<(), SinexError> {
 ///         for event in events {
 ///             EventQueries::insert_event(tx, &event.source, &event.event_type, &event.host, event.payload)
 ///                 .await?;
@@ -349,11 +349,11 @@ mod tests {
     #[sinex_test]
     fn test_db_query_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
-            async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<RawEvent> {
+            async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<Event<JsonValue>> {
                 "SELECT * FROM raw.events WHERE id = $1::uuid"
             }
 
-            async fn get_events_by_source(pool: &PgPool, source: &str) -> Vec<RawEvent> {
+            async fn get_events_by_source(pool: &PgPool, source: &str) -> Vec<Event<JsonValue>> {
                 "SELECT * FROM raw.events WHERE source = $1"
             }
         };
@@ -368,7 +368,7 @@ mod tests {
     #[sinex_test]
     fn test_db_transaction_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
-            async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
+            async fn insert_multiple_events(pool: &PgPool, events: Vec<Event<JsonValue>>) -> Result<(), SinexError> {
                 for event in events {
                     EventQueries::insert_event(tx, &event.source, "event.type", &event.host, serde_json::json!({}))
                         .await?;
@@ -387,10 +387,10 @@ mod tests {
 
     #[sinex_test]
     fn test_type_detection() -> color_eyre::eyre::Result<()> {
-        let option_type: Type = parse_quote!(Option<RawEvent>);
+        let option_type: Type = parse_quote!(Option<Event<JsonValue>>);
         assert!(is_option_type(&option_type));
 
-        let vec_type: Type = parse_quote!(Vec<RawEvent>);
+        let vec_type: Type = parse_quote!(Vec<Event<JsonValue>>);
         assert!(is_vec_type(&vec_type));
 
         let ulid_type: Type = parse_quote!(Ulid);

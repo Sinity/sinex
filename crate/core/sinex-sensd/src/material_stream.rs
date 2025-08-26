@@ -87,8 +87,7 @@ impl MaterialSliceStream {
                 source_material_id as "material_id: Ulid",
                 offset_start,
                 offset_end,
-                ts_capture,
-                note
+                ts_capture
             FROM raw.temporal_ledger
             WHERE source_material_id = $1::ulid
             AND offset_start >= $2
@@ -106,6 +105,21 @@ impl MaterialSliceStream {
             self.finished = true;
             return Ok(vec![]);
         }
+
+        // Get metadata from source_material_registry once for this material
+        // TODO: This is inefficient - we're querying for every batch. Consider caching or redesign.
+        let material_metadata = sqlx::query!(
+            r#"
+            SELECT metadata, source_identifier
+            FROM raw.source_material_registry
+            WHERE id = $1::ulid
+            "#,
+            self.material_id as Ulid
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .map(|r| r.metadata)
+        .unwrap_or_else(|| serde_json::json!({}));
 
         // Convert to MaterialSlice
         let mut result = Vec::new();
@@ -127,8 +141,7 @@ impl MaterialSliceStream {
                 ts_capture_start: record.ts_capture,
                 ts_capture_end: record.ts_capture, // Same timestamp for single capture time
                 data,
-                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string()))
-                    .unwrap_or_default(),
+                metadata: material_metadata.clone(),
             };
 
             self.current_offset = record.offset_end;
@@ -202,56 +215,73 @@ impl MaterialSliceStream {
         let blob = sqlx::query!(
             r#"
             SELECT 
-                annex_key,
+                annex_backend,
+                content_hash,
                 size_bytes,
-                checksum_sha256,
-                storage_backend
+                original_filename
             FROM core.blobs
-            WHERE id = $1::uuid
+            WHERE id = $1::ulid
             "#,
-            sinex_core::ulid_to_uuid(blob_id),
+            blob_id as Ulid,
         )
         .fetch_optional(&self.db_pool)
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        match blob.storage_backend.as_str() {
-            "git-annex" => {
-                // Load from git-annex storage
-                let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_key[0..2])
-                    .join(&blob.annex_key[2..4])
-                    .join(&blob.annex_key);
+        // Compose the annex key from components
+        // original_filename is already a String, not Option<String>
+        let filename = if blob.original_filename.is_empty() {
+            "file".to_string()
+        } else {
+            blob.original_filename.clone()
+        };
+        let annex_key = format!("{}-s{}--{}", blob.annex_backend, blob.size_bytes, filename);
+        
+        if blob.annex_backend.starts_with("SHA256") {
+            // Load from git-annex storage
+            // Git-annex stores files in .git/annex/objects/XX/YY/KEY/KEY
+            let key_hash = &blob.content_hash;
+            let annex_path = if key_hash.len() >= 4 {
+                std::path::Path::new(".git/annex/objects")
+                    .join(&key_hash[0..2])
+                    .join(&key_hash[2..4])
+                    .join(&annex_key)
+                    .join(&annex_key)
+            } else {
+                // Fallback for short hashes
+                std::path::Path::new(".git/annex/objects")
+                    .join(&annex_key)
+            };
 
-                if annex_path.exists() {
-                    tokio::fs::read(&annex_path)
-                        .await
-                        .map_err(|e| eyre!("Failed to read annex file: {}", e))
-                } else {
-                    Err(eyre!("Annex file not found at {:?}", annex_path))
-                }
-            }
-            "filesystem" => {
-                // Load from filesystem path stored in annex_key
-                let path = std::path::Path::new(&blob.annex_key);
-                tokio::fs::read(path)
+            if annex_path.exists() {
+                tokio::fs::read(&annex_path)
                     .await
-                    .map_err(|e| eyre!("Failed to read file: {}", e))
+                    .map_err(|e| eyre!("Failed to read annex file: {}", e))
+            } else {
+                Err(eyre!("Annex file not found at {:?}", annex_path))
             }
-            "s3" => {
+        } else if blob.annex_backend.starts_with("s3://") {
                 // S3 support requires additional dependencies (AWS SDK)
                 // To implement S3 support:
                 // 1. Add aws-sdk-s3 to Cargo.toml dependencies
                 // 2. Implement S3Client initialization with credentials
-                // 3. Use blob.annex_key as S3 object key to retrieve data
+                // 3. Use blob.annex_backend as S3 object key to retrieve data
                 Err(eyre!(
                     "S3 storage backend not implemented. Blob {} uses S3 storage \
                      but S3 support requires AWS SDK dependencies and configuration. \
                      Consider using git-annex or filesystem storage backends instead.",
                     blob_id
                 ))
+        } else {
+            // Try as a filesystem path
+            let path = std::path::Path::new(&blob.annex_backend);
+            if path.exists() {
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|e| eyre!("Failed to read file: {}", e))
+            } else {
+                Err(eyre!("Unknown storage backend for: {}", blob.annex_backend))
             }
-            backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }
     }
 }

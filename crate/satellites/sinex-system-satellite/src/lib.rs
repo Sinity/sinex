@@ -24,16 +24,16 @@ pub mod unified_processor;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
+        db::models::{Event, EventId, Provenance},
         types::{
             domain::{
                 ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName,
                 SanitizedPath,
             },
             error::SinexError,
-            events::Event,
-            Id,
+            Id, Ulid,
         },
+        JsonValue,
     };
 
     // SDK facade for common processor types
@@ -68,9 +68,6 @@ pub use journal_watcher::JournalWatcher;
 pub use payloads::*;
 pub use systemd_watcher::{SystemdConfig, SystemdWatcher};
 pub use udev_watcher::UdevWatcher;
-
-// Re-export for convenience
-pub use sinex_core::RawEvent;
 
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{

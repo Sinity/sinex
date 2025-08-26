@@ -27,15 +27,12 @@ axum = { workspace = true }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 hyper = "1.0"
-hyper-util = { version = "0.1", features = ["server", "server-auto"] }
 
 # JSON-RPC
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Error handling
-anyhow = { workspace = true }
-thiserror = { workspace = true }
 color-eyre = { workspace = true }
 
 # Path handling
@@ -48,8 +45,7 @@ tracing-subscriber = { workspace = true }
 # CLI
 clap = { workspace = true, features = ["derive"] }
 
-# Native messaging
-byteorder = "1.5"
+# Native messaging - removed byteorder as unused
 
 # Time handling
 chrono = { workspace = true }

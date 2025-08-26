@@ -8,6 +8,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
+use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -248,8 +249,8 @@ pub struct TerminalProcessor {
     checkpoint_manager: Option<CheckpointManager>,
 
     /// Event channel for processing events
-    event_sender: Option<mpsc::Sender<sinex_core::RawEvent>>,
-    event_receiver: Option<mpsc::Receiver<sinex_core::RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_receiver: Option<mpsc::Receiver<Event<JsonValue>>>,
 }
 
 impl TerminalProcessor {
@@ -409,11 +410,18 @@ impl TerminalProcessor {
         if let Some(ref processor) = self.sensd_processor {
             info!("Starting sensd job monitoring");
 
-            // Start the job monitoring task in background
+            // Start the job monitoring task in background with panic safety
             let monitor_processor = processor.clone();
-            tokio::spawn(async move {
+            let monitor_handle = tokio::spawn(async move {
                 if let Err(e) = monitor_processor.monitor_jobs().await {
                     warn!("sensd job monitoring error: {}", e);
+                }
+            });
+            
+            // Spawn a watchdog to detect if the monitor task panics
+            tokio::spawn(async move {
+                if let Err(e) = monitor_handle.await {
+                    error!("sensd job monitoring task panicked: {:?}", e);
                 }
             });
         }
@@ -484,13 +492,15 @@ impl TerminalProcessor {
                 .and_then(|m| m.modified().ok())
                 .map(|t| DateTime::<Utc>::from(t));
 
-            // Estimate entries by counting lines (rough estimate)
-            let estimated_entries =
-                if let Ok(content) = tokio::fs::read_to_string(history_file).await {
-                    content.lines().count() as u64
-                } else {
-                    0
-                };
+            // Estimate entries by counting lines efficiently without loading entire file
+            let estimated_entries = match Self::count_lines_streaming(history_file).await {
+                Ok(count) => count,
+                Err(e) => {
+                    debug!("Failed to count lines in history file, using size estimate: {}", e);
+                    // Fallback: estimate ~50 bytes per line average
+                    size_bytes / 50
+                }
+            };
 
             HistoryFileStatus {
                 exists: true,
@@ -508,6 +518,22 @@ impl TerminalProcessor {
         }
     }
 
+    /// Count lines in a file efficiently using streaming
+    async fn count_lines_streaming(path: &std::path::Path) -> std::io::Result<u64> {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        
+        let file = tokio::fs::File::open(path).await?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut count = 0u64;
+        
+        while lines.next_line().await?.is_some() {
+            count += 1;
+        }
+        
+        Ok(count)
+    }
+
     /// Helper function to get Atuin database status
     async fn get_atuin_status(atuin_path: &sinex_core::SanitizedPath) -> AtuinStatus {
         if std::path::Path::new(atuin_path.as_str()).exists() {
@@ -515,8 +541,10 @@ impl TerminalProcessor {
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
 
             // Query actual data from Atuin SQLite database
-            let (estimated_entries, last_entry_timestamp) =
-                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_str()) {
+            // Use spawn_blocking to avoid blocking the async runtime
+            let atuin_path_str = atuin_path.as_str().to_string();
+            let (estimated_entries, last_entry_timestamp) = match tokio::task::spawn_blocking(move || {
+                if let Ok(conn) = rusqlite::Connection::open(&atuin_path_str) {
                     // Count entries
                     let count: u64 = conn
                         .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
@@ -534,12 +562,18 @@ impl TerminalProcessor {
                         DateTime::from_timestamp(seconds, nanos)
                     });
 
-                    (count, last_entry)
+                    Ok::<_, std::io::Error>((count, last_entry))
                 } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "Cannot open database"))
+                }
+            }).await {
+                Ok(Ok(result)) => result,
+                _ => {
                     // Fallback to estimate if we can't open the database
                     let estimated_entries = db_size_bytes / 100;
                     (estimated_entries, None)
-                };
+                }
+            };
 
             AtuinStatus {
                 db_exists: true,

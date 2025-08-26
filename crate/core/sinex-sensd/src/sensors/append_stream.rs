@@ -108,16 +108,6 @@ impl AppendStreamSensor {
                 precision: "exact".to_string(),
                 clock: "wall".to_string(),
                 source_type: SensorType::AppendStream.to_string(),
-                note: Some(
-                    serde_json::json!({
-                        "bytes_read": bytes_read,
-                        "source": job.target_uri,
-                        "slice_hash": slice_hash,
-                        "capture_start": capture_start,
-                        "capture_end": capture_end,
-                    })
-                    .to_string(),
-                ),
             };
 
             temporal_ledger.record_entry(entry).await?;

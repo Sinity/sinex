@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
-    db::models::{Entity, RawEvent},
+    db::models::Entity,
     types::{ulid::Ulid, Id},
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
@@ -49,7 +49,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .get("event_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
-        .map(Id::<RawEvent>::from_ulid)
+        .map(Id::<Event<JsonValue>>::from_ulid)
         .wrap_err("Invalid or missing event_id")?;
 
     let content = params

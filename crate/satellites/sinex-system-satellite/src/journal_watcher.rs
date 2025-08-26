@@ -3,8 +3,8 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_core::types::events::Event;
-use sinex_core::RawEvent;
+use sinex_core::{Event, JsonValue};
+use sinex_core::types::utils::wait_helpers::{retry_with_exponential_backoff, RetryConfig};
 
 use crate::payloads::*;
 use sinex_core::types::events::{
@@ -72,7 +72,7 @@ impl JournalWatcher {
     /// Start streaming events with optional historical import
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting journal monitoring");
 
@@ -94,7 +94,7 @@ impl JournalWatcher {
     /// Import historical journal entries with cursor tracking
     async fn import_historical(
         &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
@@ -220,7 +220,7 @@ impl JournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u64::MAX as u128) as u64,
             };
 
-            let sync_event: RawEvent = Event::new(EventJournalSyncCompletedPayload {
+            let sync_event = Event::new(EventJournalSyncCompletedPayload {
                 sync_type: sync_payload.sync_type,
                 start_cursor: sync_payload.start_cursor,
                 end_cursor: sync_payload.end_cursor,
@@ -242,28 +242,43 @@ impl JournalWatcher {
         Ok(())
     }
 
-    /// Follow journal in real-time with cursor tracking
-    async fn follow_journal(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
-        loop {
-            match self.follow_journal_inner(&tx).await {
-                Ok(()) => {
-                    warn!("Journal following ended normally");
+    /// Follow journal in real-time with cursor tracking and exponential backoff
+    async fn follow_journal(
+        &mut self,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+    ) -> SatelliteResult<()> {
+        // Use exponential backoff for reconnection attempts
+        let retry_result = retry_with_exponential_backoff(
+            "journal_follow",
+            Duration::from_secs(1),  // Start with 1 second
+            10,                       // Max 10 retries
+            true,                     // With jitter
+            || async {
+                match self.follow_journal_inner(&tx).await {
+                    Ok(()) => {
+                        warn!("Journal following ended normally");
+                        // Return error to trigger retry
+                        Err("Journal following ended")
+                    }
+                    Err(e) => {
+                        error!("Journal following failed: {}", e);
+                        Err(e.to_string())
+                    }
                 }
-                Err(e) => {
-                    error!("Journal following failed: {}", e);
-                }
-            }
+            },
+        ).await;
 
-            // Wait before restarting
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            info!("Restarting journal following");
+        if let Err(e) = retry_result {
+            error!("Journal following failed after all retries: {}", e);
         }
+        
+        Ok(())
     }
 
     /// Inner journal following loop with proper error handling
     async fn follow_journal_inner(
         &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
@@ -370,7 +385,10 @@ impl JournalWatcher {
     }
 
     /// Parse journal entry with comprehensive metadata extraction
-    fn parse_journal_entry(&self, entry: &serde_json::Value) -> SatelliteResult<Option<RawEvent>> {
+    fn parse_journal_entry(
+        &self,
+        entry: &serde_json::Value,
+    ) -> SatelliteResult<Option<Event<JsonValue>>> {
         let obj = entry.as_object().ok_or_else(|| {
             sinex_satellite_sdk::SatelliteError::Processing("Invalid journal entry".to_string())
         })?;
@@ -515,7 +533,7 @@ impl JournalWatcher {
             fields,
         };
 
-        let event: RawEvent = Event::new(EventJournalEntryWrittenPayload {
+        let event = Event::new(EventJournalEntryWrittenPayload {
             cursor: payload.cursor,
             timestamp_us: payload.timestamp_us,
             timestamp: payload.timestamp,
@@ -558,8 +576,8 @@ impl JournalWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<RawEvent>,
-        event: RawEvent,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        event: Event<JsonValue>,
         context: &str,
     ) -> SatelliteResult<()> {
         if tx.send(event).is_err() {

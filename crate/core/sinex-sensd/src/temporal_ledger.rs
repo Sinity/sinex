@@ -23,7 +23,6 @@ pub struct LedgerEntry {
     pub precision: String,
     pub clock: String,
     pub source_type: String,
-    pub note: Option<String>,
 }
 
 /// Temporal ledger manager
@@ -138,9 +137,9 @@ impl TemporalLedger {
                 r#"
                 INSERT INTO raw.temporal_ledger (
                     source_material_id, offset_start, offset_end,
-                    offset_kind, ts_capture, precision, clock, source_type, note
+                    offset_kind, ts_capture, precision, clock, source_type
                 )
-                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
                 "#,
                 entry.source_material_id as Ulid,
                 entry.offset_start,
@@ -150,7 +149,6 @@ impl TemporalLedger {
                 entry.precision,
                 entry.clock,
                 entry.source_type,
-                entry.note,
             )
             .execute(&mut *tx)
             .await?;
@@ -177,16 +175,18 @@ impl TemporalLedger {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id, source_identifier, source_type, source_path,
-                content_type, status, created_at
+                id, source_identifier, material_kind, status, 
+                timing_info_type, metadata, staged_at, staged_by
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, 'sensing', NOW())
+            VALUES ($1::ulid, $2, $3, 'active', 'realtime', $4, NOW(), 'temporal_ledger')
             "#,
             material_id as Ulid,
             source_identifier,
             source_type,
-            source_path,
-            content_type,
+            serde_json::json!({
+                "source_path": source_path,
+                "content_type": content_type
+            }),
         )
         .execute(&self.db_pool)
         .await?;
@@ -209,10 +209,13 @@ impl TemporalLedger {
         sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
-            SET status = $2, 
-                finalized_at = NOW(),
-                total_bytes = $3
-            WHERE source_material_id = $1::ulid
+            SET status = $2,
+                metadata = jsonb_set(
+                    metadata,
+                    '{total_bytes}',
+                    to_jsonb($3::bigint)
+                )
+            WHERE id = $1::ulid
             "#,
             material_id as Ulid,
             status,
@@ -243,6 +246,12 @@ impl TemporalLedger {
         .fetch_optional(&self.db_pool)
         .await?;
 
-        Ok(result.and_then(|row| row.total_bytes).unwrap_or(0))
+        use sqlx::types::BigDecimal;
+        use std::str::FromStr;
+        
+        Ok(result
+            .and_then(|row| row.total_bytes)
+            .and_then(|bd| bd.to_string().parse::<i64>().ok())
+            .unwrap_or(0))
     }
 }

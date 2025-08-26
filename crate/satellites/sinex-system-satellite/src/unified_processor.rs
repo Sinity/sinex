@@ -227,7 +227,7 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event: RawEvent = Event::new(SystemMonitoringStartedPayload {
+            let sample_event = Event::new(SystemMonitoringStartedPayload {
                 dbus_enabled: self.config.dbus_enabled,
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
@@ -257,7 +257,7 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let event: RawEvent = Event::new(JournaldHistoricalPayload {
+                let event = Event::new(JournaldHistoricalPayload {
                     source: "journal".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Journal can provide historical entries".to_string(),
@@ -270,7 +270,7 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let event: RawEvent = Event::new(SystemdUnitsHistoricalPayload {
+                let event = Event::new(SystemdUnitsHistoricalPayload {
                     source: "systemd".to_string(),
                     scan_type: "historical".to_string(),
                     note: "systemd can provide unit state history".to_string(),
@@ -283,7 +283,7 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let event: RawEvent = Event::new(UdevDeviceHistoricalPayload {
+                let event = Event::new(UdevDeviceHistoricalPayload {
                     sources: vec!["dbus".to_string(), "udev".to_string()],
                     scan_type: "historical".to_string(),
                     note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
@@ -436,15 +436,26 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = Event::new(SystemSnapshotPayload {
-                            active_watchers,
-                            dbus_enabled: self.config.dbus_enabled,
-                            journal_enabled: self.config.journal_enabled,
-                            udev_enabled: self.config.udev_enabled,
-                            systemd_enabled: self.config.systemd_enabled,
-                            snapshot_time: Utc::now(),
-                        })
-                        .into();
+                        // System snapshots are synthesis events (no source material)
+                        let system_bootstrap_id = EventId::from_ulid(
+                            Ulid::from_bytes([
+                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            ]).unwrap(),
+                        );
+                        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+                        
+                        let snapshot_event = Event::new(
+                            SystemSnapshotPayload {
+                                active_watchers,
+                                dbus_enabled: self.config.dbus_enabled,
+                                journal_enabled: self.config.journal_enabled,
+                                udev_enabled: self.config.udev_enabled,
+                                systemd_enabled: self.config.systemd_enabled,
+                                snapshot_time: Utc::now(),
+                            },
+                            provenance,
+                        ).to_json_event()?;
 
                         context.emit_event(snapshot_event).await?;
                     }
@@ -745,7 +756,7 @@ impl ExplorationProvider for SystemProcessor {
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         } else {
             // Export configuration if no state available
             let config_data = serde_json::json!({
@@ -763,7 +774,7 @@ impl ExplorationProvider for SystemProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         }
 
         Ok(())

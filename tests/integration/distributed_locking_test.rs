@@ -90,7 +90,7 @@ async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> color_eyr
     
     // Wait for all tasks to complete
     for task in tasks {
-        task.await.unwrap();
+        task.await.expect("Task should complete without panic");
     }
     
     let successes = success_count.load(Ordering::SeqCst);
@@ -132,7 +132,7 @@ async fn test_distributed_coordination_instance_registration(ctx: TestContext) -
     
     let instance = SatelliteInstance::new(
         "registration_test",
-        SatelliteVersion::parse("1.0.100+test123").unwrap()
+        SatelliteVersion::parse("1.0.100+test123").expect("Valid version string")
     );
     
     let mut coordination = DistributedCoordination::new(instance.clone(), pool.clone());
@@ -149,7 +149,7 @@ async fn test_distributed_coordination_instance_registration(ctx: TestContext) -
     .await?;
     
     assert!(registered.is_some());
-    let reg = registered.unwrap();
+    let reg = registered.expect("Registration should succeed");
     assert_eq!(reg.service_name, "registration_test");
     assert_eq!(reg.version, "1.0.100+test123");
     
@@ -163,17 +163,17 @@ async fn test_distributed_coordination_version_based_leadership(ctx: TestContext
     // Create instances with different versions
     let old_instance = SatelliteInstance::new(
         "version_leadership_test",
-        SatelliteVersion::parse("1.0.100+old").unwrap()
+        SatelliteVersion::parse("1.0.100+old").expect("Valid version string")
     );
     
     let new_instance = SatelliteInstance::new(
         "version_leadership_test", 
-        SatelliteVersion::parse("1.0.200+new").unwrap()
+        SatelliteVersion::parse("1.0.200+new").expect("Valid version string")
     );
     
     let newest_instance = SatelliteInstance::new(
         "version_leadership_test",
-        SatelliteVersion::parse("1.1.0+newest").unwrap()
+        SatelliteVersion::parse("1.1.0+newest").expect("Valid version string")
     );
     
     let mut coord_old = DistributedCoordination::new(old_instance, pool.clone());
@@ -205,7 +205,7 @@ async fn test_distributed_coordination_leadership_handoff(ctx: TestContext) -> c
     // Start with an older version as leader
     let old_instance = SatelliteInstance::new(
         "handoff_test",
-        SatelliteVersion::parse("1.0.100+old").unwrap()
+        SatelliteVersion::parse("1.0.100+old").expect("Valid version string")
     );
     
     let mut old_coord = DistributedCoordination::new(old_instance, pool.clone());
@@ -218,7 +218,7 @@ async fn test_distributed_coordination_leadership_handoff(ctx: TestContext) -> c
     // Deploy new version
     let new_instance = SatelliteInstance::new(
         "handoff_test",
-        SatelliteVersion::parse("1.0.200+new").unwrap()
+        SatelliteVersion::parse("1.0.200+new").expect("Valid version string")
     );
     
     let mut new_coord = DistributedCoordination::new(new_instance, pool.clone());
@@ -244,7 +244,7 @@ async fn test_distributed_coordination_leadership_contention(ctx: TestContext) -
     let instances: Vec<_> = (0..5).map(|i| {
         SatelliteInstance::new(
             "contention_test",
-            SatelliteVersion::parse(&format!("1.0.100+commit{:03}", i)).unwrap()
+            SatelliteVersion::parse(&format!("1.0.100+commit{:03}", i)).expect("Valid version string")
         )
     }).collect();
     
@@ -305,7 +305,7 @@ async fn test_advisory_lock_stress_test(ctx: TestContext) -> color_eyre::Result<
     
     // Wait for all tasks
     for task in tasks {
-        task.await.unwrap();
+        task.await.expect("Task should complete without panic");
     }
     
     let total = total_acquisitions.load(Ordering::SeqCst);
@@ -354,7 +354,7 @@ async fn test_distributed_coordination_leader_heartbeat_simulation(ctx: TestCont
     
     let instance = SatelliteInstance::new(
         "heartbeat_test",
-        SatelliteVersion::parse("1.0.100+heartbeat").unwrap()
+        SatelliteVersion::parse("1.0.100+heartbeat").expect("Valid version string")
     );
     
     let mut coordination = DistributedCoordination::new(instance.clone(), pool.clone());
@@ -384,7 +384,7 @@ async fn test_distributed_coordination_leader_heartbeat_simulation(ctx: TestCont
         .await?;
         
         assert!(current_leader.is_some());
-        assert_eq!(current_leader.unwrap().instance_id, *instance.instance_id());
+        assert_eq!(current_leader.expect("Leader should exist").instance_id, *instance.instance_id());
     }
     
     Ok(())

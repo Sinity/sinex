@@ -10,8 +10,8 @@ pub mod unified_processor;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        types::{events::payloads::*, events::Event, ulid::Ulid, Id},
-        RawEvent,
+        types::{events::payloads::*, ulid::Ulid, Id},
+        Event, JsonValue,
     };
 
     // SDK facade for common processor types
@@ -103,7 +103,7 @@ pub struct CanonicalizedCommand {
     pub arguments: Vec<String>,
     pub flags: Vec<String>,
     pub target_paths: Vec<String>,
-    pub source_event_id: Id<RawEvent>,
+    pub source_event_id: Id<Event<JsonValue>>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -157,7 +157,7 @@ pub enum SafetyLevel {
 pub struct TerminalCommandCanonicalizer {
     context: Option<StreamProcessorContext>,
     config: TerminalCommandCanonicalizerConfig,
-    event_sender: Option<mpsc::UnboundedSender<RawEvent>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     canonicalized_commands: Vec<CanonicalizedCommand>,
 }
@@ -254,7 +254,7 @@ impl TerminalCommandCanonicalizer {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.processing_window_seconds as i64);
 
@@ -288,7 +288,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Canonicalize commands from terminal events
-    async fn canonicalize_commands_from_events(&mut self, events: &[RawEvent]) {
+    async fn canonicalize_commands_from_events(&mut self, events: &[Event<JsonValue>]) {
         self.canonicalized_commands.clear();
 
         for event in events {
@@ -308,7 +308,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Extract command string from terminal event
-    fn extract_command_from_event(&self, event: &RawEvent) -> Option<String> {
+    fn extract_command_from_event(&self, event: &Event<JsonValue>) -> Option<String> {
         if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
             // Try various command fields
             if let Some(command) = payload.get("command").and_then(|v| v.as_str()) {
@@ -336,7 +336,7 @@ impl TerminalCommandCanonicalizer {
     fn canonicalize_command(
         &self,
         original_command: &str,
-        event: &RawEvent,
+        event: &Event<JsonValue>,
     ) -> Option<CanonicalizedCommand> {
         let trimmed_command = original_command.trim();
         if trimmed_command.is_empty() {
@@ -539,7 +539,7 @@ impl TerminalCommandCanonicalizer {
     async fn generate_canonical_command_event(
         &self,
         canonical_cmd: &CanonicalizedCommand,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<JsonValue>> {
         let canonical_payload = serde_json::json!({
             "analysis_type": "canonical_command",
             "original_command": canonical_cmd.original_command,
@@ -555,7 +555,7 @@ impl TerminalCommandCanonicalizer {
         });
 
         // Create synthesized event with proper provenance
-        let event = RawEvent::from_synthesis(
+        let event = Event::<JsonValue>::new(
             "terminal-canonicalizer",
             "terminal.command_canonicalized",
             canonical_payload,
@@ -567,7 +567,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Analyze command patterns
-    async fn analyze_command_patterns(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn analyze_command_patterns(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut pattern_events = Vec::new();
 
         // Group commands by category and intent
@@ -590,7 +590,7 @@ impl TerminalCommandCanonicalizer {
         // Find common command sequences
         let command_sequences = self.find_command_sequences();
 
-        let all_event_ids: Vec<Id<RawEvent>> = self
+        let all_event_ids: Vec<Id<Event<JsonValue>>> = self
             .canonicalized_commands
             .iter()
             .map(|cmd| cmd.source_event_id.clone())
@@ -607,7 +607,7 @@ impl TerminalCommandCanonicalizer {
             "generated_at": Utc::now(),
         });
 
-        let pattern_event = RawEvent::from_synthesis(
+        let pattern_event = Event::<JsonValue>::new(
             "terminal-canonicalizer",
             "terminal.command_pattern",
             pattern_payload,
@@ -675,7 +675,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Analyze command safety patterns
-    async fn analyze_command_safety(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn analyze_command_safety(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut safety_events = Vec::new();
 
         // Count dangerous and critical commands
@@ -691,7 +691,7 @@ impl TerminalCommandCanonicalizer {
             .collect();
 
         if !dangerous_commands.is_empty() {
-            let dangerous_event_ids: Vec<Id<RawEvent>> = dangerous_commands
+            let dangerous_event_ids: Vec<Id<Event<JsonValue>>> = dangerous_commands
                 .iter()
                 .map(|cmd| cmd.source_event_id.clone())
                 .collect();
@@ -710,7 +710,7 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let safety_event = RawEvent::from_synthesis(
+            let safety_event = Event::<JsonValue>::new(
                 "terminal-canonicalizer",
                 "terminal.safety_analysis",
                 safety_payload,
@@ -774,14 +774,14 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Analyze shell workflow patterns
-    async fn analyze_shell_workflows(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn analyze_shell_workflows(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut workflow_events = Vec::new();
 
         // Analyze workflow patterns
         let workflows = self.identify_workflows();
 
         if !workflows.is_empty() {
-            let all_event_ids: Vec<Id<RawEvent>> = self
+            let all_event_ids: Vec<Id<Event<JsonValue>>> = self
                 .canonicalized_commands
                 .iter()
                 .map(|cmd| cmd.source_event_id.clone())
@@ -795,7 +795,7 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let workflow_event = RawEvent::from_synthesis(
+            let workflow_event = Event::<JsonValue>::new(
                 "terminal-canonicalizer",
                 "terminal.workflow_detected",
                 workflow_payload,

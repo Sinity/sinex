@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    db::models::{event::OffsetKind, Provenance, RawEvent, SourceMaterial},
+    db::models::{event::OffsetKind, Event, JsonValue, Provenance, SourceMaterial},
     types::{
         domain::{EventSource, EventType},
         Id, Ulid,
@@ -65,14 +65,14 @@ pub struct MaterialSlice {
 pub struct SensdTerminalProcessor {
     config: SensdIntegrationConfig,
     db_pool: PgPool,
-    event_sender: mpsc::Sender<RawEvent>,
+    event_sender: mpsc::Sender<Event<JsonValue>>,
 }
 
 impl SensdTerminalProcessor {
     /// Create new processor
     pub async fn new(
         config: SensdIntegrationConfig,
-        event_sender: mpsc::Sender<RawEvent>,
+        event_sender: mpsc::Sender<Event<JsonValue>>,
     ) -> Result<Self> {
         let db_pool = PgPool::connect(&config.database_url).await?;
 
@@ -90,21 +90,21 @@ impl SensdTerminalProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config, 
+                status, priority, updated_at
             )
-            VALUES ($1::ulid, 'append_stream', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'append_stream', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
-            db_path,                              // target_uri
-            format!("atuin-history:{}", db_path), // source_identifier
-            json!({ "mode": "continuous" }),      // acquisition_mode
+            db_path, // target_uri
             json!({
+                "source_identifier": format!("atuin-history:{}", db_path),
                 "format": "sqlite",
                 "table": "history",
                 "poll_interval_secs": 5,
                 "batch_size": 100,
-            }), // parameters
+                "mode": "continuous"
+            }), // config
         )
         .execute(&self.db_pool)
         .await?;
@@ -123,20 +123,20 @@ impl SensdTerminalProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config,
+                status, priority, updated_at
             )
-            VALUES ($1::ulid, 'append_stream', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'append_stream', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
             file_path,                             // target_uri
-            format!("history-file:{}", file_path), // source_identifier
-            json!({ "mode": "continuous" }),       // acquisition_mode
             json!({
+                "source_identifier": format!("history-file:{}", file_path),
                 "format": "text_lines",
                 "poll_interval_secs": 3,
                 "batch_size": 50,
-            }), // parameters
+                "mode": "continuous"
+            }), // config
         )
         .execute(&self.db_pool)
         .await?;
@@ -155,21 +155,21 @@ impl SensdTerminalProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config,
+                status, priority, updated_at
             )
-            VALUES ($1::ulid, 'tree_watch', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'tree_watch', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
             recordings_dir,                           // target_uri
-            format!("recordings:{}", recordings_dir), // source_identifier
-            json!({ "mode": "continuous" }),          // acquisition_mode
             json!({
+                "source_identifier": format!("recordings:{}", recordings_dir),
                 "patterns": ["*.cast"],
                 "recursive": false,
                 "events": ["CREATE", "MODIFY", "DELETE"],
                 "poll_interval_secs": 5,
-            }), // parameters
+                "mode": "continuous"
+            }), // config
         )
         .execute(&self.db_pool)
         .await?;
@@ -188,20 +188,20 @@ impl SensdTerminalProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config,
+                status, priority, updated_at
             )
-            VALUES ($1::ulid, 'append_stream', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'append_stream', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
             socket_path,                             // target_uri
-            format!("kitty-socket:{}", socket_path), // source_identifier
-            json!({ "mode": "continuous" }),         // acquisition_mode
             json!({
+                "source_identifier": format!("kitty-socket:{}", socket_path),
                 "format": "kitty_remote_control",
                 "commands": ["ls", "get-text"],
                 "poll_interval_secs": 1,
-            }), // parameters
+                "mode": "continuous"
+            }), // config
         )
         .execute(&self.db_pool)
         .await?;
@@ -264,17 +264,15 @@ impl SensdTerminalProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        tl.material_id as "material_id: Ulid",
+                        tl.source_material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        tl.note,
-                        sm.optional_blob_id as "optional_blob_id?: Ulid",
-                        sm.data as "inline_data?: Vec<u8>"
+                        sm.optional_blob_id as "optional_blob_id?: Ulid"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.source_material_id::uuid = tl.material_id::uuid
-                    WHERE tl.material_id = $1::ulid
+                        ON sm.id::uuid = tl.source_material_id::uuid
+                    WHERE tl.source_material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
                     LIMIT $3
@@ -294,9 +292,7 @@ impl SensdTerminalProcessor {
 
                         for record in records {
                             // Load data from storage
-                            let data = if let Some(inline_data) = record.inline_data {
-                                inline_data
-                            } else if let Some(blob_id) = record.optional_blob_id {
+                            let data = if let Some(blob_id) = record.optional_blob_id {
                                 match self.load_blob_data(blob_id).await {
                                     Ok(blob_data) => {
                                         let start = record.offset_start as usize;
@@ -321,6 +317,22 @@ impl SensdTerminalProcessor {
                                 vec![]
                             };
 
+                            // Get metadata from source_material_registry
+                            let metadata = sqlx::query!(
+                                r#"
+                                SELECT metadata
+                                FROM raw.source_material_registry
+                                WHERE id = $1::ulid
+                                "#,
+                                record.material_id as Ulid
+                            )
+                            .fetch_optional(&self.db_pool)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|r| r.metadata)
+                            .unwrap_or_else(|| serde_json::json!({}));
+
                             let slice = MaterialSlice {
                                 material_id: record.material_id,
                                 offset_start: record.offset_start,
@@ -328,7 +340,7 @@ impl SensdTerminalProcessor {
                                 ts_capture_start: record.ts_capture,
                                 ts_capture_end: record.ts_capture,
                                 data,
-                                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
+                                metadata,
                             };
 
                             offset = record.offset_end;
@@ -355,7 +367,7 @@ impl SensdTerminalProcessor {
                 content_hash,
                 size_bytes
             FROM core.blobs
-            WHERE id = $1::uuid
+            WHERE id::uuid = $1::uuid
             "#,
             ulid_to_uuid(blob_id),
         )
@@ -394,15 +406,21 @@ impl SensdTerminalProcessor {
     }
 
     /// Convert a material slice to terminal events
-    async fn slice_to_events(&self, slice: MaterialSlice) -> Result<Vec<RawEvent>> {
+    async fn slice_to_events(&self, slice: MaterialSlice) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
-        // Determine source type from metadata
+        // Get source identifier from metadata or query if not present
         let source_identifier = slice
             .metadata
             .get("source_identifier")
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+            .map(|s| s.to_string())
+            .or_else(|| {
+                // Fallback: query from database if not in metadata
+                // This is less efficient but ensures compatibility
+                None
+            })
+            .unwrap_or_else(|| "unknown".to_string());
 
         if source_identifier.starts_with("atuin-history:") {
             events.extend(self.process_atuin_slice(&slice).await?);
@@ -420,7 +438,7 @@ impl SensdTerminalProcessor {
     }
 
     /// Process Atuin database material slice
-    async fn process_atuin_slice(&self, slice: &MaterialSlice) -> Result<Vec<RawEvent>> {
+    async fn process_atuin_slice(&self, slice: &MaterialSlice) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         // Parse SQLite data from slice (simplified - real implementation would parse SQLite binary format)
@@ -430,7 +448,7 @@ impl SensdTerminalProcessor {
         if let Ok(entries) = serde_json::from_str::<serde_json::Value>(&data_str) {
             if let Some(entries_array) = entries.as_array() {
                 for entry in entries_array {
-                    let mut event = RawEvent::from_material(
+                    let mut event = Event::<JsonValue>::new(
                         EventSource::from("terminal"),
                         EventType::from("terminal.atuin_command_executed"),
                         json!({
@@ -463,7 +481,10 @@ impl SensdTerminalProcessor {
     }
 
     /// Process shell history file material slice
-    async fn process_history_file_slice(&self, slice: &MaterialSlice) -> Result<Vec<RawEvent>> {
+    async fn process_history_file_slice(
+        &self,
+        slice: &MaterialSlice,
+    ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         let data_str = String::from_utf8_lossy(&slice.data);
@@ -488,7 +509,7 @@ impl SensdTerminalProcessor {
                 "terminal.bash_historical_command"
             };
 
-            let mut event = RawEvent::from_material(
+            let mut event = Event::<JsonValue>::new(
                 EventSource::from("terminal"),
                 EventType::from(event_type),
                 json!({
@@ -516,7 +537,10 @@ impl SensdTerminalProcessor {
     }
 
     /// Process recording material slice
-    async fn process_recording_slice(&self, slice: &MaterialSlice) -> Result<Vec<RawEvent>> {
+    async fn process_recording_slice(
+        &self,
+        slice: &MaterialSlice,
+    ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         let event_type = slice
@@ -533,7 +557,7 @@ impl SensdTerminalProcessor {
 
         match event_type {
             "CREATE" => {
-                let mut event = RawEvent::from_material(
+                let mut event = Event::<JsonValue>::new(
                     EventSource::from("terminal"),
                     EventType::from("terminal.recording_started"),
                     json!({
@@ -560,7 +584,7 @@ impl SensdTerminalProcessor {
                 // Recording file was updated - could indicate session progress
             }
             "DELETE" => {
-                let mut event = RawEvent::from_material(
+                let mut event = Event::<JsonValue>::new(
                     EventSource::from("terminal"),
                     EventType::from("terminal.recording_ended"),
                     json!({
@@ -589,14 +613,14 @@ impl SensdTerminalProcessor {
     }
 
     /// Process Kitty socket material slice
-    async fn process_kitty_slice(&self, slice: &MaterialSlice) -> Result<Vec<RawEvent>> {
+    async fn process_kitty_slice(&self, slice: &MaterialSlice) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         let data_str = String::from_utf8_lossy(&slice.data);
 
         // Parse Kitty remote control response data
         if let Ok(kitty_data) = serde_json::from_str::<serde_json::Value>(&data_str) {
-            // Process based on command type stored in metadata
+            // Get command type from metadata
             let command_type = slice
                 .metadata
                 .get("command")
@@ -608,7 +632,7 @@ impl SensdTerminalProcessor {
                     // Process window/tab listings
                     if let Some(windows) = kitty_data.as_array() {
                         for window in windows {
-                            let mut event = RawEvent::from_material(
+                            let mut event = Event::<JsonValue>::new(
                                 EventSource::from("terminal"),
                                 EventType::from("terminal.kitty_window_state"),
                                 window.clone(),
@@ -631,7 +655,7 @@ impl SensdTerminalProcessor {
                 }
                 "get-text" => {
                     // Process scrollback content
-                    let mut event = RawEvent::from_material(
+                    let mut event = Event::<JsonValue>::new(
                         EventSource::from("terminal"),
                         EventType::from("terminal.kitty_content_captured"),
                         json!({
@@ -673,17 +697,18 @@ impl SensdTerminalProcessor {
             let completed_jobs = sqlx::query!(
                 r#"
                 SELECT 
-                    job_id as "job_id: Ulid",
-                    material_id as "material_id: Ulid"
-                FROM raw.sensor_jobs
-                WHERE status = 'completed'
-                AND material_id IS NOT NULL
-                AND source_identifier ~ '^(atuin-history:|history-file:|recordings:|kitty-socket:)'
+                    sj.id as "job_id: Ulid",
+                    sm.id as "material_id: Ulid"
+                FROM raw.sensor_jobs sj
+                LEFT JOIN raw.source_material_registry sm 
+                    ON sm.source_identifier LIKE '%' || sj.target_uri || '%'
+                WHERE sj.status = 'retired'
+                AND sm.id IS NOT NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM core.events 
-                    WHERE source_material_id = sensor_jobs.material_id
+                    WHERE source_material_id = sm.id
                 )
-                ORDER BY completed_at DESC
+                ORDER BY sj.updated_at DESC
                 LIMIT 10
                 "#,
             )

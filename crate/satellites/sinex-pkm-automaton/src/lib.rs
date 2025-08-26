@@ -8,7 +8,7 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
+        db::models::Event,
         types::{events::payloads::*, Id},
     };
 
@@ -89,7 +89,7 @@ pub struct KnowledgeItem {
     pub keywords: Vec<String>,
     pub related_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
-    pub source_event_id: Id<RawEvent>,
+    pub source_event_id: Id<Event<JsonValue>>,
 }
 
 /// Types of knowledge items we can extract
@@ -114,7 +114,7 @@ pub enum KnowledgeItemType {
 pub struct PKMAutomaton {
     context: Option<StreamProcessorContext>,
     config: PKMAutomatonConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     knowledge_items: Vec<KnowledgeItem>,
 }
@@ -208,7 +208,7 @@ impl PKMAutomaton {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.analysis_window_seconds as i64);
 
@@ -226,7 +226,7 @@ impl PKMAutomaton {
     }
 
     /// Extract knowledge items from events
-    async fn extract_knowledge_items(&mut self, events: &[RawEvent]) {
+    async fn extract_knowledge_items(&mut self, events: &[Event<JsonValue>]) {
         self.knowledge_items.clear();
 
         for event in events {
@@ -242,7 +242,7 @@ impl PKMAutomaton {
     }
 
     /// Extract a knowledge item from a single event
-    fn extract_knowledge_item_from_event(&self, event: &RawEvent) -> Option<KnowledgeItem> {
+    fn extract_knowledge_item_from_event(&self, event: &Event<JsonValue>) -> Option<KnowledgeItem> {
         if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
             let item_type = self.determine_knowledge_item_type(event, &payload);
             let title = self.extract_title(&payload, event);
@@ -267,7 +267,7 @@ impl PKMAutomaton {
     /// Determine the type of knowledge item based on event and payload
     fn determine_knowledge_item_type(
         &self,
-        event: &RawEvent,
+        event: &Event<JsonValue>,
         payload: &serde_json::Value,
     ) -> KnowledgeItemType {
         let event_type_str = event.event_type.to_string();
@@ -333,7 +333,7 @@ impl PKMAutomaton {
     }
 
     /// Extract title from payload
-    fn extract_title(&self, payload: &serde_json::Value, event: &RawEvent) -> String {
+    fn extract_title(&self, payload: &serde_json::Value, event: &Event<JsonValue>) -> String {
         // Try explicit title field
         if let Some(title) = payload.get("title").and_then(|v| v.as_str()) {
             return title.to_string();
@@ -464,7 +464,7 @@ impl PKMAutomaton {
     }
 
     /// Generate knowledge extraction insights
-    async fn generate_knowledge_extraction_insights(&self) -> SatelliteResult<RawEvent> {
+    async fn generate_knowledge_extraction_insights(&self) -> SatelliteResult<Event<JsonValue>> {
         let total_items = self.knowledge_items.len();
 
         // Count by type
@@ -498,7 +498,7 @@ impl PKMAutomaton {
         keyword_pairs.sort_by(|a, b| b.1.cmp(&a.1));
         keyword_pairs.truncate(20);
 
-        let source_event_ids: Vec<Id<RawEvent>> = self
+        let source_event_ids: Vec<Id<Event<JsonValue>>> = self
             .knowledge_items
             .iter()
             .map(|item| item.source_event_id)
@@ -514,7 +514,7 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_synthesis(
+        let event = Event::new(
             "pkm-automaton",
             "pkm.knowledge_extraction",
             insights_payload,
@@ -526,7 +526,10 @@ impl PKMAutomaton {
     }
 
     /// Track learning sessions based on event patterns
-    async fn track_learning_sessions(&self, events: &[RawEvent]) -> SatelliteResult<Vec<RawEvent>> {
+    async fn track_learning_sessions(
+        &self,
+        events: &[Event<JsonValue>],
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut learning_events = Vec::new();
 
         // Simple learning session detection: sequences of related knowledge events
@@ -582,7 +585,7 @@ impl PKMAutomaton {
     }
 
     /// Check if an event is related to learning activities
-    fn is_learning_related_event(&self, event: &RawEvent) -> bool {
+    fn is_learning_related_event(&self, event: &Event<JsonValue>) -> bool {
         let event_type_str = event.event_type.to_string();
         let source_str = event.source.to_string();
 
@@ -600,7 +603,7 @@ impl PKMAutomaton {
     async fn create_learning_session_event(
         &self,
         session: &LearningSession,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<JsonValue>> {
         let duration_minutes = (session.last_activity - session.start_time).num_minutes();
 
         let session_payload = serde_json::json!({
@@ -613,7 +616,7 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_synthesis(
+        let event = Event::new(
             "pkm-automaton",
             "pkm.learning_session",
             session_payload,
@@ -625,7 +628,7 @@ impl PKMAutomaton {
     }
 
     /// Build knowledge graph insights
-    async fn build_knowledge_graph_insights(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn build_knowledge_graph_insights(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut graph_events = Vec::new();
 
         // Simple knowledge relationship detection
@@ -666,7 +669,7 @@ impl PKMAutomaton {
         }
 
         if !relationships.is_empty() {
-            let all_event_ids: Vec<Id<RawEvent>> = self
+            let all_event_ids: Vec<Id<Event<JsonValue>>> = self
                 .knowledge_items
                 .iter()
                 .map(|item| item.source_event_id)
@@ -681,7 +684,7 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event = Event::from_synthesis(
+            let graph_event = Event::new(
                 "pkm-automaton",
                 "pkm.knowledge_graph",
                 graph_payload,
@@ -698,8 +701,8 @@ impl PKMAutomaton {
     /// Analyze workflow patterns in events
     async fn analyze_workflow_patterns(
         &self,
-        events: &[RawEvent],
-    ) -> SatelliteResult<Vec<RawEvent>> {
+        events: &[Event<JsonValue>],
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut pattern_events = Vec::new();
 
         // Simple workflow pattern: detect sequences of related activities
@@ -731,7 +734,8 @@ impl PKMAutomaton {
         for (pattern, frequency) in activity_sequences {
             if frequency >= 3 {
                 // Pattern appeared at least 3 times
-                let pattern_event_ids: Vec<Id<RawEvent>> = events.iter().map(|e| e.id).collect();
+                let pattern_event_ids: Vec<Id<Event<JsonValue>>> =
+                    events.iter().map(|e| e.id).collect();
 
                 let workflow_payload = serde_json::json!({
                     "analysis_type": "workflow_pattern",
@@ -741,7 +745,7 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = Event::from_synthesis(
+                let pattern_event = Event::new(
                     "pkm-automaton",
                     "pkm.workflow_pattern",
                     workflow_payload,
@@ -757,7 +761,7 @@ impl PKMAutomaton {
     }
 
     /// Classify activity type from event
-    fn classify_activity_type(&self, event: &RawEvent) -> String {
+    fn classify_activity_type(&self, event: &Event<JsonValue>) -> String {
         let event_type = event.event_type.to_string();
         let source = event.source.to_string();
 
@@ -779,7 +783,7 @@ impl PKMAutomaton {
 struct LearningSession {
     start_time: DateTime<Utc>,
     last_activity: DateTime<Utc>,
-    events: Vec<Id<RawEvent>>,
+    events: Vec<Id<Event<JsonValue>>>,
     topics: Vec<String>,
 }
 

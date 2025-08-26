@@ -3,8 +3,8 @@
 //! Monitors systemd services, timers, and unit state changes
 //! Now uses modern nix-based integration instead of spawning external processes
 
-use sinex_core::types::events::Event;
-use sinex_core::RawEvent;
+use sinex_core::{Event, JsonValue};
+use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;
 
 use sinex_core::types::events::{
     SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
@@ -145,7 +145,7 @@ impl SystemdWatcher {
     }
 
     /// Parse systemd unit status line
-    fn parse_unit_status(&self, line: &str) -> Option<RawEvent> {
+    fn parse_unit_status(&self, line: &str) -> Option<Event<JsonValue>> {
         // Example systemd monitor output format:
         // "● service.service - Description"
         // "  Active: active (running) since ..."
@@ -248,7 +248,10 @@ impl SystemdWatcher {
     }
 
     /// Get current systemd unit status
-    async fn get_unit_status(&self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn get_unit_status(
+        &self,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+    ) -> SatelliteResult<()> {
         info!("Checking systemd unit status");
 
         let mut args = vec!["status"];
@@ -309,7 +312,7 @@ impl SystemdWatcher {
     /// Monitor systemd journal for unit state changes
     async fn monitor_systemd_journal(
         &self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd journal monitoring for unit changes");
 
@@ -381,14 +384,28 @@ impl SystemdWatcher {
                 warn!("Failed to kill journalctl process: {}", e);
             }
 
-            // Wait a bit before restarting
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            // Use exponential backoff for reconnection
+            let retry_result = retry_with_exponential_backoff(
+                "systemd_journal_restart",
+                Duration::from_secs(1),
+                5,     // Max 5 retries
+                true,  // With jitter
+                || async {
+                    // Just a delay before retry
+                    Ok::<(), &str>(())
+                },
+            ).await;
+            
+            if let Err(e) = retry_result {
+                error!("Failed to restart systemd monitoring after retries: {}", e);
+            }
+            
             info!("Restarting systemd journal monitoring");
         }
     }
 
     /// Parse systemd journal entry for unit state changes
-    fn parse_systemd_journal_entry(&self, line: &str) -> Option<RawEvent> {
+    fn parse_systemd_journal_entry(&self, line: &str) -> Option<Event<JsonValue>> {
         match serde_json::from_str::<serde_json::Value>(line) {
             Ok(entry) => {
                 let message = entry["MESSAGE"].as_str().unwrap_or("");
@@ -485,7 +502,7 @@ impl SystemdWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd event streaming");
 

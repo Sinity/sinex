@@ -8,6 +8,7 @@ use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
+use crate::types::error::SinexError;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
@@ -227,8 +228,9 @@ pub struct EventTypeCount {
 }
 
 impl<'a> EventRepository<'a> {
-    #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
-    pub async fn insert(&self, mut event: Event<JsonValue>) -> DbResult<Event<JsonValue>> {
+    #[instrument(skip(self, event))]
+    pub async fn insert(&self, event: impl Into<Event<JsonValue>>) -> DbResult<Event<JsonValue>> {
+        let mut event = event.into();
         let id = event
             .id
             .get_or_insert_with(Id::<Event<JsonValue>>::new)
@@ -876,11 +878,17 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self, tx, event), fields(event_source = %event.source, event_type = %event.event_type))]
-    pub async fn insert_with_tx(
+    pub async fn insert_with_tx<T>(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        mut event: Event<JsonValue>,
-    ) -> DbResult<Event<JsonValue>> {
+        event: Event<T>,
+    ) -> DbResult<Event<JsonValue>>
+    where
+        T: serde::Serialize,
+    {
+        // Convert typed event to JSON event for storage
+        let mut event = event.to_json_event()
+            .map_err(|e| SinexError::database("Failed to serialize event payload").with_source(e))?;
         let id = event
             .id
             .get_or_insert_with(Id::<Event<JsonValue>>::new)
@@ -954,10 +962,21 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self, events), fields(batch_size = events.len()))]
-    pub async fn insert_batch(
+    pub async fn insert_batch<T>(
         &self,
-        events: Vec<Event<JsonValue>>,
-    ) -> DbResult<Vec<Event<JsonValue>>> {
+        events: Vec<Event<T>>,
+    ) -> DbResult<Vec<Event<JsonValue>>>
+    where
+        T: serde::Serialize,
+    {
+        // Convert all typed events to JSON events
+        let mut json_events = Vec::with_capacity(events.len());
+        for event in events {
+            let json_event = event.to_json_event()
+                .map_err(|e| SinexError::database("Failed to serialize event payload").with_source(e))?;
+            json_events.push(json_event);
+        }
+        let events = json_events;
         if events.is_empty() {
             return Ok(Vec::new());
         }

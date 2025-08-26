@@ -8,7 +8,7 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
+        db::models::Event,
         types::{events::payloads::*, Id},
     };
 
@@ -78,7 +78,7 @@ impl Default for AnalyticsAutomatonConfig {
 pub struct AnalyticsAutomaton {
     context: Option<StreamProcessorContext>,
     config: AnalyticsAutomatonConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
 }
 
@@ -143,7 +143,7 @@ impl AnalyticsAutomaton {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.analysis_window_seconds as i64);
 

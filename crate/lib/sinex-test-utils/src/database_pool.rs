@@ -1144,8 +1144,8 @@ mod tests {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
         let db_name;
@@ -1157,7 +1157,7 @@ mod tests {
             // Insert test data
 
             let repo = db.pool.events();
-            let event = RawEvent::test_event(
+            let event = Event::<JsonValue>::test_event(
                 EventSource::new("test"),
                 EventType::new("test.event"),
                 serde_json::json!({}),
@@ -1245,12 +1245,12 @@ mod tests {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
         let repo = db.pool.events();
-        let event_to_insert = RawEvent::test_event(
+        let event_to_insert = Event::<JsonValue>::test_event(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
@@ -1310,12 +1310,12 @@ mod tests {
                 use sinex_core::*;
                 use sinex_core::{
                     Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation,
-                    Operation, OperationRecord, Provenance, RawEvent, SourceMaterial,
+                    Event, JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
                 };
 
                 let repo = db.pool.events();
                 for _j in 0..5 {
-                    let event = RawEvent::test_event(
+                    let event = Event::<JsonValue>::test_event(
                         EventSource::new(&format!("task_{}", i)),
                         EventType::new("stress.test"),
                         serde_json::json!({}),
@@ -1495,13 +1495,13 @@ mod benches {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
         let repo = pool.events();
         for i in 0..100 {
-            let new_event = RawEvent::test_event(
+            let new_event = Event::<JsonValue>::test_event(
                 EventSource::new("bench"),
                 EventType::new("test"),
                 serde_json::json!({"index": i}),
@@ -1545,13 +1545,13 @@ mod benches {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
         let repo = pool.events();
         for i in 0..50 {
-            let new_event = RawEvent::test_event(
+            let new_event = Event::<JsonValue>::test_event(
                 EventSource::new(&format!("source_{}", i % 10)),
                 EventType::new("test"),
                 serde_json::json!({}),

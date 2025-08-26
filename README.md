@@ -50,7 +50,7 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
   - pg_jsonschema for event validation
   - pgvector for semantic search (future)
 - **Language**: Rust for core system, Python for CLI tools
-- **Message Bus**: Redis Streams for real-time event distribution
+- **Message Bus**: NATS for real-time event distribution
 
 ### Key Features
 - **Satellite Architecture**: Each event source runs as an independent systemd service

@@ -5,8 +5,8 @@ use crate::{
     config::IngestdConfig,
     proto::{
         ingest_service_server::{IngestService as IngestServiceTrait, IngestServiceServer},
-        BatchResponse, EventBatch, HealthRequest, HealthResponse, IngestResponse,
-        RawEvent as ProtoRawEvent,
+        BatchResponse, RawEvent as ProtoEvent, EventBatch, HealthRequest, HealthResponse,
+        IngestResponse,
     },
     validator::EventValidator,
     IngestdResult, SinexError,
@@ -18,15 +18,15 @@ use async_nats::{jetstream, Client as NatsClient};
 use sinex_core::environment as sinex_environment;
 use sinex_core::{
     db::{
-        models::{Provenance, RawEvent},
+        models::{Event, Provenance},
         query_helpers::{ulid_to_uuid, uuid_to_ulid},
         repositories::DbPoolExt,
-        telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator},
     },
     types::{
         domain::{EventSource, EventType, HostName},
         Id, Ulid,
     },
+    JsonValue,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 use tonic::{transport::Server, Request, Response, Status};
@@ -42,7 +42,7 @@ use std::{
 };
 use tokio::{
     net::UnixListener,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Mutex, RwLock},
     time::{interval, Duration},
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -116,12 +116,11 @@ pub struct IngestService {
     db_pool: Option<PgPool>,
     nats_client: Option<NatsClient>,
     jetstream: Option<jetstream::Context>,
-    validator: Arc<Mutex<EventValidator>>,
+    validator: Arc<RwLock<EventValidator>>,
     stats: Arc<IngestStats>,
     shutdown_flag: Arc<AtomicBool>,
-    event_buffer: Arc<Mutex<Vec<RawEvent>>>,
+    event_buffer: Arc<Mutex<Vec<Event<JsonValue>>>>,
     last_flush: Arc<Mutex<SystemTime>>,
-    telemetry: Option<Arc<TelemetryAccumulator>>,
     subject_cache: Arc<SubjectCache>,
 }
 
@@ -203,19 +202,17 @@ impl IngestService {
         };
 
         // Initialize telemetry (we'll set up the channel after service is created)
-        let telemetry = None;
 
         let service = Self {
             config: config.clone(),
             db_pool,
             nats_client,
             jetstream,
-            validator: Arc::new(Mutex::new(validator)),
+            validator: Arc::new(RwLock::new(validator)),
             stats: Arc::new(IngestStats::new()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             event_buffer: Arc::new(Mutex::new(Vec::with_capacity(config.batch_size))),
             last_flush: Arc::new(Mutex::new(SystemTime::now())),
-            telemetry,
             subject_cache: Arc::new(SubjectCache::new()),
         };
 
@@ -223,51 +220,11 @@ impl IngestService {
         Ok(service)
     }
 
-    /// Initialize telemetry system
-    async fn initialize_telemetry(&mut self) {
-        if self.config.dry_run || self.telemetry.is_some() {
-            return;
-        }
-
-        // Create a bounded channel for telemetry events (capacity: 500 for moderate telemetry load)
-        let (tx, mut rx) = mpsc::channel(500);
-
-        // Clone event buffer for telemetry injection
-        let event_buffer = self.event_buffer.clone();
-
-        // Spawn task to inject telemetry events into the main event stream
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let mut buffer = event_buffer.lock().await;
-                buffer.push(event);
-            }
-        });
-
-        let accumulator = TelemetryAccumulator::new("sinex-ingestd")
-            .with_event_sender(tx.clone())
-            .with_interval(Duration::from_secs(300)); // 5 minutes
-
-        // Set global telemetry
-        sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
-
-        // Spawn telemetry emitter
-        accumulator.clone().spawn_emitter();
-
-        // Also spawn system telemetry emitter
-        let system_emitter = SystemTelemetryEmitter::new(tx);
-        system_emitter.spawn_emitter();
-
-        self.telemetry = Some(Arc::new(accumulator));
-
-        info!("Telemetry system initialized");
-    }
 
     /// Run the ingestion service
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
 
-        // Initialize telemetry
-        self.initialize_telemetry().await;
 
         // Ensure socket directory exists
         if let Some(parent) = std::path::Path::new(&self.config.socket_path).parent() {
@@ -321,8 +278,8 @@ impl IngestService {
             }
         }
 
-        // Stats logging task
-        tokio::spawn(async move {
+        // Stats logging task with panic recovery
+        let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
 
             loop {
@@ -334,6 +291,13 @@ impl IngestService {
                         break;
                     }
                 }
+            }
+        });
+        
+        // Monitor the stats task for panics
+        tokio::spawn(async move {
+            if let Err(e) = stats_handle.await {
+                error!("Stats logging task panicked: {:?}", e);
             }
         });
 
@@ -393,7 +357,7 @@ impl IngestService {
                         };
 
                         if should_flush {
-                            let validator_guard = validator.lock().await;
+                            let validator_guard = validator.read().await;
                             Self::flush_events_static(
                                 &event_buffer,
                                 &last_flush,
@@ -408,7 +372,7 @@ impl IngestService {
                     }
                     _ = shutdown_signal(&shutdown_flag) => {
                         // Final flush on shutdown
-                        let validator_guard = validator.lock().await;
+                        let validator_guard = validator.read().await;
                         Self::flush_events_static(
                             &event_buffer,
                             &last_flush,
@@ -430,7 +394,6 @@ impl IngestService {
     async fn start_outbox_processor_task(&self, pool: PgPool, js: jetstream::Context) {
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
-        let telemetry = self.telemetry.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(100));
@@ -446,9 +409,6 @@ impl IngestService {
                             }
                             Err(e) => {
                                 error!("Failed to process outbox: {}", e);
-                                if let Some(ref telemetry) = telemetry {
-                                    telemetry.record_error("nats_outbox_processing");
-                                }
                                 stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                             }
                         }
@@ -592,7 +552,7 @@ impl IngestService {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut validator_guard = validator.lock().await;
+                        let mut validator_guard = validator.write().await;
                         if let Err(e) = validator_guard.reload_schemas(&pool).await {
                             warn!("Failed to reload schemas: {}", e);
                         }
@@ -607,7 +567,7 @@ impl IngestService {
 
     /// Flush events to database using transactional outbox pattern
     async fn flush_events_static(
-        event_buffer: &Arc<Mutex<Vec<RawEvent>>>,
+        event_buffer: &Arc<Mutex<Vec<Event<JsonValue>>>>,
         last_flush: &Arc<Mutex<SystemTime>>,
         config: &IngestdConfig,
         db_pool: Option<&PgPool>,
@@ -665,7 +625,7 @@ impl IngestService {
     /// - Transactional outbox pattern: INSERT events and outbox entries in same transaction
     async fn batch_write_to_db(
         pool: &PgPool,
-        events: &[RawEvent],
+        events: &[Event<JsonValue>],
         subject_cache: Option<&SubjectCache>,
         validator: Option<&EventValidator>,
     ) -> IngestdResult<()> {
@@ -823,10 +783,16 @@ impl IngestService {
         // Insert outbox entries for NATS publishing
         for (event_id, subject, payload) in outbox_entries {
             sqlx::query!(
-                "INSERT INTO core.outbox (id, event_id, destination, payload) VALUES (gen_ulid()::ulid, $1::ulid, $2, $3)",
-                ulid_to_uuid(event_id) as sqlx::types::Uuid,
+                r#"
+                INSERT INTO core.transactional_outbox (
+                    event_id, destination, payload, status, created_at
+                ) VALUES (
+                    $1::ulid, $2, $3, 'pending', NOW()
+                )
+                "#,
+                event_id as Ulid,
                 subject,
-                payload
+                payload.as_bytes()
             )
             .execute(&mut *tx)
             .await?;
@@ -843,24 +809,19 @@ impl IngestService {
     }
 
     /// Add event to buffer
-    async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
+    async fn add_event_to_buffer(&self, event: Event<JsonValue>) -> IngestdResult<()> {
         let event_type = &event.event_type;
         let start = std::time::Instant::now();
 
         let mut buffer = self.event_buffer.lock().await;
         buffer.push(event);
 
-        // Record telemetry
-        if let Some(ref telemetry) = self.telemetry {
-            let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            telemetry.record_event_processed(event_type.as_str(), duration_ms);
-        }
 
         // Check if we should flush immediately
         if buffer.len() >= self.config.batch_size {
             drop(buffer); // Release lock before flushing
 
-            let validator_guard = self.validator.lock().await;
+            let validator_guard = self.validator.read().await;
             Self::flush_events_static(
                 &self.event_buffer,
                 &self.last_flush,
@@ -884,7 +845,7 @@ impl IngestService {
         self.shutdown_flag.store(true, Ordering::Relaxed);
 
         // Final flush
-        let validator_guard = self.validator.lock().await;
+        let validator_guard = self.validator.read().await;
         Self::flush_events_static(
             &self.event_buffer,
             &self.last_flush,
@@ -935,7 +896,6 @@ impl Clone for IngestService {
             shutdown_flag: self.shutdown_flag.clone(),
             event_buffer: self.event_buffer.clone(),
             last_flush: self.last_flush.clone(),
-            telemetry: self.telemetry.clone(),
             subject_cache: self.subject_cache.clone(),
         }
     }
@@ -952,7 +912,7 @@ impl IngestServiceTrait for IngestServiceImpl {
     #[instrument(skip(self, request))]
     async fn ingest_event(
         &self,
-        request: Request<ProtoRawEvent>,
+        request: Request<ProtoEvent>,
     ) -> Result<Response<IngestResponse>, Status> {
         let proto_event = request.into_inner();
 
@@ -974,7 +934,7 @@ impl IngestServiceTrait for IngestServiceImpl {
 
         // Validate event
         let validation_result = {
-            let validator = self.service.validator.lock().await;
+            let validator = self.service.validator.read().await;
             validator.validate_event(&raw_event)?
         };
 
@@ -1063,7 +1023,7 @@ impl IngestServiceTrait for IngestServiceImpl {
                         raw_events.push(raw_event.clone());
                         let validator = self.service.validator.clone();
                         validation_futures.push(async move {
-                            let validator_guard = validator.lock().await;
+                            let validator_guard = validator.read().await;
                             validator_guard.validate_event(&raw_event)
                         });
                     }
@@ -1159,7 +1119,7 @@ impl IngestServiceTrait for IngestServiceImpl {
 
 impl IngestServiceImpl {
     /// Convert protobuf event to RawEvent
-    async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
+    async fn proto_to_event(&self, proto: ProtoEvent) -> IngestdResult<Event<JsonValue>> {
         // Validate and parse JSON payload
         let payload = sinex_core::types::validate_json(&proto.payload).map_err(|e| {
             SinexError::validation(format!("Invalid JSON payload: {}", e))
@@ -1180,13 +1140,13 @@ impl IngestServiceImpl {
         let source = EventSource::new(proto.source);
         let event_type = EventType::new(proto.event_type);
         let schema_id = {
-            let validator = self.service.validator.lock().await;
+            let validator = self.service.validator.read().await;
             validator
                 .get_schema_id(&source, &event_type)
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
-        let mut event = RawEvent::system_event(source, event_type, payload);
+        let mut event = Event::new(payload);
         event = event
             .with_host(HostName::new(proto.host))
             .with_ingestor_version(INGESTOR_VERSION);

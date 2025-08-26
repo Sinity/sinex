@@ -348,31 +348,23 @@ impl DesktopProcessor {
             INSERT INTO raw.source_material_registry (
                 id,
                 source_identifier, 
-                created_at,
-                data,
-                total_bytes,
-                content_type,
-                checksum,
+                staged_at,
+                material_kind,
+                timing_info_type,
                 metadata,
-                source_type,
                 status,
-                material_type,
-                source_uri
+                staged_by
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            material_id as Ulid,            // $1 - source_material_id
+            material_id as Ulid,            // $1 - id
             source_identifier,              // $2 - source_identifier
-            acquired_at,                    // $3 - created_at
-            data,                           // $4 - data
-            data.len() as i64,              // $5 - total_bytes
-            "application/json",             // $6 - content_type
-            data_hash.to_hex().to_string(), // $7 - checksum (as hex string)
-            metadata,                       // $8 - metadata
-            "desktop",                      // $9 - source_type
-            "finalized",                    // $10 - status
-            "desktop_snapshot",             // $11 - material_type
-            "desktop://snapshot"            // $12 - source_uri
+            acquired_at,                    // $3 - staged_at
+            "desktop_snapshot",             // $4 - material_kind
+            "realtime",                     // $5 - timing_info_type
+            metadata,                       // $6 - metadata
+            "completed",                    // $7 - status
+            "desktop-monitor"               // $8 - staged_by
         )
         .execute(db_pool)
         .await;
@@ -383,18 +375,22 @@ impl DesktopProcessor {
                 let _ = sqlx::query!(
                     r#"
                     INSERT INTO raw.temporal_ledger (
-                        material_id,
+                        id,
+                        source_material_id,
                         offset_start,
                         offset_end,
+                        offset_kind,
                         ts_capture,
-                        note
+                        precision,
+                        clock,
+                        source_type
                     )
-                    VALUES ($1::ulid, 0, $2, $3, $4)
+                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'millisecond', 'wall', 'realtime_capture')
                     "#,
-                    material_id as Ulid,
-                    data.len() as i64,
-                    acquired_at,
-                    metadata.to_string()
+                    Ulid::new() as Ulid,      // id
+                    material_id as Ulid,      // source_material_id
+                    data.len() as i64,        // offset_end
+                    acquired_at               // ts_capture
                 )
                 .execute(db_pool)
                 .await;
@@ -433,9 +429,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
         );
 
         // Get database pool from context
-        if let Some(db_pool) = ctx.db_pool.clone() {
-            self.db_pool = Some(db_pool);
-        }
+        self.db_pool = Some(ctx.db_pool.clone());
 
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
@@ -526,14 +520,13 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Store snapshot data as source material
                     if let Some(ref db_pool) = self.db_pool {
+                        let mut enabled_sources = Vec::new();
+                        if self.config.clipboard_enabled { enabled_sources.push("clipboard"); }
+                        if self.config.window_manager_enabled { enabled_sources.push("window_manager"); }
+                        
                         let snapshot_data = serde_json::json!({
                             "snapshot_type": "desktop_state",
-                            "enabled_sources": {
-                                let mut sources = Vec::new();
-                                if self.config.clipboard_enabled { sources.push("clipboard"); }
-                                if self.config.window_manager_enabled { sources.push("window_manager"); }
-                                sources
-                            },
+                            "enabled_sources": enabled_sources,
                             "source_count": active_watchers,
                             "clipboard_enabled": self.config.clipboard_enabled,
                             "window_manager_enabled": self.config.window_manager_enabled,
