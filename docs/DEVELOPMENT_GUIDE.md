@@ -226,7 +226,7 @@ Role-based guides for finding appropriate entry points into Sinex development.
 
 #### Focus Areas
 - Database query optimization
-- Redis Streams performance
+- NATS JetStream performance
 - Checkpoint system improvements
 - Testing infrastructure
 

@@ -44,7 +44,7 @@ All tasks completed:
 - ✅ Implemented safe content preview helpers
 - ✅ Simplified entity type mapping with EntityTypeMapper
 
-### sinex-satellite-sdk, sinex-macros, sinex-test-utils, sinex-migrations [✅ COMPLETED - Agent 4]
+### sinex-satellite-sdk, sinex-macros, sinex-test-utils, sinex-schema [✅ COMPLETED - Agent 4]
 
 All 12 tasks completed:
 - ✅ config.rs - Extracted get_cache_dir_or_fallback() helper

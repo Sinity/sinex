@@ -148,7 +148,7 @@ scan_paths = ["/home/user/Documents"]
 ## Error Handling and Resilience
 
 ### Automatic Reconnection
-- gRPC clients reconnect on connection loss
+- NATS publishers/consumers reconnect on connection loss
 - NATS clients handle transient failures
 - Exponential backoff for retries
 

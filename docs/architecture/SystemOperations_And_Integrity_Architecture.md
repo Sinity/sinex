@@ -40,7 +40,7 @@ The satellite constellation implements an elegant observability pattern where sy
 
 *   **Satellite Service Health:** ✅ **OPERATIONAL** - systemd service status, restart counts, resource usage per satellite
 *   **Event Processing Pipeline:** ✅ **OPERATIONAL** - NATS JetStream lag, durable consumer positions, checkpoint ages, DLQ sizes
-*   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, gRPC latency
+*   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, NATS consumer lag/latency
 *   **Automaton Processing:** ✅ **OPERATIONAL** - Processing rates, error rates, checkpoint intervals per automaton
 
 ## 3. Security and Service Orchestration Architecture

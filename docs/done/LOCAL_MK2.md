@@ -35,7 +35,7 @@ Deep architectural analysis and comprehensive fixes applied to the Sinex codebas
 3. **TOCTOU file races** → Atomic operations (5 files)
 4. **Mutex poisoning** → parking_lot + recovery (11 files)
 5. **N+1 NATS** → Batch publishing, 80-95% faster (4 files)
-6. **gRPC timeouts** → Circuit breaker + 30s/5s timeouts (3 files)
+6. **NATS timeouts/ack** → Consumer lag monitoring, explicit ack semantics
 7. **Panic in APIs** → Result types (3 files)
 8. **Integer overflow** → Saturating arithmetic (11 files)
 9. **OnceCell races** → Atomic init (3 files)
@@ -77,4 +77,3 @@ Deep architectural analysis and comprehensive fixes applied to the Sinex codebas
 - Public APIs return `Result` instead of panicking
 - Some return types changed for correctness
 - Simplified audit approach requires migration removal
-

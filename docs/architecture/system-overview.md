@@ -48,7 +48,7 @@ Sinex is a "sentient archive" that augments human intellect by comprehensively c
 
 ### Key Architectural Principles
 - **Satellite Constellation** - Independent services orchestrated by systemd/NixOS
-- **NATS JetStream Message Bus** - Durable internal messaging (older docs mentioning Redis Streams are historical)
+- **NATS JetStream Message Bus** - Durable internal messaging
 - **Unified Events Table** - Single source of truth with comprehensive provenance tracking
 - **Time-Ordered Keys** - ULID primary keys for natural chronological ordering and distributed generation
 - **GitOps Schema Management** - Version-controlled JSON Schema validation with automatic deployment
@@ -86,7 +86,7 @@ The foundation of Sinex built on PostgreSQL with specialized extensions.
 Unified event collection system managing multiple data sources.
 
 ### Satellite Architecture
-- **sinex-ingestd** - Central ingestion hub receiving events via gRPC
+- **sinex-ingestd** - Central archiver consuming provisional events/materials from NATS and persisting them
 - **StatefulStreamProcessor Interface** - Unified pattern for both ingestors and automata
 - **Event Source Satellites** - Independent services capturing domain-specific data
 - **Automaton Satellites** - Independent services processing events into insights
