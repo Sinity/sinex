@@ -176,3 +176,5 @@ Completeness Checks & Operational Details
 - Testing notes:
   - Property tests around idempotence (replay same messages), out‑of‑order slices, partial material then timeout, and multi‑GB materials across restart.
   - Integration tests for schema loading/refresh and event validation fallbacks.
+  - DB invariants: enforce `CHECK` for provenance XOR (Material xor Synthesis) and `UNIQUE` on `(material_id, anchor_byte)` for material events.
+  - Serializer compatibility: where sources evolve (e.g., sysinfo), consider `#[serde(untagged)]` strategies to deserialize historical Source Material during replays.
