@@ -212,7 +212,7 @@ impl IngestClient {
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &Event<JsonValue>) -> SatelliteResult<String> {
         let event_clone = event.clone();
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         let operation_timeout = self.config.operation_timeout;
 
         self.execute_with_retry_and_circuit_breaker(
@@ -271,7 +271,7 @@ impl IngestClient {
         }
 
         let events_clone = events.to_vec();
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         let operation_timeout = self.config.operation_timeout;
 
         self.execute_with_retry_and_circuit_breaker(move || {

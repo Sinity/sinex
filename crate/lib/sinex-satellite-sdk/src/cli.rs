@@ -564,7 +564,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     // Create coordination with generated instance ID
                     let instance_id = Uuid::new_v4().to_string();
 
-                    let mut coordination =
+                    let coordination =
                         SatelliteCoordination::new(service_name.clone(), instance_id, db_pool);
 
                     // Wrap runner in Arc<Mutex<>> for sharing
