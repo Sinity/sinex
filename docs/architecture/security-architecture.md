@@ -55,7 +55,7 @@ Current approach may be sufficient as:
 
 ### Network Security
 ❌ **Not Implemented**:
-- No TLS for gRPC communications
+- Local-first deployment; NATS and services bind to localhost by default. Secure external exposure explicitly if required.
 - No authentication framework
 - No rate limiting
 - Gateway exposed without access control

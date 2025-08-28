@@ -25,7 +25,8 @@ pub struct EventPipeline {
 
 pub struct PipelineContext {
     pub db_pool: DbPool,
-    pub redis: Option<RedisClient>,
+    // Historical design artifact; use NATS JetStream per docs/plan_v3.txt
+    // pub redis: Option<RedisClient>,
     pub metadata: HashMap<String, Value>,
     pub checkpoint: Option<Checkpoint>,
 }
@@ -81,7 +82,7 @@ let pipeline = EventPipeline::new(config)
     .add_stage(EnrichmentStage::new()) // Add ts_ingest, host
     .add_stage(BatchingStage::new(1000))
     .add_stage(StorageStage::new(&db_pool))
-    .add_stage(RedisPublishStage::new(&redis_client));
+    // .add_stage(RedisPublishStage::new(&redis_client)); // deprecated; publish to NATS instead
 
 pipeline.process_stream(event_stream).await?;
 ```

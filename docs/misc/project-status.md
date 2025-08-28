@@ -1,23 +1,17 @@
 # SINEX IMPLEMENTATION STATUS
 
-Note: Current internal messaging uses NATS JetStream. Any references to Redis Streams below reflect historical status text and will be updated progressively.
+Canonical ingestion architecture is NATS JetStream (see `docs/plan_v3.txt`). Previous mentions of Redis Streams or gRPC-based ingestion are historical and should be treated as deprecated.
 
-**Status Date**: 2025-07-17  
-**Overall Completion**: 98% production-ready  
-**Current Phase**: Phase 3 - Unified Architecture Complete  
+**Status Date**: 2025-08-28  
+**Current Focus**: Converging ingestion to NATS‑native pipelines; consolidating docs to canonical sources.  
 
-## 🎯 CURRENT STATE SUMMARY
-
-Sinex has completed its evolution from prototype to production-ready personal digital archiving system. The unified architecture migration is complete, with all major components implemented and operational.
-
-## ✅ COMPLETED FEATURES (98%)
+## ✅ COMPLETED FEATURES
 
 ### Core Architecture
 - **Unified StatefulStreamProcessor** - All satellites migrated from EventSource pattern
 - **ULID Primary Keys** - Time-ordered, distributed-safe identifiers throughout
 - **TimescaleDB Integration** - Hypertables with generated timestamp columns
-- **Redis Streams** - Event processing with consumer groups and checkpointing
-- **gRPC Ingestion** - High-performance event ingestion via Unix sockets
+- **NATS JetStream** - Real-time event distribution with durable buffering
 - **JSON Schema Validation** - pgvector-based schema enforcement
 
 ### Database Infrastructure
@@ -58,11 +52,11 @@ Sinex has completed its evolution from prototype to production-ready personal di
 - **Monitoring Stack** - Prometheus/Grafana integration
 - **Secret Management** - agenix-based secret handling
 
-## 🔍 REMAINING WORK (2%)
+## 🔍 REMAINING WORK
 
 ### Minor Enhancements
 - **Test Coverage Gaps** - Some edge cases in new unified architecture
-- **Documentation Updates** - Align docs with current implementation
+- **Documentation Updates** - Align all docs to plan_v3, remove historical inconsistencies
 - **Performance Tuning** - Optimize query patterns for TimescaleDB
 - **Error Handling** - Improve error recovery in edge cases
 
@@ -77,12 +71,11 @@ Sinex has completed its evolution from prototype to production-ready personal di
 - **Event-Driven Architecture** - Complete separation of ingestion and processing
 - **Immutable Event Store** - All events preserved with full provenance
 - **Stateful Stream Processing** - Unified processor pattern across all components
-- **Scalable Design** - Horizontal scaling ready with Redis Streams
+- **Scalable Design** - Horizontal scaling via NATS JetStream consumer groups
 - **Reliable Processing** - Automatic retry, dead letter queues, checkpointing
 
 ### Performance Characteristics
-- **Sub-second Ingestion** - gRPC with batching for high throughput
-- **Real-time Processing** - Redis Streams with consumer groups
+- **NATS-native Ingestion** - Satellites publish; ingestd archives; automata consume
 - **Efficient Storage** - TimescaleDB compression and partitioning
 - **Fast Queries** - Optimized indexes and query patterns
 

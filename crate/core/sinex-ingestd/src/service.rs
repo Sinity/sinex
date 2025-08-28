@@ -18,7 +18,7 @@ use async_nats::{jetstream, Client as NatsClient};
 use sinex_core::environment as sinex_environment;
 use sinex_core::{
     db::{
-        models::{Event, Provenance},
+        models::{event::EventId, Event, Provenance},
         query_helpers::{ulid_to_uuid, uuid_to_ulid},
         repositories::DbPoolExt,
     },
@@ -469,7 +469,8 @@ impl IngestService {
         for entry in &pending {
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
-            headers.insert("Nats-Msg-Id", &uuid_to_ulid(entry.event_id).to_string());
+            let msg_id = uuid_to_ulid(entry.event_id).to_string();
+            headers.insert("Nats-Msg-Id", msg_id.as_str());
 
             let publish_future =
                 js.publish_with_headers(entry.subject.clone(), headers, event_data.into());
@@ -693,20 +694,29 @@ impl IngestService {
 
             // Extract provenance into separate database fields
             let (source_event_ids_opt, source_material_id, offset_start, offset_end, anchor_byte) =
-                match event.provenance {
+                match &event.provenance {
                     Provenance::Material {
                         id,
                         anchor_byte,
                         offset_start,
                         offset_end,
-                        ..  // Ignore other fields
+                        ..
                     } => (
                         None,
                         Some(ulid_to_uuid(*id.as_ulid())),
-                        offset_start,
-                        offset_end,
-                        anchor_byte,
+                        *offset_start,
+                        *offset_end,
+                        Some(*anchor_byte),
                     ),
+                    Provenance::Synthesis {
+                        source_event_ids, ..
+                    } => {
+                        let ids = source_event_ids
+                            .iter()
+                            .map(|id| ulid_to_uuid(*id.as_ulid()))
+                            .collect::<Vec<_>>();
+                        (Some(ids), None, None, None, None)
+                    }
                 };
 
             source_event_id_arrays.push(source_event_ids_opt);
@@ -736,7 +746,7 @@ impl IngestService {
                 );
                 Arc::new(env.nats_subject(&base))
             };
-            outbox_entries.push((event_id, (*subject).clone(), serde_json::to_value(event)?));
+            outbox_entries.push((event_id, (*subject).clone(), serde_json::to_vec(&event)?));
         }
 
         // Batch insert events using UNNEST - use raw query to avoid SQLX type issues
@@ -790,7 +800,7 @@ impl IngestService {
                 "#,
                 event_id as Ulid,
                 subject,
-                payload.as_bytes()
+                payload
             )
             .execute(&mut *tx)
             .await?;
@@ -932,7 +942,10 @@ impl IngestServiceTrait for IngestServiceImpl {
         // Validate event
         let validation_result = {
             let validator = self.service.validator.read().await;
-            validator.validate_event(&raw_event)?
+            match validator.validate_event(&raw_event) {
+                Ok(v) => v,
+                Err(e) => return Err(crate::sinex_error_to_status(e)),
+            }
         };
 
         if !validation_result.should_accept() {
@@ -1143,16 +1156,22 @@ impl IngestServiceImpl {
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
-        let mut event = Event::new(payload);
-        event = event
-            .with_host(HostName::new(proto.host))
-            .with_ingestor_version(INGESTOR_VERSION);
+        // Create a dynamic event; provenance is required by type system.
+        // Use a synthesized provenance with a bootstrap parent to satisfy invariants.
+        let mut event = Event::create(
+            source.clone(),
+            event_type.clone(),
+            payload,
+            Provenance::from_synthesis_safe(EventId::new(), vec![]),
+        )
+        .with_host(HostName::new(proto.host))
+        .with_ingestor_version(INGESTOR_VERSION);
 
-        Ok(if let Some(id) = schema_id {
-            event.with_schema_id(id)
-        } else {
-            event
-        })
+        if let Some(id) = schema_id {
+            event = event.with_schema_id(id);
+        }
+
+        Ok(event)
     }
 }
 

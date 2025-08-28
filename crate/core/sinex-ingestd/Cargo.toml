@@ -31,6 +31,7 @@ async-nats.workspace = true
 
 # gRPC
 tonic.workspace = true
+prost.workspace = true
 
 # Configuration
 clap = { workspace = true, features = ["derive"] }

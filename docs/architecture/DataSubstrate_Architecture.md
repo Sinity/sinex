@@ -5,7 +5,7 @@
 *   **Implementation Status:** ✅ **OPERATIONAL** - Core substrate fully functional with satellite constellation architecture
 *   **Purpose:** This document provides the comprehensive technical architecture of Sinex's data foundation, satellite constellation, event processing, and storage systems. It serves as the single authoritative source for the operational system architecture.
 *   **Current State:** PostgreSQL + TimescaleDB operational, NATS JetStream operational, satellite constellation operational, checkpoint-based processing complete, unified events table with provenance tracking
-*   **Relationship to Other Docs:** This is the primary technical reference. See IngestionArchitecture_And_TelemetrySources.md for domain-specific telemetry patterns, SystemOperations_And_Integrity_Architecture.md for operational concerns, and UserInteraction_And_Query_Architecture.md for interface systems.
+*   **Relationship to Other Docs:** This is a broad reference. For the canonical ingestion architecture (NATS‑native, materials + events), see `docs/plan_v3.txt`. Historical Redis/gRPC examples in this file are deprecated.
 
 ## 1. System Architecture Overview
 
@@ -22,7 +22,7 @@ Sinex implements a satellite constellation architecture where independent system
 *   **Fault Tolerance:** Service isolation with automatic restart and recovery
 
 **Architecture Flow:**
-1. **Satellite Services** → **sinex-ingestd** (gRPC) → **PostgreSQL** (`core.events`) + **NATS JetStream** (`events.*`)
+1. **Satellite Services** → **NATS JetStream** (`events.raw`, `source_material.slices.*`) → **sinex-ingestd** (archiver) → **PostgreSQL** (`core.events`, `raw.source_material_registry`)
 2. **Automaton Services** → **NATS JetStream** (durable consumers) → **Event Processing** → **sinex-ingestd** (results)
 3. **Gateway Service** → **NATS JetStream** (commands/responses) → **Service Automata**
 
@@ -88,7 +88,7 @@ trait StatefulStreamProcessor {
 *   **PostgreSQL 16 + TimescaleDB:** Primary database with time-series hypertables
 *   **NATS JetStream:** Message bus for real-time event distribution
 *   **NixOS + systemd:** Declarative service orchestration and lifecycle management
-*   **gRPC:** High-performance satellite communication protocol
+*   **NATS:** Satellite → bus → archiver communication protocol (publish/consume)
 
 **PostgreSQL Extensions:**
 *   **`pgx_ulid`:** Native ULID support for time-ordered primary keys
@@ -110,8 +110,9 @@ NATS JetStream serves as the central nervous system of the satellite constellati
 
 ### 2.1. Stream Architecture
 
-**Primary Stream:** `sinex:events`
-- All events flow through this unified stream after PostgreSQL persistence
+**Primary Streams:**
+- `events.raw`: provisional events published by satellites before DB persistence (consumed by archiver)
+- `events.confirmations`: persistence confirmations published by archiver
 - Consumer groups enable horizontal scaling and load balancing
 - Automatic message acknowledgment and failure handling
 - Persistent message log with configurable retention
@@ -130,7 +131,7 @@ NATS JetStream serves as the central nervous system of the satellite constellati
 - Automatic redelivery for failed processing
 
 **Processing Semantics:**
-- **Exactly-once processing:** JetStream acknowledgment + PostgreSQL checkpoints
+- **Exactly-once processing:** JetStream acknowledgment + PostgreSQL uniqueness/checkpoints
 - **At-least-once delivery:** Failed messages redelivered until acknowledged
 - **Ordered processing:** Messages processed in stream order within consumer groups
 - **Backpressure handling:** Automatic slow consumer detection and remediation
@@ -139,27 +140,46 @@ NATS JetStream serves as the central nervous system of the satellite constellati
 
 Note: The historical examples below used Redis Stream syntax. See `docs/architecture/streaming-architecture.md` for NATS JetStream publish/consume patterns and updated guidance.
 
-**Message Production:**
+**Message Production (Rust / async-nats):**
 ```rust
-redis_client.xadd(
-    "sinex:events",
-    "*",  // Auto-generate message ID
-    &[("event_id", event.id.to_string()),
-      ("event_type", &event.event_type),
-      ("payload", &serde_json::to_string(&event.payload)?)
-    ]
-).await?
+use async_nats::{self, jetstream};
+
+let client = async_nats::connect("nats://127.0.0.1:4222").await?;
+let js = jetstream::new(client);
+
+// Ensure stream exists
+js.get_or_create_stream(jetstream::stream::Config{
+    name: "EVENTS".into(),
+    subjects: vec!["events.raw".into()],
+    ..Default::default()
+}).await?;
+
+// Publish provisional event
+let payload = serde_json::to_vec(&event)?;
+js.publish("events.raw", payload.into()).await?;
 ```
 
-**Message Consumption:**
+**Message Consumption (Rust / async-nats JetStream):**
 ```rust
-redis_client.xreadgroup(
-    "sinex-health-aggregator",  // Consumer group
-    "worker-1",                 // Consumer name
-    &[("sinex:events", ">")],   // Stream and position
-    Some(100),                   // Batch size
-    Some(Duration::from_secs(5)) // Block timeout
-).await?
+use async_nats::jetstream::{self, consumer};
+
+let client = async_nats::connect("nats://127.0.0.1:4222").await?;
+let js = jetstream::new(client);
+
+let consumer = js.get_or_create_consumer(
+    "EVENTS",
+    consumer::pull::Config{
+        durable_name: Some("sinex-health-aggregator".into()),
+        ..Default::default()
+    }
+).await?;
+
+let mut batch = consumer.fetch().max_messages(100).expires(std::time::Duration::from_secs(5)).await?;
+while let Some(Ok(msg)) = batch.next().await {
+    let event: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    // process ...
+    msg.ack().await?;
+}
 ```
 
 ### 2.4. Error Handling and Dead Letter Queue
@@ -462,7 +482,7 @@ CHECK (
 
 > **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Complete automaton ecosystem with real-time event processing
 
-Automata are specialized satellite services that consume events from Redis Streams, perform deterministic processing, and emit results back through the message bus. The automaton ecosystem transforms raw events into structured knowledge while maintaining complete provenance tracking.
+Automata are specialized satellite services that consume events from NATS JetStream, perform deterministic processing, and emit results back through the message bus. The automaton ecosystem transforms raw events into structured knowledge while maintaining complete provenance tracking.
 
 ### 6.1. Automaton Service Architecture
 
@@ -475,37 +495,28 @@ Automata are specialized satellite services that consume events from Redis Strea
 - **sinex-search-automaton:** Handles search queries and indexing
 
 **Automaton Lifecycle:**
-1. **Initialization:** Load checkpoint state and join Redis consumer group
-2. **Stream Processing:** Consume events from `sinex:events` stream
+1. **Initialization:** Load checkpoint state and attach to a JetStream durable consumer
+2. **Stream Processing:** Consume events from `events.raw`
 3. **Event Processing:** Transform events using deterministic logic
-4. **Result Emission:** Send processed events back through sinex-ingestd
+4. **Result Emission:** Publish derived events back to `events.raw`
 5. **Checkpoint Update:** Save processing state to PostgreSQL
 
 **Processing Pattern:**
 ```rust
-// Automaton main loop
+// Automaton main loop (JetStream pull consumer)
+let consumer = js.get_or_create_consumer(
+    "EVENTS",
+    consumer::pull::Config{ durable_name: Some(self.consumer_name.clone()), ..Default::default() }
+).await?;
+
 loop {
-    // Read batch of events from Redis Stream
-    let events = redis_client.xreadgroup(
-        &self.consumer_group,
-        &self.consumer_name,
-        &[("sinex:events", ">")],
-        Some(batch_size),
-        Some(timeout)
-    ).await?;
-    
-    // Process events in batch
-    for event in events {
-        let result = self.process_event(event).await?;
-        
-        // Emit result event with provenance
+    let mut batch = consumer.fetch().max_messages(batch_size).expires(timeout).await?;
+    while let Some(Ok(msg)) = batch.next().await {
+        let event: Event<JsonValue> = serde_json::from_slice(&msg.payload)?;
+        let result = self.process_event(event.clone()).await?;
         self.emit_result_event(result, event.id).await?;
-        
-        // Acknowledge message
-        redis_client.xack("sinex:events", &self.consumer_group, &[event.id]).await?;
+        msg.ack().await?;
     }
-    
-    // Save checkpoint
     self.save_checkpoint().await?;
 }
 ```
@@ -590,7 +601,7 @@ CREATE TABLE core.dead_letter_queue (
 **Satellite SDK Features:**
 - Unified lifecycle management
 - Automatic checkpoint persistence
-- Redis Stream consumer group management
+- JetStream durable consumer management
 - Error handling and retry logic
 - Health monitoring and heartbeat
 - Configuration management
@@ -674,7 +685,7 @@ The satellite constellation consists of hub services, ingestor satellites, and a
 
 **sinex-ingestd:**
 - Central event ingestion and distribution hub
-- gRPC server for satellite communication
+- NATS JetStream for satellite communication (publish/consume)
 - Batch writes to PostgreSQL for performance
 - Real-time distribution via Redis Streams
 - Schema validation and error handling
@@ -945,7 +956,7 @@ git annex group . "client"
 - ✅ PostgreSQL + TimescaleDB data substrate
 - ✅ Checkpoint-based state management
 - ✅ Event schema validation and GitOps
-- ✅ gRPC communication between services
+- ✅ NATS JetStream communication between services
 - ✅ Automaton processing ecosystem
 - ✅ Git-annex large object storage
 - ✅ Journald-based observability

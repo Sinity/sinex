@@ -24,7 +24,7 @@ struct SchemaRecord {
 }
 
 /// Schema cache entry
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct SchemaCacheEntry {
     compiled_schema: Arc<jsonschema::JSONSchema>,
     source: Arc<String>,

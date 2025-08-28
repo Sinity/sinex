@@ -68,10 +68,10 @@ networking.firewall = {
 
 ### 3. Authentication & Authorization
 
-**Unix Socket Authentication**
+**NATS Security**
 ```bash
-# Services communicate via Unix sockets when possible
-/run/sinex/ingest.sock  # gRPC socket
+# Ingestion is NATS-native; configure NATS credentials and local-only access
+# Example (nats-server): use authorization blocks and bind to 127.0.0.1
 ```
 
 **Database Access Control**

@@ -23,7 +23,7 @@ The component model is now clarified. The `sensd` daemon concept is **abolished*
 
 *   **`ingestd` (The Archiver & Broadcaster):**
     *   **Role:** The system's single, hardened gateway to the permanent record.
-    *   **Responsibility:** To receive events from all Ingestors and Automata via a single transport (gRPC, for now), validate them against their schemas, commit them atomically to the PostgreSQL `core.events` table, and then—*after* the commit succeeds—publish them to the NATS JetStream for consumption by Automata.
+    *   **Responsibility:** To consume provisional events and material slices from NATS JetStream, validate and commit them atomically to PostgreSQL (`core.events`, `raw.source_material_registry`) and publish confirmations for downstream consumers.
 
 *   **Automaton:**
     *   **Role:** The system's "cognitive reflexes." A standalone daemon that synthesizes new knowledge.

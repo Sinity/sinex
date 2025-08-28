@@ -116,7 +116,7 @@ Step-by-step guide for building the feature:
 ## Status Dashboard
 **Maturity Level**: L2 - Ready for Implementation
 **Implementation**: 0% (Design complete, implementation not started)
-**Dependencies**: PostgreSQL, Redis Streams, sinex-satellite-sdk
+**Dependencies**: PostgreSQL, NATS JetStream, sinex-satellite-sdk
 **Blocks**: Advanced analytics features, multi-device sync
 
 ## Overview
