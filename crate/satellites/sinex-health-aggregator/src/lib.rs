@@ -438,18 +438,19 @@ impl HealthAggregator {
         });
 
         // Create synthesized event with proper provenance from recent events
-        let provenance = Provenance::from_synthesis(health.recent_events.clone())
-            .unwrap_or_else(|| {
+        let provenance =
+            Provenance::from_synthesis(health.recent_events.clone()).unwrap_or_else(|| {
                 // Fallback to system bootstrap if no recent events
                 let system_bootstrap_id = EventId::from_ulid(
                     Ulid::from_bytes([
-                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    ]).unwrap(),
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .unwrap(),
                 );
                 Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
             });
-        
+
         let event = Event::create(
             "health-aggregator",
             "health.component_report",
@@ -509,17 +510,17 @@ impl HealthAggregator {
             "generated_at": Utc::now(),
         });
 
-        let provenance = Provenance::from_synthesis(all_event_ids)
-            .unwrap_or_else(|| {
-                let system_bootstrap_id = EventId::from_ulid(
-                    Ulid::from_bytes([
-                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    ]).unwrap(),
-                );
-                Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
-            });
-        
+        let provenance = Provenance::from_synthesis(all_event_ids).unwrap_or_else(|| {
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .unwrap(),
+            );
+            Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
+        });
+
         let event = Event::create(
             "health-aggregator",
             "health.system_status",
@@ -563,13 +564,14 @@ impl HealthAggregator {
                     .unwrap_or_else(|| {
                         let system_bootstrap_id = EventId::from_ulid(
                             Ulid::from_bytes([
-                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                            ]).unwrap(),
+                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                0x00, 0x00, 0x00, 0x00, 0x00,
+                            ])
+                            .unwrap(),
                         );
                         Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
                     });
-                
+
                 let alert_event = Event::create(
                     "health-aggregator",
                     "health.alert",

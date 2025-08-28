@@ -5,9 +5,9 @@
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
 use crate::Result;
+use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::Event;
 use sinex_core::types::error::SinexError;
-use serde_json::Value as JsonValue;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

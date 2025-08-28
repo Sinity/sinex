@@ -248,7 +248,7 @@ impl TemporalLedger {
 
         use sqlx::types::BigDecimal;
         use std::str::FromStr;
-        
+
         Ok(result
             .and_then(|row| row.total_bytes)
             .and_then(|bd| bd.to_string().parse::<i64>().ok())

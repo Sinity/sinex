@@ -5,8 +5,8 @@ use crate::{
     config::IngestdConfig,
     proto::{
         ingest_service_server::{IngestService as IngestServiceTrait, IngestServiceServer},
-        BatchResponse, RawEvent as ProtoEvent, EventBatch, HealthRequest, HealthResponse,
-        IngestResponse,
+        BatchResponse, EventBatch, HealthRequest, HealthResponse, IngestResponse,
+        RawEvent as ProtoEvent,
     },
     validator::EventValidator,
     IngestdResult, SinexError,
@@ -220,11 +220,9 @@ impl IngestService {
         Ok(service)
     }
 
-
     /// Run the ingestion service
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
-
 
         // Ensure socket directory exists
         if let Some(parent) = std::path::Path::new(&self.config.socket_path).parent() {
@@ -293,7 +291,7 @@ impl IngestService {
                 }
             }
         });
-        
+
         // Monitor the stats task for panics
         tokio::spawn(async move {
             if let Err(e) = stats_handle.await {
@@ -815,7 +813,6 @@ impl IngestService {
 
         let mut buffer = self.event_buffer.lock().await;
         buffer.push(event);
-
 
         // Check if we should flush immediately
         if buffer.len() >= self.config.batch_size {

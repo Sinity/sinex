@@ -8,18 +8,18 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
+use sinex_core::db::models::event::Event;
 use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
-use sinex_core::db::models::event::Event;
-use sinex_core::{JsonValue, EventSource, EventType};
+use sinex_core::{EventSource, EventType, JsonValue};
 
 use sinex_satellite_sdk::SatelliteResult;
+use std::sync::Arc;
 use std::{collections::HashMap, fmt, str::FromStr, time::Duration};
 use tokio::sync::mpsc;
-use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 /// D-Bus bus type enumeration
@@ -130,7 +130,7 @@ impl DbusWatcher {
 
         // Wait for any task to complete (or fail) with panic handling
         let (result, index, remaining) = futures::future::select_all(tasks).await;
-        
+
         // Check if the task panicked
         match result {
             Ok(Ok(())) => {
@@ -143,7 +143,7 @@ impl DbusWatcher {
                 error!("D-Bus monitoring task {} panicked: {:?}", index, e);
             }
         }
-        
+
         // Cancel remaining tasks
         for task in remaining {
             task.abort();
@@ -234,7 +234,7 @@ impl DbusWatcher {
 
         // Create bounded channel for D-Bus messages to prevent task explosion
         let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(1000);
-        
+
         // Spawn worker pool to process messages
         let num_workers = 4; // Reasonable number of workers for D-Bus processing
         for worker_id in 0..num_workers {
@@ -242,9 +242,12 @@ impl DbusWatcher {
             let tx = tx.clone();
             let config = config.clone();
             let bus_type_str = bus_type.to_string();
-            
+
             tokio::spawn(async move {
-                debug!("D-Bus worker {} started for {} bus", worker_id, bus_type_str);
+                debug!(
+                    "D-Bus worker {} started for {} bus",
+                    worker_id, bus_type_str
+                );
                 while let Some(msg_data) = rx.recv().await {
                     if let Err(e) = Self::process_message(
                         &bus_type_str,

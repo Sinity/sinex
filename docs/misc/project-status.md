@@ -1,5 +1,7 @@
 # SINEX IMPLEMENTATION STATUS
 
+Note: Current internal messaging uses NATS JetStream. Any references to Redis Streams below reflect historical status text and will be updated progressively.
+
 **Status Date**: 2025-07-17  
 **Overall Completion**: 98% production-ready  
 **Current Phase**: Phase 3 - Unified Architecture Complete  

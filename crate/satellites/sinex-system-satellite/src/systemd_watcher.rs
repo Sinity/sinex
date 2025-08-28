@@ -3,8 +3,8 @@
 //! Monitors systemd services, timers, and unit state changes
 //! Now uses modern nix-based integration instead of spawning external processes
 
-use sinex_core::{Event, JsonValue};
 use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;
+use sinex_core::{Event, JsonValue};
 
 use sinex_core::types::events::{
     SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
@@ -388,18 +388,19 @@ impl SystemdWatcher {
             let retry_result = retry_with_exponential_backoff(
                 "systemd_journal_restart",
                 Duration::from_secs(1),
-                5,     // Max 5 retries
-                true,  // With jitter
+                5,    // Max 5 retries
+                true, // With jitter
                 || async {
                     // Just a delay before retry
                     Ok::<(), &str>(())
                 },
-            ).await;
-            
+            )
+            .await;
+
             if let Err(e) = retry_result {
                 error!("Failed to restart systemd monitoring after retries: {}", e);
             }
-            
+
             info!("Restarting systemd journal monitoring");
         }
     }

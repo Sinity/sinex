@@ -31,7 +31,7 @@ The promise is threefold: to restore **agency** by placing you in control of you
 
 Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
 
-**Core Flow**: Satellites → ingestd → Event Substrate → Redis Streams → Automata → Query Interface
+**Core Flow**: Satellites → ingestd → Event Substrate → NATS JetStream → Automata → Query Interface
 
 - **Satellites**: Independent services that capture events (filesystem, terminals, window managers, system events)
 - **ingestd**: Central ingestion daemon that receives events via gRPC and stores them atomically
@@ -50,7 +50,7 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
   - pg_jsonschema for event validation
   - pgvector for semantic search (future)
 - **Language**: Rust for core system, Python for CLI tools
-- **Message Bus**: NATS for real-time event distribution
+- **Message Bus**: NATS JetStream for real-time event distribution
 
 ### Key Features
 - **Satellite Architecture**: Each event source runs as an independent systemd service
@@ -103,7 +103,7 @@ All satellites support two operational modes:
 - **Satellite Architecture**: Independent satellites with gRPC communication
 - **Event Source Satellites**: Filesystem, Terminal (Kitty/Atuin/recordings), Desktop (clipboard/Hyprland), System (D-Bus/systemd/udev)
 - **Dual-Mode Support**: All satellites support sensor (real-time) and scanner (batch) modes
-- **Processing Pipeline**: ingestd → Redis Streams → Automata
+- **Processing Pipeline**: ingestd → NATS JetStream (with transactional outbox) → Automata
 - **Storage**: Git-annex blob storage, JSON schema validation
 - **Deployment**: NixOS module with systemd satellite services
 - **Testing**: Comprehensive test suite including satellite integration tests

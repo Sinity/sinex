@@ -3,8 +3,8 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_core::{Event, JsonValue};
 use sinex_core::types::utils::wait_helpers::{retry_with_exponential_backoff, RetryConfig};
+use sinex_core::{Event, JsonValue};
 
 use crate::payloads::*;
 use sinex_core::types::events::{
@@ -250,9 +250,9 @@ impl JournalWatcher {
         // Use exponential backoff for reconnection attempts
         let retry_result = retry_with_exponential_backoff(
             "journal_follow",
-            Duration::from_secs(1),  // Start with 1 second
-            10,                       // Max 10 retries
-            true,                     // With jitter
+            Duration::from_secs(1), // Start with 1 second
+            10,                     // Max 10 retries
+            true,                   // With jitter
             || async {
                 match self.follow_journal_inner(&tx).await {
                     Ok(()) => {
@@ -266,12 +266,13 @@ impl JournalWatcher {
                     }
                 }
             },
-        ).await;
+        )
+        .await;
 
         if let Err(e) = retry_result {
             error!("Journal following failed after all retries: {}", e);
         }
-        
+
         Ok(())
     }
 

@@ -22,8 +22,8 @@ use crate::common::*;
 
 // Window manager specific imports
 use serde_json::Value;
-use sinex_core::types::Ulid;
 use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;
+use sinex_core::types::Ulid;
 use sqlx::PgPool;
 use std::{
     fmt,
@@ -231,14 +231,14 @@ impl WindowManagerWatcher {
             )
             VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            material_id as Ulid,     // $1 - id
-            self.source_identifier,  // $2 - source_identifier
-            now,                     // $3 - staged_at
+            material_id as Ulid,    // $1 - id
+            self.source_identifier, // $2 - source_identifier
+            now,                    // $3 - staged_at
             "window_state",         // $4 - material_kind
             "realtime",             // $5 - timing_info_type
             serde_json::to_value(&complete_metadata).unwrap_or_else(|_| serde_json::json!({})), // $6 - metadata
-            "completed",            // $7 - status
-            "window-manager",       // $8 - staged_by
+            "completed",      // $7 - status
+            "window-manager", // $8 - staged_by
         )
         .execute(db_pool)
         .await?;
@@ -503,7 +503,7 @@ impl WindowManagerWatcher {
     /// Stream Hyprland events with exponential backoff reconnection
     async fn stream_hyprland_events(&mut self) -> SatelliteResult<()> {
         let mut consecutive_failures = 0;
-        
+
         loop {
             match self.connect_to_hyprland_events().await {
                 Ok(stream) => {
@@ -545,8 +545,11 @@ impl WindowManagerWatcher {
                 }
                 Err(e) => {
                     consecutive_failures += 1;
-                    error!("Failed to connect to Hyprland (attempt {}): {}", consecutive_failures, e);
-                    
+                    error!(
+                        "Failed to connect to Hyprland (attempt {}): {}",
+                        consecutive_failures, e
+                    );
+
                     // Use exponential backoff with jitter, max 60 seconds
                     let base_delay = Duration::from_secs(1);
                     let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
@@ -554,9 +557,10 @@ impl WindowManagerWatcher {
                     let jitter = (std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
-                        .as_millis() % 1000) as u64;
+                        .as_millis()
+                        % 1000) as u64;
                     let jittered_delay = delay + Duration::from_millis(jitter);
-                    
+
                     warn!("Reconnecting to Hyprland in {:?}...", jittered_delay);
                     sleep(jittered_delay).await;
                     continue;
@@ -564,7 +568,7 @@ impl WindowManagerWatcher {
             }
 
             consecutive_failures += 1;
-            
+
             // Use exponential backoff for reconnection after connection loss
             let base_delay = Duration::from_secs(1);
             let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
@@ -572,10 +576,14 @@ impl WindowManagerWatcher {
             let jitter = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_millis() % 1000) as u64;
+                .as_millis()
+                % 1000) as u64;
             let jittered_delay = delay + Duration::from_millis(jitter);
-            
-            warn!("Hyprland connection lost, reconnecting in {:?}...", jittered_delay);
+
+            warn!(
+                "Hyprland connection lost, reconnecting in {:?}...",
+                jittered_delay
+            );
             sleep(jittered_delay).await;
         }
     }

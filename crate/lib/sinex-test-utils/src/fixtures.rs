@@ -38,11 +38,11 @@ use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
-use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, JsonValue,
-    Operation, OperationRecord, Provenance, SourceMaterial,
-};
 use sinex_core::types::Id;
+use sinex_core::{
+    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, JsonValue, Operation,
+    OperationRecord, Provenance, SourceMaterial,
+};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -5,10 +5,10 @@ use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
+use crate::types::error::SinexError;
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
-use crate::types::error::SinexError;
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
@@ -887,8 +887,9 @@ impl<'a> EventRepository<'a> {
         T: serde::Serialize,
     {
         // Convert typed event to JSON event for storage
-        let mut event = event.to_json_event()
-            .map_err(|e| SinexError::database("Failed to serialize event payload").with_source(e))?;
+        let mut event = event.to_json_event().map_err(|e| {
+            SinexError::database("Failed to serialize event payload").with_source(e)
+        })?;
         let id = event
             .id
             .get_or_insert_with(Id::<Event<JsonValue>>::new)
@@ -962,18 +963,16 @@ impl<'a> EventRepository<'a> {
     }
 
     #[instrument(skip(self, events), fields(batch_size = events.len()))]
-    pub async fn insert_batch<T>(
-        &self,
-        events: Vec<Event<T>>,
-    ) -> DbResult<Vec<Event<JsonValue>>>
+    pub async fn insert_batch<T>(&self, events: Vec<Event<T>>) -> DbResult<Vec<Event<JsonValue>>>
     where
         T: serde::Serialize,
     {
         // Convert all typed events to JSON events
         let mut json_events = Vec::with_capacity(events.len());
         for event in events {
-            let json_event = event.to_json_event()
-                .map_err(|e| SinexError::database("Failed to serialize event payload").with_source(e))?;
+            let json_event = event.to_json_event().map_err(|e| {
+                SinexError::database("Failed to serialize event payload").with_source(e)
+            })?;
             json_events.push(json_event);
         }
         let events = json_events;

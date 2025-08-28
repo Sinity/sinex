@@ -236,7 +236,7 @@ impl MaterialSliceStream {
             blob.original_filename.clone()
         };
         let annex_key = format!("{}-s{}--{}", blob.annex_backend, blob.size_bytes, filename);
-        
+
         if blob.annex_backend.starts_with("SHA256") {
             // Load from git-annex storage
             // Git-annex stores files in .git/annex/objects/XX/YY/KEY/KEY
@@ -249,8 +249,7 @@ impl MaterialSliceStream {
                     .join(&annex_key)
             } else {
                 // Fallback for short hashes
-                std::path::Path::new(".git/annex/objects")
-                    .join(&annex_key)
+                std::path::Path::new(".git/annex/objects").join(&annex_key)
             };
 
             if annex_path.exists() {
@@ -261,17 +260,17 @@ impl MaterialSliceStream {
                 Err(eyre!("Annex file not found at {:?}", annex_path))
             }
         } else if blob.annex_backend.starts_with("s3://") {
-                // S3 support requires additional dependencies (AWS SDK)
-                // To implement S3 support:
-                // 1. Add aws-sdk-s3 to Cargo.toml dependencies
-                // 2. Implement S3Client initialization with credentials
-                // 3. Use blob.annex_backend as S3 object key to retrieve data
-                Err(eyre!(
-                    "S3 storage backend not implemented. Blob {} uses S3 storage \
+            // S3 support requires additional dependencies (AWS SDK)
+            // To implement S3 support:
+            // 1. Add aws-sdk-s3 to Cargo.toml dependencies
+            // 2. Implement S3Client initialization with credentials
+            // 3. Use blob.annex_backend as S3 object key to retrieve data
+            Err(eyre!(
+                "S3 storage backend not implemented. Blob {} uses S3 storage \
                      but S3 support requires AWS SDK dependencies and configuration. \
                      Consider using git-annex or filesystem storage backends instead.",
-                    blob_id
-                ))
+                blob_id
+            ))
         } else {
             // Try as a filesystem path
             let path = std::path::Path::new(&blob.annex_backend);

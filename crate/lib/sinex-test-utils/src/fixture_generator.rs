@@ -9,13 +9,13 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::DbPool;
+use sinex_core::events::{
+    ClipboardCopiedPayload, DbusSignalPayload, FileCreatedPayload, HyprlandWindowFocusedPayload,
+    KittyCommandExecutedPayload, SystemdUnitStartedPayload,
+};
 use sinex_core::{
     Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue,
     Operation, OperationRecord, Provenance, SourceMaterial,
-};
-use sinex_core::events::{
-    FileCreatedPayload, KittyCommandExecutedPayload, ClipboardCopiedPayload,
-    HyprlandWindowFocusedPayload, SystemdUnitStartedPayload, DbusSignalPayload,
 };
 
 use camino::Utf8Path;
@@ -138,7 +138,8 @@ impl FixtureGenerator {
             let payload_size = self.select_payload_size();
             let timestamp = start_time + time_step * i as i32;
 
-            let event = self.create_event(source, event_type, payload_size, timestamp, i)
+            let event = self
+                .create_event(source, event_type, payload_size, timestamp, i)
                 .expect("Failed to create test event");
             events.push(event);
         }

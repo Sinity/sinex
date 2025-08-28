@@ -2,11 +2,11 @@
 //!
 //! Monitors hardware device events via udev
 
+use sinex_core::db::models::event::Event;
 use sinex_core::types::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
-use sinex_core::db::models::event::Event;
 use sinex_core::JsonValue;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;

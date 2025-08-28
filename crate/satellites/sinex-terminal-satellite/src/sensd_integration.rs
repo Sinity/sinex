@@ -129,7 +129,7 @@ impl SensdTerminalProcessor {
             VALUES ($1::ulid, 'append_stream', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
-            file_path,                             // target_uri
+            file_path, // target_uri
             json!({
                 "source_identifier": format!("history-file:{}", file_path),
                 "format": "text_lines",
@@ -161,7 +161,7 @@ impl SensdTerminalProcessor {
             VALUES ($1::ulid, 'tree_watch', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
-            recordings_dir,                           // target_uri
+            recordings_dir, // target_uri
             json!({
                 "source_identifier": format!("recordings:{}", recordings_dir),
                 "patterns": ["*.cast"],
@@ -194,7 +194,7 @@ impl SensdTerminalProcessor {
             VALUES ($1::ulid, 'append_stream', $2, $3, 'active', 100, NOW())
             "#,
             job_id as Ulid,
-            socket_path,                             // target_uri
+            socket_path, // target_uri
             json!({
                 "source_identifier": format!("kitty-socket:{}", socket_path),
                 "format": "kitty_remote_control",

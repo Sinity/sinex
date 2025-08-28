@@ -152,11 +152,11 @@ impl ProtoService for SensdGrpcService {
                 material_id: m.material_id.to_string(),
                 source_identifier: m.source_identifier,
                 source_type: m.material_kind, // material_kind is the actual column
-                size_bytes: m.size_bytes,            // From blobs table if available
+                size_bytes: m.size_bytes,     // From blobs table if available
                 content_type: m
                     .mime_type
                     .unwrap_or_else(|| "application/octet-stream".to_string()), // From blobs
-                created_at: m.staged_at.to_rfc3339(),             // Using staged_at as created_at
+                created_at: m.staged_at.to_rfc3339(), // Using staged_at as created_at
                 staged_at: m.staged_at.to_rfc3339(),
                 status: m.lifecycle_status,
                 metadata_json: serde_json::to_string(&m.metadata)
@@ -441,23 +441,23 @@ async fn load_material_data(
             // metadata is already a JsonValue, not Option<JsonValue>
             let metadata = &blob_record.metadata;
             if let Some(file_path) = metadata.get("file_path").and_then(|v| v.as_str()) {
-                    // Read the file from disk
-                    match tokio::fs::read(file_path).await {
-                        Ok(data) => {
-                            // Extract the requested slice
-                            let start = offset_start as usize;
-                            let end = offset_end as usize;
-                            if start <= data.len() && end <= data.len() && start <= end {
-                                return Ok(data[start..end].to_vec());
-                            } else {
-                                return Ok(vec![]); // Out of bounds
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to read blob file {}: {}", file_path, e);
-                            return Ok(vec![]);
+                // Read the file from disk
+                match tokio::fs::read(file_path).await {
+                    Ok(data) => {
+                        // Extract the requested slice
+                        let start = offset_start as usize;
+                        let end = offset_end as usize;
+                        if start <= data.len() && end <= data.len() && start <= end {
+                            return Ok(data[start..end].to_vec());
+                        } else {
+                            return Ok(vec![]); // Out of bounds
                         }
                     }
+                    Err(e) => {
+                        tracing::error!("Failed to read blob file {}: {}", file_path, e);
+                        return Ok(vec![]);
+                    }
+                }
             }
         }
 

@@ -240,7 +240,7 @@ impl DesktopSensdProcessor {
             offset_start: Some(slice.offset_start),
             offset_end: Some(slice.offset_end),
         };
-        
+
         let mut raw_event = Event::<JsonValue>::new(
             json!({
                 "selection_type": selection_type,
@@ -296,7 +296,7 @@ impl DesktopSensdProcessor {
             offset_start: Some(slice.offset_start),
             offset_end: Some(slice.offset_end),
         };
-        
+
         let mut raw_event = Event::<JsonValue>::new(
             json!({
                 "event_type": event_type_str,
@@ -333,7 +333,7 @@ impl DesktopSensdProcessor {
             offset_start: Some(slice.offset_start),
             offset_end: Some(slice.offset_end),
         };
-        
+
         let mut raw_event = Event::<JsonValue>::new(
             json!({
                 "snapshot_type": data.get("snapshot_type"),
@@ -382,7 +382,7 @@ impl DesktopSensdProcessor {
             offset_start: Some(slice.offset_start),
             offset_end: Some(slice.offset_end),
         };
-        
+
         let mut raw_event = Event::<JsonValue>::new(
             json!({
                 "event_type": event_type_str,

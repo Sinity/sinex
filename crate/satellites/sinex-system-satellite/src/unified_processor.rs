@@ -439,12 +439,14 @@ impl StatefulStreamProcessor for SystemProcessor {
                         // System snapshots are synthesis events (no source material)
                         let system_bootstrap_id = EventId::from_ulid(
                             Ulid::from_bytes([
-                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                            ]).unwrap(),
+                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                0x00, 0x00, 0x00, 0x00, 0x00,
+                            ])
+                            .unwrap(),
                         );
-                        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
-                        
+                        let provenance =
+                            Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
                         let snapshot_event = Event::new(
                             SystemSnapshotPayload {
                                 active_watchers,
@@ -455,7 +457,8 @@ impl StatefulStreamProcessor for SystemProcessor {
                                 snapshot_time: Utc::now(),
                             },
                             provenance,
-                        ).to_json_event()?;
+                        )
+                        .to_json_event()?;
 
                         context.emit_event(snapshot_event).await?;
                     }

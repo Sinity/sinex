@@ -5,9 +5,9 @@ use ahash::AHashMap;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
 
+use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::{Event, Provenance};
 use sinex_core::types::domain::{EventSource, EventType};
-use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

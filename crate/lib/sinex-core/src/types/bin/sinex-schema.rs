@@ -279,7 +279,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         // Note: For now, we'll use a placeholder source and concatenate event types
         let source = schema_name.clone(); // Use schema_name as source for now
         let event_type = event_types.join(","); // Concatenate event types
-        
+
         let id = sqlx::query_scalar!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas

@@ -40,6 +40,7 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 
 // Standard library
+use sinex_core::environment::environment;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
@@ -196,7 +197,16 @@ impl BindAddress {
             return BindAddress::Tcp { host, port };
         }
 
-        // Default to Unix socket
+        // In development, prefer TCP 127.0.0.1:9999 for CLI friendliness
+        let env = environment();
+        if env.is_dev() {
+            return BindAddress::Tcp {
+                host: "127.0.0.1".to_string(),
+                port: 9999,
+            };
+        }
+
+        // Default to Unix socket elsewhere
         BindAddress::UnixSocket { path: socket_path }
     }
 }

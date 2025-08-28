@@ -13,8 +13,8 @@ use serde_json::json;
 use sinex_core::{
     db::models::{event::OffsetKind, Event, Provenance},
     events::{
-        FileCreatedPayload, FileModifiedPayload, FileDeletedPayload, FileMovedPayload,
-        DirCreatedPayload, DirDeletedPayload, FileDiscoveredPayload, DirDiscoveredPayload,
+        DirCreatedPayload, DirDeletedPayload, DirDiscoveredPayload, FileCreatedPayload,
+        FileDeletedPayload, FileDiscoveredPayload, FileModifiedPayload, FileMovedPayload,
     },
     types::{
         domain::{EventSource, EventType, SanitizedPath},
@@ -228,7 +228,10 @@ impl FilesystemProcessor {
 
     /// Process a material slice from sensd into filesystem events
     #[instrument(skip(self, slice), fields(processor = "filesystem", material_id = %slice.material_id, offset_start = slice.offset_start, offset_end = slice.offset_end))]
-    async fn process_material_slice(&self, slice: MaterialSlice) -> SatelliteResult<Vec<Event<JsonValue>>> {
+    async fn process_material_slice(
+        &self,
+        slice: MaterialSlice,
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         // Parse metadata from the slice
@@ -264,7 +267,7 @@ impl FilesystemProcessor {
             offset_start: Some(slice.offset_start),
             offset_end: Some(slice.offset_end),
         };
-        
+
         let sanitized_path = SanitizedPath::new(path.clone());
         let timestamp = slice.ts_capture_start;
 
@@ -276,21 +279,27 @@ impl FilesystemProcessor {
                         path: sanitized_path,
                         created_at: timestamp,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 kind if kind.contains("Remove") => {
                     let payload = DirDeletedPayload {
                         path: sanitized_path,
                         deleted_at: timestamp,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 _ => {
                     let payload = DirDiscoveredPayload {
                         path: sanitized_path,
                         modified_at: timestamp,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
             }
         } else {
@@ -302,7 +311,9 @@ impl FilesystemProcessor {
                         created_at: timestamp,
                         permissions: None,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 kind if kind.contains("Modify") => {
                     let payload = FileModifiedPayload {
@@ -311,14 +322,18 @@ impl FilesystemProcessor {
                         modified_at: timestamp,
                         modification_type: event_kind.to_string(),
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 kind if kind.contains("Remove") => {
                     let payload = FileDeletedPayload {
                         path: sanitized_path,
                         deleted_at: timestamp,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 kind if kind.contains("Rename") => {
                     // For rename, we need both old and new paths
@@ -328,7 +343,9 @@ impl FilesystemProcessor {
                         new_path: sanitized_path,
                         moved_at: timestamp,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
                 _ => {
                     let payload = FileDiscoveredPayload {
@@ -337,7 +354,9 @@ impl FilesystemProcessor {
                         modified_at: timestamp,
                         permissions: None,
                     };
-                    Event::new(payload, provenance.clone()).at_time(timestamp).to_json_event()?
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
                 }
             }
         };

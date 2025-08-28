@@ -417,7 +417,7 @@ impl TerminalProcessor {
                     warn!("sensd job monitoring error: {}", e);
                 }
             });
-            
+
             // Spawn a watchdog to detect if the monitor task panics
             tokio::spawn(async move {
                 if let Err(e) = monitor_handle.await {
@@ -496,7 +496,10 @@ impl TerminalProcessor {
             let estimated_entries = match Self::count_lines_streaming(history_file).await {
                 Ok(count) => count,
                 Err(e) => {
-                    debug!("Failed to count lines in history file, using size estimate: {}", e);
+                    debug!(
+                        "Failed to count lines in history file, using size estimate: {}",
+                        e
+                    );
                     // Fallback: estimate ~50 bytes per line average
                     size_bytes / 50
                 }
@@ -521,16 +524,16 @@ impl TerminalProcessor {
     /// Count lines in a file efficiently using streaming
     async fn count_lines_streaming(path: &std::path::Path) -> std::io::Result<u64> {
         use tokio::io::{AsyncBufReadExt, BufReader};
-        
+
         let file = tokio::fs::File::open(path).await?;
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
         let mut count = 0u64;
-        
+
         while lines.next_line().await?.is_some() {
             count += 1;
         }
-        
+
         Ok(count)
     }
 
@@ -543,37 +546,43 @@ impl TerminalProcessor {
             // Query actual data from Atuin SQLite database
             // Use spawn_blocking to avoid blocking the async runtime
             let atuin_path_str = atuin_path.as_str().to_string();
-            let (estimated_entries, last_entry_timestamp) = match tokio::task::spawn_blocking(move || {
-                if let Ok(conn) = rusqlite::Connection::open(&atuin_path_str) {
-                    // Count entries
-                    let count: u64 = conn
-                        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
-                        .unwrap_or(0);
+            let (estimated_entries, last_entry_timestamp) =
+                match tokio::task::spawn_blocking(move || {
+                    if let Ok(conn) = rusqlite::Connection::open(&atuin_path_str) {
+                        // Count entries
+                        let count: u64 = conn
+                            .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+                            .unwrap_or(0);
 
-                    // Get most recent timestamp
-                    let last_timestamp: Option<i64> = conn
-                        .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
-                        .ok();
+                        // Get most recent timestamp
+                        let last_timestamp: Option<i64> = conn
+                            .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
+                            .ok();
 
-                    let last_entry = last_timestamp.and_then(|ts| {
-                        // Atuin stores timestamps in nanoseconds since epoch
-                        let seconds = ts / 1_000_000_000;
-                        let nanos = (ts % 1_000_000_000) as u32;
-                        DateTime::from_timestamp(seconds, nanos)
-                    });
+                        let last_entry = last_timestamp.and_then(|ts| {
+                            // Atuin stores timestamps in nanoseconds since epoch
+                            let seconds = ts / 1_000_000_000;
+                            let nanos = (ts % 1_000_000_000) as u32;
+                            DateTime::from_timestamp(seconds, nanos)
+                        });
 
-                    Ok::<_, std::io::Error>((count, last_entry))
-                } else {
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, "Cannot open database"))
-                }
-            }).await {
-                Ok(Ok(result)) => result,
-                _ => {
-                    // Fallback to estimate if we can't open the database
-                    let estimated_entries = db_size_bytes / 100;
-                    (estimated_entries, None)
-                }
-            };
+                        Ok::<_, std::io::Error>((count, last_entry))
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Cannot open database",
+                        ))
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(result)) => result,
+                    _ => {
+                        // Fallback to estimate if we can't open the database
+                        let estimated_entries = db_size_bytes / 100;
+                        (estimated_entries, None)
+                    }
+                };
 
             AtuinStatus {
                 db_exists: true,

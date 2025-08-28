@@ -148,7 +148,10 @@ impl IngestdFigmentConfig {
     fn build_figment_base() -> Result<Figment, figment::Error> {
         let default_toml = toml::to_string(&Self::default()).map_err(|e| {
             figment::Error::from(figment::error::Kind::InvalidValue(
-                figment::value::Actual::String(format!("Failed to serialize default config: {}", e)),
+                figment::value::Actual::String(format!(
+                    "Failed to serialize default config: {}",
+                    e
+                )),
                 "default_config".to_string(),
             ))
         })?;

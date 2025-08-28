@@ -8,10 +8,10 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
+use sinex_core::events::CanonicalCommandPayload;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
-use sinex_core::events::CanonicalCommandPayload;
 use sinex_core::{Event, JsonValue, Provenance};
 use sinex_core::{EventSource, EventType, HostName};
 use sinex_satellite_sdk::{
@@ -169,8 +169,8 @@ impl TerminalCommandCanonicalizer {
             .as_ref()
             .ok_or_else(|| SatelliteError::General(eyre!("Context not initialized")))?;
 
-        use sinex_core::types::{Id, Ulid as CoreUlid};
         use sinex_core::types::events::payloads::shell::CanonicalCommandPayload;
+        use sinex_core::types::{Id, Ulid as CoreUlid};
         use sinex_core::{Event, Provenance};
 
         let source_event_ids: Vec<Id<Event<JsonValue>>> = command_data
@@ -190,7 +190,11 @@ impl TerminalCommandCanonicalizer {
             user: command_data.user.clone().unwrap_or_default(),
             session_id: command_data.session_id.clone().unwrap_or_default(),
             environment_hash: command_data.environment_hash.clone().unwrap_or_default(),
-            source_events: command_data.source_events.iter().map(|id| id.to_string()).collect(),
+            source_events: command_data
+                .source_events
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
             enrichment_history: Vec::new(),
         };
 
@@ -198,8 +202,7 @@ impl TerminalCommandCanonicalizer {
         let provenance = Provenance::from_synthesis(source_event_ids)
             .ok_or_else(|| SinexError::invalid_state("No source events for canonical command"))?;
 
-        let event = Event::new(payload, provenance)
-            .at_time(command_data.start_time);
+        let event = Event::new(payload, provenance).at_time(command_data.start_time);
 
         Ok(event)
     }
