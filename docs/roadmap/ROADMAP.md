@@ -1,5 +1,15 @@
 # Sinex Long-Term Roadmap
 
+## Core Vision Documents
+
+These documents contain detailed brainstorming and speculative designs for major, unimplemented features. They are preserved here to ensure the project's long-term vision is not lost.
+
+- [**Semantic Desktop Stream**](./../vision/semantic-desktop-stream.md): A detailed exploration of how Sinex could build a real-time, semantic understanding of the user's context.
+- [**Multi-Device Sync Architecture**](./../vision/multi-device-sync-architecture.md): A deep dive into the challenges and potential solutions for synchronizing Sinex data across multiple devices.
+- [**Project Target State**](./../vision/project-target-state.md): A high-level planning document outlining the ultimate goals and target state of the project.
+- [**Emergent Insights and Speculative Extensions**](./../vision/emergent-insights-and-extensions.md): A collection of brainstorming and speculative ideas for future features and enhancements.
+
+
 See also: Explore experience milestones in `docs/roadmap/explore-ux-roadmap.md`.
 
 ## Far Future Optimizations
