@@ -270,12 +270,12 @@ fn test_safe_content_preservation_in_events() -> color_eyre::eyre::Result<()> {
             safe_string in "[a-zA-Z0-9_. /-]{1,100}"
         ) {
             // Property: Safe ASCII content should be mostly preserved in events
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new(safe_string.clone()),
                 EventType::new("safe.test"),
                 json!({"content": safe_string.clone()}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             let original_alphanum: String = safe_string.chars()
                 .filter(|c| c.is_ascii_alphanumeric()).collect();

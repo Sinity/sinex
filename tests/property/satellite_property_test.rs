@@ -304,7 +304,7 @@ proptest! {
             // Process events in first batch configuration
             let half_point = events.len() / 2;
             for (source, event_type, payload) in events.iter().take(half_point) {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload.clone(),
@@ -318,7 +318,7 @@ proptest! {
 
             // Process remaining events (simulating batch size change)
             for (source, event_type, payload) in events.iter().skip(half_point) {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload.clone(),

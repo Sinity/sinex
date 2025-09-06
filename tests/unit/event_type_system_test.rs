@@ -534,7 +534,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
             // Create multiple events per task
             for j in 0..3 {
                 let payload =
-                    FileCreatedPayload::test_default(&format!("/test/file{}_{}.txt", i, j));
+                    FileCreatedPayload::test_default(format!("/test/file{}_{}.txt", i, j));
                 let prov = Provenance::from_material(
                     Id::<SourceMaterial>::from_ulid(Ulid::new()),
                     0,
@@ -610,7 +610,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
 #[sinex_test]
 async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that valid payloads work correctly
-    let valid_payload = FileCreatedPayload::test_default("/valid/path.txt")
+    let valid_payload = FileCreatedPayload::test_default("/valid/path.txt".to_string())
         .with_size(1024)
         .with_permissions(0o644);
 

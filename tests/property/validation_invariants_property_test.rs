@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::models::RawEvent;
+use sinex_core::{Event, JsonValue, Id, Ulid};
 use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,
@@ -23,7 +23,7 @@ use std::collections::HashMap;
 // =============================================================================
 
 /// Generate events with interdependent validation constraints
-fn arb_complex_event() -> impl Strategy<Value = RawEvent> {
+fn arb_complex_event() -> impl Strategy<Value = Event<JsonValue>> {
     (
         "[a-z][a-z0-9_]{2,20}",  // source
         "[a-z][a-z0-9_.]{2,30}", // event_type
@@ -40,7 +40,7 @@ fn arb_complex_event() -> impl Strategy<Value = RawEvent> {
         prop::option::of(1u32..1000000u32), // optional size constraint
     )
         .prop_map(|(source, event_type, payload_fields, size_constraint)| {
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 json!(payload_fields),
@@ -57,7 +57,7 @@ fn arb_complex_event() -> impl Strategy<Value = RawEvent> {
                 }
             }
 
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         })
 }
@@ -303,12 +303,12 @@ fn test_unicode_normalization_invariants() -> color_eyre::eyre::Result<()> {
             unicode_content in "[\\u{0080}-\\u{FFFF}]{1,100}"
         ) {
             // Property: Unicode content should be handled consistently
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new("unicode.test"),
                 EventType::new("normalization.test"),
                 json!({"content": unicode_content.clone()}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             let original_length = unicode_content.chars().count();
 
@@ -353,12 +353,12 @@ fn test_numerical_precision_invariants() -> color_eyre::eyre::Result<()> {
                 "precision_test": format!("{:.prec$}", float_val, prec = precision_digits)
             });
 
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new("numerical.test"),
                 EventType::new("precision.test"),
                 payload,
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             // Sanitization should preserve numerical accuracy
             let result = EventSanitizer::sanitize_event(&mut event);
@@ -409,12 +409,12 @@ fn test_validation_performance_characteristics() -> color_eyre::eyre::Result<()>
                     }
                 });
 
-                let mut event = RawEvent::schemaless(
+                let mut event = Event::test_event(
                     EventSource::new(format!("perf.test.{}", i)),
                     EventType::new("performance.test"),
                     large_payload,
                 );
-                event.ts_ingest = chrono::Utc::now();
+                event.id = Some(Id::from_ulid(Ulid::new()));
                 events.push(event);
             }
 
@@ -446,7 +446,7 @@ fn test_validation_performance_characteristics() -> color_eyre::eyre::Result<()>
 // Helper Functions
 // =============================================================================
 
-fn create_event_for_security_threat(threat: SecurityThreat) -> RawEvent {
+fn create_event_for_security_threat(threat: SecurityThreat) -> Event<JsonValue> {
     let (source, event_type, payload) = match threat {
         SecurityThreat::PathTraversal => (
             "../../../etc/passwd",
@@ -470,69 +470,69 @@ fn create_event_for_security_threat(threat: SecurityThreat) -> RawEvent {
         ),
     };
 
-    let mut event = RawEvent::schemaless(
+    let mut event = Event::test_event(
         EventSource::new(source),
         EventType::new(event_type),
         payload,
     );
-    event.ts_ingest = chrono::Utc::now();
+    event.id = Some(Id::from_ulid(Ulid::new()));
     event
 }
 
-fn create_event_for_failure(failure: ValidationFailure) -> RawEvent {
+fn create_event_for_failure(failure: ValidationFailure) -> Event<JsonValue> {
     match failure {
         ValidationFailure::EmptySource => {
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new(""),
                 EventType::new("test.event"),
                 json!({"data": "test"}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         }
         ValidationFailure::InvalidPayload => {
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new("test.source"),
                 EventType::new("test.event"),
                 json!(null),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         }
         ValidationFailure::OversizedContent => {
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new("test.source"),
                 EventType::new("test.event"),
                 json!({"data": "x".repeat(1_000_000)}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         }
         ValidationFailure::MissingTimestamp => {
             // This is harder to create with current event structure
-            // since ts_ingest is required
-            let mut event = RawEvent::schemaless(
+            // ULID (ingest) is created at insert; simulate presence
+            let mut event = Event::test_event(
                 EventSource::new("test.source"),
                 EventType::new("test.event"),
                 json!({"data": "test"}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         }
     }
 }
 
-fn create_valid_test_event() -> RawEvent {
-    let mut event = RawEvent::schemaless(
+fn create_valid_test_event() -> Event<JsonValue> {
+    let mut event = Event::test_event(
         EventSource::new("valid.source"),
         EventType::new("valid.event"),
         json!({"data": "clean data", "count": 42}),
     );
-    event.ts_ingest = chrono::Utc::now();
+    event.id = Some(Id::from_ulid(Ulid::new()));
     event
 }
 
-fn contains_security_threat(event: &RawEvent, threat: &SecurityThreat) -> bool {
+fn contains_security_threat(event: &Event<JsonValue>, threat: &SecurityThreat) -> bool {
     match threat {
         SecurityThreat::PathTraversal => {
             event.source.contains("..") || event.payload.to_string().contains("..")

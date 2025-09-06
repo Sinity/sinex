@@ -5,7 +5,7 @@
 //! inter-component interactions using the current architecture:
 //! - Repository pattern with `DbPoolExt`
 //! - Generic `Id<T>` types
-//! - `RawEvent::schemaless()` direct constructor
+//! - Event::<JsonValue>::test_event constructor for test events
 //! - `#[sinex_test]` macro for async tests
 //! - Modern test infrastructure (rstest, insta, tracing-test, similar-asserts)
 
