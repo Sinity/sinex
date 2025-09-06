@@ -1,3 +1,4 @@
+Status: canonical
 # Security Architecture
 
 ## Overview
@@ -172,11 +173,12 @@ Current approach may be sufficient as:
 2. **SQL injection** → Parameterized queries only
 3. **Path traversal** → Input validation + canonicalization
 
-See [TIM-SecurityThreatModel](../docs/_todo/archive/TIM-SecurityThreatModel.md) for comprehensive threat analysis.
+Threat modeling is documented internally and will be consolidated into this document as it stabilizes.
 
 ## References
 
-- [ADR-006: NixOS Secrets Management Tool](../docs/_todo/archive/ADR-006-NixOSSecretsManagementTool.md)
-- [Database Encryption with pgsodium](../docs/roadmap/features/database-encryption-pgsodium.md)
-- [TIM-SecurityThreatModel](../docs/_todo/archive/TIM-SecurityThreatModel.md)
+- ADR‑006: NixOS Secrets Management Tool (historical; agenix)
+- [Database Encryption with pgsodium](../roadmap/features/database-encryption-pgsodium.md)
+  
+Note: Threat modeling is tracked in internal docs and tickets; consolidate into this document in future iterations.
 - Original Vision Document security requirements

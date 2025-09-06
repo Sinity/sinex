@@ -1,7 +1,11 @@
+Status: reference
 # Sinex Database Schema
 
 ## Overview
 The Sinex database uses PostgreSQL with TimescaleDB for time-series optimization and pgvector for embeddings. All tables use ULID (Universally Unique Lexicographically Sortable Identifier) as primary keys for time-ordered, distributed-safe identification.
+
+Source of truth
+- The canonical schema is defined programmatically in `crate/lib/sinex-schema/src/schema/*.rs` and applied via migrations. Any ad-hoc SQL or reference `.sql` files may lag and should not be treated as authoritative.
 
 **Current Implementation Status**:
 - ✅ Core event storage and processing (core schema)
@@ -402,7 +406,7 @@ Caches validation results for performance. Reduces repeated validation overhead 
 
 ## Migration History
 
-The database schema is organized into three comprehensive migrations using the sea-orm-migration system:
+The database schema is organized into versioned migrations maintained in `crate/lib/sinex-schema/` (sea‑orm‑migration). Use the workspace justfile and repository README for commands.
 
 1. **m20240101_000001_core_infrastructure**: Complete core infrastructure
    - PostgreSQL extensions (uuid-ossp, TimescaleDB, pg_jsonschema, ULID)
@@ -474,14 +478,14 @@ The database schema is organized into three comprehensive migrations using the s
 
 ## Related Documentation
 
-- **Architecture**: docs/architecture/STAD.md - System Technical Architecture
-- **Development**: docs/development/satellite-development-guide.md - Building satellites
+- **Architecture**: docs/architecture/Core_Architecture.md - System technical architecture
+- **Development**: docs/architecture/satellite-implementation.md - Building satellites
 - **Features**: 
   - docs/roadmap/features/embeddings-and-semantic-search.md - Semantic search design
   - docs/roadmap/features/database-encryption-pgsodium.md - Field-level encryption
 - **Operations**:
-  - crate/sinex-db/src/queries/ - Query builders and database interface
-  - crate/sinex-db/migration/src/ - Sea-ORM migration definitions
+  - crate/lib/sinex-core/src/db/repositories/ - Query builders and database interface (SQLx)
+  - crate/lib/sinex-schema/ - Schema and migrations (sea-orm-migration)
 
 ## Schema Validation
 

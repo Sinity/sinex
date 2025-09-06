@@ -1,3 +1,4 @@
+Status: canonical
 # User Interaction & Query Architecture: Working Interface Systems
 
 *   **Version:** 2.0
@@ -160,3 +161,37 @@ exo query --payload-filter '{"exit_status": 0}'
 - **Batch Operations:** Support for bulk data operations
 
 This user interface architecture provides a solid foundation for all current and future user interaction needs while maintaining the core principles of auditability, performance, and extensibility.
+
+## 5. Authoritative Queries (Examples)
+
+Gateway JSON‑RPC
+```json
+POST /rpc
+{
+  "jsonrpc": "2.0",
+  "id": "q-001",
+  "method": "search.search_events",
+  "params": {
+    "sources": ["sinex-terminal-satellite"],
+    "start_time": "2025-07-17T10:00:00Z",
+    "end_time": "2025-07-17T12:00:00Z",
+    "limit": 50
+  }
+}
+```
+
+CLI (exo)
+```bash
+./cli/exo.py query --source sinex-terminal-satellite --last 2h --limit 50
+./cli/exo.py sources --rpc ${SINEX_RPC_URL:-http://127.0.0.1:9999}
+```
+
+### Method Index (selected)
+- `search.search_events`: Full‑text + structured search over events. Params: time window, sources[], event_types[], limit, offset, payload filters. Returns: array of events with pagination hints.
+- `analytics.event_count_by_source`: Count events grouped by source. Params: `days_back?` (default 7). Returns: `[ { source, count } ]`.
+- `analytics.activity_heatmap`: Activity buckets for temporal analysis. Params: `bucket_size_minutes?` (default 60), `limit?` (default 100). Returns: `[ { bucket_start, count } ]`.
+- `pkm.create_note`: Create a PKM note artifact. Params: `event_id`, `content`, `tags[]?`, `created_by?`. Returns: `{ annotation_id }`.
+- `pkm.create_entities_from_list`: Create entities from a list. Params: `source_material_id`, `entities: [ { name, type } ]`, `created_by?`. Returns: `{ entity_ids[] }`.
+- `pkm.link_entities`: Create links between entities. Params: `from_entity_id`, `to_entity_id`, `relationship_type`, `properties?{}`. Returns: `{ relation_id }`.
+- `content.store_blob`: Store a blob and return its identifier. Params: `content` (base64 or UTF‑8), `filename?`, `content_type?`, `source?`. Returns: `{ annex_key }`.
+- `content.retrieve_blob`: Retrieve a blob by identifier. Params: `annex_key`. Returns: `{ content }` (UTF‑8 or placeholder for binary).

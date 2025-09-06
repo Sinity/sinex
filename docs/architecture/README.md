@@ -1,22 +1,26 @@
+Status: canonical
 # Sinex Architecture Documentation
 
 This directory contains comprehensive technical architecture documentation for the Sinex system.
 
-Note: Internal messaging uses NATS JetStream. Any references to Redis Streams in older documents are historical and superseded by the streaming design in `streaming-architecture.md`.
+Note: Internal messaging uses NATS JetStream. In the current implementation, satellites ingest via gRPC to `sinex-ingestd`, which persists to Postgres and fans out over JetStream. The planned end‑state (see `docs/plan_v3.txt`) is NATS‑native ingestion where satellites publish directly to JetStream and `ingestd` acts as an archiver/consumer.
 
 ## Core Architecture Documents
 
-### System Architecture
-- **[Data Substrate Architecture](DataSubstrate_Architecture.md)** - Foundation of Sinex including PostgreSQL, TimescaleDB, NATS JetStream, and the satellite constellation
-- **[Streaming Architecture & Backpressure](streaming-architecture.md)** - NATS JetStream staging/events, transactional outbox, and producer/consumer guidance
-- **[Ingestion Architecture](IngestionArchitecture_And_TelemetrySources.md)** - Event sources, telemetry patterns, and ingestion pipeline
-- **[System Operations Architecture](SystemOperations_And_Integrity_Architecture.md)** - Operational concerns, monitoring, backup, and integrity
-- **[User Interaction Architecture](UserInteraction_And_Query_Architecture.md)** - Query interfaces, CLI, and future UI systems
+See also: the high-level map in `../Architecture.md` and definitions in `../GLOSSARY.md`.
 
-### Implementation Patterns
-- **[Satellite Implementation](satellite-implementation.md)** - Patterns for building new satellites
-- **[Event Relations](event-relations.md)** - Design for event relationship tracking (planned)
-- **[Tagging System](tagging-system.md)** - Comprehensive tagging architecture (planned)
+### System Architecture
+- **[Core Architecture](./Core_Architecture.md)** - Consolidated architecture (flow, messaging, ingestion, and data substrate)
+- **[System Operations Architecture](./SystemOperations_And_Integrity_Architecture.md)** - Operational concerns, monitoring, backup, and integrity
+- **[User Interaction Architecture](./UserInteraction_And_Query_Architecture.md)** - Query interfaces, CLI, and future UI systems
+- **[Event Taxonomy](./event-taxonomy.md)** - Canonical event families and minimal payload contracts
+
+- **[Satellite Implementation](./satellite-implementation.md)** - Patterns for building new satellites
+- Event Relations and Tagging System are tracked under roadmap; historical design notes are in `../archive/architecture/`.
+
+### Deprecated/Consolidated
+- Metrics & Telemetry: see NixOS/module docs and service logs; a dedicated `MONITORING.md` will be added when available
+- Query & Operations: see `UserInteraction_And_Query_Architecture.md`
 
 ## Architecture Principles
 

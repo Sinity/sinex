@@ -1,5 +1,7 @@
 # Sinex Long-Term Roadmap
 
+See also: Explore experience milestones in `docs/roadmap/explore-ux-roadmap.md`.
+
 ## Far Future Optimizations
 
 These enhancements require significant effort and should only be considered after core refactoring is complete and performance bottlenecks are identified through real-world usage.

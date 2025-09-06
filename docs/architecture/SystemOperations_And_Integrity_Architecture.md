@@ -1,3 +1,4 @@
+Status: canonical
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
 
 *   **Version:** 2.0
@@ -20,6 +21,15 @@ The Sinex is envisioned as a lifelong cognitive partner. This long-term aspirati
 *   **Maintainability & Evolvability:** The system architecture and operational practices should facilitate updates, bug fixes, and the graceful evolution of features and technologies.
 *   **Meta-Observability as a First-Class Concern:** The system's own operational health is treated as critical data, enabling self-monitoring and diagnostics.
 *   **Automation:** Operational tasks (backups, checks, deployments) should be automated as much as possible.
+
+### 1.3. Core Invariants
+
+- Single writer: Only `sinex-ingestd` persists events to `core.events`.
+- Immutability: Events are append-only; corrections emit new events with provenance.
+- Provenance: Derived events record sources via `source_event_ids`/`associated_blob_ids`.
+- Time/order: ULIDs provide global ordering; `ts_ingest` and `ts_orig` are tracked rigorously.
+- Material integrity: Blobs are content-addressed; references are stable.
+- Operational trace: Long-running operations are recorded in `operations_log`.
 
 ## 2. Operational Observability Architecture
 
@@ -93,7 +103,7 @@ The satellite constellation implements an elegant observability pattern where sy
 ### 5.2. Schema Evolution
 
 *   **JSONB Flexibility:** ✅ **OPERATIONAL** - Event payloads use JSONB for schema flexibility
-*   **SQL Migrations:** ✅ **OPERATIONAL** - Database migrations using sqlx for schema evolution
+*   **Migrations:** ✅ **OPERATIONAL** - Database schema and migrations via `sinex-schema` (sea-orm-migration)
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - GitOps-driven schema validation enables evolution
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events preserve history during schema changes
 
@@ -126,3 +136,20 @@ The satellite constellation implements an elegant observability pattern where sy
 - JSONB flexibility for schema evolution
 
 This operational architecture provides a robust foundation for the Sinex system, focusing on proven patterns that are currently operational rather than speculative future features.
+
+## 7. Runbooks (Summary)
+
+Disaster Recovery (summary)
+- Backups: Use `pgBackRest` for PostgreSQL base + WAL archiving; version NixOS config in Git; store annex blobs on redundant remotes.
+- Full host recovery: Rebuild NixOS from config; restore Postgres with `pgbackrest restore` (latest or PITR); reinitialize `git-annex` and sync content; start services and verify.
+- Logical error recovery: Restore to a temporary instance at time T; dump specific tables/rows; apply to production after review.
+
+Daily Ops
+- Health check: verify services; recent event counts; error scans; DB disk usage.
+- Queue/lag: check JetStream consumer lag; DLQs; retry transient failures.
+- Migrations: apply via `sinex-schema` (sea-orm-migration); refresh SQLx offline cache (`just sqlx-prepare`).
+
+Troubleshooting
+- Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.
+- Satellite issues: ensure NATS connectivity; check checkpoints; restart the unit with `systemctl`.
+- DB issues: connection pool saturation, missing indexes on hot paths; run focused EXPLAINs on slow queries.

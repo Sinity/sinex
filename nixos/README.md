@@ -96,19 +96,25 @@ sudo nixos-rebuild switch
 Sinex uses a satellite architecture:
 
 ```
-External Data → Ingestors → IngestD (gRPC) → PostgreSQL + Redis → Automata → Synthesis Events
-             ↗ (filesystem)     ↗ (hub)     ↗ (storage)  ↗ (bus)    ↗ (processors)
-             ↗ (terminal)
-             ↗ (desktop) 
-             ↗ (system)
+External Data → Satellites → ingestd (gRPC) → PostgreSQL → JetStream → Automata → Gateway/CLI
+               (fs/terminal/desktop/system)   (archiver)   (events)     (fanout)
 ```
 
+Current implementation:
+- Satellites submit events/material via gRPC to ingestd (Unix socket)
+- ingestd validates and persists to PostgreSQL (TimescaleDB)
+- ingestd fans out persisted events via NATS JetStream for downstream automata
+
+Planned end‑state (see `docs/plan_v3.txt`):
+- Satellites publish directly to NATS JetStream (`events.raw`, `source_material.slices`)
+- ingestd consumes from JetStream and acts as a pure archiver
+
 **Core Components:**
-- **IngestD**: Central gRPC hub for event ingestion
+- **ingestd**: Central gRPC hub for event ingestion (current); JetStream archiver (planned)
 - **Gateway**: HTTP/JSON-RPC API for CLI and web access
 - **Satellites**: Independent services for data capture and processing
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
-- **Redis**: Message bus for real-time event distribution
+- **NATS JetStream**: Message bus for real-time event distribution
 
 ## Deployment Scenarios
 

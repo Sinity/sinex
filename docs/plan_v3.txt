@@ -148,7 +148,7 @@ Appendix — Example Payloads
   - `{ "event_id": "01JAB…", "source": "sinex-fs-watcher", "event_type": "fs.file.created", "payload": {"path": "/path/file.txt"}, "ts_orig": "…", "host": "…", "provenance": {"Material": {"id": "01JAB…", "anchor_byte": 0, "offset_start": null, "offset_end": null, "offset_kind": "Byte"}} }`
 
 Completeness Checks & Operational Details
-- Supersedes: This plan supersedes `docs/plan_v2.txt` and the ingestion parts of `docs/TARGET_final.md`.
+- Supersedes: This plan supersedes `docs/plan_v2.txt` and prior ingestion sections in historical target documents.
 - Schema registry handling:
   - Ingestd loads active schemas from `sinex_schemas.event_payload_schemas` at startup and refreshes on a timer (e.g., 60s) or upon admin signal.
   - Schema selection: key on (source, event_type), apply latest active version unless an explicit `payload_schema_id` is provided in the Event.

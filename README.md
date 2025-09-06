@@ -31,10 +31,12 @@ The promise is threefold: to restore **agency** by placing you in control of you
 
 Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
 
-**Core Flow**: Satellites → NATS JetStream → ingestd (archiver) → Event Substrate → Automata → Query Interface
+**Current Core Flow (implemented in code)**: Satellites → ingestd (gRPC over Unix socket) → Postgres (`core.events`) → NATS JetStream fanout → Automata → Gateway (JSON‑RPC) → CLI
+
+Note: A NATS‑native ingestion refactor (satellites publish directly to JetStream; ingestd acts as archiver/consumer) is planned. See `docs/plan_v3.txt`. Until that refactor lands, ingestion uses gRPC to ingestd as above.
 
 - **Satellites**: Independent services that capture events (filesystem, terminals, window managers, system events)
-- **ingestd**: Central archiver that consumes from NATS JetStream and stores data atomically
+- **ingestd**: Central ingestion daemon that receives events via gRPC and stores data atomically; also fans out persisted events via NATS JetStream
 - **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
 - **NATS JetStream**: Real-time event distribution and durable buffering
 - **Automata**: Stream processors that transform raw events into canonical representations
@@ -57,7 +59,8 @@ Sinex is a "sentient archive" implemented as a satellite constellation architect
 - **Dual-Mode Operation**: Satellites support both sensor (real-time) and scanner (batch) modes
 - **Immutable Event Storage**: All events preserved with full fidelity
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers
-- **NATS Publishing/Consuming**: Satellites publish events/material slices; ingestd consumes and archives
+- **Ingestion via gRPC (current)**: Satellites submit to ingestd over gRPC; ingestd validates/persists and fans out via NATS JetStream
+- **NATS‑native ingest (planned)**: Per `docs/plan_v3.txt`, satellites will publish directly to JetStream; ingestd becomes an archiver/consumer
 - **Schema Validation**: JSON Schema validation for event payloads
 - **Git-Annex Integration**: Large file storage for blobs
 - **NixOS Module**: First-class NixOS deployment support
@@ -232,7 +235,7 @@ The Sinex test suite is optimized for parallel execution, achieving 50%+ faster 
 - **Fast Testing**: `just test-parallel` for maximum speed
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
-See [`docs/PARALLEL_TESTING.md`](docs/PARALLEL_TESTING.md) for detailed testing guide.
+See [`TESTING.md`](TESTING.md) for the detailed testing guide.
 
 Quick commands:
 ```bash
@@ -243,39 +246,20 @@ just test-dev       # Quick dev cycle (<2 min)
 
 ## 📚 Documentation
 
-### Core Documentation
-- **Project Vision**: [`spec/VISION.md`](spec/VISION.md) - Philosophy and long-term goals
-- **Architecture Guide**: [`spec/STAD.md`](spec/STAD.md) - System technical architecture
-- **Documentation Index**: [`spec/SADI.md`](spec/SADI.md) - Complete documentation map
-- **Getting Started**: [`spec/PLAN.md`](spec/PLAN.md) - Development roadmap and status
-
-### Technical Specifications
-- **Implementation Specs**: `spec/implemented/` - Working features
-- **Ready Specs**: `spec/ready/` - Designed and ready to implement
-- **Future Plans**: `spec/planned/` - Long-term feature planning
-- **Architecture Decisions**: `spec/docs/adr/` - Design rationale
+### Core
+- **Docs Index**: [`docs/README.md`](docs/README.md) — Start here
+- **Architecture**: [`docs/architecture/`](docs/architecture/)
+- **Roadmap**: [`docs/roadmap/`](docs/roadmap/)
+- **Integrity & Security**: [`docs/architecture/SystemOperations_And_Integrity_Architecture.md`](docs/architecture/SystemOperations_And_Integrity_Architecture.md), [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md)
 
 ### Key Components
-#### Database Schema
-- [Event Substrate DDL](spec/implemented/infrastructure/TIM-EventSubstrateDDL.md) - Core.events table
-- [Event Schema Registry](spec/implemented/infrastructure/TIM-EventSchemaRegistry.md) - GitOps schemas
-- [Knowledge Graph Schema](spec/implemented/infrastructure/TIM-KnowledgeGraphSchema.md) - Entities
-
-#### Event Sources
-- [Filesystem Monitoring](spec/implemented/event-sources/TIM-FilesystemMonitoringWatchers.md)
-- [Terminal Logging](spec/implemented/event-sources/TIM-GenericTerminalLogging.md)
-- [Clipboard Monitoring](spec/implemented/event-sources/TIM-ClipboardMonitoring.md)
-- [Hyprland IPC](spec/implemented/event-sources/TIM-HyprlandIPCInterface.md)
-
-#### Infrastructure
-- [Event Ingestion](spec/implemented/infrastructure/TIM-EventIngestionProcessing.md) - Satellites
-- [Agent Manifests](spec/implemented/infrastructure/TIM-AgentManifestManagement.md) - Processors
-- [Test Framework](spec/implemented/infrastructure/TIM-TestFrameworkInfrastructure.md) - Testing
+- **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
+- **Schema & Taxonomy**: [`docs/architecture/SCHEMA.md`](docs/architecture/SCHEMA.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+- **Satellites SDK & Patterns**: [`docs/architecture/satellite-implementation.md`](docs/architecture/satellite-implementation.md)
 
 ### For Contributors
-- **Development Guide**: [`CLAUDE.md`](CLAUDE.md) - Project patterns and workflows
-- **Contribution Pathways**: [`spec/PATHWAYS.md`](spec/PATHWAYS.md) - Where to start contributing
-- **Dependency Graph**: [`spec/DEPENDENCIES.md`](spec/DEPENDENCIES.md) - Feature dependencies
+- **Testing Guide**: [`TESTING.md`](TESTING.md)
+- **CLAUDE Workflows**: [`CLAUDE.md`](CLAUDE.md)
 
 ## 🛠️ Project Structure
 
@@ -292,16 +276,16 @@ sinex/
 │   ├── sinex-desktop-satellite/  # Desktop event satellite
 │   ├── sinex-system-satellite/   # System event satellite
 │   └── sinex-terminal-command-canonicalizer/  # Automaton example
-├── crate/sinex-db/migration/     # Database migrations using sea-orm-migration
+├── crate/lib/sinex-schema/       # Database schema + migrations (sea-orm-migration)
 ├── nixos/                        # NixOS module and deployment
-├── test/                         # Comprehensive test suites
+├── tests/                        # Comprehensive test suites
 ├── cli/                          # Python query interface (exo.py)
-└── spec/                         # Documentation and specifications
+└── docs/                         # Documentation (architecture, roadmap, guides)
 ```
 
 ## 🤝 Contributing
 
-See [`spec/PATHWAYS.md`](spec/PATHWAYS.md) for contribution guidelines and [`CLAUDE.md`](CLAUDE.md) for development workflows.
+See [`CLAUDE.md`](CLAUDE.md) for development workflows.
 
 ## 📄 License
 
