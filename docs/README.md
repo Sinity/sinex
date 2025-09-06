@@ -1,15 +1,28 @@
 Sinex Documentation — Canonical Map
 
-Use this map to find the authoritative sources and reduce drift.
+Use this curated index to find the authoritative docs fast. Many historical and brainstorming notes remain in this repo, but only the links below are considered canonical for day-to-day development.
 
-- Ingestion Architecture: `docs/plan_v3.txt` (NATS‑native; materials + events; ingestd as archiver)
-- Data Substrate (DB/streams overview): `docs/architecture/DataSubstrate_Architecture.md` (points to plan_v3 for ingestion specifics)
-- Development Guide: `docs/DEVELOPMENT_GUIDE.md`
-- Security & Integrity: `docs/INTEGRITY.md`, `docs/architecture/security-architecture.md`
-- SDK & Satellites: `crate/lib/sinex-satellite-sdk/` (code), `docs/architecture/satellite-implementation.md`
-- Schema & Migrations: `crate/lib/sinex-schema/` (canonical schema + migrations)
-- System Overview: `docs/architecture/system-overview.md`
+Start Here
+- Architecture Overview: `docs/architecture/README.md`
+- Core Architecture: `docs/architecture/Core_Architecture.md`
+- Integrity & Security: `docs/architecture/SystemOperations_And_Integrity_Architecture.md`, `docs/architecture/security-architecture.md`
+- Glossary: `docs/GLOSSARY.md`
+
+Core Topics
+- Ingestion Plan: `docs/plan_v3.txt` (NATS‑native ingest, materials + events)
+- Satellites SDK: `crate/lib/sinex-satellite-sdk/` and `docs/architecture/satellite-implementation.md`
+- Event Taxonomy: `docs/architecture/event-taxonomy.md`
+- Operations & Monitoring: `nixos/README.md` and service logs (journald); `SystemOperations_And_Integrity_Architecture.md` for principles
+
+How-To Guides
+- Testing Guide: `TESTING.md` and `tests/README.md`
+- Gateway/CLI: `./cli/exo.py --help`
+
+Navigation
+- Architecture: `docs/architecture/`
 - Roadmap: `docs/roadmap/`
 
-Historical docs (Redis/gRPC-based flows) are deprecated. Prefer plan_v3 and NATS examples.
+Notes
+- Working notes and drafts live under `docs/_todo/`. Prefer the canonical docs above for day-to-day work.
 
+Historical docs (e.g., non‑NATS flows) are superseded by `plan_v3.txt` and the streaming architecture.
