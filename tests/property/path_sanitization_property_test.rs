@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::models::RawEvent;
+use sinex_core::{Event, JsonValue, Id, Ulid};
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::validation::{validate_path, ValidationError};
 use sinex_test_utils::prelude::*;
@@ -172,12 +172,12 @@ fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
             path in prop_oneof![arb_file_path(), arb_malicious_path(), arb_edge_case_path()]
         ) {
             // Property: Sanitizing the same event twice should yield the same result
-            let mut event1 = RawEvent::schemaless(
+            let mut event1 = Event::test_event(
                 EventSource::new(path.clone()),
                 EventType::new("test.event"),
                 json!({"test": "data"}),
             );
-            event1.ts_ingest = chrono::Utc::now();
+            event1.id = Some(Id::from_ulid(Ulid::new()));
 
             let mut event2 = event1.clone();
 
@@ -202,12 +202,12 @@ fn test_path_sanitization_removes_dangerous_sequences() -> color_eyre::eyre::Res
             malicious_path in arb_malicious_path()
         ) {
             // Property: Sanitized paths should not contain known dangerous patterns
-            let mut event = RawEvent::schemaless(
+            let mut event = Event::test_event(
                 EventSource::new(malicious_path.clone()),
                 EventType::new("security.test"),
                 json!({"path": malicious_path.clone()}),
             );
-            event.ts_ingest = chrono::Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
 

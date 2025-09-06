@@ -168,3 +168,38 @@ impl DirDiscoveredPayload {
         self
     }
 }
+
+// Test helpers for external tests
+#[cfg(feature = "testing")]
+impl FileCreatedPayload {
+    pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
+        Self {
+            path: path.into(),
+            size: 0,
+            created_at: Utc::now(),
+            permissions: None,
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+impl FileModifiedPayload {
+    pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
+        Self {
+            path: path.into(),
+            size: 0,
+            modified_at: Utc::now(),
+            modification_type: "modified".to_string(),
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+impl FileDeletedPayload {
+    pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
+        Self {
+            path: path.into(),
+            deleted_at: Utc::now(),
+        }
+    }
+}

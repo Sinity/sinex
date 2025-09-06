@@ -3,8 +3,9 @@
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
-    db::models::Entity,
+    db::models::{Entity, Event},
     types::{ulid::Ulid, Id},
+    JsonValue,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 
@@ -183,7 +184,7 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .unwrap_or("sinex-host");
 
     let annex_key = service
-        .store_large_content(content.as_bytes(), filename, content_type, source)
+        .store_content(content.as_bytes(), filename, content_type, source)
         .await?;
 
     Ok(json!({ "annex_key": annex_key }))

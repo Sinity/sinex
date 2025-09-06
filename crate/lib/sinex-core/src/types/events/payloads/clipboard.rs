@@ -108,7 +108,7 @@ impl ClipboardSelectedPayload {
 
 impl ClipboardCopiedPayload {
     /// Create a test instance with the given content hash
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn test_default(content_hash: impl Into<String>) -> Self {
         Self {
             operation: "copy".to_string(),
@@ -129,7 +129,7 @@ impl ClipboardCopiedPayload {
 
 impl ClipboardSelectedPayload {
     /// Create a test instance with the given content hash
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn test_default(content_hash: impl Into<String>) -> Self {
         Self {
             selection_type: "primary".to_string(),

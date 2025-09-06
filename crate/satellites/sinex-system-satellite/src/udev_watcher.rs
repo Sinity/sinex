@@ -3,10 +3,13 @@
 //! Monitors hardware device events via udev
 
 use sinex_core::db::models::event::Event;
+use sinex_core::db::models::event::EventId;
+use sinex_core::db::models::event::Provenance;
 use sinex_core::types::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
+use sinex_core::types::Ulid;
 use sinex_core::JsonValue;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
@@ -17,21 +20,37 @@ use tracing::{debug, info, warn};
 macro_rules! create_udev_event {
     ($payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
      $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
-     $properties:expr, $timestamp:expr) => {
-        Ok(Event::new($payload_type {
-            action: $action.to_string(),
-            device_path: $device_path.to_string(),
-            device_type: $device_type.to_string(),
-            subsystem: $subsystem,
-            devtype: $devtype,
-            vendor: $vendor,
-            model: $model,
-            serial: $serial,
-            properties: $properties,
-            timestamp: $timestamp,
-        })
-        .into())
-    };
+     $properties:expr, $timestamp:expr) => {{
+        // System events currently do not originate from a concrete source material;
+        // model them as synthesis events anchored to a bootstrap ID.
+        let system_bootstrap_id = EventId::from_ulid(
+            Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
+        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+        let event = Event::new(
+            $payload_type {
+                action: $action.to_string(),
+                device_path: $device_path.to_string(),
+                device_type: $device_type.to_string(),
+                subsystem: $subsystem,
+                devtype: $devtype,
+                vendor: $vendor,
+                model: $model,
+                serial: $serial,
+                properties: $properties,
+                timestamp: $timestamp,
+            },
+            provenance,
+        )
+        .to_json_event()?;
+
+        Ok(event)
+    }};
 }
 
 /// udev watcher

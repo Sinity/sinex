@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
 use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
@@ -114,8 +114,8 @@ impl Default for TerminalConfig {
                 home.join(".zsh_history"),
                 home.join(".local/share/fish/fish_history"),
             ])
-            .kitty_socket_path(None) // Auto-detected
-            .recording_output_dir(Some(home.join(".local/share/sinex/recordings")))
+            // Option fields: leave unset for None; builder treats Option fields as optional
+            .recording_output_dir(home.join(".local/share/sinex/recordings"))
             .scrollback_capture_enabled(false)
             .polling_interval_secs(5)
             .batch_size(100)
@@ -140,10 +140,9 @@ impl TerminalConfig {
 // Custom validation functions for TerminalConfig
 
 /// Validate optional path fields
-fn validate_optional_path(path: &Option<Utf8PathBuf>) -> Result<(), ValidationError> {
-    if let Some(p) = path {
-        validate_single_path(p)?;
-    }
+/// For Option<T> fields, validator passes &T for custom validators when Some.
+fn validate_optional_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+    validate_single_path(path)?;
     Ok(())
 }
 
@@ -156,10 +155,8 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
 }
 
 /// Validate a single path for security and correctness using comprehensive validation
-fn validate_single_path(path: &sinex_core::SanitizedPath) -> Result<(), ValidationError> {
+fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     let path_str = path.as_str();
-
-    // Use the comprehensive path validation from sinex-core
     match sinex_core::types::validate_path(path_str) {
         Ok(_) => Ok(()),
         Err(_) => Err(ValidationError::new("invalid_path")),
@@ -493,17 +490,18 @@ impl TerminalProcessor {
                 .map(|t| DateTime::<Utc>::from(t));
 
             // Estimate entries by counting lines efficiently without loading entire file
-            let estimated_entries = match Self::count_lines_streaming(history_file).await {
-                Ok(count) => count,
-                Err(e) => {
-                    debug!(
-                        "Failed to count lines in history file, using size estimate: {}",
-                        e
-                    );
-                    // Fallback: estimate ~50 bytes per line average
-                    size_bytes / 50
-                }
-            };
+            let estimated_entries =
+                match Self::count_lines_streaming(history_file.as_std_path()).await {
+                    Ok(count) => count,
+                    Err(e) => {
+                        debug!(
+                            "Failed to count lines in history file, using size estimate: {}",
+                            e
+                        );
+                        // Fallback: estimate ~50 bytes per line average
+                        size_bytes / 50
+                    }
+                };
 
             HistoryFileStatus {
                 exists: true,

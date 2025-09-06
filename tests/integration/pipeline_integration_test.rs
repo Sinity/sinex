@@ -126,8 +126,14 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> color_eyre:
         assert_eq!(stored_event.payload, *expected_payload);
         
         // Verify pipeline processing metadata
-        assert!(stored_event.ts_ingest > stored_event.ts_orig.unwrap_or(stored_event.ts_ingest));
-        assert!(!stored_event.ingestor_version.is_empty());
+        let ingest_ts = stored_event
+            .id
+            .as_ref()
+            .expect("id present")
+            .as_ulid()
+            .timestamp();
+        assert!(ingest_ts > stored_event.ts_orig.unwrap_or(ingest_ts));
+        assert!(stored_event.ingestor_version.as_ref().map_or(false, |s| !s.is_empty()));
         
         tracing::debug!(
             event_id = %stored_event.id,

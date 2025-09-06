@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use sinex_core::types::domain::EventSource;
 use sinex_core::DbPoolExt;
+use sinex_core::{Event, JsonValue};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -421,13 +422,13 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
             "verification_timestamp": chrono::Utc::now(),
         });
 
-        // Update the leadership record with detailed verification metadata
+        // Persist detailed verification metadata on the satellite instance record
         sqlx::query!(
-            "UPDATE core.service_leadership 
+            "UPDATE core.satellite_instances 
              SET metadata = $1 
-             WHERE service_name = 'sinex-preflight' AND instance_id = $2",
+             WHERE instance_id = $2",
             metadata,
-            instance_uuid
+            instance_uuid.to_string()
         )
         .execute(&pool)
         .await
@@ -571,9 +572,13 @@ async fn generate_verification_report(
         OutputFormat::Text => {
             println!("Recent Verification History:");
             for verification in &recent_verifications {
+                let ts_str = verification
+                    .ts_orig
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| "UNKNOWN_TIME".to_string());
                 println!(
                     "  {} - {} ({})",
-                    verification.ts_orig.to_string(),
+                    ts_str,
                     verification
                         .payload
                         .get("health_status")

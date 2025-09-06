@@ -9,11 +9,13 @@ use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
 use sinex_core::db::models::event::Event;
+use sinex_core::db::models::{EventId, Provenance};
 use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
+use sinex_core::types::Ulid;
 use sinex_core::{EventSource, EventType, JsonValue};
 
 use sinex_satellite_sdk::SatelliteResult;
@@ -177,17 +179,21 @@ impl DbusWatcher {
 
         let tx_clone = tx.clone();
         let config_clone = config.clone();
+        let bus_type = Arc::new(bus_type);
         Retry::spawn(retry_strategy, move || {
             let tx = tx_clone.clone();
             let config = config_clone.clone();
+            let bt = bus_type.clone();
             async move {
-                match Self::monitor_bus_inner(bus_type, &tx, &config).await {
+                match Self::monitor_bus_inner((*bt).clone(), &tx, &config).await {
                     Ok(()) => {
-                        warn!("D-Bus {} bus monitoring ended normally", bus_type);
+                        let bt_str = bt.to_string();
+                        warn!("D-Bus {} bus monitoring ended normally", bt_str);
                         Ok(())
                     }
                     Err(e) => {
-                        error!("D-Bus {} bus monitoring failed: {}", bus_type, e);
+                        let bt_str = bt.to_string();
+                        error!("D-Bus {} bus monitoring failed: {}", bt_str, e);
                         Err(e)
                     }
                 }
@@ -235,20 +241,15 @@ impl DbusWatcher {
         // Create bounded channel for D-Bus messages to prevent task explosion
         let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(1000);
 
-        // Spawn worker pool to process messages
-        let num_workers = 4; // Reasonable number of workers for D-Bus processing
-        for worker_id in 0..num_workers {
-            let mut rx = msg_rx.clone();
+        // Spawn a single worker to process messages (Receiver is not clonable)
+        {
             let tx = tx.clone();
             let config = config.clone();
             let bus_type_str = bus_type.to_string();
 
             tokio::spawn(async move {
-                debug!(
-                    "D-Bus worker {} started for {} bus",
-                    worker_id, bus_type_str
-                );
-                while let Some(msg_data) = rx.recv().await {
+                debug!("D-Bus worker started for {} bus", bus_type_str);
+                while let Some(msg_data) = msg_rx.recv().await {
                     if let Err(e) = Self::process_message(
                         &bus_type_str,
                         msg_data.msg_type,
@@ -263,16 +264,14 @@ impl DbusWatcher {
                     )
                     .await
                     {
-                        debug!("Worker {} error processing D-Bus message: {}", worker_id, e);
+                        error!("Failed to process D-Bus message: {}", e);
                     }
                 }
-                debug!("D-Bus worker {} shutting down", worker_id);
+                debug!("D-Bus worker stopped for {} bus", bus_type_str);
             });
         }
-        drop(msg_rx); // Drop the original receiver so workers own it
 
         // Set up message processing
-        let bus_type = bus_type.to_string();
 
         // Start receiving messages
         conn.start_receive(
@@ -377,7 +376,15 @@ impl DbusWatcher {
             && member == "Notify"
         {
             let payload = Self::parse_notification_args(args, timestamp.clone());
-            let event = Event::new(payload);
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(payload, provenance).to_json_event()?;
             Self::send_event(tx, event, "dbus_notification").await?;
         }
 
@@ -393,7 +400,15 @@ impl DbusWatcher {
             let payload = Self::parse_mpris_properties(args, player, sender, timestamp.clone())
                 .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp.clone()));
 
-            let event = Event::new(payload);
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(payload, provenance).to_json_event()?;
             Self::send_event(tx, event, "dbus_media_playback").await?;
         }
 
@@ -402,16 +417,27 @@ impl DbusWatcher {
                 && matches!(member, "PrepareForSleep" | "PrepareForShutdown"))
                 || (interface == "org.freedesktop.UPower" && member == "DeviceChanged"))
         {
-            let event = Event::new(DbusPowerStateChangedPayload {
-                event_type: member.to_string(),
-                details: json!({
-                    "bus": bus_type,
-                    "interface": interface,
-                    "path": path,
-                }),
-                timestamp: timestamp.clone(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(
+                DbusPowerStateChangedPayload {
+                    event_type: member.to_string(),
+                    details: json!({
+                        "bus": bus_type,
+                        "interface": interface,
+                        "path": path,
+                    }),
+                    timestamp: timestamp.clone(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
             Self::send_event(tx, event, "dbus_power_event").await?;
         }
 
@@ -425,79 +451,134 @@ impl DbusWatcher {
                 "power"
             };
 
-            let event = Event::new(DbusDeviceConnectedPayload {
-                device_type: device_type.to_string(),
-                event_type: member.to_string(),
-                device_path: path.to_string(),
-                device_name: None,
-                vendor: None,
-                model: None,
-                serial: None,
-                properties: HashMap::new(),
-                timestamp: timestamp.clone(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(
+                DbusDeviceConnectedPayload {
+                    device_type: device_type.to_string(),
+                    event_type: member.to_string(),
+                    device_path: path.to_string(),
+                    device_name: None,
+                    vendor: None,
+                    model: None,
+                    serial: None,
+                    properties: HashMap::new(),
+                    timestamp: timestamp.clone(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
             Self::send_event(tx, event, "dbus_hardware_event").await?;
         }
 
         if config.extract_bluetooth && interface.starts_with("org.bluez") {
-            let event = Event::new(DbusBluetoothDeviceChangedPayload {
-                event_type: member.to_string(),
-                device_address: "unknown".to_string(),
-                device_name: None,
-                device_class: None,
-                rssi: None,
-                connected: false,
-                paired: false,
-                trusted: false,
-                timestamp: timestamp.clone(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(
+                DbusBluetoothDeviceChangedPayload {
+                    event_type: member.to_string(),
+                    device_address: "unknown".to_string(),
+                    device_name: None,
+                    device_class: None,
+                    rssi: None,
+                    connected: false,
+                    paired: false,
+                    trusted: false,
+                    timestamp: timestamp.clone(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
             Self::send_event(tx, event, "dbus_bluetooth_event").await?;
         }
 
         if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
-            let event = Event::new(DbusNetworkStateChangedPayload {
-                event_type: member.to_string(),
-                interface: path.to_string(),
-                connection_type: "unknown".to_string(),
-                ssid: None,
-                ip_address: None,
-                state: "unknown".to_string(),
-                timestamp: timestamp.clone(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(
+                DbusNetworkStateChangedPayload {
+                    event_type: member.to_string(),
+                    interface: path.to_string(),
+                    connection_type: "unknown".to_string(),
+                    ssid: None,
+                    ip_address: None,
+                    state: "unknown".to_string(),
+                    timestamp: timestamp.clone(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
             Self::send_event(tx, event, "dbus_network_event").await?;
         }
 
         if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
             let mounted = member == "Mount";
 
-            let event = Event::new(DbusMountEventPayload {
-                event_type: if mounted { "mounted" } else { "unmounted" }.to_string(),
-                device: path.to_string(),
-                mount_point: "/unknown".to_string(),
-                filesystem: "unknown".to_string(),
-                label: None,
-                uuid: None,
-                size_bytes: None,
-                timestamp: timestamp.clone(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+            let event = Event::new(
+                DbusMountEventPayload {
+                    event_type: if mounted { "mounted" } else { "unmounted" }.to_string(),
+                    device: path.to_string(),
+                    mount_point: "/unknown".to_string(),
+                    filesystem: "unknown".to_string(),
+                    label: None,
+                    uuid: None,
+                    size_bytes: None,
+                    timestamp: timestamp.clone(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
             Self::send_event(tx, event, "dbus_mount_event").await?;
         }
 
         // Always emit generic signal events
-        let event = Event::new(DbusSignalPayload {
-            bus: bus_type.to_string(),
-            sender: sender.as_deref().unwrap_or_default().to_string(),
-            path: path.to_string(),
-            interface: interface.to_string(),
-            signal: member.to_string(),
-            args: args.clone(),
-            timestamp,
-        })
-        .into();
+        let system_bootstrap_id = EventId::from_ulid(
+            Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
+        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+        let event = Event::new(
+            DbusSignalPayload {
+                bus: bus_type.to_string(),
+                sender: sender.as_deref().unwrap_or_default().to_string(),
+                path: path.to_string(),
+                interface: interface.to_string(),
+                signal: member.to_string(),
+                args: args.clone(),
+                timestamp,
+            },
+            provenance,
+        )
+        .to_json_event()?;
         Self::send_event(tx, event, "dbus_generic_signal").await?;
 
         Ok(())
@@ -517,17 +598,28 @@ impl DbusWatcher {
         tx: &mpsc::UnboundedSender<Event<JsonValue>>,
         _config: &DbusConfig,
     ) -> SatelliteResult<()> {
-        let event = Event::new(DbusMethodCalledPayload {
-            bus: bus_type.to_string(),
-            sender: sender.as_deref().unwrap_or_default().to_string(),
-            destination: destination.as_deref().unwrap_or_default().to_string(),
-            path: path.to_string(),
-            interface: interface.to_string(),
-            method: member.to_string(),
-            args: args.clone(),
-            timestamp,
-        })
-        .into();
+        let system_bootstrap_id = EventId::from_ulid(
+            Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
+        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+        let event = Event::new(
+            DbusMethodCalledPayload {
+                bus: bus_type.to_string(),
+                sender: sender.as_deref().unwrap_or_default().to_string(),
+                destination: destination.as_deref().unwrap_or_default().to_string(),
+                path: path.to_string(),
+                interface: interface.to_string(),
+                method: member.to_string(),
+                args: args.clone(),
+                timestamp,
+            },
+            provenance,
+        )
+        .to_json_event()?;
         Self::send_event(tx, event, "dbus_generic_method_call").await?;
 
         Ok(())

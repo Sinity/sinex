@@ -394,8 +394,8 @@ impl FixtureGenerator {
 
         // Save SQL file
         let sql_path = dataset_dir.join(format!("{}.sql", self.config.name));
-        let sql_content = self.generate_sql(&events);
-        fs::write(&sql_path, &sql_content)
+        let sql_content = self.generate_sql(&events)?;
+        fs::write(&sql_path, sql_content.as_bytes())
             .map_err(|e| SinexError::io(format!("Failed to write SQL file: {}", e)))?;
 
         // Save JSON file
@@ -408,7 +408,7 @@ impl FixtureGenerator {
         let checksum = {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
-            hasher.update(&sql_content);
+            hasher.update(sql_content.as_bytes());
             format!("{:x}", hasher.finalize())
         };
 
@@ -529,7 +529,7 @@ mod benches {
     fn bench_generate_sql() -> color_eyre::eyre::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
-        let sql = gen.generate_sql(&events);
+        let sql = gen.generate_sql(&events)?;
         #[cfg(feature = "bench")]
         divan::black_box(sql);
         #[cfg(not(feature = "bench"))]

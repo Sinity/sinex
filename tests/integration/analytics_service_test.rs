@@ -23,17 +23,16 @@ async fn create_analytics_test_event(
     payload_content: serde_json::Value,
     time_offset: Option<Duration>,
 ) -> color_eyre::eyre::Result<()> {
-    // Create event using the schemaless builder
+    // Create event using the test_event helper with explicit timestamp
     let event = if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
         
-        // Create event with specific timestamp using builder pattern
-        sinex_core::db::models::Event::schemaless()
-            .source(sinex_core::types::domain::EventSource::new(source))
-            .event_type(sinex_core::types::domain::EventType::new(event_type))
-            .payload(payload_content)
-            .build()
-            .with_ts_orig(Some(timestamp))
+        sinex_core::Event::test_event(
+            sinex_core::types::domain::EventSource::new(source),
+            sinex_core::types::domain::EventType::new(event_type),
+            payload_content,
+        )
+        .at_time(timestamp)
     } else {
         // Use TestContext convenience method for events without specific timestamps
         return Ok(ctx.create_test_event(source, event_type, payload_content).await.map(|_| ())?);

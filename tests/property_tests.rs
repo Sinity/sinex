@@ -10,7 +10,7 @@ use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{EventSource, EventType, HostName, Id, RawEvent as DbEvent, Ulid};
+use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::sinex_test;
 
 // =============================================================================
@@ -129,24 +129,24 @@ fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
         event_type in arb_event_type(),
         payload in arb_json_value()
     )| {
-        let event = DbEvent::schemaless(
+        let mut event = Event::<JsonValue>::test_event(
             source.clone(),
             event_type.clone(),
             payload.clone(),
         );
+        // Simulate DB-assigned ID to derive ingest time
+        event.id = Some(Id::from_ulid(Ulid::new()));
 
         // Property: Event should preserve all input values
         prop_assert_eq!(event.source, source);
         prop_assert_eq!(event.event_type, event_type);
         prop_assert_eq!(event.payload, payload);
 
-        // Property: Event should always have a valid ID
-        prop_assert!(event.id.is_some());
-
-        // Property: Event should have a reasonable timestamp
+        // Property: Event should have a reasonable ULID-based ingest time
         let now = chrono::Utc::now();
-        prop_assert!(event.ts_ingest <= now);
-        prop_assert!(event.ts_ingest > now - chrono::Duration::minutes(1));
+        let ts = event.id.as_ref().unwrap().as_ulid().timestamp();
+        prop_assert!(ts <= now);
+        prop_assert!(ts > now - chrono::Duration::minutes(1));
     });
     Ok(())
 }
@@ -166,7 +166,7 @@ fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
             "boolean": bool_value
         });
 
-        let original_event = DbEvent::schemaless(
+        let original_event = Event::<JsonValue>::test_event(
             EventSource::new(&source),
             EventType::new(&event_type),
             payload,
@@ -179,7 +179,7 @@ fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
         let json_str = json_result.expect("JSON serialization should succeed for valid event");
 
         // Property: Deserialization should be inverse of serialization
-        let deserialize_result = serde_json::from_str::<DbEvent>(&json_str);
+        let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
         prop_assert!(deserialize_result.is_ok());
 
         let deserialized_event = deserialize_result.expect("JSON deserialization should succeed for valid JSON");
@@ -263,7 +263,7 @@ fn test_generic_id_properties() -> color_eyre::eyre::Result<()> {
     )| {
         let mut ids = Vec::new();
         for _ in 0..count {
-            ids.push(Id::<DbEvent>::new());
+            ids.push(Id::<Event<JsonValue>>::new());
         }
 
         // Property: All IDs should be unique (check pairwise)
@@ -298,11 +298,11 @@ fn test_id_ulid_conversion_properties() -> color_eyre::eyre::Result<()> {
         count in 1..100usize
     )| {
         for _ in 0..count {
-            let original_id = Id::<DbEvent>::new();
+            let original_id = Id::<Event<JsonValue>>::new();
 
             // Property: ID → ULID → ID should be identity
             let ulid: Ulid = original_id.clone().into();
-            let converted_id = Id::<DbEvent>::from(ulid);
+            let converted_id = Id::<Event<JsonValue>>::from(ulid);
             prop_assert_eq!(original_id.clone(), converted_id);
 
             // Property: String conversion should be consistent
@@ -331,7 +331,7 @@ fn test_unicode_handling_properties() -> color_eyre::eyre::Result<()> {
         unicode_type in "\\PC*",
         unicode_value in "\\PC*"
     )| {
-        let event = DbEvent::schemaless(
+        let event = Event::<JsonValue>::test_event(
             EventSource::new(&unicode_source),
             EventType::new(&unicode_type),
             json!({
@@ -350,7 +350,7 @@ fn test_unicode_handling_properties() -> color_eyre::eyre::Result<()> {
         let json_result = serde_json::to_string(&event);
         prop_assert!(json_result.is_ok());
 
-        let deserialized_result = serde_json::from_str::<DbEvent>(&json_result.unwrap());
+        let deserialized_result = serde_json::from_str::<Event<JsonValue>>(&json_result.unwrap());
         prop_assert!(deserialized_result.is_ok());
 
         let deserialized = deserialized_result.unwrap();
@@ -378,7 +378,7 @@ fn test_large_payload_properties() -> color_eyre::eyre::Result<()> {
             }
         });
 
-        let event = DbEvent::schemaless(
+        let event = Event::<JsonValue>::test_event(
             EventSource::from_static("large-payload-test"),
             EventType::from_static("large.payload"),
             payload.clone(),
@@ -401,7 +401,7 @@ fn test_large_payload_properties() -> color_eyre::eyre::Result<()> {
 
         // Property: Serialized large events should deserialize successfully
         let json_str = json_result.unwrap();
-        let deserialize_result = serde_json::from_str::<DbEvent>(&json_str);
+        let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
         prop_assert!(deserialize_result.is_ok());
     });
     Ok(())
@@ -474,7 +474,7 @@ fn test_validation_properties() -> color_eyre::eyre::Result<()> {
         prop_assert_eq!(event_type.as_str().len(), type_len);
 
         // Property: Events should be creatable with any valid domain types
-        let event = DbEvent::schemaless(
+        let event = Event::<JsonValue>::test_event(
             source,
             event_type,
             json!({"test": true}),

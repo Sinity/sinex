@@ -11,6 +11,10 @@ use sinex_core::types::events::{
     JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
+use sinex_core::{
+    db::models::{Event, EventId, Provenance},
+    types::Ulid,
+};
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 
@@ -227,14 +231,26 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event = Event::new(SystemMonitoringStartedPayload {
-                dbus_enabled: self.config.dbus_enabled,
-                journal_enabled: self.config.journal_enabled,
-                udev_enabled: self.config.udev_enabled,
-                systemd_enabled: self.config.systemd_enabled,
-                start_time: Utc::now(),
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+            let sample_event = Event::new(
+                SystemMonitoringStartedPayload {
+                    dbus_enabled: self.config.dbus_enabled,
+                    journal_enabled: self.config.journal_enabled,
+                    udev_enabled: self.config.udev_enabled,
+                    systemd_enabled: self.config.systemd_enabled,
+                    start_time: Utc::now(),
+                },
+                provenance,
+            )
+            .to_json_event()?;
 
             context.emit_event(sample_event).await?;
         }
@@ -257,12 +273,24 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let event = Event::new(JournaldHistoricalPayload {
-                    source: "journal".to_string(),
-                    scan_type: "historical".to_string(),
-                    note: "Journal can provide historical entries".to_string(),
-                })
-                .into();
+                let system_bootstrap_id = EventId::from_ulid(
+                    Ulid::from_bytes([
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .expect("hardcoded ULID bytes should be valid"),
+                );
+                let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+                let event = Event::new(
+                    JournaldHistoricalPayload {
+                        source: "journal".to_string(),
+                        scan_type: "historical".to_string(),
+                        note: "Journal can provide historical entries".to_string(),
+                    },
+                    provenance,
+                )
+                .to_json_event()?;
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -270,12 +298,24 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let event = Event::new(SystemdUnitsHistoricalPayload {
-                    source: "systemd".to_string(),
-                    scan_type: "historical".to_string(),
-                    note: "systemd can provide unit state history".to_string(),
-                })
-                .into();
+                let system_bootstrap_id = EventId::from_ulid(
+                    Ulid::from_bytes([
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .expect("hardcoded ULID bytes should be valid"),
+                );
+                let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+                let event = Event::new(
+                    SystemdUnitsHistoricalPayload {
+                        source: "systemd".to_string(),
+                        scan_type: "historical".to_string(),
+                        note: "systemd can provide unit state history".to_string(),
+                    },
+                    provenance,
+                )
+                .to_json_event()?;
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -283,11 +323,24 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let event = Event::new(UdevDeviceHistoricalPayload {
-                    sources: vec!["dbus".to_string(), "udev".to_string()],
-                    scan_type: "historical".to_string(),
-                    note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
-                }).into();
+                let system_bootstrap_id = EventId::from_ulid(
+                    Ulid::from_bytes([
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .expect("hardcoded ULID bytes should be valid"),
+                );
+                let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+                let event = Event::new(
+                    UdevDeviceHistoricalPayload {
+                        sources: vec!["dbus".to_string(), "udev".to_string()],
+                        scan_type: "historical".to_string(),
+                        note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
+                    },
+                    provenance,
+                )
+                .to_json_event()?;
 
                 context.emit_event(event).await?;
                 event_count += 1;

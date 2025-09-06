@@ -102,14 +102,12 @@ impl FilesystemConfig {
 }
 
 /// Custom validation functions
-fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
-    if let Some(d) = depth {
-        if *d == 0 {
-            return Err(ValidationError::new("depth_zero"));
-        }
-        if *d > 100 {
-            return Err(ValidationError::new("depth_too_large"));
-        }
+fn validate_max_depth(depth: usize) -> Result<(), ValidationError> {
+    if depth == 0 {
+        return Err(ValidationError::new("depth_zero"));
+    }
+    if depth > 100 {
+        return Err(ValidationError::new("depth_too_large"));
     }
     Ok(())
 }
@@ -197,23 +195,22 @@ impl FilesystemProcessor {
         let job_id = Ulid::new();
         let source_identifier = format!("fs-watch:{}", path);
 
-        // Insert TreeWatch job into sensor_jobs table
+        // Insert TreeWatch job into sensor_jobs table (current canonical schema)
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config
             )
-            VALUES ($1::ulid, 'tree_watch', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'tree_watch', $2, $3)
             "#,
             job_id as Ulid,
             path,
-            source_identifier,
-            json!({ "mode": "continuous" }),
             json!({
+                "mode": "continuous",
                 "recursive": true,
                 "follow_symlinks": self.config.follow_symlinks,
                 "max_depth": self.config.max_depth,
+                "source_identifier": source_identifier
             }),
         )
         .execute(db_pool)
@@ -388,16 +385,16 @@ impl FilesystemProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        tl.material_id as "material_id: Ulid",
+                        tl.source_material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        tl.note,
-                        sm.data as "inline_data?: Vec<u8>"
+                        NULL::text as note,
+                        NULL::bytea as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.source_material_id = tl.material_id
-                    WHERE tl.material_id = $1::ulid
+                        ON sm.id = tl.source_material_id
+                    WHERE tl.source_material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
                     LIMIT $3
@@ -453,22 +450,24 @@ impl FilesystemProcessor {
 
         let mut total_events = 0;
 
-        // Query for completed TreeWatch jobs that haven't been processed yet
+        // Query for retired TreeWatch jobs with matching source materials not yet processed
         let completed_jobs = sqlx::query!(
             r#"
             SELECT 
-                job_id as "job_id: Ulid",
-                material_id as "material_id: Ulid",
-                target_uri
-            FROM raw.sensor_jobs
-            WHERE status = 'completed'
-            AND sensor_type = 'tree_watch'
-            AND material_id IS NOT NULL
-            AND NOT EXISTS (
+                sj.id as "job_id: Ulid",
+                sm.id as "material_id: Ulid",
+                sj.target_uri
+            FROM raw.sensor_jobs sj
+            LEFT JOIN raw.source_material_registry sm 
+                ON sm.source_identifier LIKE '%' || sj.target_uri || '%'
+            WHERE sj.status = 'retired'
+              AND sj.sensor_type = 'tree_watch'
+              AND sm.id IS NOT NULL
+              AND NOT EXISTS (
                 SELECT 1 FROM core.events 
-                WHERE provenance->>'id' = material_id::text
-            )
-            ORDER BY completed_at DESC
+                WHERE source_material_id = sm.id
+              )
+            ORDER BY sj.updated_at DESC
             LIMIT 10
             "#,
         )
@@ -477,53 +476,53 @@ impl FilesystemProcessor {
         .map_err(|e| SatelliteError::General(eyre!("Failed to query completed jobs: {}", e)))?;
 
         for job in completed_jobs {
-            if let Some(material_id) = job.material_id {
-                info!(
-                    "Processing material {} from TreeWatch job {} (path: {})",
-                    material_id, job.job_id, job.target_uri
-                );
+            let material_id = job.material_id;
+            info!(
+                "Processing material {} from TreeWatch job {} (path: {})",
+                material_id, job.job_id, job.target_uri
+            );
 
-                // Create material stream for this job's output
-                let stream = self
-                    .create_material_stream(material_id)
-                    .await
-                    .map_err(|e| SatelliteError::General(e))?;
-                let mut stream = stream;
+            // Create material stream for this job's output
+            let stream = self
+                .create_material_stream(material_id)
+                .await
+                .map_err(|e| SatelliteError::General(e))?;
+            let mut stream = stream;
+            tokio::pin!(stream);
 
-                // Process all slices from this material
-                while let Some(slice_result) = stream.next().await {
-                    match slice_result {
-                        Ok(slice) => {
-                            // Convert slice to filesystem events
-                            let events = self.process_material_slice(slice).await?;
+            // Process all slices from this material
+            while let Some(slice_result) = stream.next().await {
+                match slice_result {
+                    Ok(slice) => {
+                        // Convert slice to filesystem events
+                        let events = self.process_material_slice(slice).await?;
 
-                            // Send events through the context or store them
-                            for event in events {
-                                if let Some(ref context) = self.context {
-                                    context.emit_event(event).await?;
-                                    total_events += 1;
-                                } else if let Some(ref sender) = self.event_sender {
-                                    sender.send(event).await.map_err(|_| {
-                                        SatelliteError::General(eyre!("Failed to send event"))
-                                    })?;
-                                    total_events += 1;
-                                }
+                        // Send events through the context or store them
+                        for event in events {
+                            if let Some(ref context) = self.context {
+                                context.emit_event(event).await?;
+                                total_events += 1;
+                            } else if let Some(ref sender) = self.event_sender {
+                                sender.send(event).await.map_err(|_| {
+                                    SatelliteError::General(eyre!("Failed to send event"))
+                                })?;
+                                total_events += 1;
                             }
                         }
-                        Err(e) => {
-                            error!(
-                                "Error processing slice from material {}: {}",
-                                material_id, e
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error processing slice from material {}: {}",
+                            material_id, e
+                        );
                     }
                 }
-
-                info!(
-                    "Completed processing material {} with {} events",
-                    material_id, total_events
-                );
             }
+
+            info!(
+                "Completed processing material {} with {} events",
+                material_id, total_events
+            );
         }
 
         Ok(total_events)

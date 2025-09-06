@@ -47,6 +47,7 @@ pub struct Event<T = JsonValue> {
     /// Event payload (typed or JSON)
     pub payload: T,
 
+    // ts_ingest is derived from ULID at the DB layer; not modeled here.
     /// Original timestamp when the event occurred
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts_orig: OptionalTimestamp,
@@ -182,6 +183,7 @@ impl<T> Event<T> {
             source: source.into(),
             event_type: event_type.into(),
             payload,
+
             ts_orig: Some(Utc::now()),
             host: get_hostname(),
             ingestor_version: get_ingestor_version(),
@@ -354,6 +356,8 @@ impl Event<JsonValue> {
         }
     }
 
+    // No RawEvent; use Event::<JsonValue>::test_event() in tests.
+
     /// Set the timestamp
     pub fn with_timestamp(mut self, ts: Timestamp) -> Self {
         self.ts_orig = Some(ts);
@@ -426,6 +430,7 @@ impl<T: Serialize> Event<T> {
             source: self.source,
             event_type: self.event_type,
             payload: serde_json::to_value(self.payload)?,
+
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: self.ingestor_version,
@@ -447,6 +452,7 @@ impl Event<JsonValue> {
             source: self.source.clone(),
             event_type: self.event_type.clone(),
             payload: serde_json::from_value(self.payload.clone())?,
+
             ts_orig: self.ts_orig,
             host: self.host.clone(),
             ingestor_version: self.ingestor_version.clone(),
@@ -514,6 +520,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             source: self.source,
             event_type: self.event_type,
             payload: self.payload,
+
             provenance: self.provenance.expect("guaranteed by typestate"),
             ts_orig: self.ts_orig.or_else(|| Some(Utc::now())),
             host: get_hostname(),

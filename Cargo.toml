@@ -4,33 +4,37 @@ members = [
   "crate/lib/sinex-core",
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
-  # "crate/lib/sinex-satellite-sdk",
-  # "crate/lib/sinex-services",
-  # Temporarily exclude sinex-test-utils to restore compilation
-  # "crate/lib/sinex-test-utils",
+  "crate/lib/sinex-satellite-sdk",
+  "crate/lib/sinex-services",
+  # Re-enabled to ensure tests compile
+  "crate/lib/sinex-test-utils",
   
   # Core runtime crates
   "crate/core/sinex-ingestd",
-  # "crate/core/sinex-gateway",
+  "crate/core/sinex-gateway",
   # Exclude dispatcher and sensd until stabilized
   # "crate/core/sinex-rpc-dispatcher",
   # "crate/core/sinex-sensd",
   
   # Satellite crates
-  # Satellites are excluded from workspace build for now
+  # Re-enable satellites incrementally for compilation
   # "crate/satellites/sinex-fs-watcher",
   # "crate/satellites/sinex-terminal-satellite",
-  # "crate/satellites/sinex-desktop-satellite",
-  # "crate/satellites/sinex-system-satellite",
-  # "crate/satellites/sinex-terminal-command-canonicalizer",
+  "crate/satellites/sinex-terminal-satellite",
+  # Enable satellites incrementally while refactoring
+  "crate/satellites/sinex-desktop-satellite",
+  "crate/satellites/sinex-system-satellite",
+  "crate/satellites/sinex-fs-watcher",
+  "crate/satellites/sinex-terminal-command-canonicalizer",
   # "crate/satellites/sinex-health-aggregator",
   # "crate/satellites/sinex-document-ingestor",
   
   # Automaton crates
+  # Enable automata incrementally
+  # "crate/satellites/sinex-content-automaton",
   # "crate/satellites/sinex-analytics-automaton",
   # "crate/satellites/sinex-pkm-automaton",
   # "crate/satellites/sinex-search-automaton",
-  # "crate/satellites/sinex-content-automaton",
   
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members
@@ -45,6 +49,10 @@ members = [
 resolver = "2"
 
 # Clippy configuration for zero warnings enforcement
+[workspace.lints.rust]
+unreachable_pub = { level = "forbid", priority = -1 }
+unused_crate_dependencies = { level = "forbid", priority = -1 }
+
 [workspace.lints.clippy]
 # Treat all clippy warnings as errors for production code
 all = { level = "warn", priority = -1 }
@@ -194,26 +202,24 @@ publish = false
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests
 # Temporarily disable workspace-level integration deps to restore compilation
+
+[dev-dependencies]
+# Root-level test deps used by files under `tests/`
+sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
+sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+tracing-test = { workspace = true }
+uuid = { workspace = true }
 # sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
 # sinex-core = { path = "crate/lib/sinex-core" }
 # sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Needed for checkpoint property tests
 
-# Core dependencies for tests
-tokio = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
-color-eyre = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
-uuid = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-
-# Modern test infrastructure
-proptest = { workspace = true, optional = true }
-rstest = { workspace = true, optional = true }
-insta = { workspace = true, optional = true }
-tracing-test = { workspace = true, optional = true }  
-similar-asserts = { workspace = true, optional = true }
-tokio-test = { version = "0.4", optional = true }
+# (Removed duplicate optional test deps; consolidated under dev-dependencies above)
 
 # Speed-optimized profiles for development
 [profile.dev]

@@ -17,7 +17,7 @@ mod integration {
 // Import test utilities with proper prelude for consistent testing
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{Blob, DbPoolExt, EventSource, EventType, Id, RawEvent as DbEvent};
+use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue};
 use sinex_test_utils::prelude::*;
 
 // =============================================================================
@@ -187,21 +187,21 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> color_eyre::eyr
 #[sinex_test]
 async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that generic IDs provide type safety
-    let event_id = Id::<DbEvent>::new();
+    let event_id = Id::<Event<JsonValue>>::new();
     let blob_id = Id::<Blob>::new();
 
     // IDs should be unique even across types
     assert_ne!(event_id.to_string(), blob_id.to_string());
 
     // Create an event with a specific ID
-    let event = DbEvent::schemaless(
+    let event = Event::<JsonValue>::test_event(
         EventSource::from_static("id-test"),
         EventType::from_static("id.safety.test"),
         json!({"event_id": event_id.to_string()}),
     );
 
     // Insert and verify
-    ctx.pool.events().insert(event.into()).await?;
+    ctx.pool.events().insert(event).await?;
 
     let retrieved_events = ctx
         .pool
@@ -862,12 +862,21 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
 
     assert_eq!(workflow_events.len(), 4);
 
-    // Verify events are in temporal order
+    // Verify events are in temporal (ingest/ULID) order
     for i in 1..workflow_events.len() {
-        assert!(
-            workflow_events[i].ts_ingest >= workflow_events[i - 1].ts_ingest,
-            "Events should be in temporal order"
-        );
+        let prev_ts = workflow_events[i - 1]
+            .id
+            .as_ref()
+            .expect("event id present")
+            .as_ulid()
+            .timestamp();
+        let curr_ts = workflow_events[i]
+            .id
+            .as_ref()
+            .expect("event id present")
+            .as_ulid()
+            .timestamp();
+        assert!(curr_ts >= prev_ts, "Events should be in temporal order");
     }
 
     // Verify workflow stages

@@ -42,6 +42,9 @@ mod common {
 
 // Use local facade for common types
 use crate::common::*;
+use color_eyre::eyre::eyre;
+use sinex_core::Provenance;
+use sinex_satellite_sdk::SatelliteError;
 
 /// Configuration for Terminal Command Canonicalizer
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -540,30 +543,34 @@ impl TerminalCommandCanonicalizer {
         &self,
         canonical_cmd: &CanonicalizedCommand,
     ) -> SatelliteResult<Event<JsonValue>> {
-        let canonical_payload = serde_json::json!({
-            "analysis_type": "canonical_command",
-            "original_command": canonical_cmd.original_command,
-            "canonical_command": canonical_cmd.canonical_command,
-            "command_category": canonical_cmd.command_category,
-            "intent": canonical_cmd.intent,
-            "safety_level": canonical_cmd.safety_level,
-            "arguments": canonical_cmd.arguments,
-            "flags": canonical_cmd.flags,
-            "target_paths": canonical_cmd.target_paths,
-            "original_timestamp": canonical_cmd.timestamp,
-            "generated_at": Utc::now(),
-        });
+        use sinex_core::types::events::payloads::shell::CanonicalCommandPayload;
 
-        // Create synthesized event with proper provenance
-        let event = Event::<JsonValue>::new(
-            "terminal-canonicalizer",
-            "terminal.command_canonicalized",
-            canonical_payload,
-            vec![canonical_cmd.source_event_id.clone()],
-        )
-        .with_timestamp(Utc::now());
+        // Build typed payload for canonical command
+        let payload = CanonicalCommandPayload {
+            command: canonical_cmd.canonical_command.clone(),
+            working_directory: String::new(),
+            exit_code: 0,
+            duration_ms: 0,
+            start_time: canonical_cmd.timestamp,
+            end_time: canonical_cmd.timestamp,
+            user: String::new(),
+            session_id: String::new(),
+            environment_hash: String::new(),
+            source_events: vec![canonical_cmd.source_event_id.as_ulid().to_string()],
+            enrichment_history: Vec::new(),
+        };
 
-        Ok(event.into())
+        // Create synthesized event with proper provenance (typed)
+        let provenance = Provenance::from_synthesis(vec![canonical_cmd.source_event_id.clone()])
+            .ok_or_else(|| {
+                SatelliteError::General(eyre!("No source event id for canonical command"))
+            })?;
+
+        let typed_event = sinex_core::Event::new(payload, provenance).at_time(Utc::now());
+        // Convert to dynamic event for downstream JSON handling
+        Ok(typed_event
+            .to_json_event()
+            .map_err(|e| SatelliteError::General(eyre!(e)))?)
     }
 
     /// Analyze command patterns
@@ -607,15 +614,19 @@ impl TerminalCommandCanonicalizer {
             "generated_at": Utc::now(),
         });
 
-        let pattern_event = Event::<JsonValue>::new(
+        let provenance = Provenance::from_synthesis(all_event_ids)
+            .ok_or_else(|| SatelliteError::General(eyre!("No source events for pattern event")))?;
+
+        let pattern_event = sinex_core::Event::dynamic(
             "terminal-canonicalizer",
             "terminal.command_pattern",
             pattern_payload,
-            all_event_ids,
         )
-        .with_timestamp(Utc::now());
+        .with_provenance(provenance)
+        .at_time(Utc::now())
+        .build();
 
-        pattern_events.push(pattern_event.into());
+        pattern_events.push(pattern_event);
 
         Ok(pattern_events)
     }
@@ -710,15 +721,20 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let safety_event = Event::<JsonValue>::new(
+            let provenance = Provenance::from_synthesis(dangerous_event_ids).ok_or_else(|| {
+                SatelliteError::General(eyre!("No source events for safety analysis"))
+            })?;
+
+            let safety_event = sinex_core::Event::dynamic(
                 "terminal-canonicalizer",
                 "terminal.safety_analysis",
                 safety_payload,
-                dangerous_event_ids,
             )
-            .with_timestamp(Utc::now());
+            .with_provenance(provenance)
+            .at_time(Utc::now())
+            .build();
 
-            safety_events.push(safety_event.into());
+            safety_events.push(safety_event);
         }
 
         Ok(safety_events)
@@ -795,15 +811,19 @@ impl TerminalCommandCanonicalizer {
                 "generated_at": Utc::now(),
             });
 
-            let workflow_event = Event::<JsonValue>::new(
+            let provenance = Provenance::from_synthesis(all_event_ids)
+                .ok_or_else(|| SatelliteError::General(eyre!("No source events for workflow")))?;
+
+            let workflow_event = sinex_core::Event::dynamic(
                 "terminal-canonicalizer",
                 "terminal.workflow_detected",
                 workflow_payload,
-                all_event_ids,
             )
-            .with_timestamp(Utc::now());
+            .with_provenance(provenance)
+            .at_time(Utc::now())
+            .build();
 
-            workflow_events.push(workflow_event.into());
+            workflow_events.push(workflow_event);
         }
 
         Ok(workflow_events)

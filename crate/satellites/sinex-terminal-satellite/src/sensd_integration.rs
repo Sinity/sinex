@@ -448,7 +448,7 @@ impl SensdTerminalProcessor {
         if let Ok(entries) = serde_json::from_str::<serde_json::Value>(&data_str) {
             if let Some(entries_array) = entries.as_array() {
                 for entry in entries_array {
-                    let mut event = Event::<JsonValue>::new(
+                    let event = Event::dynamic(
                         EventSource::from("terminal"),
                         EventType::from("terminal.atuin_command_executed"),
                         json!({
@@ -459,18 +459,15 @@ impl SensdTerminalProcessor {
                             "hostname": entry.get("hostname").unwrap_or(&json!("")),
                             "timestamp_ns": entry.get("timestamp_ns").unwrap_or(&json!(0)),
                         }),
-                        slice.material_id,
+                    )
+                    .with_provenance(Provenance::from_material(
+                        Id::from(slice.material_id),
                         slice.offset_start,
-                    );
-                    event.ts_orig = Some(slice.ts_capture_start);
-                    // Update provenance with full offset information
-                    event.provenance = Provenance::Material {
-                        id: Id::from(slice.material_id),
-                        anchor_byte: slice.offset_start,
-                        offset_kind: OffsetKind::Byte,
-                        offset_start: Some(slice.offset_start),
-                        offset_end: Some(slice.offset_end),
-                    };
+                        Some(slice.offset_start),
+                        Some(slice.offset_end),
+                    ))
+                    .build()
+                    .at_time(slice.ts_capture_start);
 
                     events.push(event);
                 }
@@ -509,7 +506,8 @@ impl SensdTerminalProcessor {
                 "terminal.bash_historical_command"
             };
 
-            let mut event = Event::<JsonValue>::new(
+            let anchor = slice.offset_start + line.as_ptr() as i64 - slice.data.as_ptr() as i64;
+            let event = Event::dynamic(
                 EventSource::from("terminal"),
                 EventType::from(event_type),
                 json!({
@@ -517,18 +515,15 @@ impl SensdTerminalProcessor {
                     "source_file": file_path,
                     "line_number": line_num,
                 }),
-                slice.material_id,
-                slice.offset_start + line.as_ptr() as i64 - slice.data.as_ptr() as i64,
-            );
-            event.ts_orig = Some(slice.ts_capture_start);
-            // Update provenance with full offset information
-            event.provenance = Provenance::Material {
-                id: Id::from(slice.material_id),
-                anchor_byte: slice.offset_start + line.as_ptr() as i64 - slice.data.as_ptr() as i64,
-                offset_kind: OffsetKind::Byte,
-                offset_start: Some(slice.offset_start),
-                offset_end: Some(slice.offset_end),
-            };
+            )
+            .with_provenance(Provenance::from_material(
+                Id::from(slice.material_id),
+                anchor,
+                Some(slice.offset_start),
+                Some(slice.offset_end),
+            ))
+            .build()
+            .at_time(slice.ts_capture_start);
 
             events.push(event);
         }
@@ -557,7 +552,7 @@ impl SensdTerminalProcessor {
 
         match event_type {
             "CREATE" => {
-                let mut event = Event::<JsonValue>::new(
+                let event = Event::dynamic(
                     EventSource::from("terminal"),
                     EventType::from("terminal.recording_started"),
                     json!({
@@ -565,18 +560,15 @@ impl SensdTerminalProcessor {
                         "session_id": ulid::Ulid::new().to_string(),
                         "terminal_type": "asciinema",
                     }),
-                    slice.material_id,
+                )
+                .with_provenance(Provenance::from_material(
+                    Id::from(slice.material_id),
                     slice.offset_start,
-                );
-                event.ts_orig = Some(slice.ts_capture_start);
-                // Update provenance with full offset information
-                event.provenance = Provenance::Material {
-                    id: Id::from(slice.material_id),
-                    anchor_byte: slice.offset_start,
-                    offset_kind: OffsetKind::Byte,
-                    offset_start: Some(slice.offset_start),
-                    offset_end: Some(slice.offset_end),
-                };
+                    Some(slice.offset_start),
+                    Some(slice.offset_end),
+                ))
+                .build()
+                .at_time(slice.ts_capture_start);
 
                 events.push(event);
             }
@@ -584,25 +576,22 @@ impl SensdTerminalProcessor {
                 // Recording file was updated - could indicate session progress
             }
             "DELETE" => {
-                let mut event = Event::<JsonValue>::new(
+                let event = Event::dynamic(
                     EventSource::from("terminal"),
                     EventType::from("terminal.recording_ended"),
                     json!({
                         "recording_file": file_path,
                         "terminal_type": "asciinema",
                     }),
-                    slice.material_id,
+                )
+                .with_provenance(Provenance::from_material(
+                    Id::from(slice.material_id),
                     slice.offset_start,
-                );
-                event.ts_orig = Some(slice.ts_capture_start);
-                // Update provenance with full offset information
-                event.provenance = Provenance::Material {
-                    id: Id::from(slice.material_id),
-                    anchor_byte: slice.offset_start,
-                    offset_kind: OffsetKind::Byte,
-                    offset_start: Some(slice.offset_start),
-                    offset_end: Some(slice.offset_end),
-                };
+                    Some(slice.offset_start),
+                    Some(slice.offset_end),
+                ))
+                .build()
+                .at_time(slice.ts_capture_start);
 
                 events.push(event);
             }
@@ -632,22 +621,19 @@ impl SensdTerminalProcessor {
                     // Process window/tab listings
                     if let Some(windows) = kitty_data.as_array() {
                         for window in windows {
-                            let mut event = Event::<JsonValue>::new(
+                            let event = Event::dynamic(
                                 EventSource::from("terminal"),
                                 EventType::from("terminal.kitty_window_state"),
                                 window.clone(),
-                                slice.material_id,
+                            )
+                            .with_provenance(Provenance::from_material(
+                                Id::from(slice.material_id),
                                 slice.offset_start,
-                            );
-                            event.ts_orig = Some(slice.ts_capture_start);
-                            // Update provenance with full offset information
-                            event.provenance = Provenance::Material {
-                                id: Id::from(slice.material_id),
-                                anchor_byte: slice.offset_start,
-                                offset_kind: OffsetKind::Byte,
-                                offset_start: Some(slice.offset_start),
-                                offset_end: Some(slice.offset_end),
-                            };
+                                Some(slice.offset_start),
+                                Some(slice.offset_end),
+                            ))
+                            .build()
+                            .at_time(slice.ts_capture_start);
 
                             events.push(event);
                         }
@@ -655,25 +641,22 @@ impl SensdTerminalProcessor {
                 }
                 "get-text" => {
                     // Process scrollback content
-                    let mut event = Event::<JsonValue>::new(
+                    let event = Event::dynamic(
                         EventSource::from("terminal"),
                         EventType::from("terminal.kitty_content_captured"),
                         json!({
                             "scrollback_content": kitty_data.get("text").unwrap_or(&json!("")),
                             "window_id": slice.metadata.get("window_id").unwrap_or(&json!("")),
                         }),
-                        slice.material_id,
+                    )
+                    .with_provenance(Provenance::from_material(
+                        Id::from(slice.material_id),
                         slice.offset_start,
-                    );
-                    event.ts_orig = Some(slice.ts_capture_start);
-                    // Update provenance with full offset information
-                    event.provenance = Provenance::Material {
-                        id: Id::from(slice.material_id),
-                        anchor_byte: slice.offset_start,
-                        offset_kind: OffsetKind::Byte,
-                        offset_start: Some(slice.offset_start),
-                        offset_end: Some(slice.offset_end),
-                    };
+                        Some(slice.offset_start),
+                        Some(slice.offset_end),
+                    ))
+                    .build()
+                    .at_time(slice.ts_capture_start);
 
                     events.push(event);
                 }
@@ -716,15 +699,14 @@ impl SensdTerminalProcessor {
             .await?;
 
             for job in completed_jobs {
-                if let Some(material_id) = job.material_id {
-                    info!(
-                        "Processing terminal material {} from job {}",
-                        material_id, job.job_id
-                    );
+                let material_id = job.material_id;
+                info!(
+                    "Processing terminal material {} from job {}",
+                    material_id, job.job_id
+                );
 
-                    if let Err(e) = self.process_material(material_id).await {
-                        error!("Failed to process material {}: {}", material_id, e);
-                    }
+                if let Err(e) = self.process_material(material_id).await {
+                    error!("Failed to process material {}: {}", material_id, e);
                 }
             }
         }

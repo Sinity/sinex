@@ -199,12 +199,21 @@ async fn test_modern_database_output_config(ctx: TestContext) -> color_eyre::eyr
     let recent_events = events.get_recent(10).await?;
     assert!(recent_events.len() >= 5, "Should retrieve recent events from database");
 
-    // Verify events are time-ordered (most recent first)
+    // Verify events are time-ordered (most recent first) by ULID timestamp
     for i in 1..recent_events.len() {
-        assert!(
-            recent_events[i-1].ts_ingest >= recent_events[i].ts_ingest,
-            "Events should be ordered by ingestion time (most recent first)"
-        );
+        let prev = recent_events[i-1]
+            .id
+            .as_ref()
+            .expect("id present")
+            .as_ulid()
+            .timestamp();
+        let curr = recent_events[i]
+            .id
+            .as_ref()
+            .expect("id present")
+            .as_ulid()
+            .timestamp();
+        assert!(prev >= curr, "Events should be ordered by ingestion time (most recent first)");
     }
 
     tracing::info!(

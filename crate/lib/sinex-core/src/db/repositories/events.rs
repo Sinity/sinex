@@ -229,8 +229,14 @@ pub struct EventTypeCount {
 
 impl<'a> EventRepository<'a> {
     #[instrument(skip(self, event))]
-    pub async fn insert(&self, event: impl Into<Event<JsonValue>>) -> DbResult<Event<JsonValue>> {
-        let mut event = event.into();
+    pub async fn insert<T>(&self, event: Event<T>) -> DbResult<Event<JsonValue>>
+    where
+        T: serde::Serialize,
+    {
+        // Convert typed event to JSON event for storage
+        let mut event = event.to_json_event().map_err(|e| {
+            SinexError::database("Failed to serialize event payload").with_source(e)
+        })?;
         let id = event
             .id
             .get_or_insert_with(Id::<Event<JsonValue>>::new)

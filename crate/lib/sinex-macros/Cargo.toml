@@ -21,6 +21,5 @@ tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"
 
 [dev-dependencies]
-# Temporarily disable macro crate dev-deps to avoid pulling test-utils into workspace build
-# sinex-test-utils = { path = "../sinex-test-utils" }
-# color-eyre = { workspace = true }
+sinex-test-utils = { path = "../sinex-test-utils" }
+color-eyre = { workspace = true }

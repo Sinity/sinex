@@ -19,9 +19,10 @@ pub use sinex_core::types::events::payloads::{
 // Common test patterns for nested modules
 pub mod patterns {
     use super::*;
+    use sinex_core::db::models::{Event, JsonValue};
     
     /// Common assertion pattern for event validation
-    pub fn assert_event_basic_structure(event: &RawEvent) {
+    pub fn assert_event_basic_structure(event: &Event<JsonValue>) {
         assert!(!event.source.is_empty(), "Event source should not be empty");
         assert!(!event.event_type.is_empty(), "Event type should not be empty");
         assert!(!event.host.is_empty(), "Event host should not be empty");
@@ -33,20 +34,16 @@ pub mod patterns {
         source: &str,
         event_type: &str,
         payload: Value,
-        source_events: Vec<Id<RawEvent>>,
-    ) -> impl std::future::Future<Output = Result<RawEvent>> + '_ {
+        source_events: Vec<Id<Event<JsonValue>>>,
+    ) -> impl std::future::Future<Output = Result<Event<JsonValue>>> + '_ {
         async move {
-            let mut event = RawEvent::schemaless(
+            let event = Event::<JsonValue>::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
             );
-            
-            // Add source event IDs for provenance tracking
-            // Note: This would need to be implemented based on the actual RawEvent structure
-            
-            ctx.pool.events().insert(event.clone()).await?;
-            Ok(event)
+            let inserted = ctx.pool.events().insert(event).await?;
+            Ok(inserted)
         }
     }
 }
@@ -172,7 +169,7 @@ pub mod performance {
         count: usize,
         source: &str,
         event_type: &str,
-    ) -> Result<Vec<RawEvent>> {
+    ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
         
         for i in 0..count {
