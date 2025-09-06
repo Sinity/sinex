@@ -471,10 +471,19 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
     // Verify each source's events are temporally ordered
     for events_slice in [&fs_events, &cmd_events, &scanner_events] {
         for window in events_slice.windows(2) {
-            assert!(
-                window[0].ts_ingest <= window[1].ts_ingest,
-                "Events from same source should be temporally ordered"
-            );
+            let t0 = window[0]
+                .id
+                .as_ref()
+                .expect("id present")
+                .as_ulid()
+                .timestamp();
+            let t1 = window[1]
+                .id
+                .as_ref()
+                .expect("id present")
+                .as_ulid()
+                .timestamp();
+            assert!(t0 <= t1, "Events from same source should be temporally ordered");
         }
     }
 

@@ -1,3 +1,4 @@
+Status: canonical
 # Security Architecture
 
 ## Overview
@@ -55,7 +56,7 @@ Current approach may be sufficient as:
 
 ### Network Security
 ❌ **Not Implemented**:
-- No TLS for gRPC communications
+- Local-first deployment; NATS and services bind to localhost by default. Secure external exposure explicitly if required.
 - No authentication framework
 - No rate limiting
 - Gateway exposed without access control
@@ -66,7 +67,7 @@ Current approach may be sufficient as:
 1. **User ↔ System**: Full trust (single-user system)
 2. **Satellites ↔ ingestd**: Unix socket permissions
 3. **ingestd ↔ Database**: PostgreSQL role separation
-4. **Automata ↔ Redis**: Consumer group isolation
+4. **Automata ↔ NATS JetStream**: Durable consumer isolation
 5. **External APIs**: API keys from environment
 
 ### Data Classification
@@ -117,7 +118,7 @@ Current approach may be sufficient as:
 ### 📋 Nice to Have
 5. **Implement TLS for IPC**
    - Between satellites and ingestd
-   - For Redis connections
+   - For NATS connections
    - For PostgreSQL if remote
 
 6. **Security scanning**
@@ -172,11 +173,12 @@ Current approach may be sufficient as:
 2. **SQL injection** → Parameterized queries only
 3. **Path traversal** → Input validation + canonicalization
 
-See [TIM-SecurityThreatModel](../docs/_todo/archive/TIM-SecurityThreatModel.md) for comprehensive threat analysis.
+Threat modeling is documented internally and will be consolidated into this document as it stabilizes.
 
 ## References
 
-- [ADR-006: NixOS Secrets Management Tool](../docs/_todo/archive/ADR-006-NixOSSecretsManagementTool.md)
-- [Database Encryption with pgsodium](../docs/roadmap/features/database-encryption-pgsodium.md)
-- [TIM-SecurityThreatModel](../docs/_todo/archive/TIM-SecurityThreatModel.md)
+- ADR‑006: NixOS Secrets Management Tool (historical; agenix)
+- [Database Encryption with pgsodium](../roadmap/features/database-encryption-pgsodium.md)
+  
+Note: Threat modeling is tracked in internal docs and tickets; consolidate into this document in future iterations.
 - Original Vision Document security requirements

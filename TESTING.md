@@ -66,3 +66,15 @@ just bench-all              # Run all benchmarks
 just bench-quick            # Quick benchmarks with small dataset
 just bench-compare          # Compare with main branch
 just bench-crate <name>     # Benchmark specific crate
+
+## Async & Concurrency Hygiene
+
+- Handle task results: never ignore `JoinHandle`; propagate errors (`Result`) or instrument/log them.
+- Use timeouts and cancellation: prefer `tokio::time::timeout` and `select!` with clear shutdown paths.
+- Avoid blocking in async: use `tokio::fs`/`spawn_blocking` for CPU‑bound or blocking I/O.
+- Bound concurrency: prefer `buffer_unordered(N)`/semaphores over unbounded `spawn` loops.
+- Stream, don’t batch: avoid building large `Vec`s before send; process in chunks for natural backpressure.
+- Deterministic tests: avoid sleep‑based timing; drive via events/channels; inject clocks when practical.
+- Isolation: use `sinex-test-utils::TestContext` for DB‑per‑test; never hardcode connection details.
+- Property tests: capture failing seeds into `tests/property/*.proptest-regressions` and commit.
+- Tracing: enable `RUST_LOG=sinex_test_utils=debug` during dev to surface ordering and race issues.

@@ -148,27 +148,25 @@ impl Default for SensorConfig {
 impl SensdConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
-        let builder = Self::builder();
+        // Start with a default config
+        let mut config = Self::default();
 
-        let builder = match std::env::var("DATABASE_URL") {
-            Ok(url) => builder.database_url(url),
-            Err(_) => builder,
-        };
+        // Override with environment variables
+        if let Ok(url) = std::env::var("DATABASE_URL") {
+            config.database_url = url;
+        }
 
-        let builder = match std::env::var("SENSD_GRPC_PORT")
+        if let Some(port) = std::env::var("SENSD_GRPC_PORT")
             .ok()
             .and_then(|s| s.parse().ok())
         {
-            Some(port) => builder.grpc_port(port),
-            None => builder,
-        };
+            config.grpc_port = port;
+        }
 
-        let builder = match std::env::var("SENSD_MATERIAL_PATH") {
-            Ok(path) => builder.material_storage_path(path),
-            Err(_) => builder,
-        };
+        if let Ok(path) = std::env::var("SENSD_MATERIAL_PATH") {
+            config.material_storage_path = path;
+        }
 
-        let config = builder.build();
         config.validate()?;
         Ok(config)
     }

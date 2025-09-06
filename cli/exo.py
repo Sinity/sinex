@@ -102,7 +102,8 @@ def _query_with_database(source: Optional[str], event_type: Optional[str],
         with conn.cursor() as cur:
             # Build query
             query_parts = [
-                "SELECT event_id, source, event_type, ts_ingest, ts_orig, host, "
+                # Select both canonical id and a backward-compatible alias
+                "SELECT id AS id, id AS event_id, source, event_type, ts_ingest, ts_orig, host, ",
                 "ingestor_version, payload_schema_id, payload FROM core.events"
             ]
             conditions = []

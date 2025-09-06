@@ -202,7 +202,7 @@ A dedicated agent for generating embeddings with:
 
 ### Phase 3: Real-time Pipeline
 - [ ] Event-driven embedding generation
-- [ ] Redis Streams integration
+- [ ] NATS JetStream integration
 - [ ] Cache management strategies
 - [ ] Model versioning system
 

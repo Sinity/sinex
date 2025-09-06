@@ -209,7 +209,7 @@ fn generate_event_envelope_enum(events: &[EventCategory]) -> proc_macro2::TokenS
             let variant_name = &event.name;
             let payload = &event.payload;
             quote! {
-                #variant_name(TypedRawEvent<#payload>),
+                #variant_name(Event<#payload>),
             }
         })
     });
@@ -218,7 +218,7 @@ fn generate_event_envelope_enum(events: &[EventCategory]) -> proc_macro2::TokenS
         #[derive(Debug, Clone)]
         pub enum EventEnvelope {
             #(#variants)*
-            Unknown(RawEvent),
+            Unknown(Event<JsonValue>),
         }
     }
 }
@@ -235,7 +235,7 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 
     quote! {
         impl EventEnvelope {
-            pub fn to_json_event(self) -> RawEvent {
+            pub fn to_json_event(self) -> Event<JsonValue> {
                 match self {
                     #(#match_arms)*
                     EventEnvelope::Unknown(event) => event,

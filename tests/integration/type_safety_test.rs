@@ -380,26 +380,26 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> color_eyr
     let source = EventSource::from_static("pipeline-test");
     let event_type = EventType::from_static("pipeline.type_safety");
     
-    // 2. Event creation with builder
-    let event = Event::schemaless()
-        .source(source.clone())
-        .event_type(event_type.clone())
-        .payload(json!({
+    // 2. Event creation (test helper ensures provenance)
+    let event = Event::test_event(
+        source.clone(),
+        event_type.clone(),
+        json!({
             "pipeline_stage": "creation",
             "type_safety": true
-        }))
-        .build();
+        }),
+    );
     
     // 3. Verify event structure
     assert_eq!(event.source, source);
     assert_eq!(event.event_type, event_type);
-    assert!(event.id.is_some());
+    // New events have no ID until inserted
     
     // 4. Insert into database
     let inserted_id = ctx.pool.events().insert_single(&event).await?;
     
-    // 5. Verify ID type preservation
-    assert_eq!(inserted_id, event.id.unwrap());
+    // 5. Verify ID type preservation happens in storage
+    assert!(Into::<Ulid>::into(inserted_id).to_uuid() != uuid::Uuid::nil());
     
     // 6. Query back using repository pattern
     let retrieved = ctx.pool.events()

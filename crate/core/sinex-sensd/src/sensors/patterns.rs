@@ -58,13 +58,6 @@ impl BatchedPullSensor {
             precision: "millisecond".to_string(),
             clock: "system".to_string(),
             source_type: "batched_pull".to_string(),
-            note: Some(
-                serde_json::json!({
-                    "pattern": "batched_pull",
-                    "data_size": data.len(),
-                })
-                .to_string(),
-            ),
         };
 
         buffer.push(entry);
@@ -164,15 +157,6 @@ impl ReplaceSnapshotSensor {
             precision: "millisecond".to_string(),
             clock: "system".to_string(),
             source_type: "replace_snapshot".to_string(),
-            note: Some(
-                serde_json::json!({
-                    "pattern": "replace_snapshot",
-                    "source": source_path,
-                    "snapshot_size": snapshot.len(),
-                    "replaced_previous": current.is_some(),
-                })
-                .to_string(),
-            ),
         };
 
         self.temporal_ledger.record_entry(entry).await?;
@@ -185,7 +169,7 @@ impl ReplaceSnapshotSensor {
 
         // Finalize the material immediately (snapshots are complete units)
         self.temporal_ledger
-            .finalize_material(material_id, "snapshot_complete", snapshot_len)
+            .finalize_material(material_id, "snapshot_complete", Some(snapshot_len))
             .await?;
 
         Ok(material_id)
@@ -282,15 +266,6 @@ impl MultiFileSensor {
                     precision: "millisecond".to_string(),
                     clock: "system".to_string(),
                     source_type: "multi_file".to_string(),
-                    note: Some(
-                        serde_json::json!({
-                            "pattern": "multi_file",
-                            "file_path": file_path.to_string_lossy(),
-                            "file_size": file_size,
-                            "modified": metadata.modified().ok(),
-                        })
-                        .to_string(),
-                    ),
                 };
 
                 self.temporal_ledger.record_entry(entry).await?;

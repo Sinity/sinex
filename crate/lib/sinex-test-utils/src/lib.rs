@@ -469,9 +469,7 @@ pub mod prelude {
         validate_json,
         validate_path,
         Blob,
-        BlobId,
         BlobRecord,
-        CheckpointId,
         CheckpointRepository,
         ConsumerGroup,
         ConsumerName,
@@ -480,7 +478,6 @@ pub mod prelude {
         DbPoolExt,
         DbTransaction,
         Entity,
-        EntityId,
         EntityRelation,
         // Event types (now available at root)
         Event,
@@ -496,19 +493,16 @@ pub mod prelude {
         // Common utilities (now available at root)
         Id,
         JsonValue,
-        OperationId,
         OptionalTimestamp,
         ProcessorName,
         Provenance,
         // Database models (now available at root)
-        RawEvent,
         SanitizedPath,
         SchemaName,
         SchemaVersion,
         // Error handling (now available at root)
         SinexError,
         SourceMaterial,
-        SourceMaterialId,
         Timestamp,
         Ulid,
     };
@@ -637,8 +631,8 @@ mod tests {
     use sinex_core::DbPoolExt;
     use sinex_core::*;
     use sinex_core::{
-        Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-        OperationRecord, Provenance, RawEvent, SourceMaterial,
+        Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue,
+        Operation, OperationRecord, Provenance, SourceMaterial,
     };
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
@@ -1044,7 +1038,7 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                RawEvent::test_event(
+                Event::<JsonValue>::test_event(
                     EventSource::from("count-test"),
                     EventType::from("batch"),
                     json!({"batch_index": i}),

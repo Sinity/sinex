@@ -43,7 +43,8 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let start = start_time.unwrap_or(EPOCH_START);
-        let rows = self.pool.events().get_source_activity(start).await?;
+        let end = end_time.unwrap_or_else(Utc::now);
+        let rows = self.pool.events().get_source_activity(start, None).await?;
 
         // Apply client-side end time filtering
         let filtered_rows = Self::apply_time_range_filter(rows, end_time, |row| row.last_event);
@@ -69,7 +70,7 @@ impl AnalyticsService {
                     .count_by_type_in_range(start, end)
                     .await?
             }
-            _ => self.pool.events().count_by_type_all_time().await?,
+            _ => self.pool.events().count_by_type_all_time(None).await?,
         };
 
         let result = rows
@@ -92,7 +93,7 @@ impl AnalyticsService {
         let rows = self
             .pool
             .events()
-            .get_events_over_time(start_time, end_time, interval)
+            .get_events_over_time(start_time, end_time, interval, None)
             .await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())

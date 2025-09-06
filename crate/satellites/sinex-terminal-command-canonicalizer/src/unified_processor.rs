@@ -8,11 +8,12 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
+use sinex_core::events::CanonicalCommandPayload;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
+use sinex_core::{Event, JsonValue, Provenance};
 use sinex_core::{EventSource, EventType, HostName};
-use sinex_core::{Provenance, RawEvent};
 use sinex_satellite_sdk::{
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
@@ -85,7 +86,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Safely extract ULID from event ID with proper error handling
-    fn extract_ulid_safely(id: &Option<sinex_core::types::Id<RawEvent>>) -> Ulid {
+    fn extract_ulid_safely(id: &Option<sinex_core::types::Id<Event<JsonValue>>>) -> Ulid {
         match id {
             Some(id) => *id.as_ulid(),
             None => {
@@ -126,7 +127,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Extract command data from a terminal event
-    fn extract_command_data(&self, event: &RawEvent) -> Option<CommandData> {
+    fn extract_command_data(&self, event: &Event<JsonValue>) -> Option<CommandData> {
         let payload = &event.payload;
 
         // Extract command text based on source
@@ -162,45 +163,46 @@ impl TerminalCommandCanonicalizer {
     async fn create_canonical_command(
         &self,
         command_data: &CommandData,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<CanonicalCommandPayload>> {
         let ctx = self
             .context
             .as_ref()
             .ok_or_else(|| SatelliteError::General(eyre!("Context not initialized")))?;
 
-        // Create synthesis event
-        let payload = serde_json::json!({
-            "command": command_data.command,
-            "working_directory": command_data.working_directory,
-            "exit_code": command_data.exit_code,
-            "duration_ms": command_data.duration_ms,
-            "start_time": command_data.start_time,
-            "end_time": command_data.end_time,
-            "user": command_data.user,
-            "session_id": command_data.session_id,
-            "environment_hash": command_data.environment_hash,
-            "source_events": command_data.source_events.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-            "enrichment_history": Vec::<String>::new(),
-        });
-
-        use sinex_core::types::events::Event;
+        use sinex_core::types::events::payloads::shell::CanonicalCommandPayload;
         use sinex_core::types::{Id, Ulid as CoreUlid};
+        use sinex_core::{Event, Provenance};
 
-        let source_event_ids: Vec<Id<RawEvent>> = command_data
+        let source_event_ids: Vec<Id<Event<JsonValue>>> = command_data
             .source_events
             .iter()
             .map(|ulid| Id::from_ulid(*ulid))
             .collect();
 
-        let event = RawEvent::from_synthesis(
-            "automaton.terminal_command_canonicalizer",
-            "command.canonical",
-            payload,
-            source_event_ids,
-        )
-        .with_timestamp(command_data.start_time)
-        .with_host(HostName::new("localhost"))
-        .with_ingestor_version("1.0.0");
+        // Create typed payload
+        let payload = CanonicalCommandPayload {
+            command: command_data.command.clone(),
+            working_directory: command_data.working_directory.clone().unwrap_or_default(),
+            exit_code: command_data.exit_code.unwrap_or(0),
+            duration_ms: command_data.duration_ms.unwrap_or(0) as u64,
+            start_time: command_data.start_time,
+            end_time: command_data.end_time.unwrap_or(command_data.start_time),
+            user: command_data.user.clone().unwrap_or_default(),
+            session_id: command_data.session_id.clone().unwrap_or_default(),
+            environment_hash: command_data.environment_hash.clone().unwrap_or_default(),
+            source_events: command_data
+                .source_events
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+            enrichment_history: Vec::new(),
+        };
+
+        // Create provenance from source events
+        let provenance = Provenance::from_synthesis(source_event_ids)
+            .ok_or_else(|| SinexError::invalid_state("No source events for canonical command"))?;
+
+        let event = Event::new(payload, provenance).at_time(command_data.start_time);
 
         Ok(event)
     }
@@ -260,7 +262,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                     _ => end_time - chrono::Duration::days(7),
                 };
 
-                // Query all terminal command events and convert to RawEvent
+                // Query all terminal command events
                 let mut all_raw_events = Vec::new();
 
                 for source in &[
@@ -282,7 +284,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                         )
                         .await?;
 
-                    // Events are already RawEvent type
+                    // Events are already Event<JsonValue> type
                     for raw_event in events {
                         all_raw_events.push(raw_event);
                     }
@@ -337,7 +339,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
     /// Process a batch of events from NATS (unified method)
     async fn process_event_batch(
         &mut self,
-        events: Vec<RawEvent>,
+        events: Vec<Event<JsonValue>>,
     ) -> SatelliteResult<ProcessingStats> {
         let start_time = std::time::Instant::now();
         let mut processed = 0;
@@ -346,7 +348,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         let mut errors = Vec::new();
 
         for event in events {
-            // Work directly with RawEvent
+            // Work directly with Event<JsonValue>
 
             let event_id = event
                 .id

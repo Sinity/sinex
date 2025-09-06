@@ -280,7 +280,8 @@ fn default_work_dir() -> Utf8PathBuf {
         Ok(validated) => validated,
         Err(_) => {
             // Fallback to a safe default if validation fails
-            env.work_directory("/tmp/sinex/ingestd")
+            Utf8PathBuf::from_path_buf(env.work_directory("/tmp/sinex/ingestd"))
+                .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
 }

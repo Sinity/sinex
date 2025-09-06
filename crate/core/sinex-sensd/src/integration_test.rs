@@ -88,19 +88,21 @@ impl SensdIntegrationTest {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id, source_identifier, source_type, 
-                total_bytes, content_type, data, status, 
-                created_at, staged_at
+                id, source_identifier, material_kind, 
+                status, timing_info_type, metadata,
+                staged_at
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, NOW())
             "#,
             material_id as Ulid,
             "integration-test",
-            "test",
-            test_data.len() as i64,
-            "text/plain",
-            test_data,
-            "ready",
+            "annex",
+            "completed",
+            "realtime",
+            serde_json::json!({
+                "test": true,
+                "data_size": test_data.len()
+            }),
         )
         .execute(&self.db_pool)
         .await?;
@@ -121,11 +123,11 @@ impl SensdIntegrationTest {
             sqlx::query!(
                 r#"
                 INSERT INTO raw.temporal_ledger (
-                    entry_id, material_id, offset_start, offset_end,
+                    id, source_material_id, offset_start, offset_end,
                     offset_kind, ts_capture, precision, clock,
-                    source_type, note, created_at
+                    source_type
                 )
-                VALUES ($1::ulid, $2::ulid, $3, $4, $5, NOW(), $6, $7, $8, $9, NOW())
+                VALUES ($1::ulid, $2::ulid, $3, $4, $5, NOW(), $6, $7, $8)
                 "#,
                 entry_id as Ulid,
                 material_id as Ulid,
@@ -135,11 +137,6 @@ impl SensdIntegrationTest {
                 "exact",
                 "wall",
                 "realtime_capture",
-                serde_json::json!({
-                    "chunk_index": i,
-                    "test": true
-                })
-                .to_string(),
             )
             .execute(&self.db_pool)
             .await?;
@@ -155,19 +152,14 @@ impl SensdIntegrationTest {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, owner, priority, status,
-                created_at
+                id, sensor_type, target_uri, config, priority, status, updated_at
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, NOW())
             "#,
             job_id as Ulid,
             "test_sensor",
             "/tmp/test",
-            "integration-test-job",
-            serde_json::json!({"mode": "test"}),
-            serde_json::json!({"test": true}),
-            "integration-test",
+            serde_json::json!({"test": true, "mode": "test", "source_identifier": "integration-test-job"}),
             1,
             "pending",
         )

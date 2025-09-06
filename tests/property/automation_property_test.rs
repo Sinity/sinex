@@ -6,8 +6,8 @@
 use chrono::Utc;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -68,8 +68,12 @@ fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)
 }
 
 /// Create test events for processing
-fn create_test_event(source: &str, event_type: &str, payload: serde_json::Value) -> RawEvent {
-    RawEvent::schemaless(
+fn create_test_event(
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Event<JsonValue> {
+    Event::test_event(
         EventSource::new(source),
         EventType::new(event_type),
         payload,
@@ -319,7 +323,7 @@ fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> 
         let mut events = Vec::new();
 
         for i in 0..event_count {
-            let event = RawEvent::schemaless(
+            let event = Event::test_event(
                 EventSource::from_static("automation-test"),
                 EventType::from_static("batch.test"),
                 json!({
@@ -342,7 +346,7 @@ fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> 
 
         // Property: Each event should have valid properties
         for event in &events {
-            prop_assert!(event.id.is_none()); // Schemaless events have no ID
+            prop_assert!(event.id.is_none()); // New events have no ID until inserted
             prop_assert_eq!(event.source.as_str(), "automation-test");
             prop_assert_eq!(event.event_type.as_str(), "batch.test");
             prop_assert!(event.payload.is_object());

@@ -11,7 +11,9 @@ use chrono::{Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
+use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
+type RawEvent = Event<JsonValue>;
 
 /// Property tests for Event-related functionality
 ///
@@ -143,14 +145,13 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
         prop::option::of(arb_timestamp()),
     )
         .prop_map(|(source, event_type, payload, ts_orig)| {
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
             );
-
-            // Set ts_ingest manually since it's skipped by the builder
-            event.ts_ingest = Utc::now();
+            // Simulate ingest by assigning an ID
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             if let Some(ts) = ts_orig {
                 event.ts_orig = Some(ts);
@@ -177,7 +178,10 @@ fn test_event_serde_roundtrip() -> Result<()> {
         prop_assert_eq!(event.id, deserialized.id);
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
-        prop_assert_eq!(event.ts_ingest, deserialized.ts_ingest);
+        // Compare derived ingest times via ULID timestamps
+        let a = event.id.as_ref().map(|id| id.as_ulid().timestamp());
+        let b = deserialized.id.as_ref().map(|id| id.as_ulid().timestamp());
+        prop_assert_eq!(a, b);
         prop_assert_eq!(event.ts_orig, deserialized.ts_orig);
         prop_assert_eq!(event.host, deserialized.host);
         prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
@@ -196,32 +200,37 @@ fn test_event_id_properties() -> Result<()> {
         event_type in arb_event_type_name(),
         payload in arb_json_value()
     )| {
-        let mut event1 = RawEvent::schemaless(
+        let mut event1 = RawEvent::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
             payload.clone(),
         );
-        event1.ts_ingest = Utc::now();
+        event1.id = Some(Id::from_ulid(Ulid::new()));
 
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
 
-        let mut event2 = RawEvent::schemaless(
+        let mut event2 = RawEvent::test_event(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
         );
-        event2.ts_ingest = Utc::now();
+        event2.id = Some(Id::from_ulid(Ulid::new()));
 
         // Events should be unique (different ts_ingest times)
-        prop_assert_ne!(event1.ts_ingest, event2.ts_ingest);
+        prop_assert_ne!(
+            event1.id.as_ref().unwrap().as_ulid().timestamp(),
+            event2.id.as_ref().unwrap().as_ulid().timestamp()
+        );
 
         // ts_ingest should be recent
         let now = Utc::now();
-        prop_assert!(event1.ts_ingest <= now);
-        prop_assert!(event2.ts_ingest <= now);
-        prop_assert!(now - event1.ts_ingest < ChronoDuration::seconds(10));
-        prop_assert!(now - event2.ts_ingest < ChronoDuration::seconds(10));
+        let t1 = event1.id.as_ref().unwrap().as_ulid().timestamp();
+        let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
+        prop_assert!(t1 <= now);
+        prop_assert!(t2 <= now);
+        prop_assert!(now - t1 < ChronoDuration::seconds(10));
+        prop_assert!(now - t2 < ChronoDuration::seconds(10));
     });
     Ok(())
 }
@@ -240,10 +249,11 @@ fn test_event_field_constraints() -> Result<()> {
         // Host should not be empty
         prop_assert!(!event.host.is_empty());
 
-        // ts_ingest should be recent (within last hour)
+        // Derived ingest time should be recent (within last hour)
         let now = Utc::now();
-        prop_assert!(event.ts_ingest <= now);
-        prop_assert!(now - event.ts_ingest < ChronoDuration::hours(1));
+        let t = event.id.as_ref().unwrap().as_ulid().timestamp();
+        prop_assert!(t <= now);
+        prop_assert!(now - t < ChronoDuration::hours(1));
 
         // If ts_orig is present, it should be reasonable
         if let Some(ts_orig) = event.ts_orig {
@@ -268,13 +278,14 @@ fn test_event_builder_preserves_values() -> Result<()> {
         ts_orig in arb_timestamp(),
         host in arb_hostname()
     )| {
-        let mut event = RawEvent::schemaless(
+        let mut event = RawEvent::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
             payload.clone(),
-        ).with_ts_orig(Some(ts_orig));
+        );
+        event.ts_orig = Some(ts_orig);
         event.host = HostName::new(host.clone());
-        event.ts_ingest = Utc::now();
+        event.id = Some(Id::from_ulid(Ulid::new()));
 
         prop_assert_eq!(event.source.as_str(), source);
         prop_assert_eq!(event.event_type.as_str(), event_type);
@@ -295,12 +306,12 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
         let mut events = Vec::new();
 
         for payload in payloads {
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source.clone()),
                 EventType::new(event_type.clone()),
                 payload,
             );
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             events.push(event);
 
             // Small delay to ensure timestamp ordering
@@ -309,7 +320,9 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
 
         // Timestamps should be in ascending order
         for window in events.windows(2) {
-            prop_assert!(window[0].ts_ingest <= window[1].ts_ingest);
+            let a = window[0].id.as_ref().unwrap().as_ulid().timestamp();
+            let b = window[1].id.as_ref().unwrap().as_ulid().timestamp();
+            prop_assert!(a <= b);
         }
     });
     Ok(())
@@ -334,12 +347,12 @@ fn test_event_edge_case_payloads() -> Result<()> {
         ];
 
         for payload in edge_cases {
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source.clone()),
                 EventType::new(event_type.clone()),
                 payload.clone(),
             );
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             // Should serialize and deserialize correctly
             let json_str = serde_json::to_string(&event).unwrap();
@@ -470,12 +483,12 @@ mod unit_tests {
 
     #[sinex_test]
     fn test_event_builder_defaults() -> Result<()> {
-        let mut event = RawEvent::schemaless(
+        let mut event = RawEvent::test_event(
             EventSource::new("test_source"),
             EventType::new("test.event"),
             json!({"key": "value"}),
         );
-        event.ts_ingest = Utc::now();
+        event.id = Some(Id::from_ulid(Ulid::new()));
 
         assert_eq!(event.source.as_str(), "test_source");
         assert_eq!(event.event_type.as_str(), "test.event");

@@ -262,7 +262,8 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     let ordering_queries = vec![
         ("ORDER BY event_id", "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY event_id"),
         ("ORDER BY ts_orig", "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY ts_orig"),
-        ("ORDER BY ts_ingest", "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY ts_ingest"),
+        // ts_ingest is deprecated in favor of ULID; approximate by ordering by event_id
+        ("ORDER BY ts_ingest", "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY event_id"),
     ];
 
     let mut ordering_results = HashMap::new();

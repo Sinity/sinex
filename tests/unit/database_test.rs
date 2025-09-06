@@ -7,6 +7,8 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
+use sinex_core::db::models::{Event, JsonValue};
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
 
 // Additional specific imports
@@ -20,7 +22,7 @@ use std::sync::Arc;
 #[sinex_test]
 async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test basic event creation using modern patterns
-    let event = RawEvent::schemaless(
+    let event = Event::<JsonValue>::test_event(
         EventSource::from("fs-watcher"),
         EventType::from("file.created"),
         json!({
@@ -35,8 +37,9 @@ async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Re
     assert_eq!(event.event_type.as_str(), "file.created");
     assert_eq!(event.payload["path"], json!("/tmp/test.txt"));
     assert_eq!(event.payload["size"], json!(1024));
-    assert!(event.id.is_some());
-    assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap());
+    assert!(event.id.is_none()); // test_event returns not yet inserted; insert to persist
+    let inserted = ctx.pool.events().insert(event).await?;
+    assert!(inserted.id.is_some());
 
     // Note: Database insertion test skipped due to operator resolution issue
     // This would be: let inserted_event = ctx.pool.events().insert(event).await?;
@@ -52,13 +55,13 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Note: Actual database queries skipped due to operator resolution issue
 
     // Demonstrate event creation patterns for different sources
-    let fs_event = RawEvent::schemaless(
+    let fs_event = Event::<JsonValue>::test_event(
         EventSource::from("fs-watcher"),
         EventType::from("file.created"),
         json!({"path": "/tmp/1.txt"}),
     );
 
-    let terminal_event = RawEvent::schemaless(
+    let terminal_event = Event::<JsonValue>::test_event(
         EventSource::from("terminal"),
         EventType::from("command.executed"),
         json!({"cmd": "ls"}),
@@ -311,7 +314,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = RawEvent::schemaless(
+        let event = Event::<JsonValue>::test_event(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({
@@ -355,7 +358,7 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
 
     for i in 0..num_events {
         let source = format!("query-perf-{}", i % 10); // 10 different sources
-        let event = RawEvent::schemaless(
+        let event = Event::<JsonValue>::test_event(
             EventSource::from(source),
             EventType::from("query.test"),
             json!({
@@ -412,7 +415,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()>
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
-    let event = RawEvent::schemaless(
+    let event = Event::<JsonValue>::test_event(
         EventSource::from("ulid-test"),
         EventType::from("regression.test"),
         json!({"ulid": test_ulid.to_string()}),
@@ -445,12 +448,12 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
 
-    let event = RawEvent::test_event(
+    let event = Event::<JsonValue>::test_event(
         EventSource::from("timestamp-test"),
         EventType::from("time.test"),
         json!({"test": "timestamp"}),
     )
-    .with_timestamp(original_time);
+    .at_time(original_time);
 
     let before_insert = Utc::now();
     let inserted_event = ctx.pool.events().insert(event).await?;
@@ -460,8 +463,9 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
     assert_eq!(inserted_event.ts_orig, Some(original_time));
 
     // Verify ingestion timestamp is recent
-    assert!(inserted_event.ts_ingest >= before_insert);
-    assert!(inserted_event.ts_ingest <= after_insert);
+    let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();
+    assert!(ingest_ts >= before_insert);
+    assert!(ingest_ts <= after_insert);
 
     // Retrieve and verify timestamps persist
     let retrieved = ctx
@@ -472,7 +476,10 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
         .unwrap();
 
     assert_eq!(retrieved.ts_orig, Some(original_time));
-    assert_eq!(retrieved.ts_ingest, inserted_event.ts_ingest);
+    assert_eq!(
+        retrieved.id.as_ref().unwrap().as_ulid().timestamp(),
+        inserted_event.id.as_ref().unwrap().as_ulid().timestamp()
+    );
 
     Ok(())
 }

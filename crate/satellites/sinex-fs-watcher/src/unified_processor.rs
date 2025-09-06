@@ -11,11 +11,16 @@ use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::{
-    db::models::{event::OffsetKind, Provenance, RawEvent},
+    db::models::{event::OffsetKind, Event, Provenance},
+    events::{
+        DirCreatedPayload, DirDeletedPayload, DirDiscoveredPayload, FileCreatedPayload,
+        FileDeletedPayload, FileDiscoveredPayload, FileModifiedPayload, FileMovedPayload,
+    },
     types::{
-        domain::{EventSource, EventType},
+        domain::{EventSource, EventType, SanitizedPath},
         Id, Ulid,
     },
+    JsonValue,
 };
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
@@ -97,14 +102,12 @@ impl FilesystemConfig {
 }
 
 /// Custom validation functions
-fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
-    if let Some(d) = depth {
-        if *d == 0 {
-            return Err(ValidationError::new("depth_zero"));
-        }
-        if *d > 100 {
-            return Err(ValidationError::new("depth_too_large"));
-        }
+fn validate_max_depth(depth: usize) -> Result<(), ValidationError> {
+    if depth == 0 {
+        return Err(ValidationError::new("depth_zero"));
+    }
+    if depth > 100 {
+        return Err(ValidationError::new("depth_too_large"));
     }
     Ok(())
 }
@@ -149,7 +152,7 @@ pub struct FilesystemProcessor {
     stage_context: Option<StageAsYouGoContext>,
 
     /// Event channel for sending processed events
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
 }
 
 impl FilesystemProcessor {
@@ -192,23 +195,22 @@ impl FilesystemProcessor {
         let job_id = Ulid::new();
         let source_identifier = format!("fs-watch:{}", path);
 
-        // Insert TreeWatch job into sensor_jobs table
+        // Insert TreeWatch job into sensor_jobs table (current canonical schema)
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_uri, source_identifier,
-                acquisition_mode, parameters, status, created_at
+                id, sensor_type, target_uri, config
             )
-            VALUES ($1::ulid, 'tree_watch', $2, $3, $4, $5, 'pending', NOW())
+            VALUES ($1::ulid, 'tree_watch', $2, $3)
             "#,
             job_id as Ulid,
             path,
-            source_identifier,
-            json!({ "mode": "continuous" }),
             json!({
+                "mode": "continuous",
                 "recursive": true,
                 "follow_symlinks": self.config.follow_symlinks,
                 "max_depth": self.config.max_depth,
+                "source_identifier": source_identifier
             }),
         )
         .execute(db_pool)
@@ -223,7 +225,10 @@ impl FilesystemProcessor {
 
     /// Process a material slice from sensd into filesystem events
     #[instrument(skip(self, slice), fields(processor = "filesystem", material_id = %slice.material_id, offset_start = slice.offset_start, offset_end = slice.offset_end))]
-    async fn process_material_slice(&self, slice: MaterialSlice) -> SatelliteResult<Vec<RawEvent>> {
+    async fn process_material_slice(
+        &self,
+        slice: MaterialSlice,
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         // Parse metadata from the slice
@@ -251,41 +256,8 @@ impl FilesystemProcessor {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        // Determine event type from metadata
-        let event_type = if is_directory {
-            match event_kind {
-                kind if kind.contains("Create") => "filesystem.dir_created",
-                kind if kind.contains("Remove") => "filesystem.dir_deleted",
-                kind if kind.contains("Rename") => "filesystem.dir_moved",
-                _ => "filesystem.dir_discovered",
-            }
-        } else {
-            match event_kind {
-                kind if kind.contains("Create") => "filesystem.file_created",
-                kind if kind.contains("Modify") => "filesystem.file_modified",
-                kind if kind.contains("Remove") => "filesystem.file_deleted",
-                kind if kind.contains("Rename") => "filesystem.file_moved",
-                _ => "filesystem.file_discovered",
-            }
-        };
-
         // Create event with material provenance
-        let mut raw_event = RawEvent::from_material(
-            EventSource::from("filesystem"),
-            EventType::from(event_type),
-            json!({
-                "path": path,
-                "size": file_size,
-                "is_directory": is_directory,
-                "event_kind": event_kind,
-                "material_id": slice.material_id.to_string(),
-                "offset_range": [slice.offset_start, slice.offset_end],
-            }),
-            slice.material_id,
-            slice.offset_start,
-        );
-        raw_event.ts_orig = Some(slice.ts_capture_start);
-        raw_event.provenance = Provenance::Material {
+        let provenance = Provenance::Material {
             id: Id::from(slice.material_id),
             anchor_byte: slice.offset_start,
             offset_kind: OffsetKind::Byte,
@@ -293,11 +265,104 @@ impl FilesystemProcessor {
             offset_end: Some(slice.offset_end),
         };
 
-        events.push(raw_event);
+        let sanitized_path = SanitizedPath::new(path.clone());
+        let timestamp = slice.ts_capture_start;
+
+        // Create typed event based on event type
+        let event: Event<JsonValue> = if is_directory {
+            match event_kind {
+                kind if kind.contains("Create") => {
+                    let payload = DirCreatedPayload {
+                        path: sanitized_path,
+                        created_at: timestamp,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                kind if kind.contains("Remove") => {
+                    let payload = DirDeletedPayload {
+                        path: sanitized_path,
+                        deleted_at: timestamp,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                _ => {
+                    let payload = DirDiscoveredPayload {
+                        path: sanitized_path,
+                        modified_at: timestamp,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+            }
+        } else {
+            match event_kind {
+                kind if kind.contains("Create") => {
+                    let payload = FileCreatedPayload {
+                        path: sanitized_path,
+                        size: file_size as u64,
+                        created_at: timestamp,
+                        permissions: None,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                kind if kind.contains("Modify") => {
+                    let payload = FileModifiedPayload {
+                        path: sanitized_path,
+                        size: file_size as u64,
+                        modified_at: timestamp,
+                        modification_type: event_kind.to_string(),
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                kind if kind.contains("Remove") => {
+                    let payload = FileDeletedPayload {
+                        path: sanitized_path,
+                        deleted_at: timestamp,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                kind if kind.contains("Rename") => {
+                    // For rename, we need both old and new paths
+                    // This is a simplification - in reality we'd need to track the rename
+                    let payload = FileMovedPayload {
+                        old_path: sanitized_path.clone(),
+                        new_path: sanitized_path,
+                        moved_at: timestamp,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+                _ => {
+                    let payload = FileDiscoveredPayload {
+                        path: sanitized_path,
+                        size: file_size as u64,
+                        modified_at: timestamp,
+                        permissions: None,
+                    };
+                    Event::new(payload, provenance.clone())
+                        .at_time(timestamp)
+                        .to_json_event()?
+                }
+            }
+        };
+
+        events.push(event);
 
         debug!(
-            "Generated {} event for path: {} (material: {}, offsets: {}-{})",
-            event_type, path, slice.material_id, slice.offset_start, slice.offset_end
+            "Generated filesystem event for path: {} (material: {}, offsets: {}-{})",
+            path, slice.material_id, slice.offset_start, slice.offset_end
         );
 
         Ok(events)
@@ -320,16 +385,16 @@ impl FilesystemProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        tl.material_id as "material_id: Ulid",
+                        tl.source_material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        tl.note,
-                        sm.data as "inline_data?: Vec<u8>"
+                        NULL::text as note,
+                        NULL::bytea as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
-                        ON sm.source_material_id = tl.material_id
-                    WHERE tl.material_id = $1::ulid
+                        ON sm.id = tl.source_material_id
+                    WHERE tl.source_material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
                     LIMIT $3
@@ -385,22 +450,24 @@ impl FilesystemProcessor {
 
         let mut total_events = 0;
 
-        // Query for completed TreeWatch jobs that haven't been processed yet
+        // Query for retired TreeWatch jobs with matching source materials not yet processed
         let completed_jobs = sqlx::query!(
             r#"
             SELECT 
-                job_id as "job_id: Ulid",
-                material_id as "material_id: Ulid",
-                target_uri
-            FROM raw.sensor_jobs
-            WHERE status = 'completed'
-            AND sensor_type = 'tree_watch'
-            AND material_id IS NOT NULL
-            AND NOT EXISTS (
+                sj.id as "job_id: Ulid",
+                sm.id as "material_id: Ulid",
+                sj.target_uri
+            FROM raw.sensor_jobs sj
+            LEFT JOIN raw.source_material_registry sm 
+                ON sm.source_identifier LIKE '%' || sj.target_uri || '%'
+            WHERE sj.status = 'retired'
+              AND sj.sensor_type = 'tree_watch'
+              AND sm.id IS NOT NULL
+              AND NOT EXISTS (
                 SELECT 1 FROM core.events 
-                WHERE provenance->>'id' = material_id::text
-            )
-            ORDER BY completed_at DESC
+                WHERE source_material_id = sm.id
+              )
+            ORDER BY sj.updated_at DESC
             LIMIT 10
             "#,
         )
@@ -409,53 +476,53 @@ impl FilesystemProcessor {
         .map_err(|e| SatelliteError::General(eyre!("Failed to query completed jobs: {}", e)))?;
 
         for job in completed_jobs {
-            if let Some(material_id) = job.material_id {
-                info!(
-                    "Processing material {} from TreeWatch job {} (path: {})",
-                    material_id, job.job_id, job.target_uri
-                );
+            let material_id = job.material_id;
+            info!(
+                "Processing material {} from TreeWatch job {} (path: {})",
+                material_id, job.job_id, job.target_uri
+            );
 
-                // Create material stream for this job's output
-                let stream = self
-                    .create_material_stream(material_id)
-                    .await
-                    .map_err(|e| SatelliteError::General(e))?;
-                let mut stream = stream;
+            // Create material stream for this job's output
+            let stream = self
+                .create_material_stream(material_id)
+                .await
+                .map_err(|e| SatelliteError::General(e))?;
+            let mut stream = stream;
+            tokio::pin!(stream);
 
-                // Process all slices from this material
-                while let Some(slice_result) = stream.next().await {
-                    match slice_result {
-                        Ok(slice) => {
-                            // Convert slice to filesystem events
-                            let events = self.process_material_slice(slice).await?;
+            // Process all slices from this material
+            while let Some(slice_result) = stream.next().await {
+                match slice_result {
+                    Ok(slice) => {
+                        // Convert slice to filesystem events
+                        let events = self.process_material_slice(slice).await?;
 
-                            // Send events through the context or store them
-                            for event in events {
-                                if let Some(ref context) = self.context {
-                                    context.emit_event(event).await?;
-                                    total_events += 1;
-                                } else if let Some(ref sender) = self.event_sender {
-                                    sender.send(event).await.map_err(|_| {
-                                        SatelliteError::General(eyre!("Failed to send event"))
-                                    })?;
-                                    total_events += 1;
-                                }
+                        // Send events through the context or store them
+                        for event in events {
+                            if let Some(ref context) = self.context {
+                                context.emit_event(event).await?;
+                                total_events += 1;
+                            } else if let Some(ref sender) = self.event_sender {
+                                sender.send(event).await.map_err(|_| {
+                                    SatelliteError::General(eyre!("Failed to send event"))
+                                })?;
+                                total_events += 1;
                             }
                         }
-                        Err(e) => {
-                            error!(
-                                "Error processing slice from material {}: {}",
-                                material_id, e
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error processing slice from material {}: {}",
+                            material_id, e
+                        );
                     }
                 }
-
-                info!(
-                    "Completed processing material {} with {} events",
-                    material_id, total_events
-                );
             }
+
+            info!(
+                "Completed processing material {} with {} events",
+                material_id, total_events
+            );
         }
 
         Ok(total_events)
@@ -861,7 +928,7 @@ impl ExplorationProvider for FilesystemProcessor {
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         } else {
             let config_data = serde_json::json!({
                 "watch_paths": self.config.watch_paths,
@@ -877,7 +944,7 @@ impl ExplorationProvider for FilesystemProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         }
 
         Ok(())

@@ -41,17 +41,16 @@
 //! - Caching of frequently accessed blobs
 
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_core::types::{ulid::Ulid, validate_path, Id};
+use sinex_core::types::{ulid::Ulid, validate_path};
 use sinex_core::DbPoolExt;
 use sinex_core::{Blob, Event, JsonValue};
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 use crate::grpc_client::IngestClient;

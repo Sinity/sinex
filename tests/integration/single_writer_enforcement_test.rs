@@ -7,7 +7,7 @@
 
 use color_eyre::eyre::Result;
 use sinex_core::{
-    db::models::RawEvent,
+    Event, JsonValue,
     types::domain::{EventSource, EventType},
 };
 use sinex_test_utils::{fixtures::*, sinex_test, TestContext};
@@ -25,7 +25,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
     // In production, satellites should only have SELECT permission on core.events
     
     // Try to insert directly as a satellite (should fail in production)
-    let event = RawEvent::schemaless(
+    let event = Event::<JsonValue>::test_event(
         EventSource::from_static("fs-watcher"),
         EventType::from_static("file.created"),
         serde_json::json!({ "path": "/test/file.txt" }),

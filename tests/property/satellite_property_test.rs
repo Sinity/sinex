@@ -5,9 +5,9 @@
 
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::{Event, JsonValue};
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 
@@ -16,12 +16,12 @@ mod strategies {
     use super::*;
 
     /// Strategy for generating realistic event sequences
-    pub fn event_sequences() -> impl Strategy<Value = Vec<RawEvent>> {
+    pub fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
         (1usize..=100).prop_flat_map(|size| {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
                     |(source, event_type, payload)| {
-                        RawEvent::schemaless(
+                        Event::test_event(
                             EventSource::new(&source),
                             EventType::new(&event_type),
                             payload,
@@ -157,7 +157,7 @@ proptest! {
 
                 if should_fail {
                     // Simulate failure by creating invalid event (empty source)
-                    let invalid_event = RawEvent::schemaless(
+                    let invalid_event = Event::test_event(
                         EventSource::new(""),  // Invalid empty source
                         EventType::new(event_type),
                         payload.clone(),
@@ -169,7 +169,7 @@ proptest! {
                     }
                 } else {
                     // Process normal event
-                    let event = RawEvent::schemaless(
+                    let event = Event::test_event(
                         EventSource::new(source),
                         EventType::new(event_type),
                         payload.clone(),
@@ -218,7 +218,7 @@ proptest! {
                     let mut operation_events = 0;
 
                     for j in 0..events_per_operation {
-                        let event = RawEvent::schemaless(
+                        let event = Event::test_event(
                             EventSource::new(&source),
                             EventType::new(&format!("test.event.{}", j)),
                             json!({"operation": i, "event": j}),
@@ -304,7 +304,7 @@ proptest! {
             // Process events in first batch configuration
             let half_point = events.len() / 2;
             for (source, event_type, payload) in events.iter().take(half_point) {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload.clone(),
@@ -318,7 +318,7 @@ proptest! {
 
             // Process remaining events (simulating batch size change)
             for (source, event_type, payload) in events.iter().skip(half_point) {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload.clone(),
@@ -351,7 +351,7 @@ proptest! {
 
             // Phase 1: Normal operation
             for i in 0..events_before_interruption {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new("interruption_test"),
                     EventType::new(&format!("before.{}", i)),
                     json!({"phase": "before", "index": i}),
@@ -366,7 +366,7 @@ proptest! {
             let _interruption_start = tokio::time::Instant::now();
 
             for i in 0..events_during_interruption {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new("interruption_test"),
                     EventType::new(&format!("during.{}", i)),
                     json!({"phase": "during", "index": i}),
@@ -384,7 +384,7 @@ proptest! {
 
             // Phase 3: Recovery
             for i in 0..events_after_interruption {
-                let event = RawEvent::schemaless(
+                let event = Event::test_event(
                     EventSource::new("interruption_test"),
                     EventType::new(&format!("after.{}", i)),
                     json!({"phase": "after", "index": i}),
@@ -423,7 +423,7 @@ proptest! {
 
                 let handle = tokio::spawn(async move {
                     for event_id in 0..events_per_source {
-                        let event = RawEvent::schemaless(
+                        let event = Event::test_event(
                             EventSource::new(&source_name),
                             EventType::new("ordering.test"),
                             json!({

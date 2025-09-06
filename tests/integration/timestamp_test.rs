@@ -30,16 +30,16 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
-        let event = Event::schemaless()
-            .source(EventSource::from("timestamp_test"))
-            .event_type(EventType::from(&format!("boundary_{}", i)))
-            .payload(json!({
+        let event = Event::test_event(
+            EventSource::from("timestamp_test"),
+            EventType::from(&format!("boundary_{}", i)),
+            json!({
                 "timestamp": ts.to_rfc3339(),
                 "epoch": ts.timestamp(),
                 "test_case": i
-            }))
-            .build()
-            .with_ts_orig(Some(*ts));
+            }),
+        )
+        .at_time(*ts);
 
         ctx.pool.events().insert(event).await?;
     }
@@ -55,8 +55,9 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
     // Verify timestamps are preserved correctly
     for event in &events {
         assert!(event.ts_orig.is_some(), "Original timestamp should be preserved");
-        assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap(), 
-                "Ingestion timestamp should be set");
+        let ingest_ts = event.id.unwrap().timestamp();
+        assert!(ingest_ts > chrono::DateTime::from_timestamp(0, 0).unwrap(),
+                "Ingestion (ULID) timestamp should be set");
     }
 
     Ok(())
@@ -77,16 +78,16 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
     let mut inserted_events = Vec::new();
 
     for (i, &ts) in timestamps.iter().enumerate() {
-        let event = Event::schemaless()
-            .source(EventSource::from("out_of_order_test"))
-            .event_type(EventType::from("sequenced_event"))
-            .payload(json!({
+        let event = Event::test_event(
+            EventSource::from("out_of_order_test"),
+            EventType::from("sequenced_event"),
+            json!({
                 "sequence": i,
                 "logical_time": ts.to_rfc3339(),
                 "description": format!("Event {} with timestamp {}", i, ts.to_rfc3339())
-            }))
-            .build()
-            .with_ts_orig(Some(ts));
+            }),
+        )
+        .at_time(ts);
 
         let inserted = ctx.pool.events().insert(event).await?;
         inserted_events.push(inserted);
@@ -141,16 +142,16 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (i, &ts) in precision_cases.iter().enumerate() {
-        let event = Event::schemaless()
-            .source(EventSource::from("precision_test"))
-            .event_type(EventType::from("precision_event"))
-            .payload(json!({
+        let event = Event::test_event(
+            EventSource::from("precision_test"),
+            EventType::from("precision_event"),
+            json!({
                 "precision_level": i,
                 "nanosecond": ts.nanosecond(),
                 "original_timestamp": ts.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
-            }))
-            .build()
-            .with_ts_orig(Some(ts));
+            }),
+        )
+        .at_time(ts);
 
         ctx.pool.events().insert(event).await?;
     }
@@ -192,15 +193,15 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (name, ts) in timezone_cases {
-        let event = Event::schemaless()
-            .source(EventSource::from("timezone_test"))
-            .event_type(EventType::from("timezone_event"))
-            .payload(json!({
+        let event = Event::test_event(
+            EventSource::from("timezone_test"),
+            EventType::from("timezone_event"),
+            json!({
                 "timezone_case": name,
                 "timestamp": ts.to_rfc3339()
-            }))
-            .build()
-            .with_ts_orig(Some(ts));
+            }),
+        )
+        .at_time(ts);
 
         ctx.pool.events().insert(event).await?;
     }
@@ -232,12 +233,12 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
 #[sinex_test]
 async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
     // Test that valid timestamps are handled correctly
-    let valid_event = Event::schemaless()
-        .source(EventSource::from("validation_test"))
-        .event_type(EventType::from("valid_event"))
-        .payload(json!({"message": "This should work"}))
-        .build()
-        .with_ts_orig(Some(Utc::now()));
+    let valid_event = Event::test_event(
+        EventSource::from("validation_test"),
+        EventType::from("valid_event"),
+        json!({"message": "This should work"}),
+    )
+    .at_time(Utc::now());
 
     // This should succeed
     let result = ctx.pool.events().insert(valid_event).await;
@@ -245,12 +246,12 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
 
     // Test edge case: distant future (should work but might be logged)
     let far_future = Utc.with_ymd_and_hms(2999, 12, 31, 23, 59, 59).unwrap();
-    let future_event = Event::schemaless()
-        .source(EventSource::from("validation_test"))
-        .event_type(EventType::from("future_event"))
-        .payload(json!({"message": "From the future"}))
-        .build()
-        .with_ts_orig(Some(far_future));
+    let future_event = Event::test_event(
+        EventSource::from("validation_test"),
+        EventType::from("future_event"),
+        json!({"message": "From the future"}),
+    )
+    .at_time(far_future);
 
     let future_result = ctx.pool.events().insert(future_event).await;
     match future_result {
@@ -272,15 +273,15 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
         let logical_time = base_time + chrono::Duration::minutes(i * 5);
         expected_order.push(logical_time);
         
-        let event = Event::schemaless()
-            .source(EventSource::from("ordering_test"))
-            .event_type(EventType::from("ordered_event"))
-            .payload(json!({
+        let event = Event::test_event(
+            EventSource::from("ordering_test"),
+            EventType::from("ordered_event"),
+            json!({
                 "sequence": i,
                 "logical_time": logical_time.to_rfc3339()
-            }))
-            .build()
-            .with_ts_orig(Some(logical_time));
+            }),
+        )
+        .at_time(logical_time);
 
         ctx.pool.events().insert(event).await?;
     }
@@ -334,12 +335,12 @@ async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::
     ];
 
     for (case_name, payload) in payload_cases {
-        let event = Event::schemaless()
-            .source(EventSource::from("payload_test"))
-            .event_type(EventType::from(&format!("payload_{}", case_name)))
-            .payload(payload)
-            .build()
-            .with_ts_orig(Some(test_time));
+        let event = Event::test_event(
+            EventSource::from("payload_test"),
+            EventType::from(&format!("payload_{}", case_name)),
+            payload,
+        )
+        .at_time(test_time);
 
         ctx.pool.events().insert(event).await?;
     }

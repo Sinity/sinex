@@ -4,8 +4,10 @@ use crate::{IngestdResult, SinexError};
 use ahash::AHashMap;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::RawEvent;
-use sinex_core::{EventSource, EventType};
+
+use serde_json::Value as JsonValue;
+use sinex_core::db::models::event::{Event, Provenance};
+use sinex_core::types::domain::{EventSource, EventType};
 use sqlx::FromRow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -22,7 +24,7 @@ struct SchemaRecord {
 }
 
 /// Schema cache entry
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct SchemaCacheEntry {
     compiled_schema: Arc<jsonschema::JSONSchema>,
     source: Arc<String>,
@@ -154,16 +156,16 @@ impl EventValidator {
         let schemas = sqlx::query_as!(
             SchemaRecord,
             r#"
-            SELECT DISTINCT ON (source_type, event_type)
+            SELECT DISTINCT ON (source, event_type)
                 id as "id: Ulid",
-                source_type as "source!",
+                source as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source_type, event_type, schema_version DESC
+            ORDER BY source, event_type, schema_version DESC
             "#
         )
         .fetch_all(pool)
@@ -235,8 +237,8 @@ impl EventValidator {
         Ok(validator)
     }
 
-    /// Validate a raw event
-    pub fn validate_event(&self, event: &RawEvent) -> IngestdResult<ValidationResult> {
+    /// Validate an event
+    pub fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<ValidationResult> {
         if !self.validation_enabled {
             return Ok(ValidationResult::Skipped);
         }
@@ -296,7 +298,10 @@ impl EventValidator {
     }
 
     /// Validate a batch of events
-    pub fn validate_batch(&self, events: &[RawEvent]) -> IngestdResult<Vec<ValidationResult>> {
+    pub fn validate_batch(
+        &self,
+        events: &[Event<JsonValue>],
+    ) -> IngestdResult<Vec<ValidationResult>> {
         events
             .iter()
             .map(|event| self.validate_event(event))
@@ -348,14 +353,14 @@ impl EventValidator {
             r#"
             SELECT 
                 id as "id: Ulid",
-                source_type as "source!",
+                source as "source!",
                 event_type as "event_type!",
                 schema_version as "schema_version!",
                 schema_content as "schema_content!",
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source_type, event_type, schema_version
+            ORDER BY source, event_type, schema_version
             "#
         )
         .fetch_all(pool)

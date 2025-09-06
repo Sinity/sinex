@@ -275,24 +275,27 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         hasher.update(&schema_text);
         let _content_hash = format!("{:x}", hasher.finalize());
 
-        // Insert or update schema
+        // Insert or update schema - using correct column names from DDL
+        // Note: For now, we'll use a placeholder source and concatenate event types
+        let source = schema_name.clone(); // Use schema_name as source for now
+        let event_type = event_types.join(","); // Concatenate event types
+
         let id = sqlx::query_scalar!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas
-                (schema_name, schema_version, schema_content, event_types, description)
+                (source, event_type, schema_version, schema_content, content_hash)
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (schema_name, schema_version) DO UPDATE
+            ON CONFLICT (source, event_type, schema_version) DO UPDATE
             SET schema_content = EXCLUDED.schema_content,
-                event_types = EXCLUDED.event_types,
-                description = EXCLUDED.description,
+                content_hash = EXCLUDED.content_hash,
                 updated_at = NOW()
             RETURNING id as "id: Ulid"
             "#,
-            &schema_name,
-            "v1",
+            &source,
+            &event_type,
+            "1.0.0", // Use proper semantic version
             &schema_content,
-            &event_types as &[String],
-            Some(format!("Schema for {} events", schema_name))
+            &_content_hash
         )
         .fetch_one(pool)
         .await?;

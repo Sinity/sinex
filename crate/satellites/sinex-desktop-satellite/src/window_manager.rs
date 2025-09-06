@@ -22,6 +22,7 @@ use crate::common::*;
 
 // Window manager specific imports
 use serde_json::Value;
+use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;
 use sinex_core::types::Ulid;
 use sqlx::PgPool;
 use std::{
@@ -224,23 +225,20 @@ impl WindowManagerWatcher {
         sqlx::query!(
             r#"
             INSERT INTO raw.source_material_registry (
-                id, source_identifier, created_at,
-                data, total_bytes, content_type, metadata,
-                source_type, status, material_type, source_uri
+                id, source_identifier, staged_at,
+                material_kind, timing_info_type, metadata,
+                status, staged_by
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
             "#,
-            material_id as Ulid,     // $1 - source_material_id
-            self.source_identifier,  // $2 - source_identifier
-            now,                     // $3 - created_at
-            &data_bytes,             // $4 - data
-            data_bytes.len() as i64, // $5 - total_bytes
-            "application/json",      // $6 - content_type
-            serde_json::to_string(&complete_metadata).unwrap_or_else(|_| "{}".to_string()), // $7 - metadata
-            "window_manager", // $8 - source_type
-            "finalized",      // $9 - status
-            "window_state",   // $10 - material_type
-            "hyprland://",    // $11 - source_uri
+            material_id as Ulid,    // $1 - id
+            self.source_identifier, // $2 - source_identifier
+            now,                    // $3 - staged_at
+            "window_state",         // $4 - material_kind
+            "realtime",             // $5 - timing_info_type
+            serde_json::to_value(&complete_metadata).unwrap_or_else(|_| serde_json::json!({})), // $6 - metadata
+            "completed",      // $7 - status
+            "window-manager", // $8 - staged_by
         )
         .execute(db_pool)
         .await?;
@@ -249,22 +247,20 @@ impl WindowManagerWatcher {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger (
-                entry_id, material_id, offset_start, offset_end, 
-                offset_kind, ts_capture, precision, clock, source_type,
-                proximity_hint, note
+                id, source_material_id, offset_start, offset_end, 
+                offset_kind, ts_capture, precision, clock, source_type
             )
-            VALUES (gen_ulid()::ulid, $1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1::ulid, $2::ulid, $3, $4, $5, $6, $7, $8, $9)
             "#,
-            material_id as Ulid,           // $1 - material_id
-            0i64,                          // $2 - offset_start
-            data_bytes.len() as i64,       // $3 - offset_end
-            "byte",                        // $4 - offset_kind
-            now,                           // $5 - ts_capture
-            "millisecond",                 // $6 - precision
-            "wall",                        // $7 - clock
-            "realtime_capture",            // $8 - source_type
-            serde_json::json!({}),         // $9 - proximity_hint
-            complete_metadata.to_string(), // $10 - note
+            Ulid::new() as Ulid,     // $1 - id
+            material_id as Ulid,     // $2 - source_material_id
+            0i64,                    // $3 - offset_start
+            data_bytes.len() as i64, // $4 - offset_end
+            "byte",                  // $5 - offset_kind
+            now,                     // $6 - ts_capture
+            "millisecond",           // $7 - precision
+            "wall",                  // $8 - clock
+            "realtime_capture",      // $9 - source_type
         )
         .execute(db_pool)
         .await?;
@@ -504,12 +500,15 @@ impl WindowManagerWatcher {
         }
     }
 
-    /// Stream Hyprland events
+    /// Stream Hyprland events with exponential backoff reconnection
     async fn stream_hyprland_events(&mut self) -> SatelliteResult<()> {
+        let mut consecutive_failures = 0;
+
         loop {
             match self.connect_to_hyprland_events().await {
                 Ok(stream) => {
                     info!("Connected to Hyprland event stream");
+                    consecutive_failures = 0; // Reset on successful connection
 
                     let reader = BufReader::new(stream);
                     let mut lines = reader.lines();
@@ -545,14 +544,47 @@ impl WindowManagerWatcher {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to connect to Hyprland: {}", e);
-                    sleep(Duration::from_secs(5)).await;
+                    consecutive_failures += 1;
+                    error!(
+                        "Failed to connect to Hyprland (attempt {}): {}",
+                        consecutive_failures, e
+                    );
+
+                    // Use exponential backoff with jitter, max 60 seconds
+                    let base_delay = Duration::from_secs(1);
+                    let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
+                    // Add simple jitter using timestamp-based pseudo-random
+                    let jitter = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        % 1000) as u64;
+                    let jittered_delay = delay + Duration::from_millis(jitter);
+
+                    warn!("Reconnecting to Hyprland in {:?}...", jittered_delay);
+                    sleep(jittered_delay).await;
                     continue;
                 }
             }
 
-            warn!("Hyprland connection lost, reconnecting in 5 seconds...");
-            sleep(Duration::from_secs(5)).await;
+            consecutive_failures += 1;
+
+            // Use exponential backoff for reconnection after connection loss
+            let base_delay = Duration::from_secs(1);
+            let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
+            // Add simple jitter using timestamp-based pseudo-random
+            let jitter = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                % 1000) as u64;
+            let jittered_delay = delay + Duration::from_millis(jitter);
+
+            warn!(
+                "Hyprland connection lost, reconnecting in {:?}...",
+                jittered_delay
+            );
+            sleep(jittered_delay).await;
         }
     }
 

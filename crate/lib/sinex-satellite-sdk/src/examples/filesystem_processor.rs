@@ -20,7 +20,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::Event;
 use sinex_core::types::events::{DirDiscoveredPayload, FileDiscoveredPayload};
-use sinex_core::JsonValue;
 use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use tokio::fs;

@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `RawEvent::test_event()`
+//! without wrapping production APIs. Tests use production `Event::<JsonValue>::test_event()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,7 +18,7 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> Result<()> {
 //!     // Direct production API - no wrapper
-//!     let event = RawEvent::test_event(
+//!     let event = Event::<JsonValue>::test_event(
 //!         "fs-watcher",
 //!         "file.created",
 //!         json!({"path": "/test/file.txt", "size": 1024})
@@ -43,8 +43,9 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
+use sinex_core::db::models::event::Event;
 use sinex_core::types::{DbPool, Ulid};
-use sinex_core::RawEvent;
+
 use sinex_core::{DbPoolExt, EnhancedRepository};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -147,12 +148,12 @@ impl TestContext {
         source: S,
         event_type: T,
         payload: JsonValue,
-    ) -> Result<RawEvent>
+    ) -> Result<Event<JsonValue>>
     where
         S: AsRef<str>,
         T: AsRef<str>,
     {
-        let event = RawEvent::test_event(source.as_ref(), event_type.as_ref(), payload);
+        let event = Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), payload);
         let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
@@ -161,7 +162,7 @@ impl TestContext {
     }
 
     /// Insert multiple events (batch operation)
-    pub async fn insert_events(&self, events: &[RawEvent]) -> Result<()> {
+    pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> Result<()> {
         for event in events {
             self.pool.events().insert(event.clone()).await?;
             if let Some(id) = &event.id {
@@ -199,7 +200,11 @@ impl TestContext {
     }
 
     /// Assert that two events are equal with detailed comparison
-    pub fn assert_event_eq(&self, actual: &RawEvent, expected: &RawEvent) -> Result<()> {
+    pub fn assert_event_eq(
+        &self,
+        actual: &Event<JsonValue>,
+        expected: &Event<JsonValue>,
+    ) -> Result<()> {
         if actual.source != expected.source {
             color_eyre::eyre::bail!(
                 "Event sources differ: actual='{}' expected='{}'",

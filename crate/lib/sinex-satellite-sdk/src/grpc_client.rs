@@ -27,8 +27,7 @@
 //! ```
 
 use crate::proto::{
-    ingest_service_client::IngestServiceClient, EventBatch, HealthRequest,
-    RawEvent as ProtoRawEvent,
+    ingest_service_client::IngestServiceClient, EventBatch, HealthRequest, RawEvent as ProtoEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
 use sinex_core::{db::models::Event, environment::environment, JsonValue};
@@ -213,7 +212,7 @@ impl IngestClient {
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &Event<JsonValue>) -> SatelliteResult<String> {
         let event_clone = event.clone();
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         let operation_timeout = self.config.operation_timeout;
 
         self.execute_with_retry_and_circuit_breaker(
@@ -272,7 +271,7 @@ impl IngestClient {
         }
 
         let events_clone = events.to_vec();
-        let mut client = self.client.clone();
+        let client = self.client.clone();
         let operation_timeout = self.config.operation_timeout;
 
         self.execute_with_retry_and_circuit_breaker(move || {
@@ -394,14 +393,14 @@ impl IngestClient {
     }
 
     /// Convert Event to protobuf format
-    fn convert_to_proto(&self, event: &Event<JsonValue>) -> SatelliteResult<ProtoRawEvent> {
+    fn convert_to_proto(&self, event: &Event<JsonValue>) -> SatelliteResult<ProtoEvent> {
         Self::convert_to_proto_static(event)
     }
 
-    fn convert_to_proto_static(event: &Event<JsonValue>) -> SatelliteResult<ProtoRawEvent> {
+    fn convert_to_proto_static(event: &Event<JsonValue>) -> SatelliteResult<ProtoEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
-        Ok(ProtoRawEvent {
+        Ok(ProtoEvent {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
             host: event.host.to_string(),

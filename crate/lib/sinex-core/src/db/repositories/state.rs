@@ -12,6 +12,7 @@ use crate::types::error::SinexError;
 use crate::{Event, Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid};
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
@@ -70,6 +71,79 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 // Use the transaction methods directly on StateRepositoryTx instead.
 
 impl<'a> StateRepository<'a> {
+    // ===== Operations Log Helpers for Replay =====
+
+    /// Start a replay operation via core.start_operation and return the operation Id
+    pub async fn start_replay_operation(
+        &self,
+        operator: &str,
+        scope: JsonValue,
+    ) -> DbResult<Id<Operation>> {
+        let op_uuid: Uuid = sqlx::query_scalar!(
+            r#"SELECT core.start_operation($1, $2, $3::jsonb) as "id!: Uuid""#,
+            "replay",
+            operator,
+            scope
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "start replay operation"))?;
+        let op_ulid = uuid_to_ulid(op_uuid);
+        Ok(Id::<Operation>::from_ulid(op_ulid))
+    }
+
+    /// Update result_status, result_message and preview_summary for an operation
+    pub async fn update_operation_meta(
+        &self,
+        id: &Id<Operation>,
+        result_status: &str,
+        result_message: Option<&str>,
+        preview_summary: JsonValue,
+    ) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id = $1
+            "#,
+            *id.as_ulid() as _,
+            result_status,
+            result_message,
+            preview_summary
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update operation meta"))?;
+        Ok(())
+    }
+
+    /// Complete an operation via core.complete_operation(summary)
+    pub async fn complete_operation(&self, id: &Id<Operation>, summary: JsonValue) -> DbResult<()> {
+        let _ = sqlx::query_scalar!(
+            r#"SELECT core.complete_operation($1::uuid, $2::jsonb) as result"#,
+            *id.as_ulid() as _,
+            summary
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "complete operation"))?;
+        Ok(())
+    }
+
+    /// Fail an operation via core.fail_operation(error)
+    pub async fn fail_operation(&self, id: &Id<Operation>, error: JsonValue) -> DbResult<()> {
+        let _ = sqlx::query_scalar!(
+            r#"SELECT core.fail_operation($1::uuid, $2::jsonb) as result"#,
+            *id.as_ulid() as _,
+            error
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "fail operation"))?;
+        Ok(())
+    }
     // ===== Validation Methods =====
 
     /// Validate an operation ID is not null/empty

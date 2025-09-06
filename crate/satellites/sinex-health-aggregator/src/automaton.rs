@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::{RawEvent, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
+use sinex_core::{Event, JsonValue, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
@@ -107,7 +107,7 @@ impl HealthAggregatorAutomaton {
     async fn generate_health_summary(
         &self,
         components: HashMap<String, ComponentHealth>,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<JsonValue>> {
         let now = Utc::now();
         let _cutoff = now - self.aggregation_window;
 
@@ -170,7 +170,7 @@ impl HealthAggregatorAutomaton {
         };
 
         // Create synthesis event with typed payload
-        let mut synthesis_event: RawEvent = Event::new(SystemHealthSummaryPayload {
+        let mut synthesis_event = Event::new(SystemHealthSummaryPayload {
             overall_status,
             healthy_components: healthy_count,
             degraded_components: degraded_count,

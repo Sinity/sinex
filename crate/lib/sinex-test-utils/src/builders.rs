@@ -18,7 +18,7 @@ pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
-    last_processed_id: Option<Id<RawEvent>>,
+    last_processed_id: Option<Id<Event<JsonValue>>>,
     processed_count: i64,
     state_data: Option<JsonValue>,
     checkpoint_version: i32,
@@ -59,7 +59,7 @@ impl TestCheckpointBuilder {
     }
 
     /// Set the last processed ID
-    pub fn last_processed_id(mut self, id: Id<RawEvent>) -> Self {
+    pub fn last_processed_id(mut self, id: Id<Event<JsonValue>>) -> Self {
         self.last_processed_id = Some(id);
         self
     }
@@ -110,7 +110,7 @@ impl TestCheckpointBuilder {
 #[derive(Debug, Builder)]
 pub(crate) struct TestScenarioBuilder {
     #[builder(default = Vec::new())]
-    events: Vec<RawEvent>,
+    events: Vec<Event<JsonValue>>,
     #[builder(default = Vec::new())]
     checkpoints: Vec<TestCheckpointBuilder>,
     pool: Option<DbPool>,
@@ -133,7 +133,7 @@ impl TestScenarioBuilder {
         count: usize,
     ) -> Self {
         for i in 0..count {
-            let event = RawEvent::test_event(
+            let event = Event::<JsonValue>::test_event(
                 source.clone(),
                 event_type.clone(),
                 json!({

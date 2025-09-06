@@ -8,13 +8,13 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
+        db::models::{EventId, Provenance},
         types::{
             domain::{EventSource, EventType},
             events::payloads::*,
-            events::Event,
-            Id,
+            Id, Ulid,
         },
-        RawEvent,
+        Event, JsonValue,
     };
 
     // SDK facade for common processor types
@@ -87,7 +87,7 @@ pub struct ComponentHealth {
     pub last_seen: DateTime<Utc>,
     pub status: HealthStatus,
     pub metrics: HashMap<String, f64>,
-    pub recent_events: Vec<Id<RawEvent>>,
+    pub recent_events: Vec<Id<Event<JsonValue>>>,
 }
 
 /// Health status enumeration
@@ -197,7 +197,7 @@ impl HealthAggregator {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.aggregation_window_seconds as i64);
 
@@ -243,7 +243,7 @@ impl HealthAggregator {
     }
 
     /// Update component health status based on events
-    async fn update_component_health(&mut self, events: &[RawEvent]) {
+    async fn update_component_health(&mut self, events: &[Event<JsonValue>]) {
         for event in events {
             if let Some(component_info) = self.extract_component_health_info(event) {
                 let component_health = self
@@ -285,7 +285,10 @@ impl HealthAggregator {
     }
 
     /// Extract component health information from an event
-    fn extract_component_health_info(&self, event: &RawEvent) -> Option<ComponentHealthInfo> {
+    fn extract_component_health_info(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> Option<ComponentHealthInfo> {
         if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
             // Try to extract component health information
             let component_name = self.determine_component_name(event, &payload)?;
@@ -305,7 +308,7 @@ impl HealthAggregator {
     /// Determine component name from event and payload
     fn determine_component_name(
         &self,
-        event: &RawEvent,
+        event: &Event<JsonValue>,
         payload: &serde_json::Value,
     ) -> Option<String> {
         // Check explicit component field
@@ -422,7 +425,7 @@ impl HealthAggregator {
         &self,
         component_name: &str,
         health: &ComponentHealth,
-    ) -> SatelliteResult<RawEvent> {
+    ) -> SatelliteResult<Event<JsonValue>> {
         let report_payload = serde_json::json!({
             "report_type": "component_health",
             "component_name": component_name,
@@ -435,19 +438,31 @@ impl HealthAggregator {
         });
 
         // Create synthesized event with proper provenance from recent events
-        let event = RawEvent::from_synthesis(
+        let provenance =
+            Provenance::from_synthesis(health.recent_events.clone()).unwrap_or_else(|| {
+                // Fallback to system bootstrap if no recent events
+                let system_bootstrap_id = EventId::from_ulid(
+                    Ulid::from_bytes([
+                        0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00,
+                    ])
+                    .unwrap(),
+                );
+                Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
+            });
+
+        let event = Event::create(
             "health-aggregator",
             "health.component_report",
             report_payload,
-            health.recent_events.clone(),
-        )
-        .with_timestamp(Utc::now());
+            provenance,
+        );
 
-        Ok(event.into())
+        Ok(event)
     }
 
     /// Generate system-wide health status
-    async fn generate_system_health_status(&self) -> SatelliteResult<RawEvent> {
+    async fn generate_system_health_status(&self) -> SatelliteResult<Event<JsonValue>> {
         let total_components = self.component_health.len();
         let healthy_components = self
             .component_health
@@ -475,7 +490,7 @@ impl HealthAggregator {
             HealthStatus::Unknown
         };
 
-        let all_event_ids: Vec<Id<RawEvent>> = self
+        let all_event_ids: Vec<Id<Event<JsonValue>>> = self
             .component_health
             .values()
             .flat_map(|h| h.recent_events.iter().cloned())
@@ -495,19 +510,29 @@ impl HealthAggregator {
             "generated_at": Utc::now(),
         });
 
-        let event = RawEvent::from_synthesis(
+        let provenance = Provenance::from_synthesis(all_event_ids).unwrap_or_else(|| {
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .unwrap(),
+            );
+            Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
+        });
+
+        let event = Event::create(
             "health-aggregator",
             "health.system_status",
             system_health_payload,
-            all_event_ids,
-        )
-        .with_timestamp(Utc::now());
+            provenance,
+        );
 
-        Ok(event.into())
+        Ok(event)
     }
 
     /// Generate health alerts for unhealthy components
-    async fn generate_health_alerts(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn generate_health_alerts(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut alerts = Vec::new();
         let alert_threshold =
             Utc::now() - chrono::Duration::minutes(self.config.unhealthy_threshold_minutes as i64);
@@ -535,15 +560,26 @@ impl HealthAggregator {
                     "generated_at": Utc::now(),
                 });
 
-                let alert_event = RawEvent::from_synthesis(
+                let provenance = Provenance::from_synthesis(health.recent_events.clone())
+                    .unwrap_or_else(|| {
+                        let system_bootstrap_id = EventId::from_ulid(
+                            Ulid::from_bytes([
+                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                0x00, 0x00, 0x00, 0x00, 0x00,
+                            ])
+                            .unwrap(),
+                        );
+                        Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
+                    });
+
+                let alert_event = Event::create(
                     "health-aggregator",
                     "health.alert",
                     alert_payload,
-                    health.recent_events.clone(),
-                )
-                .with_timestamp(Utc::now());
+                    provenance,
+                );
 
-                alerts.push(alert_event.into());
+                alerts.push(alert_event);
             }
         }
 
