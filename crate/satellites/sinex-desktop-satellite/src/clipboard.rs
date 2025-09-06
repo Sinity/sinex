@@ -237,7 +237,7 @@ impl ClipboardWatcher {
     }
 
     /// Find original hash for deduplication
-    fn find_original_hash(&self, content_hash: &str) -> Option<&str> {
+    fn find_original_hash<'a>(&self, content_hash: &'a str) -> Option<&'a str> {
         if self
             .clipboard_history
             .iter()
@@ -313,27 +313,25 @@ impl ClipboardWatcher {
         // Store in source_material_registry
         let data_bytes = content.text.as_bytes();
         if data_bytes.len() <= self.max_content_size {
-            // Store inline
+            // Store inline - we need to create a blob and link it
+            // First create the material registry entry
             sqlx::query!(
                 r#"
                 INSERT INTO raw.source_material_registry (
-                    id, source_identifier, created_at,
-                    data, total_bytes, content_type, metadata,
-                    source_type, status, material_type, source_uri
+                    id, source_identifier, staged_at,
+                    material_kind, timing_info_type, metadata,
+                    status, staged_by
                 )
-                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
                 "#,
-                material_id as Ulid,     // $1 - source_material_id
-                self.source_identifier,  // $2 - source_identifier
-                now,                     // $3 - created_at
-                data_bytes,              // $4 - data
-                data_bytes.len() as i64, // $5 - total_bytes
-                "text/plain",            // $6 - content_type
-                serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string()), // $7 - metadata
-                "clipboard",    // $8 - source_type
-                "finalized",    // $9 - status
-                "clipboard",    // $10 - material_type
-                "clipboard://", // $11 - source_uri
+                material_id as Ulid,    // $1 - id
+                self.source_identifier, // $2 - source_identifier
+                now,                    // $3 - staged_at
+                "clipboard",            // $4 - material_kind
+                "realtime",             // $5 - timing_info_type
+                serde_json::to_value(&metadata).unwrap_or_else(|_| serde_json::json!({})), // $6 - metadata
+                "completed",         // $7 - status
+                "clipboard-monitor", // $8 - staged_by
             )
             .execute(db_pool)
             .await?;
@@ -347,22 +345,20 @@ impl ClipboardWatcher {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger (
-                entry_id, material_id, offset_start, offset_end, 
-                offset_kind, ts_capture, precision, clock, source_type,
-                proximity_hint, note
+                id, source_material_id, offset_start, offset_end, 
+                offset_kind, ts_capture, precision, clock, source_type
             )
-            VALUES (gen_ulid()::ulid, $1::ulid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1::ulid, $2::ulid, $3, $4, $5, $6, $7, $8, $9)
             "#,
-            material_id as Ulid,     // $1 - material_id
-            0i64,                    // $2 - offset_start
-            data_bytes.len() as i64, // $3 - offset_end
-            "byte",                  // $4 - offset_kind
-            content.timestamp,       // $5 - ts_capture
-            "millisecond",           // $6 - precision
-            "wall",                  // $7 - clock
-            "realtime_capture",      // $8 - source_type
-            serde_json::json!({}),   // $9 - proximity_hint
-            metadata.to_string(),    // $10 - note
+            Ulid::new() as Ulid,     // $1 - id
+            material_id as Ulid,     // $2 - source_material_id
+            0i64,                    // $3 - offset_start
+            data_bytes.len() as i64, // $4 - offset_end
+            "byte",                  // $5 - offset_kind
+            content.timestamp,       // $6 - ts_capture
+            "millisecond",           // $7 - precision
+            "wall",                  // $8 - clock
+            "realtime_capture",      // $9 - source_type
         )
         .execute(db_pool)
         .await?;

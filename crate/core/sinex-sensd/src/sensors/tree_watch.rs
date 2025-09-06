@@ -137,7 +137,7 @@ impl TreeWatchSensor {
 
         // Finalize material
         temporal_ledger
-            .finalize_material(material_id, "completed", total_bytes)
+            .finalize_material(material_id, "completed", Some(total_bytes))
             .await?;
 
         info!(
@@ -219,14 +219,6 @@ impl TreeWatchSensor {
                             precision: "exact".to_string(),
                             clock: "wall".to_string(),
                             source_type: "realtime_capture".to_string(),
-                            note: Some(serde_json::json!({
-                                "path": path.to_string_lossy(),
-                                "size": file_size,
-                                "event_kind": format!("{:?}", event.kind),
-                                "validated": true, // Mark as security validated
-                                "slice_hash": slice_hash,
-                                "capture_duration_ms": (capture_end - capture_start).num_milliseconds(),
-                            }).to_string()),
                         };
 
                         temporal_ledger.record_entry(entry).await?;

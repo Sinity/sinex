@@ -6,7 +6,7 @@
 use crate::prelude::*;
 use serde_json::Value;
 use sinex_core::types::error::SinexError;
-use sinex_core::RawEvent;
+
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
@@ -185,7 +185,7 @@ impl<'ctx> ValidationTester<'ctx> {
         source: &str,
         event_type: &str,
         payload: Value,
-    ) -> std::result::Result<RawEvent, SinexError> {
+    ) -> std::result::Result<Event<JsonValue>, SinexError> {
         self.ctx
             .create_test_event(source, event_type, payload)
             .await

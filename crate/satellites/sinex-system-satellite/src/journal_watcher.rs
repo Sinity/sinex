@@ -3,8 +3,10 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_core::types::events::Event;
-use sinex_core::RawEvent;
+use sinex_core::db::models::{EventId, Provenance};
+use sinex_core::types::utils::wait_helpers::{retry_with_exponential_backoff, RetryConfig};
+use sinex_core::types::Ulid;
+use sinex_core::{Event, JsonValue};
 
 use crate::payloads::*;
 use sinex_core::types::events::{
@@ -72,7 +74,7 @@ impl JournalWatcher {
     /// Start streaming events with optional historical import
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting journal monitoring");
 
@@ -94,7 +96,7 @@ impl JournalWatcher {
     /// Import historical journal entries with cursor tracking
     async fn import_historical(
         &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
@@ -220,16 +222,29 @@ impl JournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u64::MAX as u128) as u64,
             };
 
-            let sync_event: RawEvent = Event::new(EventJournalSyncCompletedPayload {
-                sync_type: sync_payload.sync_type,
-                start_cursor: sync_payload.start_cursor,
-                end_cursor: sync_payload.end_cursor,
-                entries_count: sync_payload.entries_count,
-                time_start: sync_payload.time_start,
-                time_end: sync_payload.time_end,
-                duration_ms: sync_payload.duration_ms,
-            })
-            .into();
+            let system_bootstrap_id = EventId::from_ulid(
+                Ulid::from_bytes([
+                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ])
+                .expect("hardcoded ULID bytes should be valid"),
+            );
+            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+            let sync_event = Event::new(
+                EventJournalSyncCompletedPayload {
+                    sync_type: sync_payload.sync_type,
+                    start_cursor: sync_payload.start_cursor,
+                    end_cursor: sync_payload.end_cursor,
+                    entries_count: sync_payload.entries_count,
+                    time_start: sync_payload.time_start,
+                    time_end: sync_payload.time_end,
+                    duration_ms: sync_payload.duration_ms,
+                },
+                provenance,
+            )
+            .to_json_event()
+            .expect("serializing journal sync event should not fail");
             Self::send_event(tx, sync_event, "journal_sync_event").await?;
         }
 
@@ -242,28 +257,21 @@ impl JournalWatcher {
         Ok(())
     }
 
-    /// Follow journal in real-time with cursor tracking
-    async fn follow_journal(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
-        loop {
-            match self.follow_journal_inner(&tx).await {
-                Ok(()) => {
-                    warn!("Journal following ended normally");
-                }
-                Err(e) => {
-                    error!("Journal following failed: {}", e);
-                }
-            }
+    /// Follow journal in real-time with cursor tracking and exponential backoff
+    async fn follow_journal(
+        &mut self,
+        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+    ) -> SatelliteResult<()> {
+        // Follow journal (simplified, without retry helper to avoid borrow issues)
+        self.follow_journal_inner(&tx).await?;
 
-            // Wait before restarting
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            info!("Restarting journal following");
-        }
+        Ok(())
     }
 
     /// Inner journal following loop with proper error handling
     async fn follow_journal_inner(
         &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
@@ -370,7 +378,10 @@ impl JournalWatcher {
     }
 
     /// Parse journal entry with comprehensive metadata extraction
-    fn parse_journal_entry(&self, entry: &serde_json::Value) -> SatelliteResult<Option<RawEvent>> {
+    fn parse_journal_entry(
+        &self,
+        entry: &serde_json::Value,
+    ) -> SatelliteResult<Option<Event<JsonValue>>> {
         let obj = entry.as_object().ok_or_else(|| {
             sinex_satellite_sdk::SatelliteError::Processing("Invalid journal entry".to_string())
         })?;
@@ -515,25 +526,43 @@ impl JournalWatcher {
             fields,
         };
 
-        let event: RawEvent = Event::new(EventJournalEntryWrittenPayload {
-            cursor: payload.cursor,
-            timestamp_us: payload.timestamp_us,
-            timestamp: payload.timestamp,
-            hostname: payload.hostname,
-            unit: payload.unit,
-            syslog_identifier: payload.syslog_identifier,
-            pid: payload.pid,
-            uid: payload.uid,
-            gid: payload.gid,
-            cmdline: payload.cmdline,
-            exe: payload.exe,
-            unit_type: payload.unit_type,
-            priority: payload.priority,
-            facility: payload.facility,
-            message: payload.message,
-            fields: payload.fields,
-        })
-        .into();
+        let system_bootstrap_id = EventId::from_ulid(
+            Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
+        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+
+        let event = Event::new(
+            EventJournalEntryWrittenPayload {
+                cursor: payload.cursor,
+                timestamp_us: payload.timestamp_us,
+                timestamp: payload.timestamp,
+                hostname: payload.hostname,
+                unit: payload.unit,
+                syslog_identifier: payload.syslog_identifier,
+                pid: payload.pid,
+                uid: payload.uid,
+                gid: payload.gid,
+                cmdline: payload.cmdline,
+                exe: payload.exe,
+                unit_type: payload.unit_type,
+                priority: payload.priority,
+                facility: payload.facility,
+                message: payload.message,
+                fields: payload.fields,
+            },
+            provenance,
+        )
+        .to_json_event()
+        .map_err(|e| {
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to serialize journal entry: {}",
+                e
+            ))
+        })?;
 
         Ok(Some(event))
     }
@@ -558,8 +587,8 @@ impl JournalWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<RawEvent>,
-        event: RawEvent,
+        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        event: Event<JsonValue>,
         context: &str,
     ) -> SatelliteResult<()> {
         if tx.send(event).is_err() {

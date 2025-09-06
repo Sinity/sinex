@@ -85,8 +85,8 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_connections: 25, // Conservative default
-            min_connections: 5,
+            max_connections: 100, // Increased for high-throughput satellite constellation
+            min_connections: 10,  // Increased minimum to handle baseline load
             acquire_timeout_secs: 30,
             idle_timeout_secs: 300, // 5 minutes
             validate_against_postgres_max: true,

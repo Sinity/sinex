@@ -836,7 +836,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
@@ -906,7 +906,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
@@ -976,7 +976,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
@@ -1056,7 +1056,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels

@@ -165,7 +165,7 @@ proptest! {
             for (i, processed_count) in concurrent_updates.iter().enumerate() {
                 let manager = checkpoint_manager.clone();
                 let count = *processed_count;
-                let handle = tokio::spawn(async move {
+                let handle: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
                     let state = CheckpointState {
                         checkpoint: Checkpoint::Stream {
                             message_id: format!("concurrent-{}", i),

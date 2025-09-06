@@ -30,12 +30,12 @@ async fn create_test_event_with_timestamp(
     payload: serde_json::Value,
     timestamp: chrono::DateTime<Utc>,
 ) -> Result<sinex_core::db::models::Event> {
-    let event = sinex_core::db::models::Event::schemaless()
-        .source(sinex_core::types::domain::EventSource::from(source))
-        .event_type(sinex_core::types::domain::EventType::from(event_type))
-        .payload(payload)
-        .build()
-        .with_ts_orig(Some(timestamp));
+    let event = sinex_core::Event::test_event(
+        sinex_core::types::domain::EventSource::from(source),
+        sinex_core::types::domain::EventType::from(event_type),
+        payload,
+    )
+    .at_time(timestamp);
     
     ctx.pool.events().insert(event).await.map_err(Into::into)
 }

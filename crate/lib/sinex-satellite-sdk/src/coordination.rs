@@ -564,7 +564,7 @@ impl SatelliteCoordination {
         );
 
         // Begin transaction to ensure atomicity between work completion and signaling
-        let mut tx = self.pool.begin().await?;
+        let tx = self.pool.begin().await?;
 
         // Finish current critical work
         self.finish_critical_work().await?;
@@ -609,7 +609,7 @@ impl SatelliteCoordination {
     /// Signal critical failure to other instances
     async fn signal_critical_failure(&self, error: &str) -> Result<()> {
         // Begin transaction to ensure atomicity between database signal and coordinator signal
-        let mut tx = self.pool.begin().await?;
+        let tx = self.pool.begin().await?;
 
         // TODO: The satellite_signals table doesn't exist in the current schema
         /*

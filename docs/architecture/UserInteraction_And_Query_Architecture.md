@@ -1,8 +1,9 @@
+Status: canonical
 # User Interaction & Query Architecture: Working Interface Systems
 
 *   **Version:** 2.0
 *   **Date:** 2025-07-17
-*   **Implementation Status:** ✅ **OPERATIONAL** - Gateway, CLI, and query service operational with command/response patterns via Redis Streams
+*   **Implementation Status:** ✅ **OPERATIONAL** - Gateway, CLI, and query service operational with command/response patterns via NATS JetStream
 *   **Purpose:** This document describes the user interaction architecture for Sinex, focusing on the working gateway, CLI, and query systems. It outlines how users interact with the system through the operational interfaces.
 *   **Scope:** Covers gateway architecture, CLI interface, query service, and command/response patterns as currently implemented.
 
@@ -22,7 +23,7 @@ Sinex provides user interaction through a unified gateway architecture that hand
 
 ## 2. Gateway Architecture: Unified API and Native Messaging
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via Redis Streams
+> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via NATS JetStream
 
 Sinex provides user interaction through a unified gateway architecture that handles API requests, native messaging, and orchestrates responses through the satellite constellation.
 
@@ -38,7 +39,7 @@ The `sinex-gateway` service acts as the central API hub, translating user reques
     *   **Async by Default:** ✅ **OPERATIONAL** - All operations inherently asynchronous with timeout handling
     *   **Native Messaging:** ✅ **OPERATIONAL** - Browser extension communication through native messaging protocol
 
-### 2.2. Command/Response Pattern via Redis Streams
+### 2.2. Command/Response Pattern via NATS JetStream
 
 > **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Full request/response lifecycle working through message bus
 
@@ -46,7 +47,7 @@ User interactions follow a standardized command/response pattern that provides a
 *   **Request Flow:**
     1. **API Request** - User calls gateway endpoint or CLI command
     2. **Command Event** - Gateway generates `api.command.*` event with unique request ID
-    3. **Service Processing** - Appropriate service automaton processes command from Redis Streams
+    3. **Service Processing** - Appropriate service automaton processes command from NATS JetStream
     4. **Response Event** - Service emits `api.response.*` event with request ID
     5. **Response Delivery** - Gateway matches response and returns to client
 *   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `core.events`
@@ -109,7 +110,7 @@ exo query --payload-filter '{"exit_status": 0}'
 **Optimization Strategies:**
 *   **TimescaleDB Indexing:** ✅ **OPERATIONAL** - Time-based partitioning for efficient queries
 *   **JSONB Indexing:** ✅ **OPERATIONAL** - GIN indexes for payload queries
-*   **Query Caching:** ✅ **OPERATIONAL** - Redis-based caching for frequent queries
+*   **Query Caching:** ✅ **OPERATIONAL** - Cache layer for frequent queries (in-memory or external)
 *   **Batch Processing:** ✅ **OPERATIONAL** - Efficient batch query processing
 
 **Performance Characteristics:**
@@ -160,3 +161,37 @@ exo query --payload-filter '{"exit_status": 0}'
 - **Batch Operations:** Support for bulk data operations
 
 This user interface architecture provides a solid foundation for all current and future user interaction needs while maintaining the core principles of auditability, performance, and extensibility.
+
+## 5. Authoritative Queries (Examples)
+
+Gateway JSON‑RPC
+```json
+POST /rpc
+{
+  "jsonrpc": "2.0",
+  "id": "q-001",
+  "method": "search.search_events",
+  "params": {
+    "sources": ["sinex-terminal-satellite"],
+    "start_time": "2025-07-17T10:00:00Z",
+    "end_time": "2025-07-17T12:00:00Z",
+    "limit": 50
+  }
+}
+```
+
+CLI (exo)
+```bash
+./cli/exo.py query --source sinex-terminal-satellite --last 2h --limit 50
+./cli/exo.py sources --rpc ${SINEX_RPC_URL:-http://127.0.0.1:9999}
+```
+
+### Method Index (selected)
+- `search.search_events`: Full‑text + structured search over events. Params: time window, sources[], event_types[], limit, offset, payload filters. Returns: array of events with pagination hints.
+- `analytics.event_count_by_source`: Count events grouped by source. Params: `days_back?` (default 7). Returns: `[ { source, count } ]`.
+- `analytics.activity_heatmap`: Activity buckets for temporal analysis. Params: `bucket_size_minutes?` (default 60), `limit?` (default 100). Returns: `[ { bucket_start, count } ]`.
+- `pkm.create_note`: Create a PKM note artifact. Params: `event_id`, `content`, `tags[]?`, `created_by?`. Returns: `{ annotation_id }`.
+- `pkm.create_entities_from_list`: Create entities from a list. Params: `source_material_id`, `entities: [ { name, type } ]`, `created_by?`. Returns: `{ entity_ids[] }`.
+- `pkm.link_entities`: Create links between entities. Params: `from_entity_id`, `to_entity_id`, `relationship_type`, `properties?{}`. Returns: `{ relation_id }`.
+- `content.store_blob`: Store a blob and return its identifier. Params: `content` (base64 or UTF‑8), `filename?`, `content_type?`, `source?`. Returns: `{ annex_key }`.
+- `content.retrieve_blob`: Retrieve a blob by identifier. Params: `annex_key`. Returns: `{ content }` (UTF‑8 or placeholder for binary).

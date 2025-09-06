@@ -39,12 +39,11 @@ This document tracks the current coverage of digital activity capture and outlin
 ### High-Priority Missing Sources
 
 #### Browser Activity Monitor (40-60% of knowledge work)
-**Impact**: Largest gap in coverage - most knowledge work happens in browsers
-- Web page visits and dwell time
-- Form inputs and interactions
-- Download triggers
-- Tab management patterns
-See `docs/_todo/planned/event-sources/TIM-BrowserExtensionAPIs.md`
+**Impact**: Largest gap in coverage — most knowledge work happens in browsers
+- WebExtension captures page visits, interactions (forms, media), downloads, tab/window context
+- Native messaging host sends events to the gateway; satellite normalizes and submits via ingestd
+- Event types: `browser.page_visit`, `browser.dom_event`, `browser.media_event`, `browser.download`
+- Privacy: opt‑in capture by domain/category; redact PII at source when configured
 
 #### Process Execution Tracker (All non-terminal programs)
 **Impact**: Missing visibility into GUI application usage
@@ -61,12 +60,11 @@ See `docs/_todo/planned/event-sources/TIM-BrowserExtensionAPIs.md`
 - Bandwidth utilization
 
 #### Screen Capture with OCR (Visual context)
-**Impact**: Cannot capture visual information
-- Periodic screenshots
-- OCR text extraction
-- Visual diff detection
-- Screen region tracking
-See `docs/_todo/planned/event-sources/TIM-WaylandScreenCapturePipeWire.md`
+**Impact**: Enables visual context and OCR
+- Wayland capture via `xdg-desktop-portal` (user consent) and PipeWire screencast
+- Streams frames to encoder or OCR pipeline; store full frames as annex blobs with hashes
+- Event types: `screen.frame_captured`, `screen.text_ocr`
+- Performance: DMA‑BUF zero‑copy paths; prefer H.264 HW encode, configurable FPS
 
 #### Input Pattern Monitor (Activity detection)
 **Impact**: Cannot detect user presence/absence

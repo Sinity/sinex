@@ -5,6 +5,7 @@ target/
 # Incremental compilation cache (if not in target/)
 on/
 
+
 # Coverage
 .coverage/
 coverage.lcov
@@ -41,7 +42,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 .postgres/
-.redis/
 
 # Environment
 .env
@@ -55,8 +55,7 @@ result-*
 /spec/combo/
 .claude-outputs/
 .direnv/
-
-compilation.log
+compilation*log
 
 # Rust compiler ICE dumps
 rustc-ice-*.txt

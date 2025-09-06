@@ -55,35 +55,32 @@ impl ContentService {
             })
     }
 
-    /// Get content metadata by blob ID
+    /// Get content metadata by annex key
     pub async fn get_content_metadata(
         &self,
-        blob_id: sinex_core::types::ulid::Ulid,
+        annex_key: &str,
     ) -> ServiceResult<sinex_satellite_sdk::annex::BlobMetadata> {
         // Get blob metadata from blob manager
         let blob_metadata = self
             .blob_manager
-            .get_blob_metadata(&blob_id)
+            .get_blob_metadata(annex_key)
             .await
             .map_err(|e| {
                 SinexError::service(format!("Failed to get blob metadata: {}", e))
                     .with_operation("blob_manager.get_blob_metadata")
-                    .with_id("blob_id", blob_id)
+                    .with_context("annex_key", annex_key)
             })?;
 
         Ok(blob_metadata)
     }
 
-    /// Verify content integrity by blob ID
-    pub async fn verify_content(
-        &self,
-        blob_id: sinex_core::types::ulid::Ulid,
-    ) -> ServiceResult<bool> {
+    /// Verify content integrity by annex key
+    pub async fn verify_content(&self, annex_key: &str) -> ServiceResult<bool> {
         // Use blob manager verification
-        self.blob_manager.verify_blob(&blob_id).await.map_err(|e| {
+        self.blob_manager.verify_blob(annex_key).await.map_err(|e| {
             SinexError::service(format!("Content verification failed: {}", e))
                 .with_operation("blob_manager.verify_blob")
-                .with_id("blob_id", blob_id)
+                .with_context("annex_key", annex_key)
         })
     }
 }

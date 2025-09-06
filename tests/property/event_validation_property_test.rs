@@ -4,7 +4,9 @@
 //! This module contains property-based tests for event validation using the modern
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
+use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
+type RawEvent = Event<JsonValue>;
 // =============================================================================
 // Property Test Helpers
 // =============================================================================
@@ -34,15 +36,15 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
         prop::bool::ANY,         // random bool for ts_orig
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
             );
             event.host = HostName::new(host);
 
-            // Set required timestamp
-            event.ts_ingest = Utc::now();
+            // Simulate ingest by assigning an ID
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             // Conditionally set ts_orig
             if has_ts_orig {
@@ -62,13 +64,12 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
         event_payloads(),        // payload
     )
         .prop_map(|(source, event_type, payload)| {
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
             );
-
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         })
 }
@@ -88,13 +89,12 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
                 }
             });
 
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
             );
-
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             event
         })
@@ -137,13 +137,12 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = RawEvent::schemaless(
+        let mut event = RawEvent::test_event(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
         );
-
-        event.ts_ingest = Utc::now();
+        event.id = Some(Id::from_ulid(Ulid::new()));
         event
     })
 }
@@ -159,13 +158,12 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
                 "timestamp": Utc::now().timestamp_millis()
             });
 
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new("concurrent_test"),
                 EventType::new("worker.operation"),
                 payload,
             );
-
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
             event
         }),
         10..100,
@@ -242,14 +240,13 @@ fn test_event_field_constraints() -> color_eyre::eyre::Result<()> {
             payload in event_payloads()
         ) {
             // Property: Events with valid field constraints should be constructible
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new(source.clone()),
                 EventType::new(event_type.clone()),
                 payload,
             );
             event.host = HostName::new(host.clone());
-
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             prop_assert!(!event.source.is_empty());
             prop_assert!(!event.event_type.is_empty());
@@ -274,13 +271,12 @@ fn test_payload_size_validation() -> color_eyre::eyre::Result<()> {
                 "size_kb": size_kb
             });
 
-            let mut event = RawEvent::schemaless(
+            let mut event = RawEvent::test_event(
                 EventSource::new("test"),
                 EventType::new("payload.size.test"),
                 payload,
             );
-
-            event.ts_ingest = Utc::now();
+            event.id = Some(Id::from_ulid(Ulid::new()));
 
             // Check that large payloads are handled
             let serialized = serde_json::to_string(&event);
@@ -301,9 +297,13 @@ fn test_event_timestamp_consistency() -> color_eyre::eyre::Result<()> {
         fn property_event_timestamp_consistency(
             event in arbitrary_event()
         ) {
-            // Property: Event timestamps should maintain consistency
-            prop_assert!(event.ts_ingest >= event.ts_orig.unwrap_or(event.ts_ingest),
-                        "Ingest time should not be before origin time");
+            // Property: ULID timestamp (ingest) should be >= ts_orig when both exist
+            if let Some(id) = event.id {
+                let ingest_ts = id.timestamp();
+                let ts_orig = event.ts_orig.unwrap_or(ingest_ts);
+                prop_assert!(ingest_ts >= ts_orig,
+                            "ULID timestamp should not be before origin time");
+            }
 
             // If ts_orig exists, it should be reasonable
             if let Some(ts_orig) = event.ts_orig {
@@ -503,19 +503,19 @@ mod performance_tests {
             ) {
                 // Property: Same invalid input should always produce same error
                 if source.is_empty() || event_type.is_empty() {
-                    let mut event1 = RawEvent::schemaless(
+                    let mut event1 = RawEvent::test_event(
                         EventSource::new(source.clone()),
                         EventType::new(event_type.clone()),
                         payload.clone(),
                     );
-                    event1.ts_ingest = Utc::now();
+                    event1.id = Some(Id::from_ulid(Ulid::new()));
 
-                    let mut event2 = RawEvent::schemaless(
+                    let mut event2 = RawEvent::test_event(
                         EventSource::new(source),
                         EventType::new(event_type),
                         payload,
                     );
-                    event2.ts_ingest = Utc::now();
+                    event2.id = Some(Id::from_ulid(Ulid::new()));
 
                     let result1 = validate_event(&event1);
                     let result2 = validate_event(&event2);

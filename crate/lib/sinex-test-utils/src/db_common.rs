@@ -478,11 +478,11 @@ mod tests {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
-        let new_event = RawEvent::test_event(
+        let new_event = Event::<JsonValue>::test_event(
             EventSource::new("test"),
             EventType::new("test.event"),
             serde_json::json!({}),
@@ -515,11 +515,11 @@ mod tests {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-            OperationRecord, Provenance, RawEvent, SourceMaterial,
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
+            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
-        let new_event = RawEvent::test_event(
+        let new_event = Event::<JsonValue>::test_event(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
@@ -605,7 +605,7 @@ mod benches {
     //             None,
     //             None,
     //         )
-    //         .fetch_one::<sinex_core::types::RawEvent>(ctx.pool())
+    //         .fetch_one::<sinex_core::types::Event<JsonValue>>(ctx.pool())
     //         .await?;
 
     //         // Add annotation

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS core.llm_models (
 **LangGraph Checkpointers**:
 - SQLite for development
 - PostgreSQL for production: `langgraph_checkpoints` table
-- Redis for ephemeral state
+- Ephemeral state store (NATS JetStream)
 
 **DSPy Program Storage**:
 - Serialized programs in git-annex blobs
@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS core.llm_models (
 - Model caching strategies
 
 ### Distributed Processing
-- Request queueing with Redis
+- Request queueing with NATS JetStream
 - Worker pool scaling
 - Geographic distribution
 - Edge deployment options

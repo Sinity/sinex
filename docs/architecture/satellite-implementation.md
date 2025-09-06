@@ -1,3 +1,4 @@
+Status: canonical
 # Satellite Implementation Architecture
 
 ## Overview
@@ -77,26 +78,29 @@ pub enum CheckpointPosition {
   - Complex state tracking
   - Path-specific positions
 
-## Event Creation Patterns
+## Event Submission & Provenance
 
-### Direct Database Insertion
-Most satellites use direct database insertion for performance:
+### Submit via ingestd (JetStream)
+Satellites never write directly to Postgres. They submit events/material to ingest via the SDK, which publishes to NATS JetStream and is consumed by `sinex-ingestd`:
 ```rust
-let event_id = Ulid::new();
-let raw_event = RawEvent {
-    event_id,
-    source: sources::FILESYSTEM_WATCHER,
-    event_type: event_types::FILE_CREATED,
-    // ...
-};
-EventQueries::insert_event(&pool, &raw_event).await?;
+let event = build_event(...);
+sdk.ingest().submit(event).await?; // internally publishes to JetStream
 ```
 
 ### Provenance Tracking
-Events maintain relationships via `source_event_ids`:
+Events maintain relationships via `source_event_ids` and optional `associated_blob_ids`:
 - Scanner events reference discovered items
 - Derived events link to originals
-- Processing chains preserved
+- Processing chains preserved end‑to‑end
+
+## Sensor Rules & Enforcement
+
+Golden Rule: Only `sinex-sensd` captures source material. Satellites process already‑captured material slices.
+
+Enforcement patterns in SDK:
+- No public constructors for sensor capabilities outside sensd
+- Satellites implement `MaterialConsumer`/processing interfaces, not capture APIs
+- Macros/helpers to assert non‑sensor roles in satellites
 
 ## Implementation Examples
 
@@ -132,8 +136,8 @@ checkpoint_interval_secs = 60
 [ingestd]
 endpoint = "http://localhost:50051"
 
-[redis]
-url = "redis://localhost:6379"
+[nats]
+url = "nats://localhost:4222"
 
 [satellite.custom]
 # Satellite-specific settings
@@ -143,13 +147,13 @@ scan_paths = ["/home/user/Documents"]
 ### Environment Variables
 - `SINEX_SATELLITE_NAME`: Override configured name
 - `SINEX_INGESTD_ENDPOINT`: Override ingestd location
-- `SINEX_REDIS_URL`: Override Redis connection
+- `SINEX_NATS_URL`: Override NATS connection
 
 ## Error Handling and Resilience
 
 ### Automatic Reconnection
-- gRPC clients reconnect on connection loss
-- Redis clients handle transient failures
+- NATS publishers/consumers reconnect on connection loss
+- NATS clients handle transient failures
 - Exponential backoff for retries
 
 ### Checkpoint Recovery
@@ -175,7 +179,7 @@ scan_paths = ["/home/user/Documents"]
 - Rate limiting for high-volume sources
 
 ### Monitoring
-- Heartbeat events every 30 seconds
+ - Heartbeat events every 30 seconds
 - Processing metrics via events
 - Health status reporting
 

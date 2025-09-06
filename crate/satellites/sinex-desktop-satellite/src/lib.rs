@@ -25,8 +25,9 @@ pub mod sensd_job_submitter;
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::RawEvent,
-        types::{domain::SanitizedPath, events::Event, Timestamp},
+        db::models::Event,
+        types::{domain::SanitizedPath, Timestamp},
+        JsonValue,
     };
 
     // SDK facade for common processor types

@@ -38,9 +38,10 @@ use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
+use sinex_core::types::Id;
 use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
-    OperationRecord, Provenance, RawEvent, SourceMaterial,
+    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, JsonValue, Operation,
+    OperationRecord, Provenance, SourceMaterial,
 };
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -464,17 +465,23 @@ async fn create_user_session_fixture(
 
     // Create filesystem events
     for i in 0..event_count / 3 {
-        let event = Event::test_event(
-            "test-filesystem",
-            "file.created",
+        // Create a proper event with Material provenance
+        let material_id = Id::<SourceMaterial>::new();
+        let event = Event::new(
             FileCreatedPayload {
                 path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
                 size: 0,
                 created_at: Utc::now(),
                 permissions: None,
             },
-        )
-        .into();
+            Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(0),
+                offset_end: Some(100),
+            },
+        );
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -500,9 +507,9 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = Event::test_event(
-            "test-terminal",
-            "command.completed",
+        // Create a proper event with Material provenance
+        let material_id = Id::<SourceMaterial>::new();
+        let event = Event::new(
             KittyCommandCompletedPayload {
                 command: CommandText::from(cmd.to_string()),
                 working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
@@ -514,8 +521,14 @@ async fn create_user_session_fixture(
                 output_lines: Some(10),
                 error_output: None,
             },
-        )
-        .into();
+            Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(0),
+                offset_end: Some(cmd.len() as i64),
+            },
+        );
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -534,9 +547,9 @@ async fn create_user_session_fixture(
     // Create clipboard events
     for i in 0..event_count / 3 {
         let text = format!("Clipboard content {}", i);
-        let event = Event::test_event(
-            "test-clipboard",
-            "clipboard.copied",
+        // Create a proper event with Material provenance
+        let material_id = Id::<SourceMaterial>::new();
+        let event = Event::new(
             ClipboardCopiedPayload {
                 operation: "copy".to_string(),
                 content_type: "text/plain".to_string(),
@@ -551,8 +564,14 @@ async fn create_user_session_fixture(
                 annex_key: None,
                 blob_id: None,
             },
-        )
-        .into();
+            Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
+                offset_start: Some(0),
+                offset_end: Some(text.len() as i64),
+            },
+        );
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -656,15 +675,15 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            RawEvent::test_event(EventSource::from(""), EventType::from("test"), json!({})),
+            Event::test_event(EventSource::from(""), EventType::from("test"), json!({})),
             "Empty source",
         ),
         (
-            RawEvent::test_event(EventSource::from("test"), EventType::from(""), json!({})),
+            Event::test_event(EventSource::from("test"), EventType::from(""), json!({})),
             "Empty event type",
         ),
         (
-            RawEvent::test_event(
+            Event::test_event(
                 EventSource::from("test"),
                 EventType::from("test.event"),
                 json!(null),
@@ -766,7 +785,7 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let event = RawEvent::test_event(
+        let event = Event::test_event(
             source.clone(),
             event_type.clone(),
             json!({
@@ -942,7 +961,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = RawEvent::test_event(
+        let event = Event::test_event(
             EventSource::from("performance_test"),
             EventType::from("test.event"),
             json!({
@@ -1079,7 +1098,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
 
     // Create some valid events (using standard test events)
     for i in 0..5 {
-        let event = RawEvent::test_event(
+        let event = Event::test_event(
             EventSource::from("schema_test"),
             EventType::from("valid.event"),
             json!({
@@ -1098,7 +1117,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
     // Note: Invalid events would need schema validation to be properly tested
     // Currently just creating some events that could be considered invalid in context
     for i in 0..3 {
-        let event = RawEvent::test_event(
+        let event = Event::test_event(
             EventSource::from("schema_test"),
             EventType::from("invalid.event"),
             json!({
@@ -1146,7 +1165,7 @@ async fn create_concurrency_test_fixture(
         let mut worker_event_ids = Vec::new();
 
         for op_id in 0..operations_per_worker {
-            let event = RawEvent::test_event(
+            let event = Event::test_event(
                 EventSource::from(worker_name.as_str()),
                 EventType::from("worker.operation"),
                 json!({
@@ -1603,7 +1622,7 @@ mod tests {
         let mut event_ids = vec![];
 
         // Insert start event
-        let start_event = RawEvent::test_event(
+        let start_event = Event::test_event(
             EventSource::from_static("test"),
             EventType::from_static("test.started"),
             json!({}),
@@ -1613,7 +1632,7 @@ mod tests {
 
         // Insert middle events
         for i in 0..5 {
-            let middle_event = RawEvent::test_event(
+            let middle_event = Event::test_event(
                 EventSource::from_static("test"),
                 EventType::from_static("test.started"),
                 json!({"index": i}),
@@ -1623,7 +1642,7 @@ mod tests {
         }
 
         // Insert end event
-        let end_event = RawEvent::test_event(
+        let end_event = Event::test_event(
             EventSource::from_static("test"),
             EventType::from_static("test.completed"),
             json!({}),
@@ -1688,7 +1707,7 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_error_propagation(ctx: TestContext) -> Result<()> {
         // Test error propagation by trying to query non-existent data
-        let id = sinex_core::types::Id::<sinex_core::RawEvent>::new();
+        let id = sinex_core::types::Id::<sinex_core::Event<JsonValue>>::new();
         let result = ctx.pool.events().get_by_id(id).await;
 
         assert!(result.is_err());

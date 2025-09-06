@@ -8,6 +8,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
+use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -24,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
 use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
@@ -113,8 +114,8 @@ impl Default for TerminalConfig {
                 home.join(".zsh_history"),
                 home.join(".local/share/fish/fish_history"),
             ])
-            .kitty_socket_path(None) // Auto-detected
-            .recording_output_dir(Some(home.join(".local/share/sinex/recordings")))
+            // Option fields: leave unset for None; builder treats Option fields as optional
+            .recording_output_dir(home.join(".local/share/sinex/recordings"))
             .scrollback_capture_enabled(false)
             .polling_interval_secs(5)
             .batch_size(100)
@@ -139,10 +140,9 @@ impl TerminalConfig {
 // Custom validation functions for TerminalConfig
 
 /// Validate optional path fields
-fn validate_optional_path(path: &Option<Utf8PathBuf>) -> Result<(), ValidationError> {
-    if let Some(p) = path {
-        validate_single_path(p)?;
-    }
+/// For Option<T> fields, validator passes &T for custom validators when Some.
+fn validate_optional_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+    validate_single_path(path)?;
     Ok(())
 }
 
@@ -155,10 +155,8 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
 }
 
 /// Validate a single path for security and correctness using comprehensive validation
-fn validate_single_path(path: &sinex_core::SanitizedPath) -> Result<(), ValidationError> {
+fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     let path_str = path.as_str();
-
-    // Use the comprehensive path validation from sinex-core
     match sinex_core::types::validate_path(path_str) {
         Ok(_) => Ok(()),
         Err(_) => Err(ValidationError::new("invalid_path")),
@@ -248,8 +246,8 @@ pub struct TerminalProcessor {
     checkpoint_manager: Option<CheckpointManager>,
 
     /// Event channel for processing events
-    event_sender: Option<mpsc::Sender<sinex_core::RawEvent>>,
-    event_receiver: Option<mpsc::Receiver<sinex_core::RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_receiver: Option<mpsc::Receiver<Event<JsonValue>>>,
 }
 
 impl TerminalProcessor {
@@ -409,11 +407,18 @@ impl TerminalProcessor {
         if let Some(ref processor) = self.sensd_processor {
             info!("Starting sensd job monitoring");
 
-            // Start the job monitoring task in background
+            // Start the job monitoring task in background with panic safety
             let monitor_processor = processor.clone();
-            tokio::spawn(async move {
+            let monitor_handle = tokio::spawn(async move {
                 if let Err(e) = monitor_processor.monitor_jobs().await {
                     warn!("sensd job monitoring error: {}", e);
+                }
+            });
+
+            // Spawn a watchdog to detect if the monitor task panics
+            tokio::spawn(async move {
+                if let Err(e) = monitor_handle.await {
+                    error!("sensd job monitoring task panicked: {:?}", e);
                 }
             });
         }
@@ -484,12 +489,18 @@ impl TerminalProcessor {
                 .and_then(|m| m.modified().ok())
                 .map(|t| DateTime::<Utc>::from(t));
 
-            // Estimate entries by counting lines (rough estimate)
+            // Estimate entries by counting lines efficiently without loading entire file
             let estimated_entries =
-                if let Ok(content) = tokio::fs::read_to_string(history_file).await {
-                    content.lines().count() as u64
-                } else {
-                    0
+                match Self::count_lines_streaming(history_file.as_std_path()).await {
+                    Ok(count) => count,
+                    Err(e) => {
+                        debug!(
+                            "Failed to count lines in history file, using size estimate: {}",
+                            e
+                        );
+                        // Fallback: estimate ~50 bytes per line average
+                        size_bytes / 50
+                    }
                 };
 
             HistoryFileStatus {
@@ -508,6 +519,22 @@ impl TerminalProcessor {
         }
     }
 
+    /// Count lines in a file efficiently using streaming
+    async fn count_lines_streaming(path: &std::path::Path) -> std::io::Result<u64> {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let file = tokio::fs::File::open(path).await?;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        let mut count = 0u64;
+
+        while lines.next_line().await?.is_some() {
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
     /// Helper function to get Atuin database status
     async fn get_atuin_status(atuin_path: &sinex_core::SanitizedPath) -> AtuinStatus {
         if std::path::Path::new(atuin_path.as_str()).exists() {
@@ -515,30 +542,44 @@ impl TerminalProcessor {
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
 
             // Query actual data from Atuin SQLite database
+            // Use spawn_blocking to avoid blocking the async runtime
+            let atuin_path_str = atuin_path.as_str().to_string();
             let (estimated_entries, last_entry_timestamp) =
-                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_str()) {
-                    // Count entries
-                    let count: u64 = conn
-                        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
-                        .unwrap_or(0);
+                match tokio::task::spawn_blocking(move || {
+                    if let Ok(conn) = rusqlite::Connection::open(&atuin_path_str) {
+                        // Count entries
+                        let count: u64 = conn
+                            .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+                            .unwrap_or(0);
 
-                    // Get most recent timestamp
-                    let last_timestamp: Option<i64> = conn
-                        .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
-                        .ok();
+                        // Get most recent timestamp
+                        let last_timestamp: Option<i64> = conn
+                            .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
+                            .ok();
 
-                    let last_entry = last_timestamp.and_then(|ts| {
-                        // Atuin stores timestamps in nanoseconds since epoch
-                        let seconds = ts / 1_000_000_000;
-                        let nanos = (ts % 1_000_000_000) as u32;
-                        DateTime::from_timestamp(seconds, nanos)
-                    });
+                        let last_entry = last_timestamp.and_then(|ts| {
+                            // Atuin stores timestamps in nanoseconds since epoch
+                            let seconds = ts / 1_000_000_000;
+                            let nanos = (ts % 1_000_000_000) as u32;
+                            DateTime::from_timestamp(seconds, nanos)
+                        });
 
-                    (count, last_entry)
-                } else {
-                    // Fallback to estimate if we can't open the database
-                    let estimated_entries = db_size_bytes / 100;
-                    (estimated_entries, None)
+                        Ok::<_, std::io::Error>((count, last_entry))
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Cannot open database",
+                        ))
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(result)) => result,
+                    _ => {
+                        // Fallback to estimate if we can't open the database
+                        let estimated_entries = db_size_bytes / 100;
+                        (estimated_entries, None)
+                    }
                 };
 
             AtuinStatus {

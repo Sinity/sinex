@@ -1,9 +1,8 @@
 //! Search service for querying events and content
 
 use crate::error::ServiceResult;
-use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::{schema::Events, seaquery_helpers::SeaQueryUlidExt, DbPool};
+use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sqlx::types::chrono::{DateTime, Utc};
 
@@ -48,77 +47,103 @@ impl SearchService {
         Self { pool }
     }
 
-    /// Search events based on criteria using SeaQuery for type safety
+    /// Search events based on criteria using parameterized SQLx query building
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
-        // Build dynamic query using SeaQuery for type safety and SQL injection prevention
-        let mut select_query = Query::select()
-            .expr_as(
-                Expr::col((Alias::new("core"), Events::Table, Events::Id))
-                    .cast_as(Alias::new("text")),
-                Alias::new("event_id"),
-            )
-            .column((Alias::new("core"), Events::Table, Events::Source))
-            .column((Alias::new("core"), Events::Table, Events::EventType))
-            .column((Alias::new("core"), Events::Table, Events::TsIngest))
-            .column((Alias::new("core"), Events::Table, Events::Payload))
-            .expr_as(Expr::val(1.0_f64), Alias::new("score"))
-            .from(Events::table_iden())
-            .to_owned();
+        // Base select. Score is a placeholder (1.0) to keep response shape stable.
+        let mut sql = String::from(
+            "SELECT id::text AS event_id, source, event_type, ts_ingest, payload, 1.0::float8 AS score \
+             FROM core.events",
+        );
 
-        // Add source filter using proper parameterization
+        // Dynamic parameters (we'll append WHERE clauses and numbered placeholders below)
+
+        // We’ll switch to a simpler approach: assemble dynamic SQL and keep an ordered list of bind values in an enum.
+
+        #[derive(Debug)]
+        enum Param {
+            Text(String),
+            Time(DateTime<Utc>),
+            ILike(String),
+            Limit(i64),
+            Offset(i64),
+        }
+
+        let mut params: Vec<Param> = Vec::new();
+
+        // Append filters
+        let mut first_clause = true;
+        let mut push_clause = |clause: &str| {
+            if first_clause {
+                sql.push_str(" WHERE ");
+                first_clause = false;
+            } else {
+                sql.push_str(" AND ");
+            }
+            sql.push_str(clause);
+        };
+
         if !query.sources.is_empty() {
-            select_query.and_where(
-                Expr::col((Alias::new("core"), Events::Table, Events::Source))
-                    .is_in(query.sources.iter().cloned()),
-            );
+            // e.g., source IN ($1,$2,...)
+            let start = params.len();
+            for s in &query.sources {
+                params.push(Param::Text(s.clone()));
+            }
+            let count = params.len() - start;
+            let placeholders: Vec<String> =
+                (0..count).map(|i| format!("${}", start + i + 1)).collect();
+            push_clause(&format!("source IN ({})", placeholders.join(",")));
         }
 
-        // Add event type filter using proper parameterization
         if !query.event_types.is_empty() {
-            select_query.and_where(
-                Expr::col((Alias::new("core"), Events::Table, Events::EventType))
-                    .is_in(query.event_types.iter().cloned()),
-            );
+            let start = params.len();
+            for t in &query.event_types {
+                params.push(Param::Text(t.clone()));
+            }
+            let count = params.len() - start;
+            let placeholders: Vec<String> =
+                (0..count).map(|i| format!("${}", start + i + 1)).collect();
+            push_clause(&format!("event_type IN ({})", placeholders.join(",")));
         }
 
-        // Add time range filters with proper type handling
         if let Some(start) = query.start_time {
-            select_query.and_where(
-                Expr::col((Alias::new("core"), Events::Table, Events::TsIngest)).gte(start),
-            );
+            let idx = params.len() + 1;
+            push_clause(&format!("ts_ingest >= ${}", idx));
+            params.push(Param::Time(start));
         }
-
         if let Some(end) = query.end_time {
-            select_query.and_where(
-                Expr::col((Alias::new("core"), Events::Table, Events::TsIngest)).lte(end),
-            );
+            let idx = params.len() + 1;
+            push_clause(&format!("ts_ingest <= ${}", idx));
+            params.push(Param::Time(end));
         }
 
-        // Add text search with proper parameterization (SeaQuery prevents SQL injection)
         if let Some(text) = &query.text {
-            select_query.and_where(
-                Expr::col((Alias::new("core"), Events::Table, Events::Payload))
-                    .cast_as(Alias::new("text"))
-                    .ilike(Expr::val(format!("%{}%", text))),
-            );
+            let idx = params.len() + 1;
+            push_clause(&format!("payload::text ILIKE ${}", idx));
+            params.push(Param::ILike(format!("%{}%", text)));
         }
 
-        // Add ordering and limits
-        select_query
-            .order_by(
-                (Alias::new("core"), Events::Table, Events::TsIngest),
-                sea_query::Order::Desc,
-            )
-            .limit(query.limit as u64)
-            .offset(query.offset as u64);
+        // Order, limit, offset
+        sql.push_str(" ORDER BY ts_ingest DESC");
+        let limit_idx = params.len() + 1;
+        sql.push_str(&format!(" LIMIT ${}", limit_idx));
+        params.push(Param::Limit(query.limit as i64));
+        let offset_idx = params.len() + 1;
+        sql.push_str(&format!(" OFFSET ${}", offset_idx));
+        params.push(Param::Offset(query.offset as i64));
 
-        // Build the SQL query
-        let (sql, _values) = select_query.build(PostgresQueryBuilder);
+        // Prepare query and bind in order
+        let mut q = sqlx::query_as::<_, SearchResultRow>(&sql);
+        for p in params {
+            q = match p {
+                Param::Text(s) => q.bind(s),
+                Param::Time(ts) => q.bind(ts),
+                Param::ILike(s) => q.bind(s),
+                Param::Limit(v) => q.bind(v),
+                Param::Offset(v) => q.bind(v),
+            };
+        }
 
-        // Execute the type-safe query using the dedicated struct
-        let rows = sqlx::query_as::<_, SearchResultRow>(&sql)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = q.fetch_all(&self.pool).await?;
 
         let results = rows
             .into_iter()

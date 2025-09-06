@@ -99,7 +99,7 @@ async fn load_existing_schemas(
         r#"
         SELECT 
             id as "id: Ulid",
-            source_type as source,
+            source,
             event_type,
             schema_version,
             content_hash
@@ -177,19 +177,18 @@ async fn create_schema(pool: &PgPool, metadata: &SchemaMetadata) -> IngestdResul
     sqlx::query!(
         r#"
         INSERT INTO sinex_schemas.event_payload_schemas (
-            id, schema_name, schema_version, schema_content, content_hash,
-            source_type, event_type, is_active, created_at, updated_at
+            id, source, event_type, schema_version, schema_content, 
+            content_hash, is_active, updated_at
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW()
+            $1, $2, $3, $4, $5, $6, true, NOW()
         )
         "#,
         &id as &Ulid,
-        &schema_name,
+        &metadata.source,
+        &metadata.event_type,
         &metadata.version,
         &metadata.content,
         &metadata.content_hash,
-        &metadata.source,
-        &metadata.event_type,
     )
     .execute(pool)
     .await?;

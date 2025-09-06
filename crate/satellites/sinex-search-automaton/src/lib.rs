@@ -8,7 +8,7 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{Event, RawEvent},
+        db::models::Event,
         types::{events::payloads::*, Id},
     };
 
@@ -90,7 +90,7 @@ pub struct SearchIndexEntry {
     pub title: String,
     pub content: String,
     pub keywords: Vec<String>,
-    pub source_event_id: Id<RawEvent>,
+    pub source_event_id: Id<Event<JsonValue>>,
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
     pub search_score: f64,
@@ -116,7 +116,7 @@ pub struct SearchQueryPattern {
 pub struct SearchAutomaton {
     context: Option<StreamProcessorContext>,
     config: SearchAutomatonConfig,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     search_index: Vec<SearchIndexEntry>,
 }
@@ -195,7 +195,7 @@ impl SearchAutomaton {
         &self,
         db_pool: &PgPool,
         _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let window_start =
             Utc::now() - chrono::Duration::seconds(self.config.indexing_window_seconds as i64);
 
@@ -213,7 +213,7 @@ impl SearchAutomaton {
     }
 
     /// Build or update search index from events
-    async fn build_search_index(&mut self, events: &[RawEvent]) {
+    async fn build_search_index(&mut self, events: &[Event<JsonValue>]) {
         self.search_index.clear();
 
         for event in events {
@@ -242,7 +242,7 @@ impl SearchAutomaton {
     }
 
     /// Create a search index entry from an event
-    fn create_search_index_entry(&self, event: &RawEvent) -> Option<SearchIndexEntry> {
+    fn create_search_index_entry(&self, event: &Event<JsonValue>) -> Option<SearchIndexEntry> {
         if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
             let title = self.extract_title(&payload, event);
             let content = self.extract_searchable_content(&payload)?;
@@ -265,7 +265,7 @@ impl SearchAutomaton {
     }
 
     /// Extract title for search indexing
-    fn extract_title(&self, payload: &serde_json::Value, event: &RawEvent) -> String {
+    fn extract_title(&self, payload: &serde_json::Value, event: &Event<JsonValue>) -> String {
         // Try explicit title field
         if let Some(title) = payload.get("title").and_then(|v| v.as_str()) {
             return title.to_string();
@@ -385,7 +385,12 @@ impl SearchAutomaton {
     }
 
     /// Calculate search relevance score for content
-    fn calculate_search_score(&self, content: &str, keywords: &[String], event: &RawEvent) -> f64 {
+    fn calculate_search_score(
+        &self,
+        content: &str,
+        keywords: &[String],
+        event: &Event<JsonValue>,
+    ) -> f64 {
         let mut score = 0.0;
 
         // Content length factor (longer content might be more valuable)
@@ -412,7 +417,7 @@ impl SearchAutomaton {
     }
 
     /// Generate search index event
-    async fn generate_search_index_event(&self) -> SatelliteResult<RawEvent> {
+    async fn generate_search_index_event(&self) -> SatelliteResult<Event<JsonValue>> {
         let total_entries = self.search_index.len();
 
         // Create index summary
@@ -460,7 +465,7 @@ impl SearchAutomaton {
             })
             .collect();
 
-        let source_event_ids: Vec<Id<RawEvent>> = self
+        let source_event_ids: Vec<Id<Event<JsonValue>>> = self
             .search_index
             .iter()
             .map(|entry| entry.source_event_id)
@@ -477,7 +482,7 @@ impl SearchAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::from_synthesis(
+        let event = Event::new(
             "search-automaton",
             "search.index_built",
             index_payload,
@@ -491,15 +496,15 @@ impl SearchAutomaton {
     /// Generate search analytics
     async fn generate_search_analytics(
         &self,
-        events: &[RawEvent],
-    ) -> SatelliteResult<Vec<RawEvent>> {
+        events: &[Event<JsonValue>],
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut analytics_events = Vec::new();
 
         // Analyze search patterns in the content
         let search_patterns = self.analyze_search_patterns();
 
         if !search_patterns.is_empty() {
-            let all_event_ids: Vec<Id<RawEvent>> = events.iter().map(|e| e.id).collect();
+            let all_event_ids: Vec<Id<Event<JsonValue>>> = events.iter().map(|e| e.id).collect();
 
             let analytics_payload = serde_json::json!({
                 "analysis_type": "search_analytics",
@@ -509,7 +514,7 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let analytics_event = Event::from_synthesis(
+            let analytics_event = Event::new(
                 "search-automaton",
                 "search.analytics",
                 analytics_payload,
@@ -571,7 +576,7 @@ impl SearchAutomaton {
     }
 
     /// Analyze content discoverability
-    async fn analyze_content_discoverability(&self) -> SatelliteResult<Vec<RawEvent>> {
+    async fn analyze_content_discoverability(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
         let mut discoverability_events = Vec::new();
 
         // Analyze how easily content can be discovered
@@ -587,7 +592,7 @@ impl SearchAutomaton {
         }
 
         if !low_discoverability_entries.is_empty() || !high_discoverability_entries.is_empty() {
-            let all_entry_ids: Vec<Id<RawEvent>> = self
+            let all_entry_ids: Vec<Id<Event<JsonValue>>> = self
                 .search_index
                 .iter()
                 .map(|entry| entry.source_event_id)
@@ -603,7 +608,7 @@ impl SearchAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let discoverability_event = Event::from_synthesis(
+            let discoverability_event = Event::new(
                 "search-automaton",
                 "search.content_discoverability",
                 discoverability_payload,

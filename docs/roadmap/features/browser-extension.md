@@ -38,6 +38,26 @@ A Manifest V3 WebExtension that captures browsing activity, page content, and us
 4. Native host forwards to Sinex collector
 5. Fallback to local storage queue if host unavailable
 
+### Native Messaging Details
+- Protocol: Each JSON message to the host is length‑prefixed with a 4‑byte unsigned integer (native endian) indicating the byte length of the JSON payload, followed by the UTF‑8 JSON payload. The host replies using the same framing.
+- Permissions: Manifest V3 must declare `nativeMessaging` and list allowed host names.
+- Host manifest (example):
+  ```json
+  {
+    "name": "com.sinex.nativehost",
+    "description": "Sinex Native Messaging Host",
+    "path": "/opt/sinex/bin/sinex_native_host",
+    "type": "stdio",
+    "allowed_origins": ["chrome-extension://<EXT_ID>/"],
+    "allowed_extensions": ["sinex_extension@example.com"]
+  }
+  ```
+- Installation (Linux):
+  - Chromium (user/system): `~/.config/chromium/NativeMessagingHosts/`, `/etc/chromium/native-messaging-hosts/`
+  - Chrome (system): `/etc/opt/chrome/native-messaging-hosts/`
+  - Firefox (user/system): `~/.mozilla/native-messaging-hosts/`, `/usr/lib/mozilla/native-messaging-hosts/`
+- NixOS integration: manage the host manifest and binary path declaratively to ensure consistency.
+
 ### Content Extraction
 - Full page text via `document.body.innerText`
 - Structured data from meta tags and JSON-LD
@@ -97,6 +117,6 @@ A Manifest V3 WebExtension that captures browsing activity, page content, and us
 - Efficient batch synchronization
 
 ## Related Components
-- TIM-BrowserNativeMessaging: Native host communication
+- Native messaging host (browser → host → gateway)
 - TIM-WebArchivingTooling: Page content archival
 - Core event ingestion pipeline

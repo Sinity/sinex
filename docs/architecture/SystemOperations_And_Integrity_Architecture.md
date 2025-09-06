@@ -1,3 +1,4 @@
+Status: canonical
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
 
 *   **Version:** 2.0
@@ -21,6 +22,15 @@ The Sinex is envisioned as a lifelong cognitive partner. This long-term aspirati
 *   **Meta-Observability as a First-Class Concern:** The system's own operational health is treated as critical data, enabling self-monitoring and diagnostics.
 *   **Automation:** Operational tasks (backups, checks, deployments) should be automated as much as possible.
 
+### 1.3. Core Invariants
+
+- Single writer: Only `sinex-ingestd` persists events to `core.events`.
+- Immutability: Events are append-only; corrections emit new events with provenance.
+- Provenance: Derived events record sources via `source_event_ids`/`associated_blob_ids`.
+- Time/order: ULIDs provide global ordering; `ts_ingest` and `ts_orig` are tracked rigorously.
+- Material integrity: Blobs are content-addressed; references are stable.
+- Operational trace: Long-running operations are recorded in `operations_log`.
+
 ## 2. Operational Observability Architecture
 
 > **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Unified observability through journald integration
@@ -34,13 +44,13 @@ The satellite constellation implements an elegant observability pattern where sy
 *   **Automatic Service Discovery:** ✅ **OPERATIONAL** - systemd service metadata automatically tracked through journal entries
 *   **Health Inference:** ✅ **OPERATIONAL** - Regular log output creates implicit heartbeat pattern without explicit heartbeat events
 *   **Meta-Observability:** ✅ **OPERATIONAL** - System health becomes queryable Sinex data, enabling self-analysis and alerting
-*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, Redis, satellites) monitored through single journald channel
+*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, message bus, satellites) monitored through single journald channel
 
 ### 2.2. Operational Metrics
 
 *   **Satellite Service Health:** ✅ **OPERATIONAL** - systemd service status, restart counts, resource usage per satellite
-*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - Redis Streams lag, consumer group positions, checkpoint ages, DLQ sizes
-*   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, gRPC latency
+*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - NATS JetStream lag, durable consumer positions, checkpoint ages, DLQ sizes
+*   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, NATS consumer lag/latency
 *   **Automaton Processing:** ✅ **OPERATIONAL** - Processing rates, error rates, checkpoint intervals per automaton
 
 ## 3. Security and Service Orchestration Architecture
@@ -51,7 +61,7 @@ The satellite constellation implements an elegant observability pattern where sy
 
 *   **Satellite Service Orchestration:** ✅ **OPERATIONAL** - All satellites run as independent systemd services with NixOS-managed configuration
 *   **Resource Isolation:** ✅ **OPERATIONAL** - Per-service memory and CPU limits enforced through systemd cgroups
-*   **Service Dependencies:** ✅ **OPERATIONAL** - Proper startup ordering ensures ingestd and Redis available before satellites
+*   **Service Dependencies:** ✅ **OPERATIONAL** - Proper startup ordering ensures ingestd and NATS available before satellites
 *   **Configuration Management:** ✅ **OPERATIONAL** - Declarative NixOS configuration with service orchestration
 
 ### 3.2. Basic Security Measures
@@ -85,7 +95,7 @@ The satellite constellation implements an elegant observability pattern where sy
 
 ### 5.1. Scalability Patterns
 
-*   **Horizontal Scaling:** ✅ **OPERATIONAL** - Redis consumer groups enable horizontal scaling of automaton processing
+*   **Horizontal Scaling:** ✅ **OPERATIONAL** - NATS JetStream durable consumers enable horizontal scaling of automaton processing
 *   **Asynchronous Processing:** ✅ **OPERATIONAL** - Batch processing and asynchronous operations implemented
 *   **TimescaleDB Partitioning:** ✅ **OPERATIONAL** - Automatic time-based partitioning for efficient queries
 *   **Checkpoint-Based Recovery:** ✅ **OPERATIONAL** - Reliable state management enables service scaling
@@ -93,7 +103,7 @@ The satellite constellation implements an elegant observability pattern where sy
 ### 5.2. Schema Evolution
 
 *   **JSONB Flexibility:** ✅ **OPERATIONAL** - Event payloads use JSONB for schema flexibility
-*   **SQL Migrations:** ✅ **OPERATIONAL** - Database migrations using sqlx for schema evolution
+*   **Migrations:** ✅ **OPERATIONAL** - Database schema and migrations via `sinex-schema` (sea-orm-migration)
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - GitOps-driven schema validation enables evolution
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events preserve history during schema changes
 
@@ -120,10 +130,26 @@ The satellite constellation implements an elegant observability pattern where sy
 - Version-controlled configuration management
 
 **Performance and Scalability:**
-- Horizontal scaling through Redis consumer groups
+- Horizontal scaling through NATS JetStream durable consumers
 - TimescaleDB partitioning for efficient queries
 - Asynchronous processing with checkpoint recovery
 - JSONB flexibility for schema evolution
 
 This operational architecture provides a robust foundation for the Sinex system, focusing on proven patterns that are currently operational rather than speculative future features.
 
+## 7. Runbooks (Summary)
+
+Disaster Recovery (summary)
+- Backups: Use `pgBackRest` for PostgreSQL base + WAL archiving; version NixOS config in Git; store annex blobs on redundant remotes.
+- Full host recovery: Rebuild NixOS from config; restore Postgres with `pgbackrest restore` (latest or PITR); reinitialize `git-annex` and sync content; start services and verify.
+- Logical error recovery: Restore to a temporary instance at time T; dump specific tables/rows; apply to production after review.
+
+Daily Ops
+- Health check: verify services; recent event counts; error scans; DB disk usage.
+- Queue/lag: check JetStream consumer lag; DLQs; retry transient failures.
+- Migrations: apply via `sinex-schema` (sea-orm-migration); refresh SQLx offline cache (`just sqlx-prepare`).
+
+Troubleshooting
+- Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.
+- Satellite issues: ensure NATS connectivity; check checkpoints; restart the unit with `systemctl`.
+- DB issues: connection pool saturation, missing indexes on hot paths; run focused EXPLAINs on slow queries.

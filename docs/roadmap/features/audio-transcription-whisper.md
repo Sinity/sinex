@@ -98,7 +98,7 @@ The Speech-to-Text agent will:
 
 - **Audio Capture Pipeline**: Integration with PipeWire audio capture
 - **Blob Storage**: Git-annex for audio file management
-- **Event System**: Redis Streams for processing coordination
+- **Event System**: NATS JetStream for processing coordination
 - **Search**: Transcripts indexed for semantic search
 
 ## Future Enhancements

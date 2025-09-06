@@ -75,6 +75,41 @@ pub struct AtuinCommandExecutedPayload {
     pub terminal_session_ulid: Option<String>,
 }
 
+// Test helpers for external tests
+#[cfg(feature = "testing")]
+impl KittyCommandExecutedPayload {
+    pub fn test_default(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into().into(),
+            working_directory: None,
+            exit_status: Some(0),
+            execution_time_ms: Some(1),
+            shell_type: None,
+            kitty_window_id: "test".to_string(),
+            kitty_tab_id: "test".to_string(),
+        }
+    }
+}
+
+#[cfg(feature = "testing")]
+impl AtuinCommandExecutedPayload {
+    pub fn test_default(command: impl Into<String>, cwd: impl Into<SanitizedPath>) -> Self {
+        Self {
+            command_string: command.into().into(),
+            cwd: cwd.into(),
+            exit_code: 0,
+            duration_ns: 1,
+            atuin_history_id: "h1".to_string(),
+            atuin_session_id: "s1".to_string(),
+            timestamp: 0,
+            ts_start_orig: Utc::now(),
+            ts_end_orig: Utc::now(),
+            hostname: HostName::new("test-host".to_string()),
+            terminal_session_ulid: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "shell.atuin", event_type = "command.completed")]
 pub struct AtuinCommandCompletedPayload {

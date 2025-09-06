@@ -7,8 +7,8 @@ use sinex_core::db::repositories::source_materials::SourceMaterial;
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
-use sinex_core::Entity as DbEntity;
-use sinex_core::RawEvent;
+use sinex_core::{Entity as DbEntity, Event, JsonValue};
+
 use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
 use std::collections::HashMap;
 use std::convert::From;
@@ -106,7 +106,7 @@ impl PkmService {
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
-        event_id: Id<RawEvent>,
+        event_id: Id<Event<JsonValue>>,
         content: &str,
         tags: Vec<String>,
         created_by: &str,
@@ -237,7 +237,12 @@ impl PkmService {
         let checksum = blake3_checksum;
 
         // Check if blob already exists
-        let existing_blob = self.pool.blobs().find_by_blake3(&checksum).await?;
+        let existing_blob = self
+            .pool
+            .blobs()
+            .find_by_blake3(&checksum)
+            .await
+            .map_err(|e| SinexError::service(format!("blob lookup failed: {}", e)))?;
 
         if let Some(blob) = existing_blob {
             // Check if there's a source material for this blob
@@ -328,12 +333,10 @@ impl PkmService {
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 
-        // Create annex key (simplified - in real implementation this would use git-annex)
-        let annex_key = format!("SHA256E-s{}--{}", content.len(), sha256_checksum);
-
         // Create a blob record
         let blob = Blob::builder()
-            .annex_key(annex_key)
+            .annex_backend("SHA256E".to_string())
+            .content_hash(sha256_checksum.clone())
             .original_filename("inline-content".to_string())
             .size_bytes(content.len() as i64)
             .mime_type(
@@ -341,12 +344,16 @@ impl PkmService {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "application/octet-stream".to_string()),
             )
-            .checksum_sha256(sha256_checksum)
             .checksum_blake3(blake3_checksum)
             .build();
 
         // Insert the blob
-        let inserted_blob = self.pool.blobs().insert(blob).await?;
+        let inserted_blob = self
+            .pool
+            .blobs()
+            .insert(blob)
+            .await
+            .map_err(|e| SinexError::service(format!("blob insert failed: {}", e)))?;
 
         let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
             Some(Self::create_safe_content_preview(content, mime_type))
@@ -398,21 +405,18 @@ impl PkmService {
 
         let summaries: Vec<MaterialSummary> = filtered_materials
             .into_iter()
-            .map(|m| MaterialSummary {
-                blob_id: m.id.to_string(),
-                material_type: m.material_kind,
-                source_uri: Some(m.source_identifier),
-                ingestion_time: m.staged_at,
-                file_size_bytes: m
-                    .metadata
-                    .as_ref()
-                    .and_then(|meta| meta.get("file_size_bytes").cloned()),
-                mime_type: m
-                    .metadata
-                    .as_ref()
-                    .and_then(|meta| meta.get("mime_type").cloned()),
-                metadata: m.metadata.unwrap_or(serde_json::json!({})),
-                content_preview: None, // Field doesn't exist in SourceMaterialRecord
+            .map(|m| {
+                let meta = m.metadata.clone();
+                MaterialSummary {
+                    blob_id: m.id.to_string(),
+                    material_type: m.material_kind,
+                    source_uri: Some(m.source_identifier),
+                    ingestion_time: m.staged_at,
+                    file_size_bytes: meta.get("file_size_bytes").cloned(),
+                    mime_type: meta.get("mime_type").cloned(),
+                    metadata: meta,
+                    content_preview: None, // Field doesn't exist in SourceMaterialRecord
+                }
             })
             .collect();
 
@@ -443,7 +447,7 @@ impl PkmService {
                 ingestion_time: m.staged_at,
                 file_size_bytes: None,
                 mime_type: None,
-                metadata: m.metadata.unwrap_or(serde_json::json!({})),
+                metadata: m.metadata,
                 content_preview: None,
             })
             .collect();

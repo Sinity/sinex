@@ -14,6 +14,7 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     /// Applies the full canonical Sinex schema to the database.
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // TimescaleDB is required
         // --- Phase 1: Setup Schemas and Helper Functions ---
         // These are required before any tables can be created.
         manager.get_connection().execute_unprepared(
@@ -58,6 +59,50 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .create_table(OperationsLog::create_table_statement())
+            .await?;
+        // High-level operations API (start/complete/fail) used by repositories
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                -- Operations API helpers
+                CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB)
+                RETURNS ULID AS $$
+                DECLARE
+                    v_operation_id ULID;
+                BEGIN
+                    v_operation_id := gen_ulid();
+                    INSERT INTO core.operations_log (id, operation_type, operator, scope, result_status)
+                    VALUES (v_operation_id, p_operation_type, p_operator, p_scope, 'running');
+                    RETURN v_operation_id;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.complete_operation(p_operation_id ULID, p_summary JSONB)
+                RETURNS VOID AS $$
+                BEGIN
+                    UPDATE core.operations_log
+                    SET result_status = 'success',
+                        result_message = p_summary->>'message',
+                        duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
+                        preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
+                    WHERE id = p_operation_id;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.fail_operation(p_operation_id ULID, p_error JSONB)
+                RETURNS VOID AS $$
+                BEGIN
+                    UPDATE core.operations_log
+                    SET result_status = 'failure',
+                        result_message = p_error->>'error',
+                        duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
+                        preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
+                    WHERE id = p_operation_id;
+                END;
+                $$ LANGUAGE plpgsql;
+                "#,
+            )
             .await?;
         manager
             .create_table(ProcessorCheckpoints::create_table_statement())

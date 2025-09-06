@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    types::{events::DocumentIngestedPayload, events::Event, ulid::Ulid},
-    RawEvent,
+    db::models::Event,
+    types::{events::DocumentIngestedPayload, ulid::Ulid},
+    JsonValue,
 };
 use sinex_satellite_sdk::{
     cli::{
@@ -73,7 +74,7 @@ pub struct DocumentProcessor {
     context: Option<StreamProcessorContext>,
     config: DocumentIngestorConfig,
     db_pool: Option<PgPool>,
-    event_sender: Option<mpsc::Sender<RawEvent>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
 }
 
 impl DocumentProcessor {
@@ -363,7 +364,7 @@ impl DocumentProcessor {
         material_id: Ulid,
         document_data: Vec<u8>,
         metadata: serde_json::Value,
-    ) -> Result<Vec<RawEvent>> {
+    ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
 
         // Extract document information from metadata
@@ -414,7 +415,7 @@ impl DocumentProcessor {
         }
 
         // Create document.ingested event with proper material provenance
-        let mut event = RawEvent::from_material(
+        let mut event = Event::<JsonValue>::from_material(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),
             serde_json::json!({
