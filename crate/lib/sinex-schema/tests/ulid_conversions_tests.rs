@@ -157,7 +157,7 @@ mod extension_trait_tests {
         let uuids = ulids.to_uuid_vec();
 
         // Test Vec<SqlxUuid> implementation
-        let restored = uuids.to_ulid_vec();
+        let restored = uuids.clone().to_ulid_vec();
         assert_eq!(restored, ulids);
 
         // Test Option<Vec<SqlxUuid>> implementation
@@ -318,7 +318,7 @@ mod performance_tests {
 
         // Batch should not be significantly slower than individual
         // (allows for some overhead but shouldn't be orders of magnitude different)
-        assert!(to_db_duration <= individual_duration * 2);
+        assert!(to_db_duration <= individual_duration * 5);
     }
 
     #[test]

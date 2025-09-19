@@ -19,7 +19,7 @@ use sqlx::FromRow;
 ///
 /// This table stores metadata for large binary objects. The actual content is stored
 /// in an external content-addressed system like git-annex. This table provides a
-
+///
 /// fast, queryable index into that store.
 ///
 /// **Design Rationale:**

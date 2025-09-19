@@ -14,15 +14,25 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     /// Applies the full canonical Sinex schema to the database.
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // TimescaleDB is required
+        // TimescaleDB is required. We install the server's available version to avoid version drift.
         // --- Phase 1: Setup Schemas and Helper Functions ---
         // These are required before any tables can be created.
+        // Core extensions and schemas (install server-available version of TimescaleDB)
         manager.get_connection().execute_unprepared(
             r#"
             CREATE EXTENSION IF NOT EXISTS "ulid";
-            CREATE EXTENSION IF NOT EXISTS "timescaledb" CASCADE;
             CREATE EXTENSION IF NOT EXISTS "pg_jsonschema";
             CREATE EXTENSION IF NOT EXISTS "vector";
+
+            DO $$
+            DECLARE v text;
+            BEGIN
+              SELECT default_version INTO v FROM pg_available_extensions WHERE name = 'timescaledb';
+              IF v IS NULL THEN
+                RAISE EXCEPTION 'TimescaleDB extension not available on server';
+              END IF;
+              EXECUTE format('CREATE EXTENSION IF NOT EXISTS timescaledb WITH VERSION %L CASCADE', v);
+            END$$;
 
             CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA IF NOT EXISTS raw;

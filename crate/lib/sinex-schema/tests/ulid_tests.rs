@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use proptest::prelude::*;
+use proptest::strategy::{BoxedStrategy, Strategy};
 use rstest::*;
 use sinex_schema::ulid::{Ulid, UlidError};
 use std::collections::HashSet;
@@ -318,28 +319,28 @@ mod property_tests {
 
     proptest! {
         #[test]
-        fn test_ulid_string_roundtrip(ulid in any::<Ulid>()) {
+        fn test_ulid_string_roundtrip(ulid in ulid_strategy()) {
             let ulid_str = ulid.to_string();
             let parsed = ulid_str.parse::<Ulid>().unwrap();
             prop_assert_eq!(ulid, parsed);
         }
 
         #[test]
-        fn test_ulid_bytes_roundtrip(ulid in any::<Ulid>()) {
+        fn test_ulid_bytes_roundtrip(ulid in ulid_strategy()) {
             let bytes = ulid.to_bytes();
             let restored = Ulid::from_bytes(bytes).unwrap();
             prop_assert_eq!(ulid, restored);
         }
 
         #[test]
-        fn test_ulid_uuid_roundtrip(ulid in any::<Ulid>()) {
+        fn test_ulid_uuid_roundtrip(ulid in ulid_strategy()) {
             let uuid = ulid.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             prop_assert_eq!(ulid, restored);
         }
 
         #[test]
-        fn test_ulid_ordering_consistency(ulid1 in any::<Ulid>(), ulid2 in any::<Ulid>()) {
+        fn test_ulid_ordering_consistency(ulid1 in ulid_strategy(), ulid2 in ulid_strategy()) {
             // Compare ULIDs
             let ulid_cmp = ulid1.cmp(&ulid2);
 
@@ -354,7 +355,7 @@ mod property_tests {
         }
 
         #[test]
-        fn test_timestamp_extraction_reasonable(ulid in any::<Ulid>()) {
+        fn test_timestamp_extraction_reasonable(ulid in ulid_strategy()) {
             let timestamp = ulid.timestamp();
 
             // Should be within reasonable range (1970 to far future)
@@ -366,29 +367,17 @@ mod property_tests {
         }
     }
 
-    impl Arbitrary for Ulid {
-        type Parameters = ();
-        type Strategy = BoxedStrategy<Self>;
-
-        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
-            // Generate realistic ULID values for property testing
-            (
-                // Timestamp component (milliseconds since Unix epoch)
-                // Use a reasonable range: 2020-01-01 to 2030-01-01
-                1577836800000u64..1893456000000u64,
-                // Random component (80 bits)
-                any::<u128>(),
-            )
-                .prop_map(|(timestamp_ms, random_bits)| {
-                    // Use only the lower 80 bits for the random component
-                    let random_component = random_bits & ((1u128 << 80) - 1);
-
-                    // Create ULID from components
-                    let inner = ulid::Ulid::from_parts(timestamp_ms, random_component);
-                    Ulid::from(inner)
-                })
-                .boxed()
-        }
+    fn ulid_strategy() -> BoxedStrategy<Ulid> {
+        (
+            1577836800000u64..1893456000000u64, // 2020-2030 ms
+            any::<u128>(),                      // random 80 bits portion
+        )
+            .prop_map(|(timestamp_ms, random_bits)| {
+                let random_component = random_bits & ((1u128 << 80) - 1);
+                let inner = ulid::Ulid::from_parts(timestamp_ms, random_component);
+                Ulid::from(inner)
+            })
+            .boxed()
     }
 }
 

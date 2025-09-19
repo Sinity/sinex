@@ -232,7 +232,7 @@ pub struct Ulid(InnerUlid);
 
 impl fmt::Debug for Ulid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ulid({})", self)
+        write!(f, "Ulid({self})")
     }
 }
 
@@ -484,8 +484,7 @@ impl FromStr for Ulid {
                 }
                 _ => {
                     return Err(UlidError::InvalidFormat(format!(
-                        "ULID contains invalid base32 character: '{}'",
-                        ch
+                        "ULID contains invalid base32 character: '{ch}'"
                     )));
                 }
             }
@@ -502,8 +501,7 @@ impl FromStr for Ulid {
 
         if timestamp_ms > max_timestamp {
             return Err(UlidError::InvalidFormat(format!(
-                "ULID timestamp {} exceeds maximum allowed value {}",
-                timestamp_ms, max_timestamp
+                "ULID timestamp {timestamp_ms} exceeds maximum allowed value {max_timestamp}"
             )));
         }
 
