@@ -12,7 +12,7 @@ Canonical Decisions
 - Schema & DB:
   - Canonical migrations live in crate/lib/sinex-schema; apply via `just migrate` and update SQLx caches via `just sqlx-prepare`.
   - TimescaleDB required in dev (hypertable creation present in migrations).
-- Event invariants: ULID IDs, rigorous ts_ingest/ts_orig, provenance is Material or Synthesis, JSON Schema mapping/versioning.
+- Event invariants: ULID IDs, rigorous ts_orig, provenance is Material or Synthesis, JSON Schema mapping/versioning.
 - Environment namespacing: Use SinexEnvironment for DB names, stream names, and subjects.
 
 Data Model & Invariants

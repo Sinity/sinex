@@ -15,6 +15,7 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 **Vision**: "The logic of the system should be defined as **data**, not code, whenever possible... Simple data transformations are defined as declarative 'flows' (e.g., in YAML or SQL), which are interpreted by an engine."
 
 **Reality**: ❌ **MAJOR GAP**
+
 - **No `sinex-flow-engine` found** in the codebase
 - **No SQL-as-Automaton implementation** discovered
 - **No declarative flow files** (`.sql` or `.flow.yaml`) found
@@ -24,11 +25,12 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 
 **Implementation Status**: 0% - Not started
 
-### 2. Active Inference Implementation vs Reality  
+### 2. Active Inference Implementation vs Reality
 
 **Vision**: "The system is not just a passive observer. It is an active agent... Events as the Universal Interface: The event bus is the C&C (Command and Control) bus."
 
 **Reality**: ❌ **MAJOR GAP**
+
 - **No actuator implementations found** in the codebase
 - **No instructional event handling** discovered
 - **No active inference loop** implementation
@@ -43,9 +45,10 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 
 **Vision**: "Real-time streams are handled by 'stage-as-you-go,' where an ingestor creates an 'in-flight' record and periodically commits chunks..."
 
-**Reality**: ⚠️ **PARTIAL GAP** 
+**Reality**: ⚠️ **PARTIAL GAP**
+
 - **Database schema supports it**: `raw.source_material_registry` table exists with appropriate fields
-- **No "in-flight" record pattern** found in satellite implementations  
+- **No "in-flight" record pattern** found in satellite implementations
 - **No `status = 'sensing'` logic** discovered in ingestors
 - **No crash recovery for partial blobs** implemented
 
@@ -58,6 +61,7 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 **Vision**: "An MVP `pkm-markdown-decomposer` automaton is required... `core.artifacts` and `core.revisions` are to be removed."
 
 **Reality**: ⚠️ **LEGACY SYSTEM STILL EXISTS**
+
 - **Legacy `core.artifacts` table still exists** in database constants
 - **Legacy PKM automaton found** using old `HotlogAutomaton` pattern
 - **No markdown decomposer** implementation found
@@ -72,6 +76,7 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 **Vision**: "The `exo explore curate` command is the user's tool to find and resolve ambiguities (e.g., logical duplicates)."
 
 **Reality**: ✅ **WELL IMPLEMENTED**
+
 - **`exo explore curate` command exists** and is fully implemented
 - **Deduplication logic present** in the curation system
 - **Auto-resolve functionality** available
@@ -86,6 +91,7 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 **Vision**: "The `exo` Python script is the **sole user-facing entry point**... `exo blob stage`, `exo replay --processor`, `exo blob archive`, `exo event archive`."
 
 **Reality**: ✅ **EXCELLENT IMPLEMENTATION**
+
 - **All key commands implemented**: `blob stage`, `replay`, `blob archive`, `event-archive`
 - **Rich CLI interface** with proper argument handling
 - **Both RPC and direct database modes** supported
@@ -100,8 +106,9 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 **Vision**: "All satellites are 'Processors'... The `StatefulStreamProcessor` trait is universal."
 
 **Reality**: ⚠️ **ARCHITECTURAL BIFURCATION**
+
 - **25 files use `StatefulStreamProcessor`** (modern pattern)
-- **17 files use `HotlogAutomaton`** (legacy pattern)  
+- **17 files use `HotlogAutomaton`** (legacy pattern)
 - **Mixed architecture** with unclear migration status
 - **No `processor_main!` macro** usage found in legacy automata
 
@@ -126,19 +133,22 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 ## Critical Success Factors
 
 ### Strong Foundations ✅
+
 1. **Unified Events Table**: The `core.events` table perfectly implements the vision's "Deep Oneness" principle
-2. **ULID-based Primary Keys**: Proper time-ordered, distributed-safe identifiers 
+2. **ULID-based Primary Keys**: Proper time-ordered, distributed-safe identifiers
 3. **Rich Provenance Model**: Full source material tracking with `anchor_byte` precision
 4. **Knowledge Graph Schema**: Well-designed entity and relation tables
 5. **Operations Audit Trail**: Complete `core.operations_log` implementation
 
 ### Architectural Patterns ✅
+
 1. **StatefulStreamProcessor**: Modern, unified processor interface (where implemented)
 2. **Error Handling**: Centralized `sinex-error` crate with proper error context
 3. **Configuration**: Environment-only configuration pattern
 4. **Test Infrastructure**: Comprehensive test suite with proper abstractions
 
-### User Experience ✅ 
+### User Experience ✅
+
 1. **Rich CLI**: The `exo` command provides exactly the interface described in the vision
 2. **Interactive Curation**: Well-implemented human-in-the-loop data management
 3. **Multiple Query Modes**: Both RPC and direct database access supported
@@ -146,23 +156,27 @@ The Sinex implementation is approximately **65% aligned** with the canonical arc
 ## Priority Recommendations
 
 ### P0 (Critical - Architectural Consolidation)
+
 1. **Complete Processor Migration**: Migrate all 17 legacy `HotlogAutomaton` implementations to `StatefulStreamProcessor`
 2. **Implement Declarative Core MVP**: Build the `sinex-flow-engine` with SQL-as-Automaton support
 
-### P1 (High Impact - Foundation Completion)  
+### P1 (High Impact - Foundation Completion)
+
 3. **Implement Stage-as-You-Go**: Add in-flight record logic to real-time ingestors
 4. **Migrate PKM System**: Replace legacy artifacts with source material flow
 5. **Fix Database Constants**: Correct `SOURCE_MATERIAL_REGISTRY` table reference
 
 ### P2 (Long-term Vision)
-6. **Implement Active Inference**: Add actuator capabilities and instructional events  
+
+6. **Implement Active Inference**: Add actuator capabilities and instructional events
 7. **Expand Declarative Patterns**: Add YAML flow support and LLM-based automata
 
 ## Missing Implementation Estimate
 
 Based on the gap analysis, the missing implementation represents approximately:
+
 - **Declarative Core MVP**: 3-4 weeks of focused development
-- **Processor Migration**: 2-3 weeks of systematic refactoring  
+- **Processor Migration**: 2-3 weeks of systematic refactoring
 - **Stage-as-You-Go**: 1-2 weeks of satellite enhancement
 - **PKM Migration**: 1-2 weeks of data flow restructuring
 - **Active Inference**: 4-6 weeks of new capability development

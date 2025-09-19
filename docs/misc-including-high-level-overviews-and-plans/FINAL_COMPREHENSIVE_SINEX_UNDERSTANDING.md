@@ -149,6 +149,7 @@ Sinex envisions itself as a **"cognitive sovereignty manifesto"** - a complete r
 ### Key Technical Innovations
 
 1. **Stage-as-You-Go Pattern**
+
    ```rust
    // Revolutionary solution for real-time provenance
    let blob_id = source_material_registry.create_in_flight().await?;
@@ -157,15 +158,17 @@ Sinex envisions itself as a **"cognitive sovereignty manifesto"** - a complete r
    ```
 
 2. **Unified Stream Processing**
+
    ```rust
    #[async_trait]
    trait StatefulStreamProcessor {
-       async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs) 
+       async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs)
            -> SatelliteResult<ScanReport>;
    }
    ```
 
 3. **Event Symmetry Architecture**
+
    ```json
    // Observation and instruction use identical structure
    {"source": "ingestor.hyprland", "event_type": "workspace.switched", "payload": {"id": 3}}
@@ -179,18 +182,19 @@ Sinex envisions itself as a **"cognitive sovereignty manifesto"** - a complete r
 **What's Missing**: The ability for users to define processing logic without writing Rust code.
 
 **Vision**:
+
 ```yaml
 # User-defined processor in YAML
 processors:
   - name: productivity_analyzer
     type: sql
-    trigger: 
+    trigger:
       event_types: ["terminal.command", "browser.tab_focused"]
       window: 5m
     query: |
       SELECT COUNT(*) as context_switches,
              array_agg(DISTINCT event_type) as activities
-      FROM events 
+      FROM events
       WHERE ts_orig > NOW() - INTERVAL '5 minutes'
     output_type: analytics.productivity.context_switches
 ```
@@ -202,6 +206,7 @@ processors:
 **What's Missing**: Centralized I/O handling that separates data acquisition from interpretation.
 
 **Vision**:
+
 ```rust
 // Satellites declare needs, sensd handles acquisition
 INSERT INTO raw.sensor_jobs (sensor_type, target_uri, parameters)
@@ -215,6 +220,7 @@ VALUES ('socket', 'unix:/tmp/hypr/socket', '{"mode": "continuous"}');
 **What's Missing**: The ability for the system to act on the external world based on events.
 
 **Vision**: Actuator satellites that subscribe to instructional events and execute actions:
+
 - Desktop environment control (window management, application launching)
 - Shell command execution with proper sandboxing
 - Browser automation for repetitive tasks
@@ -227,6 +233,7 @@ VALUES ('socket', 'unix:/tmp/hypr/socket', '{"mode": "continuous"}');
 **What's Missing**: The `raw.temporal_ledger` table for high-precision timestamp tracking.
 
 **Vision**:
+
 ```sql
 CREATE TABLE raw.temporal_ledger (
     entry_id ULID PRIMARY KEY,
@@ -243,6 +250,7 @@ CREATE TABLE raw.temporal_ledger (
 ### 5. Security and Privacy Architecture
 
 **Critical Gaps**:
+
 - No encryption at rest (PostgreSQL data stored in plaintext)
 - No authentication/authorization framework
 - No audit logging for data access
@@ -258,6 +266,7 @@ CREATE TABLE raw.temporal_ledger (
 **The Fundamental Tension**: The system's philosophy demands capturing everything, but privacy requires selective capture and deletion capabilities.
 
 **Unresolved Questions**:
+
 - How to implement "purposeful data loss" without compromising system integrity?
 - Can privacy-preserving techniques (homomorphic encryption, differential privacy) work with comprehensive capture?
 - How to handle legally mandated data deletion in an immutable system?
@@ -267,6 +276,7 @@ CREATE TABLE raw.temporal_ledger (
 **Uncertainty**: How much processing can realistically be declarative vs imperative?
 
 **Open Questions**:
+
 - Can complex pattern matching be expressed declaratively?
 - How to handle stateful processing in SQL-as-Automaton?
 - What's the boundary between SQL, prompts, and custom code?
@@ -276,6 +286,7 @@ CREATE TABLE raw.temporal_ledger (
 **Ambiguity**: The architecture describes single-node optimization with "future distribution potential."
 
 **Unresolved Design Decisions**:
+
 - CRDT types for different data structures?
 - Conflict resolution for concurrent event streams?
 - Partial replication strategies for mobile devices?
@@ -286,6 +297,7 @@ CREATE TABLE raw.temporal_ledger (
 **Unknown**: How the system performs with years of accumulated data.
 
 **Key Questions**:
+
 - TimescaleDB compression effectiveness for event payloads?
 - Query performance degradation over time?
 - Storage growth projections (1GB/day estimate needs validation)?
@@ -298,6 +310,7 @@ CREATE TABLE raw.temporal_ledger (
 **Inconsistency**: Events use dot notation suggesting hierarchy (`terminal.command.executed`) but no actual hierarchical processing exists.
 
 **Manifestation**:
+
 - Pattern matching uses string prefix matching
 - No parent-child event relationships
 - Unclear if `terminal.*` should match `terminal.command.*`
@@ -307,6 +320,7 @@ CREATE TABLE raw.temporal_ledger (
 **Over-Engineering**: Four checkpoint types (`None`, `External`, `Internal`, `Stream`, `Timestamp`) with unclear usage guidelines.
 
 **Problems**:
+
 - Documentation doesn't clarify when to use each type
 - Some types overlap in functionality
 - Migration between checkpoint types is ad-hoc
@@ -316,6 +330,7 @@ CREATE TABLE raw.temporal_ledger (
 **Conceptual Confusion**: Relationship between events and knowledge graph entities is bidirectional but inconsistently implemented.
 
 **Issues**:
+
 - Events can create entities, but entities can also create events
 - No clear ownership model for entity lifecycle
 - Materialized view vs event-sourced state unclear
@@ -325,6 +340,7 @@ CREATE TABLE raw.temporal_ledger (
 **Architectural Uncertainty**: Described as core feature but unclear how it integrates with event system.
 
 **Questions**:
+
 - Are document edits events or separate data type?
 - How do CRDTs integrate with immutable event log?
 - What's the relationship between PKM and source materials?
@@ -334,6 +350,7 @@ CREATE TABLE raw.temporal_ledger (
 **Dangerous Ambiguity**: Using same event types for observation and instruction creates security risks.
 
 **Unaddressed Concerns**:
+
 - How to prevent replay attacks with instructional events?
 - Authorization model for who can emit instructions?
 - Sandboxing model for actuator execution?
@@ -456,6 +473,7 @@ Sinex represents a convergence of multiple technological and philosophical strea
 ### The Ultimate Assessment
 
 Sinex is simultaneously:
+
 - **Over-engineered** in some areas (checkpoint types, processor macros)
 - **Under-engineered** in others (security, privacy, declarative processing)
 - **Brilliantly conceived** in its core architecture (event symmetry, temporal design)

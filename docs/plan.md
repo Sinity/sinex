@@ -67,6 +67,7 @@ This plan consolidates the evolving blueprints and plan_v3 into a single, action
 ## 3. Phases & Deliverables (Compilation First)
 
 Phase 1 — Event Path via JetStream (Minimal Viable Backbone)
+
 - ingestd: add `events.raw` consumer → batch insert → publish to `events.confirmations`.
 - ingestd: bootstrap streams `events.raw`, `events.confirmations` on startup (env‑namespaced).
 - SDK: `NatsPublisher::publish_event` with `Nats-Msg-Id` from `event_id`.
@@ -75,23 +76,27 @@ Phase 1 — Event Path via JetStream (Minimal Viable Backbone)
 - Deliverable: cargo check/build passes; one E2E integration test green (optional if infra unavailable locally).
 
 Phase 2 — Confirmation‑Aware Runner (Automata‑Ready)
+
 - SDK: `StreamProcessorRunner` buffering provisional until confirmed; configurable low‑latency provisional handler.
 - ingestd: dedupe semantics verified; DLQ stubbed (enqueue on unrecoverable errors).
 - Satellite (more): add `ingest=nats` path; default to NATS in dev.
 - Deliverable: compiles; basic runner unit tests.
 
 Phase 3 — Source Material (Slices)
+
 - SDK: `AcquisitionManager` + `SourceMaterialHandle` (begin/append/finalize) publishing to `source_material.*`.
 - ingestd: material assembler consumer; annex write + registry finalize; reaper.
 - Migrate one path (e.g., terminal recordings) to slice ingestion.
 - Deliverable: compiles; happy‑path unit tests.
 
 Phase 4 — Coordination & Control Plane
+
 - KV: `sinex_manifests`, `leadership_leases` (TTL) wiring in SDK.
 - Subjects: `sinex.control.*` initial handlers (e.g., ping, basic replay stub).
 - Deliverable: compiles; smoke tests.
 
 Phase 5 — Cleanup
+
 - Remove gRPC ingestion from ingestd and SDK client paths.
 - Remove sensd crate after salvage.
 - Expand tests, integrate more satellites/automata.
@@ -141,4 +146,3 @@ Phase 5 — Cleanup
 ---
 
 This plan is the working source of truth for the refactor. Update as modules land.
-
