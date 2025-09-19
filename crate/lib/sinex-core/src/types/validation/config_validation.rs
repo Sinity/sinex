@@ -206,15 +206,16 @@ impl SecurePath {
 
 /// Custom deserializer for paths that validates during deserialization
 pub struct ValidatedPathDeserializer {
-    level: PathValidationLevel,
+    _level: PathValidationLevel,
 }
 
 impl ValidatedPathDeserializer {
     pub fn new(level: PathValidationLevel) -> Self {
-        Self { level }
+        Self { _level: level }
     }
 }
 
+#[allow(dead_code)]
 struct PathVisitor {
     level: PathValidationLevel,
 }
@@ -260,7 +261,7 @@ impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
         tuple_struct map struct enum identifier ignored_any
     }
 
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -268,7 +269,7 @@ impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
         Err(de::Error::custom("Use deserialize_string instead"))
     }
 
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {

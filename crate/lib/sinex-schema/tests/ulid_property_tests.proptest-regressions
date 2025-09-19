@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cb0cb94f52544833edfe7de03147fb690c8ebc22fda94a481158e57b342890ae # shrinks to ulid = Ulid(7ZZZZZZZZZ0000000000000000)
+cc 2d4d64c05122e11287bf883333602f73d7ee29395afcc355ea5d46d7771c5b7c # shrinks to generation_count = 100
+cc d8f60285edd0f02a74fba86b1789db22c822840549af84e96e5b05989ab8d066 # shrinks to count = 279
+cc f41d19e4564d13f0b06fa3c6ca21384ddc5762e04534fb984d638e280f9e6cb2 # shrinks to num_threads = 8, ulids_per_thread = 72
+cc ae851afaf803c0fedda214c0d66ef1beb2d1c2a98bf492de346f5e1e3792719c # shrinks to burst_size = 454, num_bursts = 7
+cc c21af8ed0d0c7da5166c9e80a492018b7af8670330364a39bb3566a81c3d1ca8 # shrinks to num_threads = 4, ulids_per_thread = 28
+cc 6e80103a9423a69287038e7b492b5655ddda78e448435f5b5e13b79098df7d66 # shrinks to count = 727

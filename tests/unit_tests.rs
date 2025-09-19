@@ -288,8 +288,6 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 // EVENT CREATION TESTS - Event::<JsonValue>::test_event()
 // =============================================================================
 
-use sinex_core::{Event, JsonValue};
-
 #[sinex_test]
 fn test_event_builder_basic() -> color_eyre::eyre::Result<()> {
     let source = EventSource::from_static("test-source");

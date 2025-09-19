@@ -8,6 +8,7 @@ use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use sinex_schema::ulid_conversions::uuid_to_ulid;
+// no Row import needed when using SQLx macros
 use std::collections::HashMap;
 use std::sync::Arc;
 

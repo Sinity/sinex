@@ -39,6 +39,7 @@ use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
 use sinex_core::types::Id;
+use sinex_core::EnhancedRepository;
 use sinex_core::{
     Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, JsonValue, Operation,
     OperationRecord, Provenance, SourceMaterial,

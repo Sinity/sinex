@@ -20,15 +20,14 @@ use sinex_core::{
     db::{
         models::{event::EventId, Event, Provenance},
         query_helpers::{ulid_to_uuid, uuid_to_ulid},
-        repositories::DbPoolExt,
     },
     types::{
         domain::{EventSource, EventType, HostName},
-        Id, Ulid,
+        Ulid,
     },
     JsonValue,
 };
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::PgPool;
 use tonic::{transport::Server, Request, Response, Status};
 
 // Standard library and common crates
@@ -42,7 +41,7 @@ use std::{
 };
 use tokio::{
     net::UnixListener,
-    sync::{mpsc, Mutex, RwLock},
+    sync::{Mutex, RwLock},
     time::{interval, Duration},
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -108,6 +107,10 @@ impl SubjectCache {
     pub async fn len(&self) -> usize {
         self.cache.lock().await.len()
     }
+
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 /// Main ingestion service
@@ -145,7 +148,7 @@ impl IngestService {
             (None, None)
         } else {
             let client = async_nats::connect(&config.nats_url).await.map_err(|e| {
-                SinexError::network(format!("Failed to connect to NATS: {}", e))
+                SinexError::network(format!("Failed to connect to NATS: {e}"))
                     .with_operation("service.connect_nats")
                     .with_context("nats_url", config.nats_url.clone())
             })?;
@@ -318,7 +321,7 @@ impl IngestService {
             .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
             .await
             .map_err(|e| {
-                SinexError::service(format!("gRPC server error: {}", e))
+                SinexError::service(format!("gRPC server error: {e}"))
                     .with_operation("service.start_grpc_server")
                     .with_context("socket_path", self.config.socket_path.clone())
             })?;
@@ -333,7 +336,7 @@ impl IngestService {
         let last_flush = self.last_flush.clone();
         let config = self.config.clone();
         let db_pool = self.db_pool.clone();
-        let jetstream = self.jetstream.clone();
+        // JetStream context not used here; outbox processor handles NATS publishing
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
         let subject_cache = self.subject_cache.clone();
@@ -361,7 +364,6 @@ impl IngestService {
                                 &last_flush,
                                 &config,
                                 db_pool.as_ref(),
-                                jetstream.as_ref(),
                                 &stats,
                                 Some(&*subject_cache),
                                 Some(&*validator_guard),
@@ -376,7 +378,6 @@ impl IngestService {
                             &last_flush,
                             &config,
                             db_pool.as_ref(),
-                            jetstream.as_ref(),
                             &stats,
                             Some(&*subject_cache),
                             Some(&*validator_guard),
@@ -440,7 +441,6 @@ impl IngestService {
             event_id: sqlx::types::Uuid,
             subject: String,
             payload: serde_json::Value,
-            created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
         }
 
         // Begin transaction for atomic read-and-lock operation
@@ -570,7 +570,6 @@ impl IngestService {
         last_flush: &Arc<Mutex<SystemTime>>,
         config: &IngestdConfig,
         db_pool: Option<&PgPool>,
-        _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
         subject_cache: Option<&SubjectCache>,
         validator: Option<&EventValidator>,
@@ -663,7 +662,7 @@ impl IngestService {
                 .id
                 .as_ref()
                 .map(|id| *id.as_ulid())
-                .unwrap_or_else(|| Ulid::new());
+                .unwrap_or_else(Ulid::new);
             let event_uuid = ulid_to_uuid(event_id);
 
             event_ids.push(event_uuid);
@@ -784,7 +783,7 @@ impl IngestService {
         .bind(serde_json::to_value(&associated_blob_id_arrays)?)
         .bind(&payload_schema_names)
         .bind(&payload_schema_versions)
-        .bind(&vec![None::<i32>; events.len()]) // processor_manifest_id
+        .bind(vec![None::<i32>; events.len()]) // processor_manifest_id
         .execute(&mut *tx)
         .await?;
 
@@ -818,8 +817,8 @@ impl IngestService {
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: Event<JsonValue>) -> IngestdResult<()> {
-        let event_type = &event.event_type;
-        let start = std::time::Instant::now();
+        let _event_type = &event.event_type;
+        let _start = std::time::Instant::now();
 
         let mut buffer = self.event_buffer.lock().await;
         buffer.push(event);
@@ -834,7 +833,6 @@ impl IngestService {
                 &self.last_flush,
                 &self.config,
                 self.db_pool.as_ref(),
-                self.jetstream.as_ref(),
                 &self.stats,
                 Some(&self.subject_cache),
                 Some(&*validator_guard),
@@ -858,7 +856,6 @@ impl IngestService {
             &self.last_flush,
             &self.config,
             self.db_pool.as_ref(),
-            self.jetstream.as_ref(),
             &self.stats,
             Some(&self.subject_cache),
             Some(&*validator_guard),
@@ -933,7 +930,7 @@ impl IngestServiceTrait for IngestServiceImpl {
                     .fetch_add(1, Ordering::Relaxed);
                 return Ok(Response::new(IngestResponse {
                     success: false,
-                    error: Some(format!("Event conversion failed: {}", e)),
+                    error: Some(format!("Event conversion failed: {e}")),
                     event_id: None,
                 }));
             }
@@ -944,7 +941,7 @@ impl IngestServiceTrait for IngestServiceImpl {
             let validator = self.service.validator.read().await;
             match validator.validate_event(&raw_event) {
                 Ok(v) => v,
-                Err(e) => return Err(crate::sinex_error_to_status(e)),
+                Err(e) => return Err(crate::sinex_error_to_status(*e)),
             }
         };
 
@@ -971,7 +968,7 @@ impl IngestServiceTrait for IngestServiceImpl {
             error!("Failed to add event to buffer: {}", e);
             return Ok(Response::new(IngestResponse {
                 success: false,
-                error: Some(format!("Internal error: {}", e)),
+                error: Some(format!("Internal error: {e}")),
                 event_id: None,
             }));
         }
@@ -1099,7 +1096,7 @@ impl IngestServiceTrait for IngestServiceImpl {
         Ok(Response::new(BatchResponse {
             success: failed_count == 0,
             error: if failed_count > 0 {
-                Some(format!("{} events failed validation", failed_count))
+                Some(format!("{failed_count} events failed validation"))
             } else {
                 None
             },
@@ -1132,7 +1129,7 @@ impl IngestServiceImpl {
     async fn proto_to_event(&self, proto: ProtoEvent) -> IngestdResult<Event<JsonValue>> {
         // Validate and parse JSON payload
         let payload = sinex_core::types::validate_json(&proto.payload).map_err(|e| {
-            SinexError::validation(format!("Invalid JSON payload: {}", e))
+            SinexError::validation(format!("Invalid JSON payload: {e}"))
                 .with_operation("service.parse_json_payload")
         })?;
 
@@ -1140,7 +1137,7 @@ impl IngestServiceImpl {
             .blob_id
             .map(|blob_id_str| {
                 Ulid::from_str(&blob_id_str).map_err(|e| {
-                    SinexError::validation(format!("Invalid blob ID: {}", e))
+                    SinexError::validation(format!("Invalid blob ID: {e}"))
                         .with_operation("service.parse_blob_id")
                 })
             })

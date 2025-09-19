@@ -34,7 +34,7 @@ pub struct Event<T = JsonValue> {
     /// Event ID - elegant distinction between new and persisted events
     /// - None: New event to be inserted (builder pattern)
     /// - Some(id): Persisted event retrieved from database
-    /// This pattern avoids separate NewEvent/PersistedEvent types
+    ///   This pattern avoids separate NewEvent/PersistedEvent types
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Id<Event<T>>>,
 
@@ -283,7 +283,10 @@ impl<T> Event<T> {
             }),
         );
 
-        Self::from_material(source, event_type, payload, test_material_id, 0)
+        #[allow(deprecated)]
+        {
+            Self::from_material(source, event_type, payload, test_material_id, 0)
+        }
     }
 }
 
@@ -607,7 +610,7 @@ mod tests {
         );
 
         // Convert to raw
-        let raw = original.to_raw();
+        let raw = original.to_json_event().unwrap();
 
         // Convert back to typed
         let recovered: Event<JsonValue> = raw.to_typed().unwrap();

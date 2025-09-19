@@ -51,7 +51,6 @@ use serde_json::Value;
 use std::io::{self, Read, Write};
 use tracing::{debug, error, info};
 
-use crate::handlers::*;
 use crate::service_container::ServiceContainer;
 
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB

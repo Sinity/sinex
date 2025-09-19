@@ -416,13 +416,10 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
     // Register schema - using repository directly
     use sinex_core::db::repositories::events::NewSchema;
     let new_schema = NewSchema {
-        schema_name: sinex_core::types::domain::SchemaName::new("filesystem"),
-        schema_version: sinex_core::types::domain::SchemaVersion::new("1.0.0"),
+        source: "filesystem".to_string(),
+        event_type: "file.created".to_string(),
+        schema_version: "1.0.0".to_string(),
         schema_content: schema,
-        is_active: true,
-        event_types: vec!["file.created".to_string()],
-        description: Some("Test schema for filesystem events".to_string()),
-        examples: None,
     };
     let _schema = ctx.pool.events().register_schema(new_schema).await?;
 

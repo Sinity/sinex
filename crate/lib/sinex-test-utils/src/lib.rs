@@ -694,8 +694,15 @@ mod tests {
         ctx.assert("workflow validation")
             .eq(&events[0].event_type.as_str(), &"file.created")?
             .that(
-                fs_event.ts_ingest < term_event.ts_ingest,
-                "file should be created before processing",
+                fs_event
+                    .id
+                    .as_ref()
+                    .and_then(|id| Some(id.as_ulid().timestamp()))
+                    < term_event
+                        .id
+                        .as_ref()
+                        .and_then(|id| Some(id.as_ulid().timestamp())),
+                "file should be created before processing (ULID ordering)",
             )?;
 
         Ok(())

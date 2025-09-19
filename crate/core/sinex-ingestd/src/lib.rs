@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 //! Sinex Ingestion Daemon
 //!
 //! Central hub for event ingestion that receives events from satellite sources,
@@ -42,19 +43,18 @@ pub fn sinex_error_to_status(err: SinexError) -> tonic::Status {
         }
         // Database errors are internal server errors
         SinexError::Database(_) => {
-            tonic::Status::new(Code::Internal, format!("Database error: {}", err))
+            tonic::Status::new(Code::Internal, format!("Database error: {err}"))
         }
         // Network errors map to connection issues
         SinexError::Network(_) => {
-            tonic::Status::new(Code::Unavailable, format!("Network error: {}", err))
+            tonic::Status::new(Code::Unavailable, format!("Network error: {err}"))
         }
         // Serialization and parsing errors are client input issues
-        SinexError::Serialization(_) | SinexError::Parse(_) => tonic::Status::new(
-            Code::InvalidArgument,
-            format!("Serialization error: {}", err),
-        ),
+        SinexError::Serialization(_) | SinexError::Parse(_) => {
+            tonic::Status::new(Code::InvalidArgument, format!("Serialization error: {err}"))
+        }
         // I/O errors are internal issues
-        SinexError::Io(_) => tonic::Status::new(Code::Internal, format!("IO error: {}", err)),
+        SinexError::Io(_) => tonic::Status::new(Code::Internal, format!("IO error: {err}")),
         // Timeout and resource exhaustion are temporary server issues
         SinexError::Timeout(_) | SinexError::ResourceExhausted(_) => {
             tonic::Status::new(Code::Unavailable, err.to_string())
@@ -66,6 +66,6 @@ pub fn sinex_error_to_status(err: SinexError) -> tonic::Status {
         // Not found issues
         SinexError::NotFound(_) => tonic::Status::new(Code::NotFound, err.to_string()),
         // Everything else is internal
-        _ => tonic::Status::new(Code::Internal, format!("Internal error: {}", err)),
+        _ => tonic::Status::new(Code::Internal, format!("Internal error: {err}")),
     }
 }

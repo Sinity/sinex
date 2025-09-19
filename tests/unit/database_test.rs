@@ -181,7 +181,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
                 .await?;
             assert_eq!(events.len(), events_per_task);
 
-            Ok::<Vec<Id<RawEvent>>, SinexError>(task_ids)
+            Ok::<Vec<Id<Event<JsonValue>>>, SinexError>(task_ids)
         });
 
         handles.push(handle);
@@ -471,7 +471,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(inserted_event.id.unwrap())
+        .get_by_id(inserted_event.id.clone().unwrap())
         .await?
         .unwrap();
 

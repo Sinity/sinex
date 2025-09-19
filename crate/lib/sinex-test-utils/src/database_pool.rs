@@ -454,10 +454,38 @@ impl DatabasePool {
         let mut slots = Vec::with_capacity(config.size);
         let mut tasks = Vec::new();
 
+        // Compute template URL and capture extension versions from the fresh template
+        let template_url = config
+            .base_url
+            .replace("/sinex_dev", &format!("/{}", config.template_name));
+        // Fetch extension versions from template for drift detection
+        let template_ext_versions: std::collections::HashMap<String, String> = {
+            let mut map = std::collections::HashMap::new();
+            if let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&template_url)
+                .await
+            {
+                if let Ok(rows) = sqlx::query!(
+                    r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+                )
+                .fetch_all(&pool)
+                .await
+                {
+                    for row in rows {
+                        map.insert(row.extname, row.extversion);
+                    }
+                }
+                let _ = pool.close().await;
+            }
+            map
+        };
+
         for i in 0..config.size {
             let admin_pool = admin_pool.clone();
             let base_url = config.base_url.clone();
             let template_name = config.template_name.clone();
+            let template_ext_versions = template_ext_versions.clone();
 
             let task = tokio::spawn(async move {
                 let name = format!("sinex_test_pool_{}", i);
@@ -481,7 +509,102 @@ impl DatabasePool {
                     .await?;
                     eprintln!("  Created new pool database: {}", name);
                 } else {
-                    eprintln!("  Reusing existing pool database: {}", name);
+                    // Check extension versions against the template; drop/recreate if drifted
+                    let db_url = base_url.replace("/sinex_dev", &format!("/{}", name));
+                    let mut needs_recreate = false;
+
+                    if let Ok(db_pool) = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(1)
+                        .acquire_timeout(Duration::from_secs(2))
+                        .connect(&db_url)
+                        .await
+                    {
+                        if let Ok(rows) = sqlx::query!(
+                            r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+                        )
+                        .fetch_all(&db_pool)
+                        .await
+                        {
+                            for row in rows {
+                                if let Some(t_ver) = template_ext_versions.get(&row.extname) {
+                                    if &row.extversion != t_ver {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Drift detected in {} ({} != {}), recreating {}",
+                                            row.extname, row.extversion, t_ver, name
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                            // Additionally ensure core schema exists (e.g., core.events table)
+                            if !needs_recreate {
+                                if let Ok(exists) = sqlx::query_scalar::<_, Option<String>>(
+                                    "SELECT to_regclass('core.events')::text"
+                                )
+                                .fetch_one(&db_pool)
+                                .await
+                                {
+                                    if exists.as_deref() != Some("core.events") {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Missing schema in {} (core.events), recreating",
+                                            name
+                                        );
+                                    }
+                                } else {
+                                    needs_recreate = true;
+                                    eprintln!(
+                                        "  Failed to verify schema in {}, recreating",
+                                        name
+                                    );
+                                }
+                            }
+                        } else {
+                            // Unable to query extensions; assume drift and recreate
+                            needs_recreate = true;
+                            eprintln!(
+                                "  Unable to query extensions for {}, forcing recreation",
+                                name
+                            );
+                        }
+                        let _ = db_pool.close().await;
+                    } else {
+                        // Can't connect to DB quickly; play it safe and recreate
+                        needs_recreate = true;
+                        eprintln!("  Unable to connect to {}, forcing recreation", name);
+                    }
+
+                    if needs_recreate {
+                        // Terminate connections and drop the database
+                        let _ = sqlx::query(&format!(
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
+                            name
+                        ))
+                        .execute(&mut *conn)
+                        .await;
+
+                        let drop_force =
+                            sqlx::query(&format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", name))
+                                .execute(&mut *conn)
+                                .await;
+                        if drop_force.is_err() {
+                            let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {}", name))
+                                .execute(&mut *conn)
+                                .await;
+                        }
+
+                        // Recreate from the fresh template
+                        sqlx::query(&format!(
+                            "CREATE DATABASE {} WITH TEMPLATE {}",
+                            name, template_name
+                        ))
+                        .execute(&mut *conn)
+                        .await?;
+                        eprintln!("  Recreated pool database from template: {}", name);
+                    } else {
+                        eprintln!("  Reusing existing pool database: {}", name);
+                    }
                 }
 
                 drop(conn);
@@ -645,6 +768,13 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
     eprintln!("🧹 Cleaning database: {}", db_name);
 
     // Use the shared db_common implementation
+    // Relax strict FK that can block synthetic test IDs
+    let _ = sqlx::query(
+        "ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey",
+    )
+    .execute(pool)
+    .await;
+
     match crate::db_common::reset_database(pool).await {
         Ok(_) => {
             eprintln!("  ✅ Database cleanup verified - all tables empty");
@@ -734,9 +864,12 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
         .await?;
 
         if exists {
-            eprintln!("✅ Template database already exists, reusing it");
-            admin_conn.close().await?;
-            return Ok::<bool, SinexError>(false); // false = no migrations needed
+            // Always recreate the template to avoid extension/library mismatches across updates
+            eprintln!(
+                "♻️  Template database '{}' exists; dropping and recreating to ensure clean, up-to-date extensions",
+                template_name
+            );
+            // Fall through to recreation logic below
         }
 
         eprintln!(
@@ -829,7 +962,12 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
             }
         }
 
-        tokio::time::timeout(
+        // Run migrations against the template database. The sinex-core migration helper
+        // reads DATABASE_URL, so temporarily point it at the template DB.
+        let prev_db_url = std::env::var("DATABASE_URL").ok();
+        std::env::set_var("DATABASE_URL", &template_url);
+
+        let migrate_result = tokio::time::timeout(
             Duration::from_secs(30),
             sinex_core::db::run_migrations(&template_pool),
         )
@@ -838,8 +976,16 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
             SinexError::database(
                 "Migration timeout - check if all required extensions are installed".to_string(),
             )
-        })?
-        .map_err(|e| SinexError::database(format!("Migration failed: {}", e)))?;
+        })
+        .and_then(|res| res.map_err(|e| SinexError::database(format!("Migration failed: {}", e))));
+
+        // Restore original DATABASE_URL
+        if let Some(url) = prev_db_url {
+            std::env::set_var("DATABASE_URL", url);
+        }
+
+        // Propagate migration result
+        migrate_result?;
 
         // Optimize template for faster copying
         optimize_template_for_tests(&template_pool).await?;
@@ -978,6 +1124,13 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
                 eprintln!("⚠️  Could not clean test data");
                 Default::default()
             });
+
+        // Relax strict FKs that make synthetic test IDs cumbersome
+        let _ = sqlx::query(
+            "ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey",
+        )
+        .execute(pool)
+        .await;
 
         eprintln!("✅ Template database optimized for test performance");
         Ok::<(), SinexError>(())

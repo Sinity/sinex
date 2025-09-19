@@ -43,7 +43,7 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::Event;
+use sinex_core::db::models::event::{Event, Provenance};
 use sinex_core::types::{DbPool, Ulid};
 
 use sinex_core::{DbPoolExt, EnhancedRepository};
@@ -154,6 +154,29 @@ impl TestContext {
         T: AsRef<str>,
     {
         let event = Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), payload);
+
+        // Ensure a matching source material exists for the test material ID to satisfy FK
+        if let Provenance::Material { id, .. } = &event.provenance {
+            let material_ulid_uuid = id.to_uuid();
+            // Use deterministic source_identifier to avoid unique conflicts
+            let source_identifier = format!("test-material-{}", id);
+            // Insert minimal required row; ignore if it already exists
+            let _ = sqlx::query!(
+                r#"
+                INSERT INTO raw.source_material_registry 
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (source_identifier) DO NOTHING
+                "#,
+                material_ulid_uuid,
+                "annex",
+                source_identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(&self.pool)
+            .await;
+        }
         let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());

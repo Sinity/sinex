@@ -174,7 +174,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Parse sinex_test configuration
     let config = parse_sinex_test_attrs(attr);
-    let timeout_secs = config.timeout.unwrap_or_else(|| {
+    let timeout_secs = config.timeout.unwrap_or({
         if is_async {
             DEFAULT_ASYNC_TIMEOUT
         } else {

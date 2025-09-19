@@ -92,7 +92,7 @@ impl IngestdConfig {
         batch_size: usize,
         batch_timeout_secs: u64,
         dry_run: bool,
-    ) -> IngestdResult<Self> {
+    ) -> Self {
         let builder = Self::builder()
             .nats_url(nats_url)
             .socket_path(socket_path)
@@ -104,7 +104,7 @@ impl IngestdConfig {
         let db_url = database_url.unwrap_or_else(default_database_url);
         let builder = builder.database_url(db_url);
 
-        Ok(builder.build())
+        builder.build()
     }
 
     /// Validate configuration and exit with appropriate status code
@@ -128,7 +128,7 @@ impl IngestdConfig {
 
         // Run validator crate validation first
         ValidateTrait::validate(self).map_err(|e| {
-            SinexError::configuration(format!("Validation failed: {}", e))
+            SinexError::configuration(format!("Validation failed: {e}"))
                 .with_operation("config.validate_connection_strings")
         })?;
 
@@ -195,7 +195,7 @@ impl IngestdConfig {
             .fetch_one(&pool)
             .await
             .map_err(|e| {
-                SinexError::configuration(format!("Database connection test failed: {}", e))
+                SinexError::configuration(format!("Database connection test failed: {e}"))
                     .with_operation("config.test_database_connection")
                     .with_context("database_url", self.database_url.clone())
             })?;
@@ -214,7 +214,7 @@ impl IngestdConfig {
             .connect(&self.nats_url)
             .await
             .map_err(|e| {
-                SinexError::configuration(format!("NATS connection test failed: {}", e))
+                SinexError::configuration(format!("NATS connection test failed: {e}"))
                     .with_operation("config.test_nats_connection")
                     .with_context("nats_url", self.nats_url.clone())
             })?;
@@ -262,7 +262,7 @@ fn default_database_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         let env = environment();
         let base_name = env.database_name("sinex");
-        format!("postgresql:///{}?host=/run/postgresql", base_name)
+        format!("postgresql:///{base_name}?host=/run/postgresql")
     })
 }
 

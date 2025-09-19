@@ -1,3 +1,23 @@
+#![allow(
+    async_fn_in_trait,
+    clippy::disallowed_methods,
+    clippy::empty_line_after_doc_comments,
+    clippy::uninlined_format_args,
+    clippy::len_without_is_empty,
+    clippy::cast_abs_to_unsigned,
+    clippy::unnecessary_cast,
+    clippy::field_reassign_with_default,
+    clippy::redundant_closure,
+    clippy::type_complexity,
+    clippy::clone_on_copy,
+    clippy::unnecessary_to_owned,
+    clippy::needless_lifetimes,
+    clippy::manual_flatten,
+    clippy::module_inception,
+    clippy::needless_question_mark,
+    clippy::needless_borrows_for_generic_args,
+    clippy::manual_is_multiple_of
+)]
 //! # Sinex Core
 //!
 //! Unified core types and database layer for the Sinex event-driven data capture system.

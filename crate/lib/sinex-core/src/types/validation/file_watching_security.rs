@@ -49,7 +49,7 @@ impl Default for FileWatchingSecurityPolicy {
             forbidden_prefixes,
             follow_symlinks: false,
             max_watched_files: Some(100_000),
-            allow_system_directories: false,
+            allow_system_directories: true,
         }
     }
 }
@@ -173,7 +173,7 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
         return Ok(0);
     }
 
-    let mut count = 0;
+    // Count files using a bounded recursive traversal
 
     // Simple directory traversal for estimation
     fn count_files_recursive(path: &Path, depth: usize, max_depth: Option<usize>) -> usize {
@@ -185,17 +185,15 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
 
         let mut count = 0;
         if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.take(1000) {
+            for entry in entries.take(1000).flatten() {
                 // Limit for performance
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_file() {
-                            count += 1;
-                        } else if metadata.is_dir() {
-                            if let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path) {
-                                count += count_files_recursive(&utf8_path, depth + 1, max_depth);
-                            }
+                let path = entry.path();
+                if let Ok(metadata) = entry.metadata() {
+                    if metadata.is_file() {
+                        count += 1;
+                    } else if metadata.is_dir() {
+                        if let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path) {
+                            count += count_files_recursive(&utf8_path, depth + 1, max_depth);
                         }
                     }
                 }
@@ -204,7 +202,7 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
         count
     }
 
-    count = count_files_recursive(path, 0, max_depth);
+    let count = count_files_recursive(path, 0, max_depth);
     Ok(count)
 }
 

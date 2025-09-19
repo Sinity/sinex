@@ -118,24 +118,24 @@ impl<'a> CheckpointRepository<'a> {
                 id, processor_name, consumer_group, consumer_name,
                 last_processed_id, checkpoint_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6
+                $1::uuid, $2, $3, $4, $5::uuid, $6
             )
             RETURNING 
-                id as "id: Id<CheckpointRecord>",
+                id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             "#,
-            *id.as_ulid() as _,
+            id.to_uuid(),
             checkpoint.processor_name.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
-            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_id.map(|id| id.to_uuid()),
             checkpoint.checkpoint_data
         )
         .fetch_one(self.pool)
@@ -151,11 +151,11 @@ impl<'a> CheckpointRepository<'a> {
             CheckpointRecord,
             r#"
             SELECT 
-                id as "id: Id<CheckpointRecord>",
+                id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
                 last_activity as "last_activity!",
@@ -182,11 +182,11 @@ impl<'a> CheckpointRepository<'a> {
             CheckpointRecord,
             r#"
             SELECT 
-                id as "id: Id<CheckpointRecord>",
+                id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
                 last_activity as "last_activity!",
@@ -221,7 +221,7 @@ impl<'a> CheckpointRepository<'a> {
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
-                    last_processed_id = $4,
+                    last_processed_id = $4::uuid,
                     checkpoint_data = $5,
                     processed_count = processed_count + 1,
                     last_activity = NOW(),
@@ -230,11 +230,11 @@ impl<'a> CheckpointRepository<'a> {
                   AND consumer_group = $2 
                   AND consumer_name = $3
                 RETURNING 
-                    id as "id: Id<CheckpointRecord>",
+                    id::uuid as "id!: Id<CheckpointRecord>",
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                    last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                     processed_count as "processed_count!",
                     checkpoint_data,
                     last_activity as "last_activity!",
@@ -243,7 +243,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
-                last_processed_id.map(|id| *id.as_ulid()) as _,
+                last_processed_id.map(|id| id.to_uuid()),
                 checkpoint_data
             )
             .fetch_one(self.pool)
@@ -255,7 +255,7 @@ impl<'a> CheckpointRepository<'a> {
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
-                    last_processed_id = $4,
+                    last_processed_id = $4::uuid,
                     checkpoint_data = $5,
                     last_activity = NOW(),
                     updated_at = NOW()
@@ -263,11 +263,11 @@ impl<'a> CheckpointRepository<'a> {
                   AND consumer_group = $2 
                   AND consumer_name = $3
                 RETURNING 
-                    id as "id: Id<CheckpointRecord>",
+                    id::uuid as "id!: Id<CheckpointRecord>",
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                    last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                     processed_count as "processed_count!",
                     checkpoint_data,
                     last_activity as "last_activity!",
@@ -276,7 +276,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name.as_str(),
                 consumer_group.as_str(),
                 consumer_name.as_str(),
-                last_processed_id.map(|id| *id.as_ulid()) as _,
+                last_processed_id.map(|id| id.to_uuid()),
                 checkpoint_data
             )
             .fetch_one(self.pool)
@@ -302,7 +302,7 @@ impl<'a> CheckpointRepository<'a> {
                 id, processor_name, consumer_group, consumer_name,
                 last_processed_id, checkpoint_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6
+                $1::uuid, $2, $3, $4, $5::uuid, $6
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
@@ -312,21 +312,21 @@ impl<'a> CheckpointRepository<'a> {
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
-                id as "id: Id<CheckpointRecord>",
+                        id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             "#,
-            *id.as_ulid() as _,
+            id.to_uuid(),
             processor_name.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
-            last_processed_id.map(|id| *id.as_ulid()) as _,
+            last_processed_id.map(|id| id.to_uuid()),
             checkpoint_data
         )
         .fetch_one(self.pool)
@@ -461,7 +461,7 @@ impl<'a> CheckpointRepository<'a> {
                 id, processor_name, consumer_group, consumer_name,
                 last_processed_id, checkpoint_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6
+                $1::uuid, $2, $3, $4, $5::uuid, $6
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
@@ -471,21 +471,21 @@ impl<'a> CheckpointRepository<'a> {
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
-                id as "id: Id<CheckpointRecord>",
+                id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             "#,
-            *id.as_ulid() as _,
+            id.to_uuid(),
             processor_name.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
-            last_processed_id.map(|id| *id.as_ulid()) as _,
+            last_processed_id.map(|id| id.to_uuid()),
             checkpoint_data
         )
         .fetch_one(&mut **tx)

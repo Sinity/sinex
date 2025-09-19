@@ -83,7 +83,8 @@ impl<'a> SchemaManagementRepository<'a> {
         &self,
         new_schema: NewEventSchema,
     ) -> DbResult<EventPayloadSchema> {
-        let id = sinex_schema::ulid::Ulid::new().to_string();
+        let id_ulid = sinex_schema::ulid::Ulid::new();
+        let id_uuid = id_ulid.to_uuid();
         let content_hash = new_schema.calculate_content_hash();
 
         // Check if this exact schema already exists
@@ -112,7 +113,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 id, source, event_type, schema_version, schema_content,
                 content_hash, is_active
             ) VALUES (
-                $1::text::uuid, $2, $3, $4, $5, $6, true
+                $1::uuid::ulid, $2, $3, $4, $5, $6, true
             )
             RETURNING 
                 id::text as id,
@@ -124,7 +125,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_active,
                 updated_at
             "#,
-            id,
+            id_uuid,
             new_schema.source,
             new_schema.event_type,
             new_schema.schema_version,

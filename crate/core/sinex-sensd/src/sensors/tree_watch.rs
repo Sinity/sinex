@@ -263,16 +263,13 @@ mod tests {
 
         // Create a test job with a dangerous path
         let dangerous_job = SensorJob {
-            job_id: Ulid::new(),
-            sensor_type: SensorType::TreeWatch,
+            id: Ulid::new(),
+            sensor_type: SensorType::TreeWatch.to_string(),
             target_uri: "/etc/passwd".to_string(), // This should be rejected
             config: serde_json::Value::Null,
-            status: crate::job_manager::JobStatus::Pending,
-            created_at: Utc::now(),
-            started_at: None,
-            completed_at: None,
-            error_message: None,
-            material_id: None,
+            status: "active".to_string(),
+            priority: 0,
+            updated_at: Utc::now(),
         };
 
         // This should fail due to security validation
@@ -306,16 +303,13 @@ mod tests {
             .expect("Failed to convert temp path to string");
 
         let safe_job = SensorJob {
-            job_id: Ulid::new(),
-            sensor_type: SensorType::TreeWatch,
+            id: Ulid::new(),
+            sensor_type: SensorType::TreeWatch.to_string(),
             target_uri: temp_path.to_string(),
             config: serde_json::Value::Null,
-            status: crate::job_manager::JobStatus::Pending,
-            created_at: Utc::now(),
-            started_at: None,
-            completed_at: None,
-            error_message: None,
-            material_id: None,
+            status: "active".to_string(),
+            priority: 0,
+            updated_at: Utc::now(),
         };
 
         // This should succeed with a valid path

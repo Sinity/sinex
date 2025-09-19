@@ -92,31 +92,29 @@ impl SinexEnvironment {
             return Err(eyre!("Database URL cannot be empty"));
         }
 
-        // Parse the URL to extract database name and replace it
-        if let Some(last_slash) = base_url.rfind('/') {
-            let (prefix, db_part) = base_url.split_at(last_slash + 1);
+        // Separate query from main part first so we don't mis-detect slashes inside the query
+        let (main, query) = match base_url.split_once('?') {
+            Some((m, q)) => (m, format!("?{}", q)),
+            None => (base_url, String::new()),
+        };
 
-            // Handle query parameters (e.g., ?host=/run/postgresql)
-            let (db_name, query) = if let Some(q_pos) = db_part.find('?') {
-                (&db_part[..q_pos], &db_part[q_pos..])
-            } else {
-                (db_part, "")
-            };
+        // Find the database name as the segment after the last '/' in the main part
+        let last_slash = main
+            .rfind('/')
+            .ok_or_else(|| eyre!("Invalid database URL format: {}", base_url))?;
+        let (prefix, db_name) = main.split_at(last_slash + 1);
 
-            // Skip namespacing if database name is already namespaced
-            if db_name.contains(&format!("_{}", self.name)) {
-                debug!(
-                    "Database URL already namespaced for environment {}",
-                    self.name
-                );
-                return Ok(base_url.to_string());
-            }
-
-            let namespaced_db = self.database_name(db_name);
-            Ok(format!("{}{}{}", prefix, namespaced_db, query))
-        } else {
-            Err(eyre!("Invalid database URL format: {}", base_url))
+        // Skip namespacing if already present
+        if db_name.contains(&format!("_{}", self.name)) {
+            debug!(
+                "Database URL already namespaced for environment {}",
+                self.name
+            );
+            return Ok(base_url.to_string());
         }
+
+        let namespaced_db = self.database_name(db_name);
+        Ok(format!("{prefix}{namespaced_db}{query}"))
     }
 
     /// Get environment-namespaced NATS subject
@@ -124,7 +122,8 @@ impl SinexEnvironment {
     /// Prefixes NATS subjects with environment:
     /// - sinex.events.raw.> -> dev.sinex.events.raw.>
     pub fn nats_subject(&self, base_subject: &str) -> String {
-        if base_subject.starts_with(&format!("{}.", self.name)) {
+        let env_prefix = &self.name;
+        if base_subject.starts_with(&format!("{env_prefix}.")) {
             debug!(
                 "NATS subject already namespaced for environment {}",
                 self.name
@@ -141,7 +140,7 @@ impl SinexEnvironment {
     /// - SINEX_RAW_EVENTS -> DEV_SINEX_RAW_EVENTS
     pub fn nats_stream_name(&self, base_name: &str) -> String {
         let env_prefix = self.name.to_uppercase();
-        if base_name.starts_with(&format!("{}_", env_prefix)) {
+        if base_name.starts_with(&format!("{env_prefix}_")) {
             debug!(
                 "NATS stream name already namespaced for environment {}",
                 self.name

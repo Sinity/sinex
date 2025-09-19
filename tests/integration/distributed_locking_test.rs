@@ -141,17 +141,21 @@ async fn test_distributed_coordination_instance_registration(ctx: TestContext) -
     coordination.register_instance().await?;
     
     // Verify instance appears in database
-    let registered = sqlx::query!(
-        "SELECT instance_id, service_name, version FROM core.satellite_instances WHERE instance_id = $1",
-        instance.instance_id()
+    let registered = sqlx::query(
+        "SELECT instance_id::uuid as id, service_name, version FROM core.satellite_instances WHERE instance_id = $1::uuid::ulid",
     )
+    .bind(instance.instance_id().to_uuid())
     .fetch_optional(pool)
     .await?;
     
     assert!(registered.is_some());
     let reg = registered.expect("Registration should succeed");
-    assert_eq!(reg.service_name, "registration_test");
-    assert_eq!(reg.version, "1.0.100+test123");
+    let id: sqlx::types::Uuid = reg.get("id");
+    let service_name: String = reg.get("service_name");
+    let version: String = reg.get("version");
+    assert_eq!(id, instance.instance_id().to_uuid());
+    assert_eq!(service_name, "registration_test");
+    assert_eq!(version, "1.0.100+test123");
     
     Ok(())
 }
@@ -366,25 +370,27 @@ async fn test_distributed_coordination_leader_heartbeat_simulation(ctx: TestCont
     // Simulate periodic heartbeat updates (this would normally be done by the coordination loop)
     for i in 0..5 {
         // Update instance last_seen timestamp
-        sqlx::query!(
-            "UPDATE core.satellite_instances SET last_seen = NOW() WHERE instance_id = $1",
-            instance.instance_id()
+        sqlx::query(
+            "UPDATE core.satellite_instances SET last_seen = NOW() WHERE instance_id = $1::uuid::ulid",
         )
+        .bind(instance.instance_id().to_uuid())
         .execute(pool)
         .await?;
         
         tokio::time::sleep(Duration::from_millis(100)).await;
         
         // Verify leadership is still held
-        let current_leader = sqlx::query!(
-            "SELECT instance_id FROM core.service_leadership WHERE service_name = $1",
-            "heartbeat_test"
+        let current_leader = sqlx::query(
+            "SELECT instance_id::uuid as id FROM core.service_leadership WHERE service_name = $1",
         )
+        .bind("heartbeat_test")
         .fetch_optional(pool)
         .await?;
         
         assert!(current_leader.is_some());
-        assert_eq!(current_leader.expect("Leader should exist").instance_id, *instance.instance_id());
+        let leader_row = current_leader.expect("Leader should exist");
+        let leader_id: sqlx::types::Uuid = leader_row.get("id");
+        assert_eq!(leader_id, instance.instance_id().to_uuid());
     }
     
     Ok(())

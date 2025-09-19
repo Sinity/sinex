@@ -63,12 +63,13 @@ pub struct FileChangeEvent {
 }
 
 /// File system watcher with security validation
+#[derive(Debug)]
 pub struct FileWatcher {
     config: FileWatcherConfig,
     _watcher: RecommendedWatcher,
     event_receiver: mpsc::Receiver<FileChangeEvent>,
     /// Validated watch roots for boundary checking
-    validated_watch_roots: Vec<Utf8PathBuf>,
+    _validated_watch_roots: Vec<Utf8PathBuf>,
 }
 
 impl FileWatcher {
@@ -136,7 +137,7 @@ impl FileWatcher {
             config,
             _watcher: watcher,
             event_receiver,
-            validated_watch_roots: validated_paths,
+            _validated_watch_roots: validated_paths,
         })
     }
 
@@ -157,6 +158,7 @@ impl FileWatcher {
 }
 
 /// Convert notify event to our file change event (legacy, non-secure version)
+#[allow(dead_code)]
 fn convert_notify_event(event: Event, allowed_kinds: &[FileChangeKind]) -> Option<FileChangeEvent> {
     let kind = match event.kind {
         EventKind::Create(_) => FileChangeKind::Created,

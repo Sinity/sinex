@@ -5,6 +5,7 @@ mod tests {
     use crate::db::schema::*;
     use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
     use crate::types::ulid::Ulid;
+    // Use sea_query from this crate for builders, but avoid mixing iden types
     use sea_query::{Alias, PostgresQueryBuilder, Query};
     use sinex_test_utils::{sinex_test, TestContext};
 
@@ -69,10 +70,15 @@ mod tests {
 
         // Build a query using SeaQuery and TableDef
         let query = Query::select()
-            .column(Alias::new(Events::Id))
-            .column(Alias::new(Events::Source))
-            .column(Alias::new(Events::EventType))
-            .from(Events::table_iden())
+            // Avoid cross-crate Iden types by using literal column names
+            .column(Alias::new(Events::primary_key()))
+            .column(Alias::new("source"))
+            .column(Alias::new("event_type"))
+            // Build table ref from strings to keep sea_query versions consistent
+            .from((
+                Alias::new(Events::schema_name()),
+                Alias::new(Events::table_name()),
+            ))
             .limit(1)
             .to_string(PostgresQueryBuilder);
 
@@ -99,9 +105,12 @@ mod tests {
         assert_eq!(EventPayloadSchemas::schema_name(), "sinex_schemas");
         assert_eq!(EventPayloadSchemas::primary_key(), "id");
 
-        assert_eq!(SourceMaterials::table_name(), "source_material_registry");
-        assert_eq!(SourceMaterials::schema_name(), "raw");
-        assert_eq!(SourceMaterials::primary_key(), "id");
+        assert_eq!(
+            SourceMaterialRegistry::table_name(),
+            "source_material_registry"
+        );
+        assert_eq!(SourceMaterialRegistry::schema_name(), "raw");
+        assert_eq!(SourceMaterialRegistry::primary_key(), "id");
 
         assert_eq!(OperationsLog::table_name(), "operations_log");
         assert_eq!(OperationsLog::schema_name(), "core");
@@ -109,11 +118,11 @@ mod tests {
 
         assert_eq!(Entities::table_name(), "entities");
         assert_eq!(Entities::schema_name(), "core");
-        assert_eq!(Entities::primary_key(), "entity_id");
+        assert_eq!(Entities::primary_key(), "id");
 
         assert_eq!(EntityRelations::table_name(), "entity_relations");
         assert_eq!(EntityRelations::schema_name(), "core");
-        assert_eq!(EntityRelations::primary_key(), "relation_id");
+        assert_eq!(EntityRelations::primary_key(), "id");
 
         Ok(())
     }

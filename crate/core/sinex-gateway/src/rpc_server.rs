@@ -41,7 +41,6 @@ use tower_http::cors::CorsLayer;
 
 // Standard library
 use sinex_core::environment::environment;
-use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,7 +146,7 @@ async fn handle_rpc(
         request.method, request.params
     );
 
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
     let method = request.method.clone();
 
     // Use shared dispatch function
@@ -175,7 +174,7 @@ async fn handle_rpc(
 #[derive(Debug)]
 enum BindAddress {
     Tcp { host: String, port: u16 },
-    UnixSocket { path: Utf8PathBuf },
+    UnixSocket { _path: Utf8PathBuf },
 }
 
 impl BindAddress {
@@ -199,7 +198,7 @@ impl BindAddress {
         }
 
         // Default to Unix socket elsewhere
-        BindAddress::UnixSocket { path: socket_path }
+        BindAddress::UnixSocket { _path: socket_path }
     }
 }
 

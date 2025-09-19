@@ -146,17 +146,17 @@ mod tests {
     #[sinex_test]
     fn test_timestamp_conversions() -> Result<()> {
         // Test seconds conversion
-        let dt = timestamp_to_datetime(1700000000);
+        let dt = timestamp_to_datetime(1700000000).unwrap();
         assert_eq!(dt.timestamp(), 1700000000);
 
         // Test with nanoseconds
-        let dt = timestamp_with_nanos_to_datetime(1700000000, 123456789);
+        let dt = timestamp_with_nanos_to_datetime(1700000000, 123456789).unwrap();
         assert_eq!(dt.timestamp(), 1700000000);
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
 
         // Test nanosecond conversion
         let timestamp_ns = 1_700_000_000_123_456_789_i64;
-        let dt = timestamp_nanos_to_datetime(timestamp_ns);
+        let dt = timestamp_nanos_to_datetime(timestamp_ns).unwrap();
         assert_eq!(dt.timestamp(), 1700000000);
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
         Ok(())

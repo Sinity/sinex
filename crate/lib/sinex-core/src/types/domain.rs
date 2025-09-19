@@ -435,6 +435,11 @@ impl SanitizedPath {
             return Err("Path cannot be empty".into());
         }
 
+        // Reject inputs containing traversal sequences upfront to be conservative
+        if path.contains("..") {
+            return Err("Path contains directory traversal sequences".into());
+        }
+
         // Parse as UTF-8 path for validation
         let utf8_path = Utf8Path::new(path);
 

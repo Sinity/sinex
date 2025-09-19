@@ -67,6 +67,11 @@ impl<T> NonEmptyVec<T> {
         self.inner.len()
     }
 
+    /// NonEmptyVec can never be empty by construction
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Push an element to the end
     pub fn push(&mut self, value: T) {
         self.inner.push(value);

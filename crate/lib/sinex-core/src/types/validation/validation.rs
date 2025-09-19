@@ -198,8 +198,8 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
         )));
     }
 
-    Ok(camino::Utf8PathBuf::from_path_buf(canonical_path)
-        .map_err(|_| ValidationError::Io("Canonical path contains invalid UTF-8".to_string()))?)
+    camino::Utf8PathBuf::from_path_buf(canonical_path)
+        .map_err(|_| ValidationError::Io("Canonical path contains invalid UTF-8".to_string()))
 }
 
 /// Validate JSON with size and depth limits

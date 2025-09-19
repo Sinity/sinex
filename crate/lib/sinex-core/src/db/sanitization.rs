@@ -194,8 +194,8 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Event, JsonValue};
-    use crate::types::domain::EventType;
+    use crate::models::{Event, JsonValue, Provenance};
+    use crate::types::domain::{EventSource, EventType};
     use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
 
@@ -203,11 +203,18 @@ mod tests {
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::<JsonValue>::schemaless(
+        let mut event = Event::dynamic(
             EventSource::new("../../../etc/passwd"),
             EventType::new("security.test"),
             json!({"path": "../../sensitive/file.txt"}),
-        );
+        )
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -224,11 +231,18 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::<JsonValue>::schemaless(
+        let mut event = Event::dynamic(
             EventSource::new("test\0source"),
             EventType::new("security.test"),
             json!({"data": "test\0value"}),
-        );
+        )
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -240,11 +254,18 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::<JsonValue>::schemaless(
+        let mut event = Event::dynamic(
             EventSource::new("security.test"),
             EventType::new("sql.injection"),
             json!({"query": "'; DROP TABLE events; --"}),
-        );
+        )
+        .with_provenance(Provenance::from_material(
+            crate::types::Id::<crate::models::SourceMaterial>::new(),
+            0,
+            None,
+            None,
+        ))
+        .build();
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(!was_modified);
@@ -267,29 +288,27 @@ mod tests {
     async fn test_generic_sanitizer_with_typed_event(
         ctx: TestContext,
     ) -> color_eyre::eyre::Result<()> {
+        use crate::models::Provenance;
+        use crate::types::domain::SanitizedPath;
         use crate::types::events::payloads::filesystem::FileCreatedPayload;
-        use crate::types::SanitizedPath;
 
         // Create a typed event with potentially malicious content
         let payload = FileCreatedPayload {
             path: SanitizedPath::from("../../../malicious/file.txt".to_string()),
             size: 1024,
-            modified_at: chrono::Utc::now(),
+            created_at: chrono::Utc::now(),
             permissions: Some(0o644),
         };
 
-        let mut event = Event::dynamic(
-            EventSource::new("../malicious-source"),
-            EventType::new("file.created"),
-            payload,
-        )
-        .with_provenance(Provenance::from_material(
-            crate::types::Id::<crate::models::SourceMaterial>::new(),
-            0,
-            None,
-            None,
-        ))
-        .build();
+        // Build a typed event (not JsonValue) and use the generic sanitizer
+        let mut event = Event::builder(payload)
+            .with_provenance(Provenance::from_material(
+                crate::types::Id::<crate::models::SourceMaterial>::new(),
+                0,
+                None,
+                None,
+            ))
+            .build();
 
         let was_modified = EventSanitizer::sanitize_event_generic(&mut event).unwrap();
         assert!(was_modified);

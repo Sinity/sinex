@@ -11,41 +11,10 @@ mod tests {
     use sqlx::PgPool;
 
     async fn setup_test_database() -> (TestContext, PgPool) {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool().clone();
+        let ctx = TestContext::new().await.expect("test DB init");
+        let pool = ctx.pool.clone();
 
-        // Ensure schema tables exist
-        sqlx::query!(
-            r#"
-            CREATE SCHEMA IF NOT EXISTS sinex_schemas;
-            
-            CREATE TABLE IF NOT EXISTS sinex_schemas.event_payload_schemas (
-                id UUID PRIMARY KEY DEFAULT gen_ulid(),
-                source TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                schema_version TEXT NOT NULL,
-                schema_content JSONB NOT NULL,
-                content_hash TEXT NOT NULL UNIQUE,
-                is_active BOOLEAN NOT NULL DEFAULT true,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS uk_schema_identity 
-            ON sinex_schemas.event_payload_schemas (source, event_type, schema_version);
-
-            CREATE TABLE IF NOT EXISTS sinex_schemas.validation_cache (
-                event_id UUID NOT NULL,
-                schema_id UUID NOT NULL,
-                is_valid BOOLEAN NOT NULL,
-                validation_errors JSONB,
-                validated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (event_id, schema_id)
-            );
-            "#
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        // Schema tables are created via migrations; no test-time DDL needed
 
         (ctx, pool)
     }
@@ -208,14 +177,7 @@ mod tests {
         assert!(schema.is_active);
 
         // Deprecate the schema
-        let request = DeprecateSchemaRequest {
-            schema_id: schema.id,
-            reason: "Schema is obsolete".to_string(),
-            migration_guide: Some("Use v2.0.0 instead".to_string()),
-            replacement_schema_id: None,
-        };
-
-        repo.deprecate_schema(request).await.unwrap();
+        repo.deprecate_schema(&schema.id).await.unwrap();
 
         // Verify it's no longer active
         let result = repo

@@ -107,6 +107,8 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         .validate()
         .map_err(|e| eyre!("Invalid pool configuration: {}", e))?;
 
+    // Keep environment behavior unchanged; do not force SQLx simple protocol here.
+
     // Validate configuration against PostgreSQL limits if requested
     if config.validate_against_postgres_max {
         if let Err(e) = validate_pool_config_against_postgres(database_url, config).await {
@@ -223,6 +225,8 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         idle_timeout_secs: 300,
         validate_against_postgres_max: false, // Skip validation in tests
     };
+
+    // Keep environment behavior unchanged during tests.
 
     let pool = PgPoolOptions::new()
         .max_connections(test_config.max_connections)

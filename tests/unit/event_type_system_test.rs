@@ -14,12 +14,12 @@ use sinex_test_utils::prelude::*;
 
 // Additional imports for specific payload types
 use sinex_core::db::models::event::SourceMaterial;
-use sinex_core::types::events::event_payload::EventPayload as _;
 use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_core::{Event, Id, Provenance};
+use sinex_core::EventPayload as _;
+use sinex_core::{Event, Id, JsonValue, Provenance};
 
 // =============================================================================
 // EVENT SOURCE CONSTANTS AND VALIDATION TESTS
@@ -172,7 +172,7 @@ async fn test_event_type_hierarchical_structure(_ctx: TestContext) -> color_eyre
 #[sinex_test]
 async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test FileCreatedPayload
-    let file_payload = FileCreatedPayload::test_default("/test/file.txt")
+    let file_payload = FileCreatedPayload::test_default("/test/file.txt".to_string())
         .with_size(1024)
         .with_permissions(0o644);
 
@@ -197,7 +197,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
     assert_eq!(file_event.payload.path.as_str(), "/test/file.txt");
 
     // Test FileModifiedPayload
-    let modified_payload = FileModifiedPayload::test_default("/test/modified.txt")
+    let modified_payload = FileModifiedPayload::test_default("/test/modified.txt".to_string())
         .with_size(2048)
         .with_modification_type("content");
 
@@ -234,7 +234,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
 async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
-        .with_working_directory("/home/user")
+        .with_working_directory("/home/user".to_string())
         .with_exit_status(0)
         .with_execution_time_ms(150)
         .with_shell_type("bash");
@@ -257,10 +257,11 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
     assert_eq!(kitty_event.payload.command.as_str(), "ls -la");
 
     // Test AtuinCommandExecutedPayload
-    let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", "/repo")
-        .with_exit_code(0)
-        .with_duration_ns(2000000)
-        .with_hostname("dev-machine");
+    let atuin_payload =
+        AtuinCommandExecutedPayload::test_default("git status", "/repo".to_string())
+            .with_exit_code(0)
+            .with_duration_ns(2000000)
+            .with_hostname("dev-machine");
 
     let prov =
         Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
@@ -430,10 +431,10 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx);
         let handle = task::spawn(async move {
-            let mut events: Vec<RawEvent> = Vec::new();
+            let mut events: Vec<Event<JsonValue>> = Vec::new();
 
             // Create filesystem event
-            let fs_payload = FileCreatedPayload::test_default(&format!("/test/file{}.txt", i))
+            let fs_payload = FileCreatedPayload::test_default(format!("/test/file{}.txt", i))
                 .with_size((i as u64) * 1024);
             let prov = Provenance::from_material(
                 Id::<SourceMaterial>::from_ulid(Ulid::new()),
@@ -453,8 +454,8 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
             );
 
             // Create shell event
-            let shell_payload = KittyCommandExecutedPayload::test_default(&format!("cmd{}", i))
-                .with_kitty_ids(&format!("win{}", i), &format!("tab{}", i));
+            let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{}", i))
+                .with_kitty_ids(format!("win{}", i), format!("tab{}", i));
             let prov = Provenance::from_material(
                 Id::<SourceMaterial>::from_ulid(Ulid::new()),
                 0,
@@ -477,13 +478,13 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
                 ctx_clone.pool.events().insert(event.clone()).await?;
             }
 
-            Ok::<(Vec<RawEvent>, usize), color_eyre::eyre::Error>((events, i))
+            Ok::<(Vec<Event<JsonValue>>, usize), color_eyre::eyre::Error>((events, i))
         });
         handles.push(handle);
     }
 
     // Wait for all tasks to complete
-    let results = futures::future::join_all(handles).await;
+    let results = future::join_all(handles).await;
 
     // Verify all tasks completed successfully
     assert_eq!(results.len(), 5);
@@ -570,13 +571,13 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
                 }
             }
 
-            Ok::<Vec<Id<RawEvent>>, color_eyre::eyre::Error>(event_ids)
+            Ok::<Vec<Id<Event<JsonValue>>>, color_eyre::eyre::Error>(event_ids)
         });
         handles.push(handle);
     }
 
     // Wait for all tasks to complete
-    let results = futures::future::join_all(handles).await;
+    let results = future::join_all(handles).await;
 
     // Collect all event IDs using ULID strings
     let mut all_ids = HashSet::new();

@@ -103,7 +103,16 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             core.revisions,
             core.entities,
             core.event_clusters,
-            sinex_schemas.processor_manifests
+            core.processor_checkpoints,
+            core.operations_log,
+            core.transactional_outbox,
+            core.blobs,
+            core.tags,
+            core.tagged_items,
+            raw.source_material_registry,
+            raw.temporal_ledger,
+            sinex_schemas.processor_manifests,
+            sinex_schemas.event_payload_schemas
         CASCADE
     "#,
     )
@@ -122,6 +131,15 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             "DELETE FROM core.entity_relations",
             "DELETE FROM core.revisions",
             "DELETE FROM sinex_schemas.processor_manifests",
+            "DELETE FROM sinex_schemas.event_payload_schemas",
+            "DELETE FROM core.processor_checkpoints",
+            "DELETE FROM core.operations_log",
+            "DELETE FROM core.transactional_outbox",
+            "DELETE FROM core.tags",
+            "DELETE FROM core.tagged_items",
+            "DELETE FROM core.blobs",
+            "DELETE FROM raw.temporal_ledger",
+            "DELETE FROM raw.source_material_registry",
             "DELETE FROM core.entities",
             "DELETE FROM core.event_clusters",
         ];
