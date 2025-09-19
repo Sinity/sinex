@@ -4494,11 +4494,18 @@ dependencies = [
 name = "sinex-workspace"
 version = "0.4.2"
 dependencies = [
+ "blake3",
  "chrono",
+ "color-eyre",
+ "futures",
+ "jsonschema",
+ "lazy_static",
  "proptest",
+ "regex",
  "rstest",
  "serde_json",
  "sinex-core",
+ "sinex-satellite-sdk",
  "sinex-test-utils",
  "tokio",
  "tracing",

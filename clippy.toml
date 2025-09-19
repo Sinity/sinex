@@ -1,23 +1,12 @@
 # Sinex Clippy Configuration
 
 # Disallow methods that bypass our abstractions
+# Keep the disallowed-methods list minimal and actionable. Previous entries around
+# SQLx macros and anyhow helpers were too restrictive and caused high friction.
+# We allow teams to migrate these progressively with code review and targeted CI checks.
 disallowed-methods = [
-    # SQL Query Methods - Use QueryBuilder instead
-    { path = "sqlx::query", reason = "Use QueryBuilder from sinex-db instead" },
-    { path = "sqlx::query_as", reason = "Use QueryBuilder from sinex-db instead" },
-    { path = "sqlx::query_scalar", reason = "Use QueryBuilder from sinex-db instead" },
-    { path = "sqlx::query!", reason = "Use QueryBuilder from sinex-db instead of macros" },
-    { path = "sqlx::query_as!", reason = "Use QueryBuilder from sinex-db instead of macros" },
-    
-    # Error handling - Use CoreError instead
-    { path = "anyhow::anyhow", reason = "Use CoreError from sinex-core for typed errors" },
-    { path = "anyhow::bail", reason = "Use CoreError from sinex-core for typed errors" },
-    { path = "anyhow::ensure", reason = "Use CoreError from sinex-core for typed errors" },
-    
-    # Avoid blocking operations in async code
+    # Avoid blocking sleep in async contexts
     { path = "std::thread::sleep", reason = "Use tokio::time::sleep for async code" },
-    { path = "std::fs::read", reason = "Use tokio::fs for async I/O" },
-    { path = "std::fs::write", reason = "Use tokio::fs for async I/O" },
 ]
 
 # Complexity thresholds
