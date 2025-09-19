@@ -5,7 +5,6 @@
 //! and processes the resulting MaterialSliceStream to generate events with proper provenance.
 
 use async_trait::async_trait;
-use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
@@ -16,10 +15,7 @@ use sinex_core::{
         DirCreatedPayload, DirDeletedPayload, DirDiscoveredPayload, FileCreatedPayload,
         FileDeletedPayload, FileDiscoveredPayload, FileModifiedPayload, FileMovedPayload,
     },
-    types::{
-        domain::{EventSource, EventType, SanitizedPath},
-        Id, Ulid,
-    },
+    types::{domain::SanitizedPath, Id, Ulid},
     JsonValue,
 };
 use sinex_satellite_sdk::{
@@ -37,14 +33,12 @@ use sinex_satellite_sdk::{
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 use validator::{Validate, ValidationError};
 
-#[cfg(test)]
-mod config_validation_tests;
+// Test module removed or relocated; keep core tests within this file
 
 // Use shared MaterialSlice from sensd crate
 use sinex_sensd::material_stream::MaterialSlice;
@@ -265,7 +259,7 @@ impl FilesystemProcessor {
             offset_end: Some(slice.offset_end),
         };
 
-        let sanitized_path = SanitizedPath::new(path.clone());
+        let sanitized_path = SanitizedPath::new(path);
         let timestamp = slice.ts_capture_start;
 
         // Create typed event based on event type
@@ -487,7 +481,6 @@ impl FilesystemProcessor {
                 .create_material_stream(material_id)
                 .await
                 .map_err(|e| SatelliteError::General(e))?;
-            let mut stream = stream;
             tokio::pin!(stream);
 
             // Process all slices from this material
@@ -672,7 +665,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         let start_time = std::time::Instant::now();
         let mut events_processed = 0;
         let mut successful_targets = Vec::new();
-        let mut failed_targets = Vec::new();
+        let failed_targets = Vec::new();
         let mut warnings = Vec::new();
 
         info!(

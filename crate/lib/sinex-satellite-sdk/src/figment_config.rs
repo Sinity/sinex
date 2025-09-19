@@ -268,8 +268,7 @@ pub fn generate_example_configs() -> std::io::Result<()> {
         retry_backoff_multiplier: 2.0,
     };
 
-    let toml = toml::to_string_pretty(&event_source)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let toml = toml::to_string_pretty(&event_source).map_err(std::io::Error::other)?;
     fs::write("event-source-example.toml", toml)?;
 
     // Example automaton config
@@ -293,8 +292,7 @@ pub fn generate_example_configs() -> std::io::Result<()> {
         max_processing_time_secs: 60,
     };
 
-    let toml = toml::to_string_pretty(&automaton)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let toml = toml::to_string_pretty(&automaton).map_err(std::io::Error::other)?;
     fs::write("automaton-example.toml", toml)?;
 
     Ok(())

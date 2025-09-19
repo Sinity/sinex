@@ -285,16 +285,13 @@ impl StreamManager {
     /// Create a subject for alerts
     pub fn alert_subject(severity: &str, component: &str) -> String {
         let env = environment();
-        env.nats_subject(&format!("sinex.alerts.{}.{}", severity, component))
+        env.nats_subject(&format!("sinex.alerts.{severity}.{component}"))
     }
 
     /// Create a subject for satellite control
     pub fn control_subject(satellite: &str, command: &str) -> String {
         let env = environment();
-        env.nats_subject(&format!(
-            "sinex.satellite.control.{}.{}",
-            satellite, command
-        ))
+        env.nats_subject(&format!("sinex.satellite.control.{satellite}.{command}"))
     }
 
     /// List all configured streams

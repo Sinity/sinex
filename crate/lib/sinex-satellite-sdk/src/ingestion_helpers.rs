@@ -226,12 +226,11 @@ impl IdempotenceKey {
 
     /// Generate SQL for insert_or_ignore semantics
     pub fn to_insert_sql(&self) -> String {
-        format!(
-            "INSERT INTO core.events (...) VALUES (...) 
+        "INSERT INTO core.events (...) VALUES (...) 
             ON CONFLICT (source_material_id, anchor_byte) 
             WHERE source_material_id IS NOT NULL 
-            DO NOTHING",
-        )
+            DO NOTHING"
+            .to_string()
     }
 
     /// Check if this key would conflict with existing events
@@ -263,7 +262,7 @@ pub struct AnchorComputer {
 
 impl AnchorComputer {
     /// Compute anchor byte for a given offset in the material
-    pub fn compute_anchor(&self, offset: i64, record_boundary: i64) -> i64 {
+    pub fn compute_anchor(&self, _offset: i64, record_boundary: i64) -> i64 {
         // For now, use the start of the record as the anchor
         // This ensures deterministic anchoring
         record_boundary

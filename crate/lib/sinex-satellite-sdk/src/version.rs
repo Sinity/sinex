@@ -35,7 +35,6 @@ impl SatelliteVersion {
     ///
     /// # Errors
     /// Returns `SatelliteError::Configuration` if any version information is invalid
-    #[must_use]
     pub fn current() -> crate::SatelliteResult<Self> {
         Ok(Self {
             version: satellite_version()?,
@@ -146,7 +145,6 @@ impl SatelliteInstance {
     ///
     /// # Errors
     /// Returns `SatelliteError::Configuration` if version information is invalid
-    #[must_use]
     pub fn new(instance_id: String, service_name: String) -> crate::SatelliteResult<Self> {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
@@ -210,7 +208,6 @@ impl SatelliteInstance {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the satellite version is invalid
-#[must_use]
 pub fn satellite_version() -> crate::SatelliteResult<Version> {
     Version::from_str(env!("SATELLITE_VERSION")).map_err(|e| {
         crate::SatelliteError::Configuration(format!("Invalid satellite version: {}", e))
@@ -231,7 +228,6 @@ pub fn satellite_commit_hash() -> String {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the commit count is invalid
-#[must_use]
 pub fn satellite_commit_count() -> crate::SatelliteResult<u32> {
     env!("SATELLITE_COMMIT_COUNT")
         .parse()
@@ -252,7 +248,6 @@ pub fn satellite_build_timestamp() -> String {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the dirty flag is invalid
-#[must_use]
 pub fn satellite_is_dirty() -> crate::SatelliteResult<bool> {
     env!("SATELLITE_IS_DIRTY")
         .parse()

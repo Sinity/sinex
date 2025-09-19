@@ -259,11 +259,12 @@ impl Default for ConsumerDefaults {
 
 impl NatsConfig {
     /// Load configuration from environment and files
-    pub fn from_env() -> Result<Self, figment::Error> {
+    pub fn from_env() -> Result<Self, Box<figment::Error>> {
         Figment::new()
             .merge(Toml::file("sinex.toml").nested())
             .merge(Env::prefixed("SINEX_").split("_"))
             .extract()
+            .map_err(Box::new)
     }
 
     /// Create a test configuration
@@ -395,7 +396,7 @@ fn validate_nats_urls(urls: &[String]) -> Result<(), ValidationError> {
         }
 
         // Use basic URL parsing to validate structure
-        if let Err(_) = url.parse::<url::Url>() {
+        if url.parse::<url::Url>().is_err() {
             return Err(ValidationError::new("invalid_url_format"));
         }
     }

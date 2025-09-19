@@ -91,11 +91,8 @@ impl NatsClient {
             .map_err(|e| NatsError::Connection(format!("Invalid server address: {}", e)))?;
 
         // Connect to NATS
-        let server_list = if servers.len() == 1 {
-            servers[0].clone()
-        } else {
-            servers[0].clone() // async-nats 0.37 doesn't support multiple servers in connect
-        };
+        // async-nats 0.37 doesn't support multiple servers in connect; pick the first
+        let server_list = servers[0].clone();
 
         let client = options
             .connect(server_list)

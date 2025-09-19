@@ -107,7 +107,7 @@ impl StageAsYouGoContext {
             "Registered in-flight source material"
         );
 
-        Ok(result.id.into())
+        Ok(result.id)
     }
 
     /// Create and send an event with attached source material reference

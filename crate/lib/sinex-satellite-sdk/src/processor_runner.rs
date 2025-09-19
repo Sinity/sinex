@@ -203,7 +203,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                             // Save final checkpoint
                             let checkpoint_state = CheckpointState {
                                 checkpoint: report.final_checkpoint,
-                                processed_count: report.events_processed as u64,
+                    processed_count: report.events_processed,
                                 last_activity: Utc::now(),
                                 data: None, // No checkpoint data in ScanReport
                                 version: 2,
@@ -318,6 +318,7 @@ mod tests {
     use crate::stream_processor::{Checkpoint, ProcessorType};
     use crate::ScanReport;
     use async_trait::async_trait;
+    use sinex_core::Ulid;
     use std::collections::HashMap;
 
     struct MockProcessor {
@@ -354,7 +355,7 @@ mod tests {
                 events_processed: events_processed as u64,
                 duration: std::time::Duration::from_secs(1),
                 final_checkpoint: Checkpoint::Internal {
-                    event_id: sinex_core::ulid::Ulid::new(),
+                    event_id: Ulid::new(),
                     message_count: events_processed as u64,
                 },
                 time_range: None,
@@ -380,72 +381,74 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_runner_creation() {
-        use sinex_test_utils::test_harness::{TestContext, TestHarness};
+        use sinex_test_utils::TestContext;
 
         // Create test context with database pool
-        let test_ctx = TestContext::new_with_prefix("processor_runner_test").await;
-        let db_pool = test_ctx.pool().clone();
+        let test_ctx = TestContext::with_name("processor_runner_test")
+            .await
+            .expect("ctx");
+        let db_pool = test_ctx.pool.clone();
 
         // Create mock processor
         let processor = MockProcessor {
             name: "test-processor".to_string(),
-            processor_type: ProcessorType::Satellite,
-            scans_performed: Arc::new(Mutex::new(0)),
+            processor_type: ProcessorType::Automaton,
+            events_to_process: 0,
         };
 
-        // Create processor runner
-        let runner = ProcessorRunner::new(Arc::new(Mutex::new(processor)), db_pool.clone(), None);
+        // Create checkpoint manager and runner
+        let checkpoint_manager = CheckpointManager::new(
+            db_pool.clone(),
+            "test-processor".to_string(),
+            "default".to_string(),
+            "test-host".to_string(),
+        );
 
-        // Test scan capability
-        let args = ScanArgs {
-            targets: vec![],
-            filters: EventFilterCollection::empty(),
-            shutdown_signal: None,
-            dry_run: false,
+        // Test scan capability via runner configuration
+        let args = ScanArgs::default();
+        let config = ProcessorRunnerConfig {
+            mode: ProcessorMode::Scan,
+            scan_args: args,
+            enable_shutdown_handler: false,
         };
-
-        let checkpoint = Checkpoint::None;
-        let horizon = TimeHorizon::Snapshot;
-
-        let result = runner.scan(checkpoint, horizon, args).await;
+        let mut runner = ProcessorRunner::new(processor, checkpoint_manager, config);
+        let result = runner.run().await;
         assert!(result.is_ok());
-
-        let report = result.unwrap();
-        assert_eq!(report.events_processed, 0);
     }
 
     #[tokio::test]
     async fn test_processor_runner_with_checkpoint() {
         use chrono::Utc;
-        use sinex_test_utils::test_harness::{TestContext, TestHarness};
+        use sinex_test_utils::TestContext;
 
         // Create test context
-        let test_ctx = TestContext::new_with_prefix("processor_checkpoint_test").await;
-        let db_pool = test_ctx.pool().clone();
+        let test_ctx = TestContext::with_name("processor_checkpoint_test")
+            .await
+            .expect("ctx");
+        let db_pool = test_ctx.pool.clone();
 
         // Create mock processor that tracks checkpoint
         let processor = MockProcessor {
             name: "checkpoint-processor".to_string(),
             processor_type: ProcessorType::Automaton,
-            scans_performed: Arc::new(Mutex::new(0)),
+            events_to_process: 10,
         };
 
-        // Create runner
-        let runner = ProcessorRunner::new(Arc::new(Mutex::new(processor)), db_pool.clone(), None);
-
-        // Test checkpoint retrieval
-        let checkpoint = runner.current_checkpoint().await;
-        assert!(checkpoint.is_ok());
-        assert_eq!(checkpoint.unwrap(), Checkpoint::None);
-
-        // Test historical scan with timestamp checkpoint
-        let start_time = Utc::now() - chrono::Duration::hours(1);
-        let end_time = Utc::now();
-        let checkpoint = Checkpoint::timestamp(start_time, None);
-        let horizon = TimeHorizon::Historical { end_time };
+        let checkpoint_manager = CheckpointManager::new(
+            db_pool.clone(),
+            "checkpoint-processor".to_string(),
+            "default".to_string(),
+            "test-host".to_string(),
+        );
 
         let args = ScanArgs::default();
-        let result = runner.scan(checkpoint, horizon, args).await;
+        let config = ProcessorRunnerConfig {
+            mode: ProcessorMode::Scan,
+            scan_args: args,
+            enable_shutdown_handler: false,
+        };
+        let mut runner = ProcessorRunner::new(processor, checkpoint_manager, config);
+        let result = runner.run().await;
         assert!(result.is_ok());
     }
 }

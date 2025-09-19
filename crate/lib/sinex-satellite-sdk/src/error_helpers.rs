@@ -141,7 +141,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_io_error_with_context() -> TestResult {
+    fn test_io_error_with_context() -> color_eyre::eyre::Result<()> {
         // Test various IO error types with context
         let test_cases = vec![
             (ErrorKind::NotFound, "File not found error"),
@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_io_error_with_empty_context() -> TestResult {
+    fn test_io_error_with_empty_context() -> color_eyre::eyre::Result<()> {
         let io_error = std::io::Error::new(ErrorKind::NotFound, "test error");
         let satellite_error = io_error_with_context(io_error, "");
 
@@ -198,7 +198,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_utf8_error_with_context() -> TestResult {
+    fn test_utf8_error_with_context() -> color_eyre::eyre::Result<()> {
         // Create invalid UTF-8 bytes
         let invalid_utf8 = vec![0xFF, 0xFE, 0xFD];
         let utf8_error = String::from_utf8(invalid_utf8).unwrap_err();
@@ -229,7 +229,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_json_error_with_context() -> TestResult {
+    fn test_json_error_with_context() -> color_eyre::eyre::Result<()> {
         // Test various JSON parsing errors
         let invalid_json_strings = vec![
             ("{invalid_json}", "Malformed JSON object"),
@@ -274,7 +274,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_processing_error() -> TestResult {
+    fn test_processing_error() -> color_eyre::eyre::Result<()> {
         let error = processing_error("Something went wrong");
 
         match error {
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_processing_error_fmt() -> TestResult {
+    fn test_processing_error_fmt() -> color_eyre::eyre::Result<()> {
         let value = 42;
         let error = processing_error_fmt(format_args!("Value {} is invalid", value));
 
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_processing_error_with_special_characters() -> TestResult {
+    fn test_processing_error_with_special_characters() -> color_eyre::eyre::Result<()> {
         // Test that special characters in error messages are preserved
         let special_message = "Error: 100% failed with UTF-8 chars: ñ, é, 中文";
         let error = processing_error(special_message);
@@ -323,7 +323,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_error_chain_context_preservation() -> TestResult {
+    fn test_error_chain_context_preservation() -> color_eyre::eyre::Result<()> {
         // Test that error context is properly preserved through multiple conversions
         let original_io_error = std::io::Error::new(ErrorKind::NotFound, "file.txt");
 
@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_error_helpers_with_empty_strings() -> TestResult {
+    fn test_error_helpers_with_empty_strings() -> color_eyre::eyre::Result<()> {
         // Test edge cases with empty strings
 
         // Empty JSON should produce a valid error
@@ -371,7 +371,7 @@ mod tests {
     // =============================================================================
 
     #[sinex_test]
-    fn test_error_display_formatting() -> TestResult {
+    fn test_error_display_formatting() -> color_eyre::eyre::Result<()> {
         let error = processing_error("Test error message");
 
         // Test Display implementation

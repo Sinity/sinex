@@ -1,3 +1,11 @@
+#![allow(
+    unexpected_cfgs,
+    clippy::large_enum_variant,
+    clippy::needless_borrow,
+    clippy::mem_replace_option_with_none,
+    clippy::manual_flatten,
+    clippy::uninlined_format_args
+)]
 //! Sinex Satellite SDK
 //!
 //! Shared library for building Sinex satellite services (event sources and automata).
@@ -331,10 +339,10 @@ pub enum SatelliteError {
     Configuration(String),
 
     #[error("gRPC communication error: {0}")]
-    Grpc(#[from] tonic::Status),
+    Grpc(Box<tonic::Status>),
 
     #[error("gRPC transport error: {0}")]
-    GrpcTransport(#[from] tonic::transport::Error),
+    GrpcTransport(Box<tonic::transport::Error>),
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -365,6 +373,18 @@ pub enum SatelliteError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+}
+
+impl From<tonic::Status> for SatelliteError {
+    fn from(e: tonic::Status) -> Self {
+        SatelliteError::Grpc(Box::new(e))
+    }
+}
+
+impl From<tonic::transport::Error> for SatelliteError {
+    fn from(e: tonic::transport::Error) -> Self {
+        SatelliteError::GrpcTransport(Box::new(e))
+    }
 }
 
 impl From<SatelliteError> for sinex_core::error::SinexError {

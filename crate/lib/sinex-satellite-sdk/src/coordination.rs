@@ -513,7 +513,7 @@ impl SatelliteCoordination {
     /// Monitor for handoff requests from newer versions
     async fn monitor_handoff_requests(
         &self,
-        sender: mpsc::Sender<HandoffRequest>,
+        _sender: mpsc::Sender<HandoffRequest>,
     ) -> Result<HandoffRequest> {
         loop {
             // TODO: The satellite_signals table doesn't exist in the current schema

@@ -440,7 +440,7 @@ impl BlobManager {
         let hash = annex_key
             .split("-s")
             .next()
-            .and_then(|s| s.split('-').last())
+            .and_then(|s| s.split('-').next_back())
             .ok_or_else(|| eyre!("Could not extract hash from annex key"))?;
 
         self.db_pool

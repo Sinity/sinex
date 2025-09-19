@@ -464,8 +464,6 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
     /// Run the CLI with parsed arguments
     pub async fn run(&mut self, args: ProcessorCli) -> color_eyre::eyre::Result<()> {
         use crate::grpc_client::IngestClient;
-        #[cfg(feature = "nats-bypass")]
-        use crate::nats::config::NatsConfig;
         use crate::stream_processor::{ScanArgs, StreamProcessorRunner};
         use sinex_core::db::SqlxPgPool;
 

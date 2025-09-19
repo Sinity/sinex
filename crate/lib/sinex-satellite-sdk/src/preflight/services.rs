@@ -43,7 +43,7 @@ impl FromStr for ServiceStatus {
             "active" => Ok(ServiceStatus::Active),
             "inactive" => Ok(ServiceStatus::Inactive),
             "failed" => Ok(ServiceStatus::Failed),
-            "unknown" | _ => Ok(ServiceStatus::Unknown),
+            _ => Ok(ServiceStatus::Unknown),
         }
     }
 }

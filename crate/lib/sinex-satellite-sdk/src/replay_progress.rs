@@ -75,7 +75,7 @@ pub struct ReplayCheckpoint {
 #[derive(Clone)]
 pub struct ProgressTracker {
     inner: Arc<RwLock<ReplayProgress>>,
-    update_callback: Option<Arc<dyn Fn(&ReplayProgress) + Send + Sync>>,
+    update_callback: Option<UpdateCallback>,
 }
 
 impl ProgressTracker {
@@ -394,3 +394,4 @@ impl ProgressReporter for ConsoleProgressReporter {
         tracing::error!("Replay error: {}", message);
     }
 }
+type UpdateCallback = Arc<dyn Fn(&ReplayProgress) + Send + Sync>;

@@ -8,7 +8,6 @@ use super::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
-use sinex_core::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::{db::models::Event, JsonValue, Provenance};
 use std::sync::Arc;
@@ -576,14 +575,12 @@ impl BufferedPublisher {
 
         debug!(batch_size = event_batch.len(), "Flushing event batch");
 
-        match publisher.publish_events_batch(&event_batch).await {
+        match publisher.publish_events_batch(event_batch).await {
             Ok(acks) => {
                 // Send successful responses
                 for (i, ack) in acks.into_iter().enumerate() {
                     if i < pending_responses.len() {
-                        if let Some(response_tx) =
-                            std::mem::replace(&mut pending_responses[i], None)
-                        {
+                        if let Some(response_tx) = pending_responses[i].take() {
                             let _ = response_tx.send(Ok(ack));
                         }
                     }
@@ -593,10 +590,8 @@ impl BufferedPublisher {
             }
             Err(e) => {
                 // Send error to all pending responses
-                for response_tx in pending_responses.drain(0..event_batch.len()) {
-                    if let Some(response_tx) = response_tx {
-                        let _ = response_tx.send(Err(e.clone()));
-                    }
+                for response_tx in pending_responses.drain(0..event_batch.len()).flatten() {
+                    let _ = response_tx.send(Err(e.clone()));
                 }
             }
         }
@@ -632,7 +627,7 @@ impl BufferedPublisher {
         // Send responses back
         for (i, result) in responses.into_iter().enumerate() {
             if i < pending_responses.len() {
-                if let Some(response_tx) = std::mem::replace(&mut pending_responses[i], None) {
+                if let Some(response_tx) = pending_responses[i].take() {
                     let _ = response_tx.send(result);
                 }
             }

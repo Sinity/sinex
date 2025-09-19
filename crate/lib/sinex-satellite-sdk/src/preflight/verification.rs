@@ -11,10 +11,8 @@
 use chrono::Utc;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
-use sinex_core::db::models::Event;
-use sinex_core::types::Id;
+// use sinex_core::db::models::Event;
 use sinex_core::DbPoolExt;
-use sinex_core::JsonValue;
 use sinex_core::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -245,7 +243,7 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
 }
 
 /// Test transaction operations
-async fn test_transactions(pool: &PgPool, _messages: &mut Vec<String>) -> Result<Value> {
+async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> Result<Value> {
     // Test committed transaction
     let tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
 
@@ -265,11 +263,7 @@ async fn test_transactions(pool: &PgPool, _messages: &mut Vec<String>) -> Result
     let committed_id = committed_event
         .id
         .wrap_err("Committed event should have an ID")?;
-    let verify_commit = pool
-        .events()
-        .get_by_id(Id::<Event<JsonValue>>::from(committed_id))
-        .await?
-        .is_some();
+    let verify_commit = pool.events().get_by_id(committed_id).await?.is_some();
 
     // Test rollback
     let tx_rollback = pool
@@ -365,7 +359,7 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
 }
 
 /// Test database extensions
-async fn test_database_extensions(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Result<Value> {
     let mut tested_extensions = HashMap::new();
 
     // Test UUID generation
@@ -464,7 +458,7 @@ async fn test_database_extensions(pool: &PgPool, messages: &mut Vec<String>) -> 
 }
 
 /// Verify event pipeline
-async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_event_pipeline(_messages: &mut [String]) -> Result<Value> {
     let pool = get_test_pool().await?;
 
     // Test rapid event ingestion
@@ -522,7 +516,7 @@ async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
 }
 
 /// Verify service integration
-async fn verify_service_integration(_messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
     let pool = get_test_pool().await?;
 
     // Check if processor_checkpoints table exists
