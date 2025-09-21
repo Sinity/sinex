@@ -46,7 +46,7 @@ use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::{Event, Provenance};
 use sinex_core::types::{DbPool, Ulid};
 
-use sinex_core::{DbPoolExt, EnhancedRepository};
+use sinex_core::DbPoolExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

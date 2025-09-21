@@ -77,9 +77,6 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_core::*;
-        use sinex_core::*;
-
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(
             &self
@@ -165,6 +162,7 @@ impl TestScenarioBuilder {
 }
 
 /// Builder for creating database analysis metrics
+#[allow(unexpected_cfgs)]
 #[derive(Clone, Debug, Builder)]
 #[builder(on(String, into))]
 pub(crate) struct DatabaseMetricsBuilder {

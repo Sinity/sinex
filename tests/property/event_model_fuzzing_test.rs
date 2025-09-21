@@ -23,14 +23,13 @@
 use sinex_test_utils::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};
-use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,
 };
-use sinex_core::{Event, Id, JsonValue, Ulid}; // Modern Event API
+use sinex_core::{Event, Id}; // Modern Event API helpers
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data

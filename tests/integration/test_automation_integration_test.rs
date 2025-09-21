@@ -167,18 +167,18 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> color_eyre::ey
 
     // Initialize multiple automata by creating their CheckpointManagers
     let mut managers = HashMap::new();
-    for name in &automaton_names {
+    for &name in &automaton_names {
         let manager = CheckpointManager::new(
             ctx.pool.clone(),
             name.to_string(),
             "default".to_string(),
             format!("test-consumer-{}", name),
         );
-        managers.insert(name.clone(), manager);
+        managers.insert(name.to_string(), manager);
     }
 
     // Simulate concurrent processing by each automaton
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, &name) in automaton_names.iter().enumerate() {
         let manager = managers.get(name).unwrap();
 
         // Load initial checkpoint
@@ -205,7 +205,7 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> color_eyre::ey
     }
 
     // Verify all automata processed events without conflicts
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, &name) in automaton_names.iter().enumerate() {
         let manager = managers.get(name).unwrap();
         let checkpoint = manager.load_checkpoint().await?;
         let expected_count = (i + 1) as u64;

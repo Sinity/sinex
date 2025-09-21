@@ -139,7 +139,9 @@ impl DocumentProcessor {
         info!("Processing material: {}", material_id);
 
         // Create stream for material slices
-        let stream = self.create_material_stream(material_id, db_pool).await?;
+        let stream = self
+            .create_material_stream(material_id, db_pool.clone())
+            .await?;
         pin_mut!(stream);
 
         let mut events_generated = 0u64;
@@ -205,11 +207,12 @@ impl DocumentProcessor {
     async fn create_material_stream(
         &self,
         material_id: Ulid,
-        db_pool: &PgPool,
+        db_pool: PgPool,
     ) -> Result<impl tokio_stream::Stream<Item = Result<MaterialSlice>> + '_> {
         let batch_size = self.config.batch_size;
 
         // Query temporal ledger for slices
+        let pool = db_pool;
         let stream = async_stream::stream! {
             let mut offset = 0i64;
 
@@ -217,17 +220,17 @@ impl DocumentProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        tl.material_id as "material_id: Ulid",
+                        tl.source_material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        tl.note,
+                        NULL::text as note,
                         sm.optional_blob_id as "optional_blob_id?: Ulid",
-                        sm.data as "inline_data?: Vec<u8>"
+                        NULL::bytea as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
                         ON sm.id = tl.source_material_id
-                    WHERE tl.material_id = $1::ulid
+                    WHERE tl.source_material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
                     LIMIT $3
@@ -236,7 +239,7 @@ impl DocumentProcessor {
                     offset,
                     batch_size as i64,
                 )
-                .fetch_all(db_pool)
+                .fetch_all(&pool)
                 .await;
 
                 match slices {
@@ -258,7 +261,7 @@ impl DocumentProcessor {
                                 }
                             } else if let Some(blob_id) = record.optional_blob_id {
                                 // Load from blob storage
-                                match self.load_blob_data(blob_id, db_pool).await {
+                                match self.load_blob_data(blob_id, &pool).await {
                                     Ok(blob_data) => {
                                         // Extract slice from blob based on offsets
                                         let start = record.offset_start as usize;
@@ -318,7 +321,7 @@ impl DocumentProcessor {
                 content_hash,
                 size_bytes
             FROM core.blobs
-            WHERE id = $1::uuid
+            WHERE id::uuid = $1::uuid
             "#,
             ulid_to_uuid(blob_id),
         )

@@ -9,6 +9,7 @@
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
+use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::sinex_test;
@@ -27,12 +28,9 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
             ulids.push(Ulid::new());
         }
 
-        // Property: All ULIDs should be unique (check pairwise)
-        for (i, ulid1) in ulids.iter().enumerate() {
-            for ulid2 in ulids.iter().skip(i + 1) {
-                prop_assert_ne!(ulid1, ulid2);
-            }
-        }
+        // Property: All ULIDs should be unique
+        let unique: HashSet<_> = ulids.iter().cloned().collect();
+        prop_assert_eq!(unique.len(), ulids.len());
 
         // Property: ULIDs should be generally in temporal order
         for window in ulids.windows(2) {
@@ -413,8 +411,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
         thread_count in 2..10usize,
         operations_per_thread in 10..100usize
     )| {
-        use parking_lot::Mutex;
-        use std::sync::Arc;
+        use std::sync::{Arc, Mutex};
         use std::thread;
 
         let results = Arc::new(Mutex::new(Vec::new()));
@@ -428,7 +425,8 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
                 for _ in 0..operations_per_thread {
                     thread_ulids.push(Ulid::new());
                 }
-                results_clone.lock().extend(thread_ulids);
+                let mut guard = results_clone.lock().expect("mutex poisoned");
+                guard.extend(thread_ulids);
             });
             handles.push(handle);
         }
@@ -437,18 +435,15 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
             handle.join().unwrap();
         }
 
-        let final_results = results.lock();
+        let final_results = results.lock().expect("mutex poisoned");
         let expected_count = thread_count * operations_per_thread;
 
         // Property: Should have expected number of ULIDs
         prop_assert_eq!(final_results.len(), expected_count);
 
-        // Property: All ULIDs should be unique despite concurrent generation (check pairwise)
-        for (i, ulid1) in final_results.iter().enumerate() {
-            for ulid2 in final_results.iter().skip(i + 1) {
-                prop_assert_ne!(ulid1, ulid2);
-            }
-        }
+        // Property: All ULIDs should be unique despite concurrent generation
+        let unique: HashSet<_> = final_results.iter().cloned().collect();
+        prop_assert_eq!(unique.len(), final_results.len());
     });
     Ok(())
 }

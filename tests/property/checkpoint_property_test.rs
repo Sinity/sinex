@@ -3,12 +3,33 @@
 //! Tests that verify checkpoint consistency, recovery, and concurrency properties
 //! using modern test infrastructure.
 
+#![allow(dead_code)]
+
+use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_satellite_sdk::Checkpoint;
 use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+
+static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+    Mutex::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio test runtime"),
+    )
+});
+
+fn run_async<F, T>(future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let runtime = TEST_RUNTIME.lock().expect("tokio runtime mutex poisoned");
+    runtime.block_on(future)
+}
 
 // =============================================================================
 // Property Test Strategies
@@ -41,7 +62,7 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 // Property Tests
 // =============================================================================
 
-/// Test that checkpoint updates are idempotent
+// Test that checkpoint updates are idempotent
 proptest! {
     fn checkpoint_updates_are_idempotent(
         processor_name in processor_names(),
@@ -49,8 +70,7 @@ proptest! {
         last_processed_id in prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"),
         checkpoint_data in checkpoint_data(),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -89,11 +109,11 @@ proptest! {
             prop_assert!(state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint recovery under various failure scenarios
+// Test checkpoint recovery under various failure scenarios
 proptest! {
     fn checkpoint_recovery_is_robust(
         processor_name in processor_names(),
@@ -102,8 +122,7 @@ proptest! {
             1..=10
         ),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -138,18 +157,17 @@ proptest! {
             prop_assert_eq!(state.max_processed, expected_final_count);
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test concurrent checkpoint access
+// Test concurrent checkpoint access
 proptest! {
     fn concurrent_checkpoint_access_is_safe(
         processor_name in processor_names(),
         concurrent_updates in proptest::collection::vec(0u64..1000u64, 1..=20),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -165,7 +183,7 @@ proptest! {
             for (i, processed_count) in concurrent_updates.iter().enumerate() {
                 let manager = checkpoint_manager.clone();
                 let count = *processed_count;
-                let handle: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let state = CheckpointState {
                         checkpoint: Checkpoint::Stream {
                             message_id: format!("concurrent-{}", i),
@@ -197,19 +215,18 @@ proptest! {
             prop_assert!(final_state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint state transitions
+// Test checkpoint state transitions
 proptest! {
     fn checkpoint_state_transitions_are_valid(
         processor_name in processor_names(),
         initial_count in 0u64..100u64,
         increments in proptest::collection::vec(1u64..100u64, 1..=10),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -252,11 +269,11 @@ proptest! {
             }
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint data integrity
+// Test checkpoint data integrity
 proptest! {
     fn checkpoint_data_integrity_is_preserved(
         processor_name in processor_names(),
@@ -270,8 +287,7 @@ proptest! {
             1..=50
         ),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -334,18 +350,17 @@ proptest! {
             prop_assert!(final_state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint cleanup behavior
+// Test checkpoint cleanup behavior
 proptest! {
     fn checkpoint_cleanup_maintains_consistency(
         processor_names in proptest::collection::vec(processor_names(), 1..=10),
         cleanup_threshold in 1u64..100u64,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -396,7 +411,7 @@ proptest! {
             prop_assert!(remaining_checkpoint.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 

@@ -3,7 +3,6 @@
 //! Tests schema validation logic, error handling, and edge cases
 //! without requiring full database integration.
 
-use lazy_static::lazy_static;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
 

@@ -4,30 +4,25 @@
 //! command events from multiple sources (kitty, atuin, shell history).
 
 use async_trait::async_trait;
-use camino::Utf8PathBuf;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
-use serde_json::{json, Value};
+use serde_json::Value;
 use sinex_core::events::CanonicalCommandPayload;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
-use sinex_core::{Event, JsonValue, Provenance};
-use sinex_core::{EventSource, EventType, HostName};
+use sinex_core::EventType;
+use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
+    cli::{CoverageAnalysis, ExportFormat, IngestionHistoryEntry},
     stream_processor::{
         Checkpoint, ProcessingStats, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
     },
-    SatelliteError, SatelliteResult,
+    ExplorationProvider, SatelliteError, SatelliteResult, SourceState,
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
-use tokio::time::Duration as TokioDuration;
 use tracing::{debug, info, warn};
 
 // Helper trait for extracting values from JSON

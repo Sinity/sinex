@@ -453,6 +453,7 @@ pub mod prelude {
         assert_debug_snapshot, assert_json_snapshot, assert_snapshot, assert_yaml_snapshot,
     };
     pub use rstest::{fixture, rstest};
+    #[allow(deprecated)]
     pub use similar_asserts::{assert_eq as assert_similar, assert_str_eq};
     pub use tracing_test::traced_test;
 

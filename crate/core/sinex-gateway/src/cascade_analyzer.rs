@@ -125,6 +125,7 @@ pub struct StreamingCascadeAnalyzer {
     config: CascadeAnalyzerConfig,
 }
 
+#[allow(dead_code)]
 impl StreamingCascadeAnalyzer {
     /// Create new analyzer with default configuration
     pub fn new(pool: PgPool) -> Self {

@@ -119,12 +119,6 @@ fn arb_version() -> impl Strategy<Value = String> {
     "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(-[a-zA-Z0-9-]+)?"
 }
 
-/// Generate arbitrary ULIDs for testing
-fn arb_ulid() -> impl Strategy<Value = Ulid> {
-    // Just generate new ULIDs - they're already random and suitable for testing
-    Just(()).prop_map(|_| Ulid::new())
-}
-
 /// Generate arbitrary timestamps within a reasonable range
 fn arb_timestamp() -> impl Strategy<Value = chrono::DateTime<Utc>> {
     // Generate timestamps from 1 year ago to 1 hour in the future
@@ -175,7 +169,7 @@ fn test_event_serde_roundtrip() -> Result<()> {
         let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
 
         // Should be identical
-        prop_assert_eq!(event.id, deserialized.id);
+        prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
         // Compare derived ingest times via ULID timestamps

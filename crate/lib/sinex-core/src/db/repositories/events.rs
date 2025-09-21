@@ -656,7 +656,6 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
     pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event<JsonValue>>> {
-        use crate::db::schema::Events;
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
         let limit = filters.limit.unwrap_or(100) as u64;
@@ -832,7 +831,6 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
     ) -> DbResult<Vec<TimeBucketResult>> {
         // Use SeaQuery for dynamic query building with proper escaping
-        use crate::db::schema::Events;
         use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 
         let query = Query::select()
@@ -1265,8 +1263,8 @@ impl<'a> EventRepository<'a> {
     pub async fn delete_annotation_with_context(
         &self,
         id: Id<EventAnnotation>,
-        deleted_by: &str,
-        deletion_reason: &str,
+        _deleted_by: &str,
+        _deletion_reason: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
             "DELETE FROM core.event_annotations WHERE id = $1",
@@ -1645,16 +1643,16 @@ impl<'a> EventRepository<'a> {
 
         // Build dynamic DELETE query based on filters
         let mut query_parts = vec!["DELETE FROM core.events WHERE 1=1".to_string()];
-        let mut bind_index = 1;
+        let mut _bind_index = 1;
 
-        if let Some(source) = source {
-            query_parts.push(format!(" AND source = ${}", bind_index));
-            bind_index += 1;
+        if source.is_some() {
+            query_parts.push(format!(" AND source = ${}", _bind_index));
+            _bind_index += 1;
         }
 
-        if let Some(event_type) = event_type {
-            query_parts.push(format!(" AND event_type = ${}", bind_index));
-            bind_index += 1;
+        if event_type.is_some() {
+            query_parts.push(format!(" AND event_type = ${}", _bind_index));
+            _bind_index += 1;
         }
 
         // Add safety constraint to only delete test events
@@ -2070,14 +2068,14 @@ mod tests {
             EventType::new("test.event"),
             json!({"test": "data"}),
         )
-        .with_host(HostName::new("test-host"))
         .with_provenance(Provenance::from_material(
             crate::types::Id::<crate::models::SourceMaterial>::new(),
             0,
             None,
             None,
         ))
-        .build();
+        .build()
+        .with_host(HostName::new("test-host"));
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         // In production, all events MUST go through ingestd service
@@ -2105,14 +2103,14 @@ mod tests {
             EventType::new("source.event"),
             json!({"original": true}),
         )
-        .with_host(HostName::new("test-host"))
         .with_provenance(Provenance::from_material(
             crate::types::Id::<crate::models::SourceMaterial>::new(),
             0,
             None,
             None,
         ))
-        .build();
+        .build()
+        .with_host(HostName::new("test-host"));
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let source = pool.events().insert(source_event).await?;
@@ -2124,9 +2122,9 @@ mod tests {
             EventType::new("derived.event"),
             json!({"derived": true}),
         )
-        .with_host(HostName::new("test-host"))
         .with_provenance(Provenance::from_synthesis(vec![source_id.clone()]).unwrap())
-        .build();
+        .build()
+        .with_host(HostName::new("test-host"));
 
         // TEST-ONLY: Direct repository access bypasses single-writer invariant
         let inserted = pool.events().insert(derived_event).await?;

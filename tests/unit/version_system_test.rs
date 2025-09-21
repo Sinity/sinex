@@ -286,13 +286,13 @@ async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::
     let newer_candidate = LeadershipCandidate {
         version: newer_version,
         start_time: now,
-        instance_id: "newer".to_string(),
+        _instance_id: "newer".to_string(),
     };
 
     let older_candidate = LeadershipCandidate {
         version: older_version,
         start_time: now,
-        instance_id: "older".to_string(),
+        _instance_id: "older".to_string(),
     };
 
     // Newer version should win
@@ -310,13 +310,13 @@ async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::
     let earlier_candidate = LeadershipCandidate {
         version: same_version,
         start_time: earlier_time,
-        instance_id: "earlier".to_string(),
+        _instance_id: "earlier".to_string(),
     };
 
     let later_candidate = LeadershipCandidate {
         version: same_version,
         start_time: now,
-        instance_id: "later".to_string(),
+        _instance_id: "later".to_string(),
     };
 
     // Earlier start time should win for same version
@@ -339,7 +339,7 @@ async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Resul
             patch: 100,
         },
         start_time: base_time - std::time::Duration::from_secs(60),
-        instance_id: "earlier".to_string(),
+        _instance_id: "earlier".to_string(),
     };
 
     let later = LeadershipCandidate {
@@ -349,7 +349,7 @@ async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Resul
             patch: 100,
         },
         start_time: base_time - std::time::Duration::from_secs(30),
-        instance_id: "later".to_string(),
+        _instance_id: "later".to_string(),
     };
 
     // Earlier start time should win (stability preference)
@@ -487,7 +487,7 @@ struct InstanceMetadata {
 struct LeadershipCandidate {
     version: SimpleVersion,
     start_time: std::time::SystemTime,
-    instance_id: String,
+    _instance_id: String,
 }
 
 #[derive(Debug)]

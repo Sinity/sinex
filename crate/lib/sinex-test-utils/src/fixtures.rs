@@ -1,8 +1,6 @@
 // Test Fixture Management System
 
 use sinex_core::types::domain::CommandText;
-use sinex_core::types::events::payloads::shell::KittyCommandExecutedPayload;
-use sinex_core::types::events::payloads::window::HyprlandWindowFocusedPayload;
 //
 // Provides reusable test data with proper lifecycle management for Sinex tests.
 // Features:
@@ -39,11 +37,7 @@ use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
 use sinex_core::types::Id;
-use sinex_core::EnhancedRepository;
-use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, JsonValue, Operation,
-    OperationRecord, Provenance, SourceMaterial,
-};
+use sinex_core::Provenance;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1091,7 +1085,7 @@ pub(crate) async fn cleanup_fixture<T: 'static>(key: &str) -> Result<()> {
 async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidationFixture> {
     let mut valid_events = Vec::new();
     let mut invalid_events = Vec::new();
-    let mut schema_ids = Vec::new();
+    let schema_ids = Vec::new();
     let mut validation_errors = Vec::new();
 
     // TODO: Implement schema validation fixture creation once schema management is available
@@ -1405,6 +1399,8 @@ macro_rules! fixture {
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use sinex_core::EnhancedRepository;
+    use sinex_core::JsonValue;
     use std::sync::Arc;
     use std::time::Duration;
 

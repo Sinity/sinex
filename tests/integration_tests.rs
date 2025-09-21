@@ -414,14 +414,14 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
     });
 
     // Register schema - using repository directly
-    use sinex_core::db::repositories::events::NewSchema;
-    let new_schema = NewSchema {
+    use sinex_core::db::repositories::schema_management::NewEventSchema;
+    let new_schema = NewEventSchema {
         source: "filesystem".to_string(),
         event_type: "file.created".to_string(),
         schema_version: "1.0.0".to_string(),
         schema_content: schema,
     };
-    let _schema = ctx.pool.events().register_schema(new_schema).await?;
+    let _schema = ctx.pool.schemas().register_schema(new_schema).await?;
 
     // Test valid event
     let valid_event = ctx

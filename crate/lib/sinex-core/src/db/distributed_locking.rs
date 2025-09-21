@@ -30,8 +30,8 @@ static HELD_LOCKS: Lazy<tokio::sync::Mutex<HashSet<i64>>> =
 
 impl AdvisoryLock {
     /// Try to acquire an advisory lock immediately (non-blocking)
-    #[instrument(skip(pool), fields(key = key))]
-    pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
+    #[instrument(skip(_pool), fields(key = key))]
+    pub async fn try_acquire(_pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
         let lock_id = hash_key_to_i64(key);
 
         // Prevent re-entrant acquisition within this process
@@ -63,9 +63,9 @@ impl AdvisoryLock {
     }
 
     /// Acquire an advisory lock, blocking until available or timeout
-    #[instrument(skip(pool), fields(key = key, timeout_secs = timeout.as_secs()))]
+    #[instrument(skip(_pool), fields(key = key, timeout_secs = timeout.as_secs()))]
     pub async fn acquire_or_wait(
-        pool: &DbPool,
+        _pool: &DbPool,
         key: &str,
         timeout: Duration,
     ) -> CoreResult<ResourceGuard<Self>> {
@@ -106,8 +106,8 @@ impl AdvisoryLock {
     ///
     /// Implementation note: To avoid relying on `pg_locks` internals and OID casting,
     /// we probe using `pg_try_advisory_lock()` and immediately unlock if we acquire it.
-    #[instrument(skip(pool), fields(key = key))]
-    pub async fn is_locked(pool: &DbPool, key: &str) -> CoreResult<bool> {
+    #[instrument(skip(_pool), fields(key = key))]
+    pub async fn is_locked(_pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
 
         // Check process-local registry
@@ -116,8 +116,8 @@ impl AdvisoryLock {
     }
 
     /// Force release a lock (use with caution - should only be used for cleanup)
-    #[instrument(skip(pool), fields(key = key))]
-    pub async fn force_release(pool: &DbPool, key: &str) -> CoreResult<bool> {
+    #[instrument(skip(_pool), fields(key = key))]
+    pub async fn force_release(_pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
         let mut held = HELD_LOCKS.lock().await;
         Ok(held.remove(&lock_id))

@@ -18,7 +18,6 @@ use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_core::EventPayload as _;
 use sinex_core::{Event, Id, JsonValue, Provenance};
 
 // =============================================================================

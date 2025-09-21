@@ -145,9 +145,6 @@ fn test_scan_args_properties() -> color_eyre::eyre::Result<()> {
             prop_assert!(deserialized.is_ok());
             // Note: We can't test equality because ScanArgs doesn't derive Eq/PartialEq
         }
-
-        // Property: Validation should be consistent
-        prop_assert!(args.max_events >= 0);
     });
     Ok(())
 }
