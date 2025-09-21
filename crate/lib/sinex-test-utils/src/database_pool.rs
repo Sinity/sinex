@@ -997,6 +997,31 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
         // Propagate migration result
         migrate_result?;
 
+        // Seed a canonical test source material so Event::test_event() inserts pass FK checks.
+        sqlx::query(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata
+            ) VALUES (
+                $1::text::ulid,
+                'annex',
+                'test-material-bootstrap',
+                'completed',
+                'realtime',
+                '{}'::jsonb
+            )
+            ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+        .execute(&template_pool)
+        .await?;
+
         // Optimize template for faster copying
         optimize_template_for_tests(&template_pool).await?;
 
@@ -1319,7 +1344,6 @@ mod tests {
     #[sinex_test]
     async fn test_database_cleanup_on_drop() -> Result<()> {
         use sinex_core::*;
-        use sinex_core::*;
         use sinex_core::{
             Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
             JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
@@ -1437,8 +1461,8 @@ mod tests {
 
         // Add annotation
         sqlx::query(
-            "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator) 
-             VALUES ($1, $2, 'test', '{}'::jsonb, 'test-user')"
+            "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, metadata, created_by) \
+             VALUES ($1, $2, 'test', 'test-content', '{}'::jsonb, 'test-user')"
         )
         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
         .bind(event.id.expect("Event must have an ID").to_uuid())

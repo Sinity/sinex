@@ -253,9 +253,9 @@ mod tests {
     #[sinex_test]
     fn test_default_config() -> color_eyre::eyre::Result<()> {
         let config = IngestdFigmentConfig::default();
-        assert_eq!(config.database_pool_size, 25);
-        assert_eq!(config.batch_size, 100);
-        assert_eq!(config.batch_timeout_secs, 5);
+        assert_eq!(config.database_pool_size, DEFAULT_POOL_SIZE);
+        assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
+        assert_eq!(config.batch_timeout_secs, DEFAULT_BATCH_TIMEOUT);
         assert!(!config.dry_run);
         assert!(config.validate_schemas);
         Ok(())

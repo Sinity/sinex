@@ -21,9 +21,8 @@ pub struct SensdIntegrationTest {
 }
 
 impl SensdIntegrationTest {
-    /// Create a new integration test instance
-    pub async fn new(database_url: &str) -> Result<Self> {
-        let db_pool = PgPool::connect(database_url).await?;
+    /// Create a new integration test instance from an existing pool
+    pub async fn with_pool(db_pool: PgPool) -> Result<Self> {
         let temporal_ledger =
             Arc::new(TemporalLedger::new(db_pool.clone(), Default::default()).await?);
         let job_manager = Arc::new(
@@ -41,6 +40,12 @@ impl SensdIntegrationTest {
             job_manager,
             grpc_service,
         })
+    }
+
+    /// Create a new integration test instance (connects using the provided URL)
+    pub async fn new(database_url: &str) -> Result<Self> {
+        let db_pool = PgPool::connect(database_url).await?;
+        Self::with_pool(db_pool).await
     }
 
     /// Test the complete flow: job creation → execution → material streaming
@@ -92,9 +97,9 @@ impl SensdIntegrationTest {
                 status, timing_info_type, metadata,
                 staged_at
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, NOW())
+            VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, NOW())
             "#,
-            material_id as Ulid,
+            material_id.to_uuid(),
             "integration-test",
             "annex",
             "completed",
@@ -127,10 +132,10 @@ impl SensdIntegrationTest {
                     offset_kind, ts_capture, precision, clock,
                     source_type
                 )
-                VALUES ($1::ulid, $2::ulid, $3, $4, $5, NOW(), $6, $7, $8)
+                VALUES ($1::uuid::ulid, $2::uuid::ulid, $3, $4, $5, NOW(), $6, $7, $8)
                 "#,
-                entry_id as Ulid,
-                material_id as Ulid,
+                entry_id.to_uuid(),
+                material_id.to_uuid(),
                 offset_start,
                 offset_end,
                 "byte",
@@ -154,14 +159,14 @@ impl SensdIntegrationTest {
             INSERT INTO raw.sensor_jobs (
                 id, sensor_type, target_uri, config, priority, status, updated_at
             )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, NOW())
+            VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, NOW())
             "#,
-            job_id as Ulid,
+            job_id.to_uuid(),
             "test_sensor",
-            "/tmp/test",
+            format!("/tmp/test-{}", job_id),
             serde_json::json!({"test": true, "mode": "test", "source_identifier": "integration-test-job"}),
             1,
-            "pending",
+            "active",
         )
         .execute(&self.db_pool)
         .await?;
@@ -176,19 +181,29 @@ pub async fn run_integration_test(database_url: &str) -> Result<()> {
     test.test_complete_flow().await
 }
 
+/// Run a basic integration test against an existing pool
+pub async fn run_integration_test_with_pool(db_pool: PgPool) -> Result<()> {
+    let test = SensdIntegrationTest::with_pool(db_pool).await?;
+    test.test_complete_flow().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::TestContext;
     use std::env;
 
     #[tokio::test]
     async fn test_sensd_integration() -> Result<()> {
-        // Only run if database URL is provided
-        if let Ok(database_url) = env::var("DATABASE_URL") {
+        // Always exercise the isolated test context to keep nextest runs deterministic.
+        let ctx = TestContext::with_name("sensd_integration").await?;
+        run_integration_test_with_pool(ctx.pool.clone()).await?;
+
+        // Optionally exercise a user-provided database when explicitly configured.
+        if let Ok(database_url) = env::var("SENSD_INTEGRATION_DATABASE_URL") {
             run_integration_test(&database_url).await?;
-        } else {
-            println!("Skipping integration test - no DATABASE_URL provided");
         }
+
         Ok(())
     }
 }

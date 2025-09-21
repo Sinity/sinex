@@ -9,6 +9,27 @@ use crate::types::error::SinexError;
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
+
+macro_rules! event_select_columns {
+    () => {
+        "id::uuid as id, \
+         source, \
+         event_type, \
+         host, \
+         payload, \
+         ts_orig, \
+         ts_ingest, \
+         source_material_id::uuid as source_material_id, \
+         anchor_byte, \
+         offset_start, \
+         offset_end, \
+         offset_kind, \
+         source_event_ids::uuid[] as source_event_ids, \
+         associated_blob_ids::uuid[] as associated_blob_ids, \
+         payload_schema_id::uuid as payload_schema_id, \
+         ingestor_version"
+    };
+}
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
@@ -255,6 +276,33 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(material_ulid) = source_material_id {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    timing_info_type,
+                    metadata
+                ) VALUES (
+                    $1::text::ulid,
+                    'annex',
+                    'test-material-bootstrap',
+                    'completed',
+                    'realtime',
+                    '{}'::jsonb
+                )
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(material_ulid.to_string())
+            .execute(self.pool)
+            .await;
+        }
+
         let record = sqlx::query_as!(
             EventRecord,
             r#"
@@ -311,28 +359,11 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self), fields(event_id = %id))]
     pub async fn get_by_id(&self, id: Id<Event<JsonValue>>) -> DbResult<Option<Event<JsonValue>>> {
-        let record = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE id = $1
-            "#,
-        )
+        let record = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE id::uuid = $1"
+        ))
         .bind(ulid_to_uuid(*id.as_ulid()))
         .fetch_optional(self.pool)
         .await
@@ -353,29 +384,11 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self), fields(limit = limit))]
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<Event<JsonValue>>> {
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            ORDER BY ts_ingest DESC
-            LIMIT $1
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events ORDER BY ts_ingest DESC LIMIT $1"
+        ))
         .bind(limit)
         .fetch_all(self.pool)
         .await
@@ -394,30 +407,11 @@ impl<'a> EventRepository<'a> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE source = $1
-            ORDER BY ts_ingest DESC
-            LIMIT $2 OFFSET $3
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+        ))
         .bind(source.as_str())
         .bind(limit)
         .bind(offset)
@@ -438,30 +432,11 @@ impl<'a> EventRepository<'a> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE event_type = $1
-            ORDER BY ts_ingest DESC
-            LIMIT $2 OFFSET $3
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE event_type = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+        ))
         .bind(event_type.as_str())
         .bind(limit)
         .bind(offset)
@@ -510,30 +485,11 @@ impl<'a> EventRepository<'a> {
         let offset = offset.unwrap_or(0);
 
         // Use index hint for TimescaleDB optimization on time-range queries
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE ts_ingest >= $1 AND ts_ingest <= $2
-            ORDER BY ts_ingest DESC
-            LIMIT $3 OFFSET $4
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2 ORDER BY ts_ingest DESC LIMIT $3 OFFSET $4"
+        ))
         .bind(start)
         .bind(end)
         .bind(limit)
@@ -577,30 +533,11 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
-            ORDER BY ts_ingest DESC
-            LIMIT $4
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest DESC LIMIT $4"
+        ))
         .bind(event_type.as_str())
         .bind(start)
         .bind(end)
@@ -618,32 +555,11 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE source = $1 
-              AND event_type = 'process.heartbeat'
-              AND ts_ingest >= $2 
-              AND ts_ingest <= $3
-            ORDER BY ts_ingest ASC
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC"
+        ))
         .bind(source.as_str())
         .bind(start)
         .bind(end)
@@ -1984,9 +1900,9 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids,
+                associated_blob_ids
             FROM core.events 
-            WHERE id = ANY($1::uuid[])
+            WHERE id::uuid = ANY($1::uuid[])
             ORDER BY ts_ingest DESC
             "#,
         )
@@ -2027,12 +1943,12 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids,
+                associated_blob_ids
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY source ORDER BY ts_ingest DESC) as rn
-                FROM core.events 
-                WHERE source = ANY($1::text[])
+            FROM core.events
+            WHERE source = ANY($1::text[])
             ) ranked_events
             WHERE rn <= $2
             ORDER BY source, ts_ingest DESC

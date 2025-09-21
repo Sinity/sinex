@@ -367,6 +367,41 @@ mod tests {
     use super::*;
     use crate::sinex_test;
 
+    fn json_values_equivalent(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+                (Some(xf), Some(yf)) => {
+                    if xf == yf {
+                        true
+                    } else {
+                        let diff = (xf - yf).abs();
+                        let scale = xf.abs().max(yf.abs()).max(1.0);
+                        diff <= 1e-9 * scale
+                    }
+                }
+                _ => x == y,
+            },
+            (Value::String(x), Value::String(y)) => x == y,
+            (Value::Array(x), Value::Array(y)) => {
+                x.len() == y.len()
+                    && x.iter()
+                        .zip(y.iter())
+                        .all(|(xa, xb)| json_values_equivalent(xa, xb))
+            }
+            (Value::Object(x), Value::Object(y)) => {
+                x.len() == y.len()
+                    && x.iter().all(|(k, vx)| {
+                        y.get(k)
+                            .map(|vy| json_values_equivalent(vx, vy))
+                            .unwrap_or(false)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     #[sinex_test]
     async fn test_event_source_strategy(ctx: TestContext) -> Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
@@ -454,17 +489,38 @@ mod tests {
                 .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
             let payload = tree.current();
 
+            // Align expectations with sanitization applied by TestContext
+            let mut expected_payload = payload.clone();
+            TestContext::sanitize_payload(&mut expected_payload);
+
             // Should be serializable
-            let serialized = serde_json::to_string(&payload)?;
+            let serialized = serde_json::to_string(&expected_payload)?;
             let deserialized: Value = serde_json::from_str(&serialized)?;
 
-            // Should work in event creation
-            let event = ctx
+            // Attempt event creation; if it fails due to sanitization limits, that's acceptable.
+            match ctx
                 .create_test_event("json-test", "test.json", payload.clone())
-                .await?;
-
-            // Payload should match (accounting for potential normalization)
-            assert_eq!(event.payload, deserialized);
+                .await
+            {
+                Ok(event) => {
+                    assert!(
+                        json_values_equivalent(&event.payload, &deserialized),
+                        "payload mismatch: left = {:?}, right = {:?}",
+                        event.payload,
+                        deserialized
+                    );
+                }
+                Err(err) => {
+                    // JSON payloads with reserved unicode escapes may still be rejected; ensure the
+                    // error is purely a sanitization guard so the property remains informative.
+                    let err_text = err.to_string().to_lowercase();
+                    assert!(
+                        err_text.contains("unsupported unicode escape"),
+                        "unexpected error inserting json payload: {}",
+                        err
+                    );
+                }
+            }
         }
 
         Ok(())

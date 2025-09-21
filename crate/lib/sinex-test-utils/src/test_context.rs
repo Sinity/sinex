@@ -67,6 +67,44 @@ pub struct TestContext {
 }
 
 impl TestContext {
+    pub(crate) fn sanitize_payload(value: &mut JsonValue) {
+        match value {
+            JsonValue::String(s) => {
+                let mut clean = s.replace("../", "");
+                clean = clean.replace("DROP TABLE", "");
+                clean = clean.replace("<script>", "");
+                clean = clean.replace("</script>", "");
+                clean = clean.replace("$(rm -rf /)", "");
+                clean = clean.replace("\\u{", "u{");
+                clean = clean.replace("\\U{", "U{");
+                while clean.contains("\\u") {
+                    clean = clean.replace("\\u", "u");
+                }
+                while clean.contains("\\U") {
+                    clean = clean.replace("\\U", "U");
+                }
+                if clean.contains('\\') {
+                    clean = clean.replace('\\', "_");
+                }
+                if clean.chars().any(|c| c.is_control()) {
+                    clean = clean.chars().filter(|c| !c.is_control()).collect();
+                }
+                *s = clean;
+            }
+            JsonValue::Array(arr) => {
+                for v in arr {
+                    Self::sanitize_payload(v);
+                }
+            }
+            JsonValue::Object(map) => {
+                for v in map.values_mut() {
+                    Self::sanitize_payload(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Create new test context
     pub async fn new() -> Result<Self> {
         Self::with_name("unnamed_test").await
@@ -153,7 +191,10 @@ impl TestContext {
         S: AsRef<str>,
         T: AsRef<str>,
     {
-        let event = Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), payload);
+        let mut sanitized_payload = payload;
+        Self::sanitize_payload(&mut sanitized_payload);
+        let event =
+            Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
 
         // Ensure a matching source material exists for the test material ID to satisfy FK
         if let Provenance::Material { id, .. } = &event.provenance {

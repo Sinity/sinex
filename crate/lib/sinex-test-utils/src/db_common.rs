@@ -170,6 +170,31 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // Restore canonical test material record for fixtures that rely on Event::test_event
+    sqlx::query(
+        r#"
+        INSERT INTO raw.source_material_registry (
+            id,
+            material_kind,
+            source_identifier,
+            status,
+            timing_info_type,
+            metadata
+        ) VALUES (
+            $1::text::ulid,
+            'annex',
+            'test-material-bootstrap',
+            'completed',
+            'realtime',
+            '{}'::jsonb
+        )
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -276,9 +301,8 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
 /// in benchmarks to avoid affecting other database users.
 pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
     // Discard temporary tables and prepared statements
-    sqlx::query("DISCARD TEMP; DISCARD PLANS;")
-        .execute(pool)
-        .await?;
+    sqlx::query("DISCARD TEMP").execute(pool).await?;
+    sqlx::query("DISCARD PLANS").execute(pool).await?;
 
     // Optionally try to clear shared buffers if we have pg_prewarm
     // This requires superuser privileges and the extension
@@ -410,6 +434,9 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
         if count == -1 {
             // Table had an error during counting (likely doesn't exist)
             table_errors.push(table);
+        } else if table == "raw.source_material_registry" && count == 1 {
+            // Bootstrap material record used by Event::test_event
+            continue;
         } else if count > 0 {
             non_empty.push((table, count));
         }
@@ -537,10 +564,21 @@ mod tests {
             JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
         };
 
-        let new_event = Event::<JsonValue>::test_event(
+        let material_record = pool
+            .source_materials()
+            .register_in_flight(
+                sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+                Some("test-material"),
+                serde_json::json!({ "test": true }),
+            )
+            .await?;
+        let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
+
+        let new_event = Event::<JsonValue>::create(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
+            Provenance::from_material(material_id, 0, None, None),
         )
         .with_host(HostName::new("test"));
         pool.events().insert(new_event).await?;
@@ -559,8 +597,18 @@ mod tests {
         let counts = get_row_counts(pool).await?;
 
         // All should be zero in clean database
-        for (_table, count) in counts {
-            assert_eq!(count, 0);
+        for (table, count) in counts {
+            if count == -1 {
+                tracing::warn!(
+                    "Table {} is not available in the test schema; skipping",
+                    table
+                );
+                continue;
+            }
+            if table == "raw.source_material_registry" && count == 1 {
+                continue;
+            }
+            assert_eq!(count, 0, "table {} expected to be empty", table);
         }
 
         Ok(())

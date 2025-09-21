@@ -290,13 +290,16 @@ impl TimingPatterns {
     /// Wait for a specific number of events to be processed
     pub async fn wait_for_event_processing(
         target_count: usize,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<CoordinationPrimitive> {
+        // Provide a coordination primitive that callers can increment and await explicitly.
+        // The previous implementation attempted to wait immediately, which deadlocked
+        // because no increments had occurred yet. Tests and callers now decide when to
+        // block on the threshold, keeping the helper usable for both sync and async flows.
         let counter = CoordinationPrimitive::event_counter(
             target_count,
             format!("simple_counter_{}", target_count),
         );
-        counter.wait_for_threshold(timeout).await?;
         Ok(counter)
     }
 

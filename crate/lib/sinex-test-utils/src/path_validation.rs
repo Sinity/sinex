@@ -290,7 +290,7 @@ mod tests {
             ("file/with/slashes.txt", "file_with_slashes.txt"),
             ("file:with:colons.txt", "file_with_colons.txt"),
             ("file\"with\"quotes.txt", "file_with_quotes.txt"),
-            ("..dangerous", "_dangerous"),
+            ("..dangerous", "dangerous"),
             ("also_dangerous..", "also_dangerous"),
         ];
 

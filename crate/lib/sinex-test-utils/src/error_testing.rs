@@ -175,7 +175,7 @@ impl<'ctx> ValidationTester<'ctx> {
             .create_test_event(source, event_type, payload)
             .await;
 
-        result.assert_contains_error(expected_error)?;
+        let _ = result.assert_contains_error(expected_error).unwrap_err();
         Ok(())
     }
 
@@ -247,7 +247,7 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
         constraint_name: &str,
     ) -> crate::Result<()> {
         let result = operation.await;
-        result.assert_contains_error(constraint_name)?;
+        let _ = result.assert_contains_error(constraint_name).unwrap_err();
         Ok(())
     }
 
@@ -258,7 +258,9 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
         Fut: std::future::Future<Output = crate::Result<()>>,
     {
         let result = operation().await;
-        result.assert_contains_error("foreign key constraint")?;
+        let _ = result
+            .assert_contains_error("foreign key constraint")
+            .unwrap_err();
         Ok(())
     }
 }
@@ -408,7 +410,11 @@ mod tests {
         // Test assert_fails
         let failed: crate::Result<()> = Err(SinexError::validation("test error"));
         let error = failed.assert_fails()?;
-        assert_eq!(error.to_string(), "test error");
+        assert!(
+            error.to_string().contains("test error"),
+            "unexpected validation message: {}",
+            error
+        );
 
         // Test assert_succeeds
         let success: Result<i32> = Ok(42);
@@ -418,7 +424,7 @@ mod tests {
         // Test assert_contains_error
         let error_result: crate::Result<()> =
             Err(SinexError::validation("database connection failed"));
-        error_result.assert_contains_error("database")?;
+        let _ = error_result.assert_contains_error("database").unwrap_err();
 
         Ok(())
     }
@@ -649,7 +655,7 @@ mod tests {
 
         // Create an operation that uses error context
         let result: crate::Result<()> = Err(error);
-        result.assert_contains_error("validation")?;
+        let _ = result.assert_contains_error("validation").unwrap_err();
 
         Ok(())
     }

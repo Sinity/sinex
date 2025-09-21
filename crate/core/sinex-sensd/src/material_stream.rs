@@ -84,17 +84,17 @@ impl MaterialSliceStream {
         let slices = sqlx::query!(
             r#"
             SELECT 
-                source_material_id as "material_id: Ulid",
+                source_material_id::uuid as "material_id!: Ulid",
                 offset_start,
                 offset_end,
                 ts_capture
             FROM raw.temporal_ledger
-            WHERE source_material_id = $1::ulid
+            WHERE source_material_id = $1::uuid::ulid
             AND offset_start >= $2
             ORDER BY offset_start
             LIMIT $3
             "#,
-            self.material_id as Ulid,
+            self.material_id.to_uuid(),
             self.current_offset,
             self.batch_size as i64,
         )
@@ -112,9 +112,9 @@ impl MaterialSliceStream {
             r#"
             SELECT metadata, source_identifier
             FROM raw.source_material_registry
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid::ulid
             "#,
-            self.material_id as Ulid
+            self.material_id.to_uuid()
         )
         .fetch_optional(&self.db_pool)
         .await?
@@ -169,11 +169,11 @@ impl MaterialSliceStream {
         let material = sqlx::query!(
             r#"
             SELECT 
-                optional_blob_id as "optional_blob_id: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
             FROM raw.source_material_registry
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid::ulid
             "#,
-            material_id as Ulid
+            material_id.to_uuid()
         )
         .fetch_optional(&self.db_pool)
         .await?
@@ -220,9 +220,9 @@ impl MaterialSliceStream {
                 size_bytes,
                 original_filename
             FROM core.blobs
-            WHERE id = $1::ulid
+            WHERE id = $1::uuid::ulid
             "#,
-            blob_id as Ulid,
+            blob_id.to_uuid(),
         )
         .fetch_optional(&self.db_pool)
         .await?
