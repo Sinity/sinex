@@ -202,7 +202,7 @@ mod tests {
     use color_eyre::eyre::Result;
 
     #[sinex_test]
-    async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_path_traversal_sanitization(ctx: TestContext) -> Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("../../../etc/passwd"),
             EventType::new("security.test"),
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_null_byte_sanitization(ctx: TestContext) -> Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("test\0source"),
             EventType::new("security.test"),
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_sql_injection_preserved(ctx: TestContext) -> Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("security.test"),
             EventType::new("sql.injection"),
@@ -285,9 +285,7 @@ mod tests {
 
     /// Add a test to verify the generic sanitizer works with typed events
     #[sinex_test]
-    async fn test_generic_sanitizer_with_typed_event(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    async fn test_generic_sanitizer_with_typed_event(ctx: TestContext) -> Result<()> {
         use crate::models::Provenance;
         use crate::types::domain::SanitizedPath;
         use crate::types::events::payloads::filesystem::FileCreatedPayload;

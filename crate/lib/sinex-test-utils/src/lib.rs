@@ -622,6 +622,7 @@ pub use test_context::TestContext;
 // Comprehensive self-tests
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::prelude::*;
     use crate::sinex_test;
     use rstest::rstest;

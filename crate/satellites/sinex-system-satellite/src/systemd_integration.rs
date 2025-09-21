@@ -9,11 +9,10 @@ use nix::unistd::Pid;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// Systemd cgroup path base
 const SYSTEMD_CGROUP_BASE: &str = "/sys/fs/cgroup/systemd";

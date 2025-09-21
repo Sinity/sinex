@@ -1293,6 +1293,7 @@ fn _get_pool_config() -> PoolConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::sinex_test;
 

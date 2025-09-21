@@ -32,9 +32,6 @@ use futures::future::BoxFuture;
 use serde_json::json;
 use sinex_core::db::models::Event;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
-use sinex_core::types::events::payloads::{
-    ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
-};
 use sinex_core::types::Id;
 use sinex_core::uuid_to_ulid;
 use std::any::{Any, TypeId};

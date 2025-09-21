@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use crate::db::schema::*;
     use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
     use crate::types::ulid::Ulid;

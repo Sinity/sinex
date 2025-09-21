@@ -20,8 +20,8 @@ mod common {
         },
         grpc_client::IngestClient,
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
         SatelliteResult,
     };

@@ -1228,6 +1228,7 @@ pub struct SystemHealthReport {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::repositories::DbPoolExt;
     use crate::types::{Id, Ulid};

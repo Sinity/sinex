@@ -126,7 +126,7 @@ mod tests {
         assert!(temp_dir.path().starts_with(&system_temp));
 
         // Directory should be automatically cleaned up when dropped
-        let temp_path = temp_dir.path().to_path_buf();
+        let _temp_path = temp_dir.path().to_path_buf();
         drop(temp_dir);
 
         // Note: Cleanup happens when temp_dir is dropped

@@ -332,6 +332,7 @@ impl LeadershipGuard {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use sinex_test_utils::{sinex_test, TestContext};
 

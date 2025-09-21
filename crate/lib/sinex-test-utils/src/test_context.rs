@@ -449,6 +449,7 @@ impl<'ctx> ContextualAssert<'ctx> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;

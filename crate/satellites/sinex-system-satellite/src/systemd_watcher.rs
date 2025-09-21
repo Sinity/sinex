@@ -17,15 +17,10 @@ use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
-
-// Use our modern systemd integration module
-use crate::systemd_integration::{
-    SystemdChange, SystemdChangeMonitor, SystemdMonitor, SystemdUnitState as ModernUnitState,
-};
 
 /// SystemD unit types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -1153,6 +1153,7 @@ mod tests {
         drop(tx); // Drop the sender
                   // We can't easily test the actual error without async context,
                   // but we can test the type conversion compiles
+        #[allow(dead_code)]
         fn test_conversion(err: oneshot::error::RecvError) -> SinexError {
             err.into()
         }

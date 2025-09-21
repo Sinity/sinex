@@ -1966,6 +1966,7 @@ impl<'a> EventRepository<'a> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::prelude::*;
     use crate::types::domain::{EventSource, EventType, HostName};

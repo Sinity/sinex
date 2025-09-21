@@ -510,6 +510,7 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::database_pool::acquire_test_database;
     use crate::sinex_test;

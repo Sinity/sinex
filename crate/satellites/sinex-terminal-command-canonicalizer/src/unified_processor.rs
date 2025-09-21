@@ -223,8 +223,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let start_time = Utc::now();
-        let mut events_processed = 0;
+        let scan_start = Utc::now();
 
         match until {
             TimeHorizon::Continuous => {
@@ -287,7 +286,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
 
                 // Sort by timestamp
                 all_raw_events.sort_by_key(|e| e.ts_orig);
-                events_processed = all_raw_events.len() as u64;
+                let events_processed = all_raw_events.len() as u64;
 
                 // Process events in batches using the new unified method
                 let batch_size = 100;

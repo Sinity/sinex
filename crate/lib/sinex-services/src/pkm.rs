@@ -11,7 +11,6 @@ use sinex_core::{Entity as DbEntity, Event, JsonValue};
 
 use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
 use std::collections::HashMap;
-use std::convert::From;
 use tracing::{debug, info};
 
 pub struct PkmService {
