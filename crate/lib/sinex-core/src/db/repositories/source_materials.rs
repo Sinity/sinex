@@ -7,28 +7,12 @@ use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::SourceMaterialRegistry;
 use crate::query_helpers::ulid_to_uuid;
 use crate::types::Id;
+use crate::Ulid;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
-
-macro_rules! source_material_columns {
-    () => {
-        "id::uuid as \"id: Ulid\", \
-         material_kind, \
-         source_identifier, \
-         status, \
-         timing_info_type, \
-         metadata, \
-         staged_at, \
-         start_time, \
-         end_time, \
-         staged_by, \
-         staged_on_host, \
-         optional_blob_id::uuid as \"optional_blob_id?: Ulid\""
-    };
-}
 
 /// Canonical material kinds recognised by the registry
 pub mod material_kinds {
@@ -299,37 +283,46 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                r#"
-                INSERT INTO raw.source_material_registry (
-                    id,
-                    material_kind,
-                    source_identifier,
-                    status,
-                    timing_info_type,
-                    metadata,
-                    start_time,
-                    end_time,
-                    staged_by,
-                    staged_on_host,
-                    optional_blob_id
-                ) VALUES (
-                    ($1::uuid)::ulid,
-                    $2,
-                    $3,
-                    $4,
-                    $5,
-                    $6,
-                    $7,
-                    $8,
-                    $9,
-                    $10,
-                    ($11::uuid)::ulid
-                )
-                RETURNING
-                "#,
-                source_material_columns!()
-            ),
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id
+            ) VALUES (
+                ($1::uuid)::ulid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                ($11::uuid)::ulid
+            )
+            RETURNING
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            "#,
             ulid_to_uuid(*id.as_ulid()),
             material.material_kind,
             material.source_identifier,
@@ -356,11 +349,23 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry WHERE id::uuid = $1"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            WHERE id::uuid = $1
+            "#,
             ulid_to_uuid(*id.as_ulid())
         )
         .fetch_optional(self.pool)
@@ -375,11 +380,23 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry WHERE optional_blob_id::uuid = $1"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            WHERE optional_blob_id::uuid = $1
+            "#,
             ulid_to_uuid(*blob_id.as_ulid())
         )
         .fetch_optional(self.pool)
@@ -391,11 +408,24 @@ impl<'a> SourceMaterialRepository<'a> {
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<SourceMaterialRecord>> {
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry ORDER BY staged_at DESC LIMIT $1"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            ORDER BY staged_at DESC
+            LIMIT $1
+            "#,
             limit
         )
         .fetch_all(self.pool)
@@ -413,11 +443,25 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry WHERE material_kind = $1 ORDER BY staged_at DESC LIMIT $2"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            WHERE material_kind = $1
+            ORDER BY staged_at DESC
+            LIMIT $2
+            "#,
             material_kind,
             limit
         )
@@ -438,11 +482,25 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry WHERE metadata @> $1 ORDER BY staged_at DESC LIMIT $2"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            WHERE metadata @> $1
+            ORDER BY staged_at DESC
+            LIMIT $2
+            "#,
             search_obj,
             limit
         )
@@ -478,11 +536,26 @@ impl<'a> SourceMaterialRepository<'a> {
 
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "SELECT ",
-                source_material_columns!(),
-                " FROM raw.source_material_registry WHERE (metadata->>'archived') IS DISTINCT FROM 'true' AND staged_at < $1 ORDER BY staged_at ASC LIMIT $2"
-            ),
+            r#"
+            SELECT
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            FROM raw.source_material_registry
+            WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
+              AND staged_at < $1
+            ORDER BY staged_at ASC
+            LIMIT $2
+            "#,
             older_than,
             limit
         )
@@ -499,10 +572,24 @@ impl<'a> SourceMaterialRepository<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as!(
             SourceMaterialRecord,
-            concat!(
-                "UPDATE raw.source_material_registry SET metadata = metadata || $2 WHERE id::uuid = $1 RETURNING ",
-                source_material_columns!()
-            ),
+            r#"
+            UPDATE raw.source_material_registry
+            SET metadata = metadata || $2
+            WHERE id::uuid = $1
+            RETURNING
+                id::uuid as "id!: Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+            "#,
             ulid_to_uuid(*id.as_ulid()),
             metadata
         )
