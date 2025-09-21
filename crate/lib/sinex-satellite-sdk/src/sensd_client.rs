@@ -361,22 +361,20 @@ impl SensdClient {
         let materials = sqlx::query!(
             r#"
             SELECT 
-                id as "material_id: Ulid",
-                staged_at as acquired_at,
-                COALESCE((metadata->>'size_bytes')::bigint, 0) as "size_bytes!",
-                material_kind as mime_type,
-                metadata
-            FROM raw.source_material_registry
-            WHERE source_identifier = $1
-            AND staged_at > $2
-            -- TODO: Need to fix provenance check
-            -- For now, just check if any events exist
-            AND NOT EXISTS (
-                SELECT 1 FROM core.events 
-                WHERE source_event_ids IS NOT NULL
-                LIMIT 1
-            )
-            ORDER BY staged_at DESC
+                sm.id as "material_id: Ulid",
+                sm.staged_at as acquired_at,
+                COALESCE((sm.metadata->>'file_size_bytes')::bigint, 0) as "size_bytes!",
+                sm.metadata->>'mime_type' as mime_type,
+                sm.metadata
+            FROM raw.source_material_registry sm
+            WHERE sm.source_identifier = $1
+              AND sm.staged_at > $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM core.events e
+                  WHERE e.source_material_id = sm.id
+              )
+            ORDER BY sm.staged_at DESC
             LIMIT 100
             "#,
             source_identifier,
@@ -391,7 +389,7 @@ impl SensdClient {
                 material_id: m.material_id,
                 acquired_at: m.acquired_at,
                 size_bytes: m.size_bytes,
-                mime_type: Some(m.mime_type),
+                mime_type: m.mime_type,
                 metadata: m.metadata,
             })
             .collect())

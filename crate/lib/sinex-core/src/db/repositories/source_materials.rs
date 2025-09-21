@@ -9,12 +9,33 @@ use crate::query_helpers::ulid_to_uuid;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 
-/// Material type constants
-pub mod material_types {
+/// Canonical material kinds recognised by the registry
+pub mod material_kinds {
+    pub const ANNEX: &str = "annex";
+    pub const GIT: &str = "git";
+}
+
+/// Canonical timing info types
+pub mod timing_info_types {
+    pub const REALTIME: &str = "realtime";
+    pub const INTRINSIC: &str = "intrinsic";
+    pub const INFERRED: &str = "inferred";
+}
+
+/// Canonical statuses for source material lifecycle
+pub mod status {
+    pub const SENSING: &str = "sensing";
+    pub const COMPLETED: &str = "completed";
+    pub const RECOVERED_PARTIAL: &str = "recovered_partial";
+    pub const FAILED: &str = "failed";
+}
+
+/// Legacy material type constants kept for compatibility with higher layers
+pub mod legacy_material_types {
     pub const FILE: &str = "file";
     pub const STREAM: &str = "stream";
     pub const BLOB: &str = "blob";
@@ -23,124 +44,211 @@ pub mod material_types {
     pub const CHUNK: &str = "chunk";
 }
 
-/// Source material to register
+/// Source material registration payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceMaterial {
-    pub material_type: String,
-    pub source_uri: Option<String>,
-    pub encoding: Option<String>,
-    pub metadata: Option<JsonValue>,
-    pub blob_id: Option<Id<crate::Blob>>,
-    pub content_preview: Option<String>,
-    pub retention_policy: Option<String>,
+    material_kind: String,
+    source_identifier: String,
+    timing_info_type: String,
+    status: String,
+    metadata: JsonValue,
+    optional_blob_id: Option<Id<crate::Blob>>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+    staged_by: Option<String>,
+    staged_on_host: Option<String>,
 }
 
 impl SourceMaterial {
-    /// Create a file source material
+    fn new(material_kind: impl Into<String>, source_identifier: impl Into<String>) -> Self {
+        Self {
+            material_kind: material_kind.into(),
+            source_identifier: source_identifier.into(),
+            timing_info_type: timing_info_types::INTRINSIC.to_string(),
+            status: status::COMPLETED.to_string(),
+            metadata: json!({}),
+            optional_blob_id: None,
+            start_time: None,
+            end_time: None,
+            staged_by: None,
+            staged_on_host: None,
+        }
+    }
+
+    fn metadata_object_mut(&mut self) -> &mut JsonMap<String, JsonValue> {
+        if !self.metadata.is_object() {
+            self.metadata = json!({});
+        }
+        self.metadata
+            .as_object_mut()
+            .expect("metadata forced to object")
+    }
+
+    fn merge_metadata(&mut self, extra: JsonValue) {
+        match extra {
+            JsonValue::Object(map) => {
+                let target = self.metadata_object_mut();
+                for (key, value) in map.into_iter() {
+                    target.insert(key, value);
+                }
+            }
+            JsonValue::Null => {}
+            other => {
+                let target = self.metadata_object_mut();
+                target.insert("_meta".to_string(), other);
+            }
+        }
+    }
+
+    /// Create a file-backed source material entry.
     pub fn file(path: impl Into<String>) -> Self {
-        SourceMaterial {
-            material_type: material_types::FILE.to_string(),
-            source_uri: Some(path.into()),
-            encoding: None,
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
-        }
+        let path_str = path.into();
+        let mut material = Self::new(material_kinds::ANNEX, path_str.clone());
+        material
+            .metadata_object_mut()
+            .insert("source_uri".to_string(), JsonValue::String(path_str));
+        material.metadata_object_mut().insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(legacy_material_types::FILE.to_string()),
+        );
+        material
     }
 
-    /// Create a stream source material
+    /// Create a stream-backed source material entry.
     pub fn stream(uri: impl Into<String>) -> Self {
-        SourceMaterial {
-            material_type: material_types::STREAM.to_string(),
-            source_uri: Some(uri.into()),
-            encoding: None,
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
-        }
+        let uri_str = uri.into();
+        let mut material = Self::new(material_kinds::ANNEX, uri_str.clone());
+        material
+            .metadata_object_mut()
+            .insert("source_uri".to_string(), JsonValue::String(uri_str));
+        material.metadata_object_mut().insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(legacy_material_types::STREAM.to_string()),
+        );
+        material.with_timing_info_type(timing_info_types::REALTIME)
     }
 
-    /// Create a blob source material
+    /// Create an in-memory blob source material entry.
     pub fn blob() -> Self {
-        SourceMaterial {
-            material_type: material_types::BLOB.to_string(),
-            source_uri: Some("memory://inline".to_string()),
-            encoding: None,
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
-        }
+        let mut material = Self::new(material_kinds::ANNEX, "memory://inline");
+        material.metadata_object_mut().insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(legacy_material_types::BLOB.to_string()),
+        );
+        material
     }
 
-    /// Create a binary blob source material
+    /// Create a binary blob source material entry.
     pub fn blob_binary(filename: impl Into<String>) -> Self {
-        SourceMaterial {
-            material_type: material_types::BLOB_BINARY.to_string(),
-            source_uri: Some(filename.into()),
-            encoding: None,
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
-        }
+        let filename = filename.into();
+        let mut material = Self::new(material_kinds::ANNEX, filename.clone());
+        let metadata = material.metadata_object_mut();
+        metadata.insert("filename".to_string(), JsonValue::String(filename));
+        metadata.insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(legacy_material_types::BLOB_BINARY.to_string()),
+        );
+        material
     }
 
-    /// Create a text blob source material
+    /// Create a text blob source material entry.
     pub fn blob_text(filename: impl Into<String>) -> Self {
-        SourceMaterial {
-            material_type: material_types::BLOB_TEXT.to_string(),
-            source_uri: Some(filename.into()),
-            encoding: Some("utf-8".to_string()),
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
+        let filename = filename.into();
+        let mut material = Self::new(material_kinds::ANNEX, filename.clone());
+        {
+            let metadata = material.metadata_object_mut();
+            metadata.insert("filename".to_string(), JsonValue::String(filename));
+            metadata.insert(
+                "legacy_material_type".to_string(),
+                JsonValue::String(legacy_material_types::BLOB_TEXT.to_string()),
+            );
+            metadata.insert(
+                "encoding".to_string(),
+                JsonValue::String("utf-8".to_string()),
+            );
         }
+        material
     }
 
     /// Create a chunk source material (for large file processing)
     pub fn chunk(parent_id: impl Into<String>, index: usize) -> Self {
-        SourceMaterial {
-            material_type: material_types::CHUNK.to_string(),
-            source_uri: Some(format!("chunk://{}#{}", parent_id.into(), index)),
-            encoding: None,
-            metadata: None,
-            content_preview: None,
-            retention_policy: None,
-            blob_id: None,
-        }
+        let identifier = format!("chunk://{}#{}", parent_id.into(), index);
+        let mut material = Self::new(material_kinds::ANNEX, identifier.clone());
+        let metadata = material.metadata_object_mut();
+        metadata.insert("chunk_uri".to_string(), JsonValue::String(identifier));
+        metadata.insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(legacy_material_types::CHUNK.to_string()),
+        );
+        material
     }
 
     /// Fluent method to set blob ID
     pub fn with_blob_id(mut self, blob_id: Id<crate::Blob>) -> Self {
-        self.blob_id = Some(blob_id);
+        self.optional_blob_id = Some(blob_id);
         self
     }
 
-    /// Fluent method to set encoding
+    /// Fluent method to set encoding (stored in metadata)
     pub fn with_encoding(mut self, encoding: impl Into<String>) -> Self {
-        self.encoding = Some(encoding.into());
+        self.metadata_object_mut()
+            .insert("encoding".to_string(), JsonValue::String(encoding.into()));
         self
     }
 
-    /// Fluent method to set metadata
+    /// Fluent method to set metadata (merged with existing entries)
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
-        self.metadata = Some(metadata);
+        self.merge_metadata(metadata);
         self
     }
 
-    /// Fluent method to set content preview
+    /// Fluent method to set content preview (stored in metadata)
     pub fn with_content_preview(mut self, preview: impl Into<String>) -> Self {
-        self.content_preview = Some(preview.into());
+        self.metadata_object_mut().insert(
+            "content_preview".to_string(),
+            JsonValue::String(preview.into()),
+        );
         self
     }
 
-    /// Fluent method to set retention policy
+    /// Fluent method to set retention policy (stored in metadata)
     pub fn with_retention_policy(mut self, policy: impl Into<String>) -> Self {
-        self.retention_policy = Some(policy.into());
+        self.metadata_object_mut().insert(
+            "retention_policy".to_string(),
+            JsonValue::String(policy.into()),
+        );
+        self
+    }
+
+    /// Fluent method to override the status
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = status.into();
+        self
+    }
+
+    /// Fluent method to override the timing info type
+    pub fn with_timing_info_type(mut self, timing: impl Into<String>) -> Self {
+        self.timing_info_type = timing.into();
+        self
+    }
+
+    pub fn with_start_time(mut self, start_time: DateTime<Utc>) -> Self {
+        self.start_time = Some(start_time);
+        self
+    }
+
+    pub fn with_end_time(mut self, end_time: DateTime<Utc>) -> Self {
+        self.end_time = Some(end_time);
+        self
+    }
+
+    pub fn with_staged_by(mut self, staged_by: impl Into<String>) -> Self {
+        self.staged_by = Some(staged_by.into());
+        self
+    }
+
+    pub fn with_staged_on_host(mut self, host: impl Into<String>) -> Self {
+        self.staged_on_host = Some(host.into());
         self
     }
 }
@@ -171,25 +279,52 @@ impl<'a> SourceMaterialRepository<'a> {
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::new();
-        let metadata = material.metadata.unwrap_or(serde_json::json!({}));
 
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             INSERT INTO raw.source_material_registry (
-                id, material_type, source_uri, encoding, metadata, content_preview, optional_blob_id, source_identifier
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id
             ) VALUES (
-                ($1::uuid)::ulid, $2, $3, $4, $5, $6, ($7::uuid)::ulid, $3
+                ($1::uuid)::ulid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                ($11::uuid)::ulid
             )
             RETURNING *
-            "#
+            "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
-        .bind(material.material_type)
-        .bind(material.source_uri)
-        .bind(material.encoding)
-        .bind(metadata)
-        .bind(material.content_preview)
-        .bind(material.blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
+        .bind(material.material_kind)
+        .bind(material.source_identifier)
+        .bind(material.status)
+        .bind(material.timing_info_type)
+        .bind(material.metadata)
+        .bind(material.start_time)
+        .bind(material.end_time)
+        .bind(material.staged_by)
+        .bind(material.staged_on_host)
+        .bind(
+            material
+                .optional_blob_id
+                .map(|id| ulid_to_uuid(*id.as_ulid())),
+        )
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "register material"))
@@ -226,15 +361,15 @@ impl<'a> SourceMaterialRepository<'a> {
         .bind(ulid_to_uuid(*blob_id.as_ulid()))
         .fetch_optional(self.pool)
         .await
-        .map_err(|e| db_error(e, "find material by checksum"))
+        .map_err(|e| db_error(e, "find material by blob id"))
     }
 
-    /// Get recent materials
+    /// Get recent materials ordered by staged time
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<SourceMaterialRecord>> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             SELECT * FROM raw.source_material_registry
-            ORDER BY created_at DESC
+            ORDER BY staged_at DESC
             LIMIT $1
             "#,
         )
@@ -244,10 +379,10 @@ impl<'a> SourceMaterialRepository<'a> {
         .map_err(|e| db_error(e, "get recent materials"))
     }
 
-    /// Get materials by type
-    pub async fn get_by_type(
+    /// Get materials filtered by canonical material kind
+    pub async fn get_by_kind(
         &self,
-        material_type: &str,
+        material_kind: &str,
         limit: Option<i64>,
     ) -> DbResult<Vec<SourceMaterialRecord>> {
         let limit = limit.unwrap_or(100);
@@ -255,19 +390,19 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             SELECT * FROM raw.source_material_registry
-            WHERE material_type = $1
-            ORDER BY created_at DESC
+            WHERE material_kind = $1
+            ORDER BY staged_at DESC
             LIMIT $2
             "#,
         )
-        .bind(material_type)
+        .bind(material_kind)
         .bind(limit)
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get materials by type"))
+        .map_err(|e| db_error(e, "get materials by kind"))
     }
 
-    /// Search materials by metadata
+    /// Search materials by metadata containment
     pub async fn search_by_metadata(
         &self,
         key: &str,
@@ -275,13 +410,13 @@ impl<'a> SourceMaterialRepository<'a> {
         limit: Option<i64>,
     ) -> DbResult<Vec<SourceMaterialRecord>> {
         let limit = limit.unwrap_or(100);
-        let search_obj = serde_json::json!({ key: value });
+        let search_obj = json!({ key: value });
 
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             SELECT * FROM raw.source_material_registry
             WHERE metadata @> $1
-            ORDER BY created_at DESC
+            ORDER BY staged_at DESC
             LIMIT $2
             "#,
         )
@@ -292,16 +427,12 @@ impl<'a> SourceMaterialRepository<'a> {
         .map_err(|e| db_error(e, "search materials by metadata"))
     }
 
-    /// Archive a material
+    /// Mark a material as archived via metadata flag
     pub async fn archive_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
         let result = sqlx::query(
             r#"
             UPDATE raw.source_material_registry
-            SET 
-                is_archived = true,
-                archive_time = NOW(),
-                status = 'archived',
-                updated_at = NOW()
+            SET metadata = metadata || jsonb_build_object('archived', true, 'archived_at', NOW())
             WHERE id::uuid = $1
             "#,
         )
@@ -313,7 +444,7 @@ impl<'a> SourceMaterialRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Get non-archived materials older than a certain date
+    /// Retrieve materials eligible for archival (no archived flag and older than threshold)
     pub async fn get_materials_for_archival(
         &self,
         older_than: DateTime<Utc>,
@@ -324,9 +455,9 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             SELECT * FROM raw.source_material_registry
-            WHERE NOT is_archived 
-              AND created_at < $1
-            ORDER BY created_at ASC
+            WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
+              AND staged_at < $1
+            ORDER BY staged_at ASC
             LIMIT $2
             "#,
         )
@@ -337,7 +468,7 @@ impl<'a> SourceMaterialRepository<'a> {
         .map_err(|e| db_error(e, "get materials for archival"))
     }
 
-    /// Update material metadata
+    /// Update material metadata (merged at the database level)
     pub async fn update_metadata(
         &self,
         id: Id<SourceMaterialRecord>,
@@ -346,7 +477,7 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query_as::<_, SourceMaterialRecord>(
             r#"
             UPDATE raw.source_material_registry
-            SET metadata = $2, updated_at = NOW()
+            SET metadata = metadata || $2
             WHERE id::uuid = $1
             RETURNING *
             "#,
@@ -358,69 +489,64 @@ impl<'a> SourceMaterialRepository<'a> {
         .map_err(|e| db_error(e, "update material metadata"))
     }
 
-    /// Count materials by type
-    pub async fn count_by_type(&self, material_type: &str) -> DbResult<i64> {
+    /// Count materials by canonical kind
+    pub async fn count_by_kind(&self, material_kind: &str) -> DbResult<i64> {
         let result = sqlx::query!(
             r#"
             SELECT COUNT(*) as count
             FROM raw.source_material_registry
             WHERE material_kind = $1
             "#,
-            material_type
+            material_kind
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "count materials by type"))?;
+        .map_err(|e| db_error(e, "count materials by kind"))?;
 
         Ok(result.count.unwrap_or(0))
     }
 
-    /// Get total size of materials by type
-    pub async fn get_total_size_by_type(&self, material_type: &str) -> DbResult<i64> {
+    /// Get total size of materials by canonical kind (sourced from core.blobs)
+    pub async fn get_total_size_by_kind(&self, material_kind: &str) -> DbResult<i64> {
         let total_size: Option<i64> = sqlx::query_scalar(
             r#"
             SELECT COALESCE(SUM(b.size_bytes), 0)::BIGINT
             FROM raw.source_material_registry sm
             LEFT JOIN core.blobs b ON sm.optional_blob_id::uuid = b.id::uuid
-            WHERE sm.material_type = $1
+            WHERE sm.material_kind = $1
             "#,
         )
-        .bind(material_type)
+        .bind(material_kind)
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "get total size by type"))?;
+        .map_err(|e| db_error(e, "get total size by kind"))?;
 
         Ok(total_size.unwrap_or(0))
     }
 
-    /// Register in-flight source material (for Stage-as-You-Go pattern)
+    /// Register in-flight source material (Stage-as-you-go)
     pub async fn register_in_flight(
         &self,
-        material_type: &str,
+        material_kind_hint: &str,
         source_uri: Option<&str>,
         metadata: JsonValue,
     ) -> DbResult<SourceMaterialRecord> {
-        let id = Id::<SourceMaterial>::new();
-        let content_preview = Some("[IN-FLIGHT]".to_string());
+        let mut material =
+            SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
+        material.status = status::SENSING.to_string();
+        material.timing_info_type = timing_info_types::REALTIME.to_string();
+        material.merge_metadata(metadata);
+        if let Some(uri) = source_uri {
+            material
+                .metadata_object_mut()
+                .insert("source_uri".to_string(), JsonValue::String(uri.to_string()));
+        }
+        material.metadata_object_mut().insert(
+            "legacy_material_type".to_string(),
+            JsonValue::String(material_kind_hint.to_string()),
+        );
 
-        sqlx::query_as::<_, SourceMaterialRecord>(
-            r#"
-            INSERT INTO raw.source_material_registry (
-                id, material_type, source_uri, metadata, content_preview, source_identifier
-            ) VALUES (
-                ($1::uuid)::ulid, $2, $3, $4, $5, COALESCE($3, 'in-flight')
-            )
-            RETURNING *
-            "#,
-        )
-        .bind(ulid_to_uuid(*id.as_ulid()))
-        .bind(material_type)
-        .bind(source_uri)
-        .bind(metadata)
-        .bind(content_preview)
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "register in-flight material"))
+        self.register_material(material).await
     }
 
     /// Finalize in-flight source material
@@ -432,24 +558,37 @@ impl<'a> SourceMaterialRepository<'a> {
         content_preview: Option<String>,
         total_bytes: Option<i64>,
     ) -> DbResult<()> {
+        let metadata_update = {
+            let mut map = JsonMap::new();
+            if let Some(bytes) = total_bytes {
+                map.insert(
+                    "file_size_bytes".to_string(),
+                    JsonValue::Number(bytes.into()),
+                );
+            }
+            if let Some(enc) = encoding {
+                map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
+            }
+            if let Some(preview) = content_preview {
+                map.insert("content_preview".to_string(), JsonValue::String(preview));
+            }
+            JsonValue::Object(map)
+        };
+
         sqlx::query(
             r#"
             UPDATE raw.source_material_registry
             SET optional_blob_id = ($2::uuid)::ulid,
-                encoding = COALESCE($3, encoding),
-                content_preview = COALESCE($4, content_preview),
-                total_bytes = COALESCE($5, total_bytes),
-                status = 'finalized',
-                finalized_at = NOW(),
-                updated_at = NOW()
+                metadata = metadata || $3,
+                status = $4,
+                end_time = COALESCE(end_time, NOW())
             WHERE id::uuid = $1
             "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
         .bind(blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
-        .bind(encoding)
-        .bind(content_preview)
-        .bind(total_bytes)
+        .bind(metadata_update)
+        .bind(status::COMPLETED)
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "finalize in-flight material"))?;
@@ -458,7 +597,6 @@ impl<'a> SourceMaterialRepository<'a> {
     }
 }
 
-/// Transaction support for SourceMaterialRepository
 impl<'a> super::common::TransactionSupport for SourceMaterialRepository<'a> {
     type Item = SourceMaterialRepositoryTx<'a>;
 
@@ -521,6 +659,30 @@ impl<'a> SourceMaterialRepositoryTx<'a> {
     ) -> DbResult<Option<SourceMaterialRecord>> {
         SourceMaterialRepository::new(self.pool)
             .update_metadata(id, metadata)
+            .await
+    }
+
+    pub async fn register_in_flight(
+        &self,
+        material_kind_hint: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+    ) -> DbResult<SourceMaterialRecord> {
+        SourceMaterialRepository::new(self.pool)
+            .register_in_flight(material_kind_hint, source_uri, metadata)
+            .await
+    }
+
+    pub async fn finalize_in_flight(
+        &self,
+        id: Id<SourceMaterialRecord>,
+        blob_id: Option<Id<crate::Blob>>,
+        encoding: Option<&str>,
+        content_preview: Option<String>,
+        total_bytes: Option<i64>,
+    ) -> DbResult<()> {
+        SourceMaterialRepository::new(self.pool)
+            .finalize_in_flight(id, blob_id, encoding, content_preview, total_bytes)
             .await
     }
 }

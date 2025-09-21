@@ -52,8 +52,8 @@ fn generate_version_info() {
     println!("cargo:rustc-env=SATELLITE_BUILD_TIMESTAMP={build_timestamp}");
     println!("cargo:rustc-env=SATELLITE_IS_DIRTY={is_dirty}");
 
-    // Print version info for build logs
-    println!("cargo:warning=Building satellite version: {full_version}");
+    // Print version info for build logs without emitting a Cargo warning
+    eprintln!("Building satellite version: {full_version}");
 }
 
 fn get_commit_count() -> Option<u32> {

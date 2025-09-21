@@ -4222,6 +4222,7 @@ dependencies = [
  "async-nats 0.33.0",
  "bon",
  "camino",
+ "chrono",
  "clap",
  "color-eyre",
  "dirs",

@@ -22,6 +22,8 @@ pub mod seaquery_helpers;
 // Migration support
 #[cfg(feature = "migration")]
 pub mod migration;
+#[cfg(feature = "migration")]
+pub use migration::run_migrations_for_url;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{

@@ -76,6 +76,8 @@ use sinex_core::types::error::SinexError;
 
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -827,6 +829,13 @@ pub async fn acquire_test_database() -> Result<TestDatabase> {
 
 /// Ensure we have a template database with all migrations applied
 /// This is created once per test process and reused for all test databases
+fn advisory_lock_key(name: &str) -> i64 {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    // mask to positive i64 to match PostgreSQL advisory lock expectations
+    (hasher.finish() & 0x7FFF_FFFF_FFFF_FFFF) as i64
+}
+
 async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<String> {
     // Check if we already have a template database cached
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
@@ -854,6 +863,18 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
                 .await
                 .map_err(|_| SinexError::database("Admin connection timeout"))?
                 .map_err(|e| SinexError::database(format!("Admin connection failed: {}", e)))?;
+
+        // Ensure cross-process coordination when dropping/creating the template
+        let lock_key = advisory_lock_key(template_name);
+        tokio::time::timeout(
+            Duration::from_secs(120),
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(lock_key)
+                .execute(&mut admin_conn),
+        )
+        .await
+        .map_err(|_| SinexError::database("Template advisory lock timeout"))?
+        .map_err(|e| SinexError::database(format!("Template advisory lock failed: {}", e)))?;
 
         // Check if template already exists
         let exists: bool = sqlx::query_scalar(&format!(
@@ -909,26 +930,15 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
         .map_err(|_| SinexError::database("Create database timeout"))?
         .map_err(|e| SinexError::database(format!("Create database failed: {}", e)))?;
 
-        admin_conn.close().await?;
-        Ok::<bool, SinexError>(true) // true = needs migrations
+        Ok::<(PgConnection, i64), SinexError>((admin_conn, lock_key))
     };
 
     // Execute admin operations with timeout
-    let needs_migrations = tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
-        .await
-        .map_err(|_| SinexError::database("Admin operations timeout"))?
-        .map_err(|e| SinexError::database(format!("Admin operations failed: {}", e)))?;
-
-    // If template already exists, we're done
-    if !needs_migrations {
-        // Cache the template name for future use
-        TEMPLATE_DB_NAME
-            .set(template_name.to_string())
-            .map_err(|_| {
-                SinexError::unknown("Failed to cache template database name".to_string())
-            })?;
-        return Ok(template_name.to_string());
-    }
+    let (mut admin_conn, lock_key) =
+        tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
+            .await
+            .map_err(|_| SinexError::database("Admin operations timeout"))?
+            .map_err(|e| SinexError::database(format!("Admin operations failed: {}", e)))?;
 
     // Track template recreation
     POOL_METRICS.record_template_recreation();
@@ -969,7 +979,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
 
         let migrate_result = tokio::time::timeout(
             Duration::from_secs(30),
-            sinex_core::db::run_migrations(&template_pool),
+            sinex_core::db::run_migrations_for_url(&template_url),
         )
         .await
         .map_err(|_| {
@@ -994,11 +1004,25 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
         Ok::<(), SinexError>(())
     };
 
-    // Execute template setup with timeout
-    tokio::time::timeout(Duration::from_secs(45), template_pool_future)
+    let migration_result: Result<()> =
+        tokio::time::timeout(Duration::from_secs(45), template_pool_future)
+            .await
+            .map_err(|_| SinexError::database("Template setup timeout"))?;
+
+    if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_key)
+        .execute(&mut admin_conn)
         .await
-        .map_err(|_| SinexError::database("Template setup timeout"))?
-        .map_err(|e| SinexError::database(format!("Template setup failed: {}", e)))?;
+    {
+        eprintln!(
+            "⚠️  Failed to release template advisory lock for {}: {}",
+            template_name, e
+        );
+    }
+
+    admin_conn.close().await?;
+
+    migration_result?;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {:?}", template_elapsed);
