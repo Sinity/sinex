@@ -1471,7 +1471,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_test(timeout = 120)]
     async fn test_pre_warmed_fixture(ctx: TestContext) -> Result<()> {
         let fixture = pre_warmed_database(&ctx).await?;
 

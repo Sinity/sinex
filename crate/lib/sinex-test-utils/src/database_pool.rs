@@ -933,9 +933,12 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
         Ok::<(PgConnection, i64), SinexError>((admin_conn, lock_key))
     };
 
-    // Execute admin operations with timeout
+    // Execute admin operations with timeout. Individual steps inside the future already
+    // have their own tighter limits (e.g. 5s connect, 120s advisory lock, 10s create).
+    // Provide a generous cap so concurrent processes can wait their turn for the lock
+    // without tripping an outer 20s ceiling.
     let (mut admin_conn, lock_key) =
-        tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
+        tokio::time::timeout(Duration::from_secs(180), admin_conn_future)
             .await
             .map_err(|_| SinexError::database("Admin operations timeout"))?
             .map_err(|e| SinexError::database(format!("Admin operations failed: {}", e)))?;
