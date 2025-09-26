@@ -136,7 +136,7 @@ pub enum ProcessorCommand {
 /// Parse checkpoint as JSON
 fn parse_checkpoint_json(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
     serde_json::from_str::<serde_json::Value>(checkpoint_str)
-        .and_then(|v| serde_json::from_value::<Checkpoint>(v))
+        .and_then(serde_json::from_value::<Checkpoint>)
         .context("Invalid checkpoint JSON")
 }
 

@@ -155,8 +155,8 @@
             '';
           };
         in
-        {
-          packages = {
+        let
+          sinexPackages = {
             # Core satellite services
             sinexIngestd = buildRustPackage "sinex-ingestd";
             sinexGateway = buildRustPackage "sinex-gateway";
@@ -184,6 +184,20 @@
             default = buildRustPackage "sinex-ingestd";
             inherit pg_jsonschema;
           };
+
+          vmTests = import ./tests/nixos-vm/default.nix {
+            inherit pkgs;
+            sinex-ingestd = sinexPackages.sinexIngestd;
+            sinex-gateway = sinexPackages.sinexGateway;
+            inherit pg_jsonschema;
+          };
+        in
+        {
+          packages = sinexPackages;
+
+          checks = pkgs.lib.mapAttrs' (name: value:
+            pkgs.lib.nameValuePair "sinex-vm-${name}" value
+          ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
@@ -254,7 +268,7 @@
                 
                 # Run migrations using sea-orm system
                 if [ "$DB_STATUS" = "🟢" ] && command -v cargo >/dev/null 2>&1; then
-                  if cd crate/sinex-db/migration && cargo run -- status >/dev/null 2>&1; then
+                  if cd crate/lib/sinex-schema && cargo run -- status >/dev/null 2>&1; then
                     MIGRATION_INFO="migrations ready"
                   else
                     DB_STATUS="🟡"
@@ -296,18 +310,6 @@
             '';
           };
 
-          # NixOS VM tests
-          checks = {
-            # VM tests need to be updated for the new satellite architecture
-            # Temporarily disabled until test scenarios are rewritten
-
-            # sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix {
-            #   sinex-ingestd = self.packages.${system}.sinexIngestd;
-            #   sinex-gateway = self.packages.${system}.sinexGateway;
-            #   sinex-fs-watcher = self.packages.${system}.sinexFsWatcher;
-            #   pg_jsonschema = self.packages.${system}.pg_jsonschema;
-            # };
-          };
         }
       );
     in

@@ -192,8 +192,8 @@ impl ProgressTracker {
         progress.last_update = Utc::now();
 
         // Log progress every 10 batches or 10%
-        let should_log = progress.batches_processed % 10 == 0
-            || (progress.batches_processed * 10) % progress.total_batches == 0;
+        let should_log = progress.batches_processed.is_multiple_of(10)
+            || (progress.batches_processed * 10).is_multiple_of(progress.total_batches);
 
         if should_log {
             let percentage =

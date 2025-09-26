@@ -194,15 +194,13 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Event, JsonValue, Provenance};
+    use crate::models::{Event, Provenance};
     use crate::types::domain::{EventSource, EventType};
     use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
 
-    use color_eyre::eyre::Result;
-
     #[sinex_test]
-    async fn test_path_traversal_sanitization(ctx: TestContext) -> Result<()> {
+    async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("../../../etc/passwd"),
             EventType::new("security.test"),
@@ -230,7 +228,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_null_byte_sanitization(ctx: TestContext) -> Result<()> {
+    async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("test\0source"),
             EventType::new("security.test"),
@@ -253,7 +251,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_sql_injection_preserved(ctx: TestContext) -> Result<()> {
+    async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = Event::dynamic(
             EventSource::new("security.test"),
             EventType::new("sql.injection"),

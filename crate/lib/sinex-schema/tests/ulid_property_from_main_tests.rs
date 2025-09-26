@@ -20,7 +20,9 @@ fn test_ulid_chronological_ordering() {
 
         for i in 0..count {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
             }
             ulids.push(Ulid::new());
         }
@@ -171,7 +173,9 @@ fn test_ulid_string_ordering() {
 
         for i in 0..count {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
             }
             let ulid = Ulid::new();
             ulids.push(ulid);

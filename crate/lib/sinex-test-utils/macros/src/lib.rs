@@ -343,7 +343,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     Some(thread::spawn(move || {
                         let mut elapsed = 5;
                         loop {
-                            thread::sleep(Duration::from_secs(5));
+                            thread::park_timeout(Duration::from_secs(5));
                             eprintln!("  ⏳ {} still running... ({}s elapsed)",
                                      test_name_clone.replace('_', " "), elapsed);
                             elapsed += 5;

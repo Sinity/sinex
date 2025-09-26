@@ -225,12 +225,12 @@ impl<'ctx> PropertyTester<'ctx> {
     {
         for case_num in 0..test_cases {
             let tree = strategy.new_tree(&mut self.runner).map_err(|e| {
-                SinexError::unknown(format!("Strategy tree generation failed: {:?}", e))
+                SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
             })?;
             let value = tree.current();
 
             property(self.ctx, value).await.map_err(|e| {
-                SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
+                SinexError::validation(format!("Property test case {case_num} failed: {e}"))
             })?;
         }
 
@@ -243,7 +243,7 @@ impl<'ctx> PropertyTester<'ctx> {
             let tree = SinexStrategies::any_event()
                 .new_tree(&mut self.runner)
                 .map_err(|e| {
-                    SinexError::unknown(format!("Strategy tree generation failed: {:?}", e))
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
                 })?;
             let (source, event_type, payload) = tree.current();
 
@@ -253,7 +253,7 @@ impl<'ctx> PropertyTester<'ctx> {
                 .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
-                    SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
+                    SinexError::validation(format!("Property test case {case_num} failed: {e}"))
                 })?;
 
             // Verify basic properties
@@ -271,7 +271,7 @@ impl<'ctx> PropertyTester<'ctx> {
             let tree = SinexStrategies::any_event()
                 .new_tree(&mut self.runner)
                 .map_err(|e| {
-                    SinexError::unknown(format!("Strategy tree generation failed: {:?}", e))
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
                 })?;
             let (source, event_type, payload) = tree.current();
 
@@ -281,7 +281,7 @@ impl<'ctx> PropertyTester<'ctx> {
                 .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
-                    SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
+                    SinexError::validation(format!("Property test case {case_num} failed: {e}"))
                 })?;
 
             // Should be findable by ID
@@ -320,7 +320,7 @@ impl<'ctx> PropertyTester<'ctx> {
             let tree = SinexStrategies::malicious_payload()
                 .new_tree(&mut self.runner)
                 .map_err(|e| {
-                    SinexError::unknown(format!("Strategy tree generation failed: {:?}", e))
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
                 })?;
             let malicious_payload = tree.current();
 
@@ -410,7 +410,7 @@ mod tests {
         for _ in 0..20 {
             let tree = SinexStrategies::event_source()
                 .new_tree(&mut runner)
-                .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
             let source = tree.current();
 
             // Should be non-empty and match pattern
@@ -437,7 +437,7 @@ mod tests {
         for _ in 0..20 {
             let tree = SinexStrategies::event_type()
                 .new_tree(&mut runner)
-                .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
             let event_type = tree.current();
 
             // Should contain at least one dot
@@ -461,7 +461,7 @@ mod tests {
         for _ in 0..20 {
             let tree = SinexStrategies::file_path()
                 .new_tree(&mut runner)
-                .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
             let path = tree.current();
 
             // Should start with /
@@ -486,7 +486,7 @@ mod tests {
         for _ in 0..10 {
             let tree = SinexStrategies::json_payload()
                 .new_tree(&mut runner)
-                .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
             let payload = tree.current();
 
             // Align expectations with sanitization applied by TestContext
@@ -516,8 +516,7 @@ mod tests {
                     let err_text = err.to_string().to_lowercase();
                     assert!(
                         err_text.contains("unsupported unicode escape"),
-                        "unexpected error inserting json payload: {}",
-                        err
+                        "unexpected error inserting json payload: {err}"
                     );
                 }
             }
@@ -534,7 +533,7 @@ mod tests {
         for _ in 0..10 {
             let tree = SinexStrategies::filesystem_event()
                 .new_tree(&mut runner)
-                .map_err(|e| SinexError::unknown(format!("Strategy error: {:?}", e)))?;
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
             let (source, event_type, payload) = tree.current();
 
             assert_eq!(source, "filesystem");

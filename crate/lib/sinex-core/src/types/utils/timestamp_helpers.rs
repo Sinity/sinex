@@ -140,11 +140,10 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use color_eyre::eyre::Result;
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_timestamp_conversions() -> Result<()> {
+    fn test_timestamp_conversions() -> color_eyre::eyre::Result<()> {
         // Test seconds conversion
         let dt = timestamp_to_datetime(1700000000).unwrap();
         assert_eq!(dt.timestamp(), 1700000000);
@@ -163,7 +162,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_flexible_parsing() -> Result<()> {
+    fn test_flexible_parsing() -> color_eyre::eyre::Result<()> {
         // Test RFC3339
         let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();
         assert_eq!(dt.to_rfc3339(), "2023-11-14T12:00:00+00:00");

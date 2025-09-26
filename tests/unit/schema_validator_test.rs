@@ -81,17 +81,17 @@ fn test_schema_compilation_error_handling() -> color_eyre::eyre::Result<()> {
     ];
 
     for (schema, description) in malformed_schemas {
-        println!("Testing malformed schema: {}", description);
+        println!("Testing malformed schema: {description}");
 
         let result = JSONSchema::compile(&schema);
         match result {
             Ok(_) => {
                 // Some schemas might be more lenient than expected
-                println!("  Schema was accepted (lenient parsing): {:?}", schema);
+                println!("  Schema was accepted (lenient parsing): {schema:?}");
             }
             Err(e) => {
                 // Expected case - schema compilation should fail gracefully
-                println!("  Schema compilation failed as expected: {}", e);
+                println!("  Schema compilation failed as expected: {e}");
 
                 // Error should be informative
                 let error_str = e.to_string();
@@ -238,7 +238,7 @@ fn test_schema_version_string_validation() -> color_eyre::eyre::Result<()> {
 
     // Test valid versions
     for version in &valid_versions {
-        println!("Testing valid version: '{}'", version);
+        println!("Testing valid version: '{version}'");
         // Basic validation - non-empty, reasonable length, no control characters
         assert!(!version.is_empty(), "Version should not be empty");
         assert!(
@@ -257,7 +257,7 @@ fn test_schema_version_string_validation() -> color_eyre::eyre::Result<()> {
 
     // Test invalid versions
     for version in &invalid_versions {
-        println!("Testing invalid version: '{}'", version);
+        println!("Testing invalid version: '{version}'");
         // These should be caught by validation
         let has_issues = version.is_empty()
             || version.starts_with(' ')
@@ -266,8 +266,7 @@ fn test_schema_version_string_validation() -> color_eyre::eyre::Result<()> {
             || version.contains('\n');
         assert!(
             has_issues,
-            "Invalid version should be detectable: '{}'",
-            version
+            "Invalid version should be detectable: '{version}'"
         );
     }
 
@@ -286,7 +285,7 @@ fn test_schema_registry_error_conditions() -> color_eyre::eyre::Result<()> {
     let mut large_properties = serde_json::Map::new();
     for i in 0..1000 {
         large_properties.insert(
-            format!("prop_{}", i),
+            format!("prop_{i}"),
             json!({"type": "string", "description": format!("Property {}", i)}),
         );
     }
@@ -301,7 +300,7 @@ fn test_schema_registry_error_conditions() -> color_eyre::eyre::Result<()> {
     let result = JSONSchema::compile(&large_schema);
     match result {
         Ok(_) => println!("Large schema compiled successfully"),
-        Err(e) => println!("Large schema failed to compile: {}", e),
+        Err(e) => println!("Large schema failed to compile: {e}"),
     }
 
     // Test deeply nested schemas
@@ -318,7 +317,7 @@ fn test_schema_registry_error_conditions() -> color_eyre::eyre::Result<()> {
     let result = JSONSchema::compile(&nested);
     match result {
         Ok(_) => println!("Deeply nested schema compiled successfully"),
-        Err(e) => println!("Deeply nested schema failed: {}", e),
+        Err(e) => println!("Deeply nested schema failed: {e}"),
     }
 
     Ok(())
@@ -350,16 +349,14 @@ fn test_event_source_and_type_patterns() -> color_eyre::eyre::Result<()> {
     for source in &valid_sources {
         assert!(
             EVENT_SOURCE_PATTERN.is_match(source),
-            "Valid source '{}' should match pattern",
-            source
+            "Valid source '{source}' should match pattern"
         );
     }
 
     for source in &invalid_sources {
         assert!(
             !EVENT_SOURCE_PATTERN.is_match(source),
-            "Invalid source '{}' should not match pattern",
-            source
+            "Invalid source '{source}' should not match pattern"
         );
     }
 
@@ -387,16 +384,14 @@ fn test_event_source_and_type_patterns() -> color_eyre::eyre::Result<()> {
     for event_type in &valid_types {
         assert!(
             EVENT_TYPE_PATTERN.is_match(event_type),
-            "Valid event type '{}' should match pattern",
-            event_type
+            "Valid event type '{event_type}' should match pattern"
         );
     }
 
     for event_type in &invalid_types {
         assert!(
             !EVENT_TYPE_PATTERN.is_match(event_type),
-            "Invalid event type '{}' should not match pattern",
-            event_type
+            "Invalid event type '{event_type}' should not match pattern"
         );
     }
 

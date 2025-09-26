@@ -103,7 +103,7 @@ impl TestAutomatonHandle {
     pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> Result<Self> {
         // For now, return a mock handle
         Ok(Self {
-            name: format!("test-{}", automaton_type),
+            name: format!("test-{automaton_type}"),
             process: None,
         })
     }
@@ -141,14 +141,22 @@ impl SatelliteOrchestrator {
 
     pub async fn shutdown_all(&self) -> Result<()> {
         // Shutdown all satellites
-        let mut satellites = self.satellites.lock();
-        for (_, mut handle) in satellites.drain() {
+        let satellite_handles: Vec<_> = {
+            let mut satellites = self.satellites.lock();
+            satellites.drain().collect()
+        };
+
+        for (_, mut handle) in satellite_handles {
             handle.stop().await?;
         }
 
         // Shutdown all automata
-        let mut automata = self.automata.lock();
-        for (_, mut handle) in automata.drain() {
+        let automaton_handles: Vec<_> = {
+            let mut automata = self.automata.lock();
+            automata.drain().collect()
+        };
+
+        for (_, mut handle) in automaton_handles {
             handle.stop().await?;
         }
 
@@ -368,7 +376,7 @@ mod tests {
             });
 
             let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
-            orchestrator.register_satellite(&format!("sat-{}", i), handle);
+            orchestrator.register_satellite(&format!("sat-{i}"), handle);
         }
 
         // Should have all satellites registered
@@ -415,10 +423,10 @@ mod tests {
             let orchestrator_clone = orchestrator.clone();
             let handle = thread::spawn(move || {
                 let sat_handle = TestSatelliteHandle {
-                    name: format!("thread-sat-{}", i),
+                    name: format!("thread-sat-{i}"),
                     process: None,
                 };
-                orchestrator_clone.register_satellite(&format!("key-{}", i), sat_handle);
+                orchestrator_clone.register_satellite(&format!("key-{i}"), sat_handle);
             });
             handles.push(handle);
         }

@@ -233,7 +233,7 @@ proptest! {
 
             for i in 0..concurrent_operations {
                 let ctx_clone = TestContext::new().await.unwrap();
-                let source = format!("concurrent-{}", i);
+                let source = format!("concurrent-{i}");
 
                 let handle = tokio::spawn(async move {
                     let mut operation_events = 0;
@@ -241,7 +241,7 @@ proptest! {
                     for j in 0..events_per_operation {
                         let event = Event::test_event(
                             EventSource::new(&source),
-                            EventType::new(&format!("test.event.{}", j)),
+                    EventType::new(format!("test.event.{j}")),
                             json!({"operation": i, "event": j}),
                         );
 
@@ -376,7 +376,7 @@ proptest! {
             for i in 0..events_before_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("before.{}", i)),
+                    EventType::new(format!("before.{i}")),
                     json!({"phase": "before", "index": i}),
                 );
 
@@ -391,7 +391,7 @@ proptest! {
             for i in 0..events_during_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("during.{}", i)),
+                    EventType::new(format!("during.{i}")),
                     json!({"phase": "during", "index": i}),
                 );
 
@@ -409,7 +409,7 @@ proptest! {
             for i in 0..events_after_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("after.{}", i)),
+                    EventType::new(format!("after.{i}")),
                     json!({"phase": "after", "index": i}),
                 );
 
@@ -443,12 +443,12 @@ proptest! {
             // Create concurrent event producers
             for source_id in 0..concurrent_sources {
                 let ctx_clone = TestContext::new().await.unwrap();
-                let source_name = format!("ordering-test-{}", source_id);
+                let source_name = format!("ordering-test-{source_id}");
 
                 let handle = tokio::spawn(async move {
                     for event_id in 0..events_per_source {
                         let event = Event::test_event(
-                            EventSource::new(&source_name),
+                            EventSource::new(source_name.clone()),
                             EventType::new("ordering.test"),
                             json!({
                                 "source_id": source_id,

@@ -16,8 +16,18 @@ use sinex_schema::ulid::{Ulid, UlidError};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+
+fn spin_for(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+    let start = Instant::now();
+    while Instant::now().duration_since(start) < duration {
+        std::thread::yield_now();
+    }
+}
 
 #[cfg(test)]
 mod basic_tests {
@@ -278,7 +288,7 @@ mod conversion_tests {
     #[test]
     fn test_uuid_conversion_preserves_order() {
         let ulid1 = Ulid::new();
-        thread::sleep(Duration::from_millis(1)); // Ensure different timestamp
+        spin_for(Duration::from_millis(1)); // Ensure different timestamp
         let ulid2 = Ulid::new();
 
         assert!(ulid1 < ulid2);

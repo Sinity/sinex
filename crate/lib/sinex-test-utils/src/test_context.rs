@@ -63,6 +63,7 @@ pub struct TestContext {
     start_time: Instant,
     created_events: Arc<Mutex<Vec<Ulid>>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    baseline_events: i64,
     _tracing_enabled: bool,
 }
 
@@ -113,7 +114,10 @@ impl TestContext {
     /// Create test context with custom name
     pub async fn with_name(test_name: &str) -> Result<Self> {
         let db = acquire_test_database().await?;
+        // Defensive cleanup in case a previous test left residue due to panic
+        db.force_cleanup().await?;
         let pool = db.pool().clone();
+        let baseline_events = pool.events().count_all().await?;
 
         Ok(Self {
             pool,
@@ -122,6 +126,7 @@ impl TestContext {
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
+            baseline_events,
             _tracing_enabled: false,
         })
     }
@@ -180,6 +185,29 @@ impl TestContext {
         self.start_time.elapsed()
     }
 
+    /// Number of events present when the context was created
+    pub fn baseline_event_count(&self) -> i64 {
+        self.baseline_events
+    }
+
+    /// Current total number of events
+    pub async fn current_event_count(&self) -> Result<i64> {
+        Ok(self.pool.events().count_all().await?)
+    }
+
+    /// Difference between current and baseline event count
+    pub async fn event_delta(&self) -> Result<i64> {
+        Ok(self.current_event_count().await? - self.baseline_events)
+    }
+
+    /// Force cleanup of the underlying database (use with caution)
+    pub async fn force_cleanup(&self) -> Result<()> {
+        self.db
+            .force_cleanup()
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!(e))
+    }
+
     /// Create and insert a test event
     pub async fn create_test_event<S, T>(
         &self,
@@ -200,14 +228,14 @@ impl TestContext {
         if let Provenance::Material { id, .. } = &event.provenance {
             let material_ulid_uuid = id.to_uuid();
             // Use deterministic source_identifier to avoid unique conflicts
-            let source_identifier = format!("test-material-{}", id);
+            let source_identifier = format!("test-material-{id}");
             // Insert minimal required row; ignore if it already exists
             let _ = sqlx::query!(
                 r#"
                 INSERT INTO raw.source_material_registry 
                     (id, material_kind, source_identifier, status, timing_info_type)
                 VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (source_identifier) DO NOTHING
+                ON CONFLICT (id) DO NOTHING
                 "#,
                 material_ulid_uuid,
                 "annex",

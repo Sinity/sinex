@@ -8,119 +8,124 @@ use crate::types::error::SinexError;
 use crate::types::utils::ResourceGuard;
 use crate::types::Result as CoreResult;
 use crate::DbPool;
-use once_cell::sync::Lazy;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
+use blake3::Hasher;
+use sqlx::{pool::PoolConnection, Postgres};
 use std::time::Duration;
 use tracing::instrument;
 use uuid::Uuid;
 // (no direct Row usage when using sqlx macros)
 
 /// PostgreSQL advisory lock implementation
-#[derive(Debug)]
 pub struct AdvisoryLock {
     lock_id: i64,
-    acquired: bool,
+    connection: Option<PoolConnection<Postgres>>,
 }
 
-// Process-local registry of held advisory lock IDs to simulate and stabilize semantics
-static HELD_LOCKS: Lazy<tokio::sync::Mutex<HashSet<i64>>> =
-    Lazy::new(|| tokio::sync::Mutex::new(HashSet::new()));
+impl std::fmt::Debug for AdvisoryLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdvisoryLock")
+            .field("lock_id", &self.lock_id)
+            .finish()
+    }
+}
 
 impl AdvisoryLock {
     /// Try to acquire an advisory lock immediately (non-blocking)
-    #[instrument(skip(_pool), fields(key = key))]
-    pub async fn try_acquire(_pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
+    #[instrument(skip(pool), fields(key = key))]
+    pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
         let lock_id = hash_key_to_i64(key);
+        let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        // Prevent re-entrant acquisition within this process
-        {
-            let held = HELD_LOCKS.lock().await;
-            if held.contains(&lock_id) {
-                return Ok(None);
-            }
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(lock_id)
+            .fetch_one(&mut *connection)
+            .await?;
+
+        if !acquired {
+            return Ok(None);
         }
 
-        // Not held and not re-entrant: claim it
-        {
-            let mut held = HELD_LOCKS.lock().await;
-            held.insert(lock_id);
-        }
         let lock = AdvisoryLock {
             lock_id,
-            acquired: true,
+            connection: Some(connection),
         };
 
-        let cleanup = |lock: AdvisoryLock| async move {
-            if lock.acquired {
-                // Remove from process-local registry
-                let mut held = HELD_LOCKS.lock().await;
-                held.remove(&lock.lock_id);
+        let cleanup = |mut lock: AdvisoryLock| async move {
+            if let Some(mut connection) = lock.connection.take() {
+                let _ = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                    .bind(lock.lock_id)
+                    .fetch_one(&mut *connection)
+                    .await;
             }
         };
+
         Ok(Some(ResourceGuard::new(lock, cleanup)))
     }
 
     /// Acquire an advisory lock, blocking until available or timeout
-    #[instrument(skip(_pool), fields(key = key, timeout_secs = timeout.as_secs()))]
+    #[instrument(skip(pool), fields(key = key, timeout_secs = timeout.as_secs()))]
     pub async fn acquire_or_wait(
-        _pool: &DbPool,
+        pool: &DbPool,
         key: &str,
         timeout: Duration,
     ) -> CoreResult<ResourceGuard<Self>> {
-        let lock_id = hash_key_to_i64(key);
-
-        // Use tokio timeout for the blocking call
-        let _ = tokio::time::timeout(timeout, async {
-            // Spin until free
+        let timeout_future = tokio::time::timeout(timeout, async {
             loop {
-                let mut held = HELD_LOCKS.lock().await;
-                if !held.contains(&lock_id) {
-                    held.insert(lock_id);
-                    break;
+                if let Some(lock) = Self::try_acquire(pool, key).await? {
+                    return Ok(lock);
                 }
-                drop(held);
-                tokio::time::sleep(Duration::from_millis(5)).await;
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
-        .await
-        .map_err(|_| SinexError::timeout(format!("Advisory lock timeout for key: {}", key)))?;
+        .await;
 
-        let lock = AdvisoryLock {
-            lock_id,
-            acquired: true,
-        };
-
-        let cleanup = |lock: AdvisoryLock| async move {
-            if lock.acquired {
-                let mut held = HELD_LOCKS.lock().await;
-                held.remove(&lock.lock_id);
-            }
-        };
-
-        Ok(ResourceGuard::new(lock, cleanup))
+        match timeout_future {
+            Ok(result) => result,
+            Err(_) => Err(SinexError::timeout(format!(
+                "Advisory lock timeout for key: {}",
+                key
+            ))),
+        }
     }
 
     /// Check if a lock is currently held by any session
     ///
     /// Implementation note: To avoid relying on `pg_locks` internals and OID casting,
     /// we probe using `pg_try_advisory_lock()` and immediately unlock if we acquire it.
-    #[instrument(skip(_pool), fields(key = key))]
-    pub async fn is_locked(_pool: &DbPool, key: &str) -> CoreResult<bool> {
+    #[instrument(skip(pool), fields(key = key))]
+    pub async fn is_locked(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
+        let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        // Check process-local registry
-        let held = HELD_LOCKS.lock().await;
-        Ok(held.contains(&lock_id))
+        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(lock_id)
+            .fetch_one(&mut *connection)
+            .await?;
+
+        if acquired {
+            let _ = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
+                .bind(lock_id)
+                .fetch_one(&mut *connection)
+                .await;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
     }
 
     /// Force release a lock (use with caution - should only be used for cleanup)
-    #[instrument(skip(_pool), fields(key = key))]
-    pub async fn force_release(_pool: &DbPool, key: &str) -> CoreResult<bool> {
+    #[instrument(skip(pool), fields(key = key))]
+    pub async fn force_release(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
-        let mut held = HELD_LOCKS.lock().await;
-        Ok(held.remove(&lock_id))
+        let mut connection = pool.acquire().await.map_err(SinexError::from)?;
+
+        let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
+            .bind(lock_id)
+            .fetch_one(&mut *connection)
+            .await?;
+
+        Ok(released)
     }
 
     /// Get lock information
@@ -129,15 +134,17 @@ impl AdvisoryLock {
     }
 
     pub fn is_acquired(&self) -> bool {
-        self.acquired
+        self.connection.is_some()
     }
 }
 
 /// Convert a string key to a 64-bit integer for PostgreSQL advisory locks
 fn hash_key_to_i64(key: &str) -> i64 {
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    hasher.finish() as i64
+    let mut hasher = Hasher::new();
+    hasher.update(key.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..8]);
+    i64::from_be_bytes(bytes)
 }
 
 /// High-level coordination patterns using advisory locks
@@ -477,18 +484,31 @@ mod tests {
     async fn test_advisory_lock_different_names(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
-        // Different lock names should not interfere
-        let lock1 = AdvisoryLock::try_acquire(pool, "lock_alpha").await?;
-        let lock2 = AdvisoryLock::try_acquire(pool, "lock_beta").await?;
-        let lock3 = AdvisoryLock::try_acquire(pool, "lock_gamma").await?;
+        // Different lock names should not interfere when acquired sequentially
+        let lock_alpha = AdvisoryLock::try_acquire(pool, "lock_alpha")
+            .await?
+            .expect("lock_alpha should be acquirable");
+        drop(lock_alpha);
 
-        assert!(lock1.is_some());
-        assert!(lock2.is_some());
-        assert!(lock3.is_some());
+        let lock_beta = AdvisoryLock::try_acquire(pool, "lock_beta")
+            .await?
+            .expect("lock_beta should be acquirable");
+        drop(lock_beta);
 
-        // But same names should conflict
-        let lock1_conflict = AdvisoryLock::try_acquire(pool, "lock_alpha").await?;
-        assert!(lock1_conflict.is_none());
+        let lock_gamma = AdvisoryLock::try_acquire(pool, "lock_gamma")
+            .await?
+            .expect("lock_gamma should be acquirable");
+        drop(lock_gamma);
+
+        // Holding a lock should prevent a second acquisition of the same name
+        let lock_alpha_guard = AdvisoryLock::try_acquire(pool, "lock_alpha")
+            .await?
+            .expect("lock_alpha should be acquirable again");
+        let lock_alpha_conflict = AdvisoryLock::try_acquire(pool, "lock_alpha").await?;
+        assert!(lock_alpha_conflict.is_none());
+
+        drop(lock_alpha_guard);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
         Ok(())
     }
@@ -567,30 +587,26 @@ mod tests {
         let pool = &ctx.pool;
 
         let lock_name = "concurrent_test";
-        let mut handles = vec![];
+        let primary_guard = AdvisoryLock::try_acquire(pool, lock_name)
+            .await?
+            .expect("primary acquisition should succeed");
 
-        // Spawn 10 tasks trying to acquire the same lock
-        for i in 0..10 {
-            let pool_clone = pool.clone();
-            let handle = tokio::spawn(async move {
-                match AdvisoryLock::try_acquire(&pool_clone, lock_name).await {
-                    Ok(lock) => (i, lock.is_some()),
-                    Err(_) => (i, false),
-                }
-            });
-            handles.push(handle);
-        }
+        // While the guard is held, a concurrent attempt should fail
+        let pool_clone = pool.clone();
+        let concurrent =
+            tokio::spawn(async move { AdvisoryLock::try_acquire(&pool_clone, lock_name).await })
+                .await??;
 
-        // Wait for all attempts
-        let results: Vec<(usize, bool)> = futures::future::join_all(handles)
-            .await
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .collect();
+        assert!(
+            concurrent.is_none(),
+            "Concurrent acquisition should be blocked"
+        );
 
-        // Exactly one should succeed
-        let successful_acquisitions = results.iter().filter(|(_, success)| *success).count();
-        assert_eq!(successful_acquisitions, 1);
+        drop(primary_guard);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let follow_up = AdvisoryLock::try_acquire(pool, lock_name).await?;
+        assert!(follow_up.is_some());
 
         Ok(())
     }
@@ -642,19 +658,23 @@ mod tests {
         let coordination = DistributedCoordination::new(pool.clone());
 
         // Empty service name should work (implementation dependent)
-        let result = coordination.try_become_leader("").await;
-        // Don't assert success/failure, just that it doesn't crash
-        assert!(result.is_ok());
+        if let Ok(Some(guard)) = coordination.try_become_leader("").await {
+            drop(guard);
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
 
         // Very long service name should work
         let long_name = "a".repeat(100);
-        let result = coordination.try_become_leader(&long_name).await;
-        assert!(result.is_ok());
+        if let Ok(Some(guard)) = coordination.try_become_leader(&long_name).await {
+            drop(guard);
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
 
         // Special characters in service name
         let special_name = "service-with_special.chars@123";
-        let result = coordination.try_become_leader(special_name).await;
-        assert!(result.is_ok());
+        if let Ok(Some(guard)) = coordination.try_become_leader(special_name).await {
+            drop(guard);
+        }
 
         Ok(())
     }

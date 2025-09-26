@@ -1,15 +1,15 @@
+//! Property tests for schema validation functionality
+//!
+//! This module consolidates property tests from:
+//! - json_schema_property_tests.rs (JSON schema validation and security)
+//! - Additional schema-related property tests for validation chains
+//! - Schema compatibility and evolution properties
+
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
-use sinex_core::types::validation::{validate_json, ValidationError};
+use sinex_core::types::validation::validate_json;
 use sinex_test_utils::prelude::*;
-
-/// Property tests for schema validation functionality
-///
-/// This module consolidates property tests from:
-/// - json_schema_property_tests.rs (JSON schema validation and security)
-/// - Additional schema-related property tests for validation chains
-/// - Schema compatibility and evolution properties
 
 // =============================================================================
 // JSON Schema Validation Properties
@@ -155,20 +155,7 @@ fn test_json_validation_normal_payloads() -> color_eyre::eyre::Result<()> {
         let result = validate_json(&json_str);
 
         // Any result is acceptable - just ensure it doesn't crash
-        match result {
-            Ok(_) => {
-                // Payload passed validation
-                prop_assert!(true);
-            },
-            Err(ValidationError::Json(_)) => {
-                // Expected for malformed JSON structures
-                prop_assert!(true);
-            },
-            Err(_) => {
-                // Other validation errors are also acceptable
-                prop_assert!(true);
-            }
-        }
+        drop(result);
     });
     Ok(())
 }
@@ -181,12 +168,7 @@ fn test_json_validation_security_payloads() -> color_eyre::eyre::Result<()> {
         let result = validate_json(&json_str);
 
         // Should not panic or cause memory issues
-        match result {
-            Ok(_) | Err(_) => {
-                // Any result is fine - main thing is no crashes
-                prop_assert!(true);
-            }
-        }
+        drop(result);
     });
     Ok(())
 }
@@ -261,7 +243,6 @@ fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
         match (base_result, evolved_result) {
             (Ok(_), Ok(_)) => {
                 // Both passed - ideal scenario
-                prop_assert!(true);
             },
             (Err(e1), Err(e2)) => {
                 // Both failed - error types should be compatible
@@ -273,11 +254,9 @@ fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
             },
             (Ok(_), Err(_)) => {
                 // Base passed, evolved failed - acceptable if additional fields are invalid
-                prop_assert!(true);
             },
             (Err(_), Ok(_)) => {
                 // Base failed, evolved passed - could happen if additional fields fix validation
-                prop_assert!(true);
             }
         }
     });
@@ -327,7 +306,7 @@ fn test_validation_chain_numeric_properties() -> color_eyre::eyre::Result<()> {
     )| {
         for &test_number in test_numbers.iter() {
             // Property: Numbers should have predictable range behavior
-            let in_valid_range = test_number >= 0 && test_number <= 1000;
+            let in_valid_range = (0..=1000).contains(&test_number);
             let too_small = test_number < 0;
             let too_large = test_number > 1000;
 
@@ -451,10 +430,7 @@ fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
     for payload in edge_cases {
         // Should not panic
         let json_str = payload.to_string();
-        let _result = validate_json(&json_str);
-
-        // The main property we're testing is that it doesn't crash
-        assert!(true);
+        let _ = validate_json(&json_str);
     }
     Ok(())
 }
@@ -577,7 +553,7 @@ mod unit_tests {
         // At minimum, these should not panic
         match valid_result {
             Ok(_) => {}
-            Err(e) => println!("Valid payload failed: {}", e),
+            Err(e) => println!("Valid payload failed: {e}"),
         }
 
         match invalid_result {
@@ -654,7 +630,6 @@ mod unit_tests {
         // Test that we can detect validation issues
         assert!(empty_value.is_empty()); // Should fail validation
         assert!(!valid_value.is_empty()); // Should pass validation
-        assert!(valid_value.len() >= 1); // Should meet minimum length
         Ok(())
     }
 }

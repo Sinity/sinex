@@ -119,7 +119,6 @@ fn test_validate_path_neutralizes_traversal() -> color_eyre::eyre::Result<()> {
                 }
                 Err(_) => {
                     // Rejection is acceptable for malicious paths
-                    prop_assert!(true);
                 }
             }
         }
@@ -253,9 +252,13 @@ fn test_path_validation_handles_unicode_safely() -> color_eyre::eyre::Result<()>
                     // Valid unicode should be preserved or safely normalized
                     prop_assert!(validated.as_str().len() <= unicode_path.len() + 100); // Allow for normalization
                 }
-                Err(_) => {
-                    // Rejection is fine for problematic unicode
-                    prop_assert!(true);
+                Err(e) => {
+                    // Rejection is fine for problematic unicode but should be a path error
+                    prop_assert!(
+                        matches!(e, ValidationError::Path(_)),
+                        "Unicode path rejection should report a path error: {:?}",
+                        e
+                    );
                 }
             }
         }
@@ -327,9 +330,14 @@ fn test_path_length_limits_enforced() -> color_eyre::eyre::Result<()> {
                             "Validated path should respect length limits"
                         );
                     }
-                    Err(_) => {
-                        // May still fail for other reasons - that's fine
-                        prop_assert!(true);
+                    Err(e) => {
+                        // May still fail for other reasons - ensure it's a path validation error
+                        prop_assert!(
+                            matches!(e, ValidationError::Path(_)),
+                            "Unexpected error type for length {}: {:?}",
+                            path_length,
+                            e
+                        );
                     }
                 }
             }
@@ -409,8 +417,8 @@ mod unit_tests {
             .new_tree(&mut runner)
             .unwrap()
             .current();
-        // Edge cases can be empty, so just verify it doesn't crash
-        assert!(true);
+        // Edge cases can be empty, but they should stay within documented bounds
+        assert!(edge_case.len() <= 5000);
 
         Ok(())
     }

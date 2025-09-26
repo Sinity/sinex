@@ -97,8 +97,8 @@ psql *ARGS:
 # Update SQLX offline cache (for Nix builds)
 sqlx-prepare:
     just migrate
-    # Prepare SQLx offline cache for workspace members (default targets: libs/bins only)
-    cargo sqlx prepare --workspace
+    # Prepare SQLx offline cache for workspace members (include test targets for all queries)
+    cargo sqlx prepare --workspace -- --all-targets
     @echo "✅ SQLX cache updated - remember to commit .sqlx/"
 
 # Check SQLX cache

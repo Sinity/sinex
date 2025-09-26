@@ -10,6 +10,8 @@
 //! - Temporary files should be created in secure, bounded locations
 //! - Test cleanup should only delete files within safe boundaries
 
+#![allow(clippy::result_large_err)]
+
 use camino::{Utf8Path, Utf8PathBuf};
 use sinex_core::types::error::SinexError;
 use sinex_core::SanitizedPath;
@@ -29,7 +31,7 @@ pub type PathValidationResult<T> = Result<T, SinexError>;
 pub fn validate_test_path(path: &str) -> PathValidationResult<SanitizedPath> {
     // First, use the core SanitizedPath validation
     let sanitized = SanitizedPath::from_str(path)
-        .map_err(|e| SinexError::validation(format!("Path validation failed: {}", e)))?;
+        .map_err(|e| SinexError::validation(format!("Path validation failed: {e}")))?;
 
     let utf8_path = Utf8Path::new(path);
 
@@ -54,7 +56,7 @@ pub fn create_test_temp_dir(test_name: &str) -> PathValidationResult<Utf8PathBuf
 
     // Create the directory
     std::fs::create_dir_all(&test_temp_dir)
-        .map_err(|e| SinexError::io(format!("Failed to create test temp dir: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to create test temp dir: {e}")))?;
 
     Ok(test_temp_dir)
 }
@@ -83,7 +85,7 @@ pub fn remove_test_dir(dir_path: &Utf8Path) -> PathValidationResult<()> {
 
     // Remove the directory
     std::fs::remove_dir_all(dir_path)
-        .map_err(|e| SinexError::io(format!("Failed to remove test directory: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to remove test directory: {e}")))?;
 
     Ok(())
 }
@@ -125,7 +127,7 @@ fn get_safe_temp_base() -> PathValidationResult<Utf8PathBuf> {
 
     // Ensure it exists
     std::fs::create_dir_all(&sinex_temp)
-        .map_err(|e| SinexError::io(format!("Failed to create sinex temp directory: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to create sinex temp directory: {e}")))?;
 
     Ok(sinex_temp)
 }
@@ -156,8 +158,7 @@ fn validate_not_system_critical(path: &Utf8Path) -> PathValidationResult<()> {
     for forbidden in &forbidden_paths {
         if path_str.starts_with(forbidden) {
             return Err(SinexError::validation(format!(
-                "Test paths cannot access system directory: {}",
-                forbidden
+                "Test paths cannot access system directory: {forbidden}"
             )));
         }
     }
@@ -233,7 +234,7 @@ mod tests {
 
         for path in &dangerous_paths {
             let result = validate_test_path(path);
-            assert!(result.is_err(), "Path should be rejected: {}", path);
+            assert!(result.is_err(), "Path should be rejected: {path}");
         }
 
         Ok(())
@@ -296,7 +297,7 @@ mod tests {
 
         for (input, expected) in &test_cases {
             let result = sanitize_filename(input);
-            assert_eq!(&result, expected, "Failed to sanitize: {}", input);
+            assert_eq!(&result, expected, "Failed to sanitize: {input}");
         }
 
         Ok(())
@@ -319,7 +320,7 @@ mod tests {
 
         for path in &system_paths {
             let result = remove_test_dir(path);
-            assert!(result.is_err(), "Should reject removal of: {}", path);
+            assert!(result.is_err(), "Should reject removal of: {path}");
         }
 
         Ok(())

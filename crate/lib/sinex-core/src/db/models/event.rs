@@ -551,13 +551,9 @@ mod tests {
 
     #[test]
     fn test_material_event_creation() {
-        let event = Event::from_material(
-            "fs-watcher",
-            "file.created",
-            json!({"path": "/test.txt"}),
-            Id::<SourceMaterial>::new(),
-            42,
-        );
+        let event = Event::dynamic("fs-watcher", "file.created", json!({"path": "/test.txt"}))
+            .from_material(Id::<SourceMaterial>::new(), 42)
+            .build();
 
         assert_eq!(event.source.as_str(), "fs-watcher");
         assert_eq!(event.event_type.as_str(), "file.created");
@@ -570,12 +566,13 @@ mod tests {
     #[test]
     fn test_synthesis_event_creation() {
         let parent_ids = vec![EventId::new(), EventId::new()];
-        let event = Event::from_synthesis(
+        let event = Event::dynamic(
             "processor",
             "analysis.completed",
             json!({"result": "success"}),
-            parent_ids.clone(),
-        );
+        )
+        .from_parents(parent_ids.clone())
+        .build();
 
         assert_eq!(event.source.as_str(), "processor");
         assert_eq!(event.event_type.as_str(), "analysis.completed");
@@ -587,13 +584,10 @@ mod tests {
 
     #[test]
     fn test_raw_event_alias() {
-        let event: Event<JsonValue> = Event::from_material(
-            "test",
-            "test.event",
-            json!({"data": "value"}),
-            Id::<SourceMaterial>::new(),
-            0,
-        );
+        let event: Event<JsonValue> =
+            Event::dynamic("test", "test.event", json!({"data": "value"}))
+                .from_material(Id::<SourceMaterial>::new(), 0)
+                .build();
 
         // Verify it's the same type
         let _: Event<JsonValue> = event;
@@ -601,13 +595,9 @@ mod tests {
 
     #[test]
     fn test_type_conversions() {
-        let original = Event::from_material(
-            "test",
-            "test.event",
-            json!({"message": "hello"}),
-            Id::<SourceMaterial>::new(),
-            10,
-        );
+        let original = Event::dynamic("test", "test.event", json!({"message": "hello"}))
+            .from_material(Id::<SourceMaterial>::new(), 10)
+            .build();
 
         // Convert to raw
         let raw = original.to_json_event().unwrap();

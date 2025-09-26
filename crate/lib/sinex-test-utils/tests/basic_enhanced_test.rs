@@ -35,6 +35,7 @@ async fn test_rstest_integration(
 #[sinex_test(trace = true)]
 async fn test_tracing_enabled(ctx: TestContext) -> Result<()> {
     tracing::info!("Test with tracing");
+    ctx.capture_log("Test with tracing".into());
 
     ctx.create_test_event("traced", "test.event", json!({}))
         .await?;

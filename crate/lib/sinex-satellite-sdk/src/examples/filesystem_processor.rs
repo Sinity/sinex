@@ -26,7 +26,7 @@ use tokio::fs;
 use tracing::{debug, info, warn};
 
 /// Configuration for the filesystem processor
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct FilesystemProcessorConfig {
     /// Maximum number of files to process in one scan
     pub max_files: Option<usize>,
@@ -36,17 +36,6 @@ pub struct FilesystemProcessorConfig {
     pub exclude_extensions: Vec<String>,
     /// Follow symbolic links
     pub follow_symlinks: bool,
-}
-
-impl Default for FilesystemProcessorConfig {
-    fn default() -> Self {
-        Self {
-            max_files: None,
-            include_extensions: Vec::new(),
-            exclude_extensions: Vec::new(),
-            follow_symlinks: false,
-        }
-    }
 }
 
 /// Example filesystem processor implementing unified stream processor interface

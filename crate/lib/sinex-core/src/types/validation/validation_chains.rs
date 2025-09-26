@@ -189,11 +189,10 @@ pub fn format_validation_errors_with_context(errors: &ValidationErrors, context:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use color_eyre::eyre::Result;
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_database_config_validation() -> Result<()> {
+    fn test_database_config_validation() -> color_eyre::eyre::Result<()> {
         let valid_config = DatabaseConfig {
             connection_url: "postgresql://user:pass@localhost/db".to_string(),
             max_connections: 100,
@@ -221,7 +220,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_event_validation() -> Result<()> {
+    fn test_event_validation() -> color_eyre::eyre::Result<()> {
         let valid_event = EventValidation {
             event_type: "user.created".to_string(),
             source: "api".to_string(),
@@ -243,7 +242,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_friendly_error_formatting() -> Result<()> {
+    fn test_friendly_error_formatting() -> color_eyre::eyre::Result<()> {
         let config = DatabaseConfig {
             connection_url: "invalid".to_string(),
             max_connections: 0,

@@ -7,7 +7,6 @@ use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::SourceMaterialRegistry;
 use crate::query_helpers::ulid_to_uuid;
 use crate::types::Id;
-use crate::Ulid;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
@@ -310,7 +309,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 ($11::uuid)::ulid
             )
             RETURNING
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -321,7 +320,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             "#,
             ulid_to_uuid(*id.as_ulid()),
             material.material_kind,
@@ -351,7 +350,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -362,7 +361,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             WHERE id::uuid = $1
             "#,
@@ -382,7 +381,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -393,7 +392,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             WHERE optional_blob_id::uuid = $1
             "#,
@@ -410,7 +409,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -421,7 +420,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             ORDER BY staged_at DESC
             LIMIT $1
@@ -445,7 +444,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -456,7 +455,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             WHERE material_kind = $1
             ORDER BY staged_at DESC
@@ -484,7 +483,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -495,7 +494,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             WHERE metadata @> $1
             ORDER BY staged_at DESC
@@ -538,7 +537,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -549,7 +548,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             FROM raw.source_material_registry
             WHERE (metadata->>'archived') IS DISTINCT FROM 'true'
               AND staged_at < $1
@@ -577,7 +576,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SET metadata = metadata || $2
             WHERE id::uuid = $1
             RETURNING
-                id::uuid as "id!: Ulid",
+                id::uuid as "id!: crate::Ulid",
                 material_kind,
                 source_identifier,
                 status,
@@ -588,7 +587,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: Ulid"
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
             "#,
             ulid_to_uuid(*id.as_ulid()),
             metadata

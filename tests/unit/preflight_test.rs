@@ -261,9 +261,9 @@ async fn test_phase1_database_connectivity_success(
         .any(|m| m.contains("connection established")));
 
     // Verify details contain expected fields
-    assert!(details.get("database_url").is_some());
-    assert!(details.get("postgresql_version").is_some());
-    assert!(details.get("connection_pool").is_some());
+    assert!(details.contains_key("database_url"));
+    assert!(details.contains_key("postgresql_version"));
+    assert!(details.contains_key("connection_pool"));
 
     Ok(())
 }
@@ -396,8 +396,8 @@ async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::
     assert!(!messages.is_empty());
 
     // Verify details contain migration information
-    assert!(details.get("current_migrations").is_some());
-    assert!(details.get("discovered_migrations").is_some());
+    assert!(details.contains_key("current_migrations"));
+    assert!(details.contains_key("discovered_migrations"));
 
     Ok(())
 }
@@ -434,16 +434,19 @@ async fn test_phase4_system_resources_success(_ctx: TestContext) -> color_eyre::
     assert!(!messages.is_empty());
 
     // Verify details contain resource information
-    assert!(details.get("memory").is_some());
-    assert!(details.get("disk").is_some());
-    assert!(details.get("cpu").is_some());
-    assert!(details.get("filesystem").is_some());
+    assert!(details.contains_key("memory"));
+    assert!(details.contains_key("disk"));
+    assert!(details.contains_key("cpu"));
+    assert!(details.contains_key("filesystem"));
 
     // Check memory details structure
-    let memory = details.get("memory").unwrap();
-    assert!(memory.get("total_gb").is_some());
-    assert!(memory.get("available_gb").is_some());
-    assert!(memory.get("meets_requirements").is_some());
+    let memory = details
+        .get("memory")
+        .and_then(Value::as_object)
+        .expect("Memory details should be present");
+    assert!(memory.contains_key("total_gb"));
+    assert!(memory.contains_key("available_gb"));
+    assert!(memory.contains_key("meets_requirements"));
 
     Ok(())
 }
@@ -492,9 +495,9 @@ async fn test_phase5_configuration_success(ctx: TestContext) -> color_eyre::eyre
     assert!(!messages.is_empty());
 
     // Verify details contain configuration information
-    assert!(details.get("environment").is_some());
-    assert!(details.get("toml_generation").is_some());
-    assert!(details.get("event_sources").is_some());
+    assert!(details.contains_key("environment"));
+    assert!(details.contains_key("toml_generation"));
+    assert!(details.contains_key("event_sources"));
 
     Ok(())
 }
@@ -538,8 +541,12 @@ Ok(())
     let parsed: serde_json::Value = serde_json::from_str(test_config)
         .map_err(|e| color_eyre::eyre::eyre!("Test JSON should be valid: {}", e))?;
 
-    assert!(parsed.get("database").is_some());
-    assert!(parsed.get("logging").is_some());
+    let parsed = parsed
+        .as_object()
+        .expect("Parsed configuration should be a JSON object");
+
+    assert!(parsed.contains_key("database"));
+    assert!(parsed.contains_key("logging"));
 
     Ok(())
 }
@@ -561,9 +568,9 @@ async fn test_phase6_service_dependencies(_ctx: TestContext) -> color_eyre::eyre
     assert!(!messages.is_empty());
 
     // Verify details contain service information
-    assert!(details.get("binaries").is_some());
-    assert!(details.get("systemd_services").is_some());
-    assert!(details.get("external_dependencies").is_some());
+    assert!(details.contains_key("binaries"));
+    assert!(details.contains_key("systemd_services"));
+    assert!(details.contains_key("external_dependencies"));
 
     Ok(())
 }
@@ -614,7 +621,7 @@ async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::
     assert!(!messages.is_empty());
 
     // Verify details contain integration test results
-    assert!(details.get("database_integration").is_some());
+    assert!(details.contains_key("database_integration"));
 
     Ok(())
 }
@@ -650,11 +657,11 @@ async fn test_verification_status_properties(_ctx: TestContext) -> color_eyre::e
 
     for status in statuses {
         // Test equality and cloning
-        let cloned_status = status.clone();
+        let cloned_status = status;
         assert_eq!(status, cloned_status);
 
         // Test debug formatting
-        let debug_str = format!("{:?}", status);
+        let debug_str = format!("{status:?}");
         assert!(!debug_str.is_empty());
     }
 

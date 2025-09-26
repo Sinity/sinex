@@ -450,7 +450,7 @@ def main():
         "tests": {"title": "Sinex Test Suite", "patterns": ["test/**/*.rs", "crate/*/tests/**/*.rs"], "output": "llm-context-tests.md"},
         "docs": {"title": "Sinex Documentation", "patterns": ["*.md", "docs/**/*.md", "spec/**/*.md"], "output": "llm-context-docs.md"},
         "satellite": {"title": "Sinex Satellite Services", "patterns": ["crate/satellites/*/src/**/*.rs", "crate/core/sinex-ingestd/src/**/*.rs"], "output": "llm-context-satellites.md", "group_by_crate": True},
-        "db": {"title": "Sinex Database Layer", "patterns": ["crate/lib/sinex-db/src/**/*.rs", "crate/lib/sinex-db/migration/src/**/*.rs", "db/migrations/**/*.sql"], "output": "llm-context-db.md"},
+        "db": {"title": "Sinex Database Layer", "patterns": ["crate/lib/sinex-schema/src/**/*.rs", "crate/lib/sinex-schema/tests/**/*.rs", "crate/lib/sinex-schema/DDL.sql"], "output": "llm-context-db.md"},
         "minimal": {"title": "Sinex Minimal Overview", "patterns": ["crate/sinex-*/src/lib.rs", "crate/sinex-*/src/main.rs", "README.md", "CLAUDE.md"], "output": "llm-context-minimal.md"},
         "rustdoc-generated": {"title": "Sinex Generated Documentation (from cargo doc)", "patterns": [], "output": "llm-context-rustdoc-generated.md", "generate_rustdoc": True},
         "smart": {"title": "Sinex Core (Dependency-Ordered)", "patterns": ["crate/core/*/src/**/*.rs", "crate/lib/*/src/**/*.rs"], "exclude": ["**/tests/**", "**/test/**", "**/benches/**", "**/migration/**"], "output": "llm-context-smart.md", "smart_order": True, "group_by_crate": True}

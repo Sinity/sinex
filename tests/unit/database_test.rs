@@ -142,7 +142,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
         let handle = tokio::spawn(async move {
             // Create isolated test context for each task
-            let task_ctx = TestContext::with_name(&format!("concurrent_{}", task_id))
+            let task_ctx = TestContext::with_name(&format!("concurrent_{task_id}"))
                 .await
                 .map_err(|e| SinexError::unknown(e.to_string()))?;
 
@@ -155,7 +155,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
             for event_num in 0..events_per_task {
                 let event = task_ctx
                     .create_test_event(
-                        &format!("task-{}", task_id),
+                        &format!("task-{task_id}"),
                         "concurrent.test",
                         json!({
                             "task_id": task_id,
@@ -174,7 +174,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
                 .pool
                 .events()
                 .get_by_source(
-                    &EventSource::from(format!("task-{}", task_id)),
+                    &EventSource::from(format!("task-{task_id}")),
                     Some(100),
                     None,
                 )
@@ -194,15 +194,14 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     for handle in handles {
         let task_ids = handle
             .await
-            .map_err(|e| SinexError::service(format!("Task failed: {}", e)))??;
+            .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
 
         // Verify no duplicate IDs across tasks
         for id in &task_ids {
             let id_str = id.to_string();
             assert!(
                 !all_id_strings.contains(&id_str),
-                "ID collision detected: {}",
-                id
+                "ID collision detected: {id}"
             );
             all_id_strings.insert(id_str);
         }

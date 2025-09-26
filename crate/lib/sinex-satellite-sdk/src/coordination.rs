@@ -112,6 +112,7 @@
 use crate::heartbeat::HeartbeatEmitter;
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as JsonValue};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use sinex_core::types::utils::CoordinationPrimitive;
 use sinex_core::types::{DbPool, Result, SinexError};
@@ -203,6 +204,12 @@ impl WorkTracker {
     /// Check if all work is complete
     pub fn is_work_complete(&self) -> bool {
         self.in_flight_operations.get() == 0
+    }
+}
+
+impl Default for WorkTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -513,33 +520,53 @@ impl SatelliteCoordination {
     /// Monitor for handoff requests from newer versions
     async fn monitor_handoff_requests(
         &self,
-        _sender: mpsc::Sender<HandoffRequest>,
+        sender: mpsc::Sender<HandoffRequest>,
     ) -> Result<HandoffRequest> {
         loop {
-            // TODO: The satellite_signals table doesn't exist in the current schema
-            // This coordination mechanism needs to be reimplemented
-            /*
-            // Check database for handoff signals
             let signals = sqlx::query!(
-                "SELECT * FROM core.satellite_signals
-                 WHERE (target_instance = $1 OR target_instance = 'ALL')
-                 AND signal_type = 'handoff_request'
-                 AND created_at > NOW() - INTERVAL '1 minute'
-                 ORDER BY created_at DESC",
+                r#"
+                SELECT id, message, payload
+                FROM core.satellite_signals
+                WHERE (target_instance = $1 OR target_instance = 'ALL')
+                  AND signal_type = 'handoff_request'
+                  AND processed_at IS NULL
+                  AND created_at > NOW() - INTERVAL '1 minute'
+                ORDER BY created_at DESC
+                "#,
                 self.instance.instance_id.to_string()
             )
             .fetch_all(&self.pool)
             .await?;
 
-            for signal in signals {
-                if let Some(message) = signal.message {
-                    if let Ok(request) = serde_json::from_str::<HandoffRequest>(&message) {
-                        let _ = sender.send(request.clone()).await;
-                        return Ok(request);
+            if let Some(signal) = signals.into_iter().next() {
+                let payload = match signal.payload {
+                    Some(value) => value,
+                    None => {
+                        warn!(
+                            "handoff request without payload for {}",
+                            self.instance.service_name
+                        );
+                        sqlx::query!(
+                            "UPDATE core.satellite_signals SET processed_at = NOW() WHERE id = $1",
+                            signal.id
+                        )
+                        .execute(&self.pool)
+                        .await?;
+                        continue;
                     }
-                }
+                };
+                let request = Self::parse_handoff_request(payload, signal.message)?;
+
+                sqlx::query!(
+                    "UPDATE core.satellite_signals SET processed_at = NOW() WHERE id = $1",
+                    signal.id
+                )
+                .execute(&self.pool)
+                .await?;
+
+                let _ = sender.send(request.clone()).await;
+                return Ok(request);
             }
-            */
 
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -564,24 +591,25 @@ impl SatelliteCoordination {
         );
 
         // Begin transaction to ensure atomicity between work completion and signaling
-        let tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await?;
 
         // Finish current critical work
         self.finish_critical_work().await?;
 
         // Signal ready for handoff - within transaction
-        // TODO: The satellite_signals table doesn't exist in the current schema
-        // This coordination mechanism needs to be reimplemented
-        /*
+        let payload = serde_json::to_value(&request).map_err(|e| {
+            SinexError::validation(format!("Failed to encode handoff request: {e}"))
+        })?;
+
         sqlx::query!(
-            "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
-             VALUES ($1, 'handoff_ready', $2, NOW())",
+            "INSERT INTO core.satellite_signals (target_instance, signal_type, message, payload)
+             VALUES ($1, 'handoff_ready', $2, $3)",
             request.from_instance,
-            "Ready for leadership transfer"
+            "Ready for leadership transfer",
+            payload
         )
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await?;
-        */
 
         // Commit transaction - makes work completion and signaling atomic
         tx.commit().await?;
@@ -609,18 +637,20 @@ impl SatelliteCoordination {
     /// Signal critical failure to other instances
     async fn signal_critical_failure(&self, error: &str) -> Result<()> {
         // Begin transaction to ensure atomicity between database signal and coordinator signal
-        let tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await?;
 
-        // TODO: The satellite_signals table doesn't exist in the current schema
-        /*
         sqlx::query!(
-            "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
-             VALUES ('ALL', 'leader_failure', $1, NOW())",
-            error
+            "INSERT INTO core.satellite_signals (target_instance, signal_type, message, payload)
+             VALUES ('ALL', 'leader_failure', $1, $2)",
+            error,
+            json!({
+                "service": self.instance.service_name,
+                "instance_id": self.instance.instance_id,
+                "error": error
+            })
         )
-        .execute(&mut *tx)
+        .execute(tx.as_mut())
         .await?;
-        */
 
         // Commit the database signal first
         tx.commit().await?;
@@ -635,21 +665,33 @@ impl SatelliteCoordination {
     async fn watch_for_leader_failure(&self) -> Result<()> {
         loop {
             // Check for failure signals
-            // TODO: The satellite_signals table doesn't exist in the current schema
-            /*
             let failures = sqlx::query!(
-                "SELECT * FROM core.satellite_signals
-                 WHERE signal_type = 'leader_failure'
-                 AND created_at > NOW() - INTERVAL '30 seconds'"
+                r#"
+                SELECT id
+                FROM core.satellite_signals
+                WHERE (target_instance = $1 OR target_instance = 'ALL')
+                  AND signal_type = 'leader_failure'
+                  AND processed_at IS NULL
+                  AND created_at > NOW() - INTERVAL '30 seconds'
+                "#,
+                self.instance.instance_id.to_string()
             )
             .fetch_all(&self.pool)
             .await?;
 
             if !failures.is_empty() {
+                for failure in &failures {
+                    sqlx::query!(
+                        "UPDATE core.satellite_signals SET processed_at = NOW() WHERE id = $1",
+                        failure.id
+                    )
+                    .execute(&self.pool)
+                    .await?;
+                }
+
                 warn!("Leader failure signals detected");
                 return Ok(());
             }
-            */
 
             // Check if current leader is still healthy via heartbeat
             let leader_health = sqlx::query!(
@@ -750,6 +792,26 @@ impl SatelliteCoordination {
         }
 
         Ok(is_complete)
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn parse_handoff_request(
+        payload: JsonValue,
+        message: Option<String>,
+    ) -> Result<HandoffRequest> {
+        serde_json::from_value::<HandoffRequest>(payload.clone()).or_else(|payload_err| {
+            if let Some(message) = message {
+                serde_json::from_str::<HandoffRequest>(&message).map_err(|msg_err| {
+                    SinexError::validation(format!(
+                        "Failed to parse handoff request payload ({payload_err}) and message ({msg_err})"
+                    ))
+                })
+            } else {
+                Err(SinexError::validation(format!(
+                    "Failed to parse handoff request payload: {payload_err}"
+                )))
+            }
+        })
     }
 
     // Getters

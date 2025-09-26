@@ -61,8 +61,8 @@ fn test_ulid_ordering_consistency() -> color_eyre::eyre::Result<()> {
     let mut ulids = Vec::new();
     for _ in 0..10 {
         ulids.push(Ulid::new());
-        // Small delay to ensure different timestamps
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // Yield to allow clock to advance without blocking the async runtime
+        std::thread::yield_now();
     }
 
     // ULIDs should be in ascending order (generally)
@@ -108,8 +108,7 @@ fn test_ulid_invalid_strings() -> color_eyre::eyre::Result<()> {
     for invalid_ulid in invalid_cases {
         assert!(
             Ulid::from_str(invalid_ulid).is_err(),
-            "Should reject invalid ULID: {}",
-            invalid_ulid
+            "Should reject invalid ULID: {invalid_ulid}"
         );
     }
     Ok(())
@@ -426,10 +425,10 @@ fn test_edge_case_strings() -> color_eyre::eyre::Result<()> {
 
     for (test_name, test_value) in edge_cases {
         let source = EventSource::new(test_value);
-        let event_type = EventType::new(&format!("edge.{}", test_name));
+        let event_type = EventType::new(format!("edge.{test_name}"));
 
         assert_eq!(source.as_str(), test_value);
-        assert_eq!(event_type.as_str(), &format!("edge.{}", test_name));
+        assert_eq!(event_type.as_str(), format!("edge.{test_name}"));
 
         // Should work in event creation
         let event =

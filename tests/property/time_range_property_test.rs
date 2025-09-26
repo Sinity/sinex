@@ -252,10 +252,13 @@ fn test_edge_case_time_ranges() -> color_eyre::eyre::Result<()> {
             
             // Very long ranges should not overflow
             if duration > Duration::days(365) {
-                // Should be representable
-                let _start_ts = start.timestamp();
-                let _end_ts = end.timestamp();
-                prop_assert!(true); // If we get here without panic, it's good
+                // Should be representable and maintain ordering
+                let start_ts = start.timestamp();
+                let end_ts = end.timestamp();
+                prop_assert!(
+                    start_ts <= end_ts,
+                    "Long ranges should keep chronological ordering"
+                );
             }
         }
     }

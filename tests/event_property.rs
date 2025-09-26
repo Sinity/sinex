@@ -15,10 +15,10 @@ use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 type RawEvent = Event<JsonValue>;
 
-/// Property tests for Event-related functionality
-///
-/// These tests migrate from the old RawEvent-based system to the modern
-/// unified Event architecture using the schemaless builder pattern.
+// Property tests for Event-related functionality
+//
+// These tests migrate from the old RawEvent-based system to the modern
+// unified Event architecture using the schemaless builder pattern.
 
 // =============================================================================
 // Helper Functions
@@ -202,7 +202,7 @@ fn test_event_id_properties() -> Result<()> {
         event1.id = Some(Id::from_ulid(Ulid::new()));
 
         // Small delay to ensure different timestamps
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::yield_now();
 
         let mut event2 = RawEvent::test_event(
             EventSource::new(source),
@@ -309,7 +309,7 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
             events.push(event);
 
             // Small delay to ensure timestamp ordering
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::yield_now();
         }
 
         // Timestamps should be in ascending order

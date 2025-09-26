@@ -112,7 +112,7 @@ pub mod path_utils {
                     .filter_map(|line| {
                         line.strip_prefix("file://")
                             .and_then(|p| urlencoding::decode(p).ok())
-                            .map(|p| sanitize_path_component(&p.to_string()))
+                            .map(|p| sanitize_path_component(p.as_ref()))
                     })
                     .collect(),
             )
@@ -121,7 +121,7 @@ pub mod path_utils {
                 content
                     .lines()
                     .filter(|l| !l.is_empty())
-                    .map(|l| sanitize_path_component(l))
+                    .map(sanitize_path_component)
                     .collect(),
             )
         } else {

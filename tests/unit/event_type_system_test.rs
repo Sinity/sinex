@@ -41,9 +41,7 @@ async fn test_event_source_patterns(_ctx: TestContext) -> color_eyre::eyre::Resu
         if expected_prefix.ends_with('.') {
             assert!(
                 source_name.starts_with(expected_prefix),
-                "Source '{}' should start with '{}'",
-                source_name,
-                expected_prefix
+                "Source '{source_name}' should start with '{expected_prefix}'"
             );
         } else {
             // For exact matches like "clipboard", "system"
@@ -117,15 +115,12 @@ async fn test_event_type_validation(_ctx: TestContext) -> color_eyre::eyre::Resu
         if should_be_valid {
             assert!(
                 result.is_ok(),
-                "Event type '{}' should be valid, but got error: {:?}",
-                event_type,
-                result
+                "Event type '{event_type}' should be valid, but got error: {result:?}"
             );
         } else {
             assert!(
                 result.is_err(),
-                "Event type '{}' should be invalid but passed validation",
-                event_type
+                "Event type '{event_type}' should be invalid but passed validation"
             );
         }
     }
@@ -152,8 +147,7 @@ async fn test_event_type_hierarchical_structure(_ctx: TestContext) -> color_eyre
         assert_eq!(
             parts.len(),
             2,
-            "Event type should have exactly 2 parts: {}",
-            event_type
+            "Event type should have exactly 2 parts: {event_type}"
         );
 
         assert_eq!(parts[0], expected_object, "Object part should match");
@@ -383,8 +377,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
             assert_eq!(
                 event.source.as_str(),
                 source,
-                "Event should have source '{}'",
-                source
+                "Event should have source '{source}'"
             );
         }
 
@@ -398,8 +391,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
 
         assert_eq!(
             actual_types, expected_set,
-            "Should create all expected event types for source '{}'",
-            source
+            "Should create all expected event types for source '{source}'"
         );
 
         // Verify mapping was successful (no snapshot needed for simple validation)
@@ -433,7 +425,7 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
             let mut events: Vec<Event<JsonValue>> = Vec::new();
 
             // Create filesystem event
-            let fs_payload = FileCreatedPayload::test_default(format!("/test/file{}.txt", i))
+            let fs_payload = FileCreatedPayload::test_default(format!("/test/file{i}.txt"))
                 .with_size((i as u64) * 1024);
             let prov = Provenance::from_material(
                 Id::<SourceMaterial>::from_ulid(Ulid::new()),
@@ -453,8 +445,8 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
             );
 
             // Create shell event
-            let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{}", i))
-                .with_kitty_ids(format!("win{}", i), format!("tab{}", i));
+            let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{i}"))
+                .with_kitty_ids(format!("win{i}"), format!("tab{i}"));
             let prov = Provenance::from_material(
                 Id::<SourceMaterial>::from_ulid(Ulid::new()),
                 0,
@@ -533,8 +525,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
 
             // Create multiple events per task
             for j in 0..3 {
-                let payload =
-                    FileCreatedPayload::test_default(format!("/test/file{}_{}.txt", i, j));
+                let payload = FileCreatedPayload::test_default(format!("/test/file{i}_{j}.txt"));
                 let prov = Provenance::from_material(
                     Id::<SourceMaterial>::from_ulid(Ulid::new()),
                     0,
@@ -586,8 +577,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
             let id_string = id.to_string();
             assert!(
                 all_ids.insert(id_string.clone()),
-                "Event ID {} should be unique",
-                id_string
+                "Event ID {id_string} should be unique"
             );
         }
     }

@@ -66,7 +66,9 @@ fn test_ulid_ordering_transitivity() -> color_eyre::eyre::Result<()> {
         for _ in 0..count {
             ulids.push(Ulid::new());
             if delay_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                for _ in 0..delay_ms {
+                    std::thread::yield_now();
+                }
             }
         }
 
@@ -481,15 +483,6 @@ fn test_validation_properties() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-// =============================================================================
-// ULID COMPREHENSIVE PROPERTY TESTS - From dedicated property file
-// =============================================================================
-
-mod property {
-    pub mod ulid_property_test;
-}
-
-// =============================================================================
 // REGRESSION PROPERTY TESTS - Preserve important system invariants
 // =============================================================================
 

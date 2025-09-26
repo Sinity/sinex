@@ -266,7 +266,7 @@ impl SatelliteConfig {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_else(default_pool_size),
             work_dir: std::env::var("SINEX_WORK_DIR")
-                .map(|s| Utf8PathBuf::from(s))
+                .map(Utf8PathBuf::from)
                 .unwrap_or_else(|_| default_work_dir()),
             dry_run: std::env::var("SINEX_DRY_RUN")
                 .map(|s| s.parse().unwrap_or(false))

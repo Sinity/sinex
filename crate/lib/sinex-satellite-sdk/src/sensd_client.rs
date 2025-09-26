@@ -449,7 +449,7 @@ impl SensdClient {
         .await?;
         */
         // Placeholder until schema is fixed
-        return Err(eyre!("sensor_jobs schema mismatch - needs updating"));
+        Err(eyre!("sensor_jobs schema mismatch - needs updating"))
 
         /*
         #[allow(unreachable_code)]

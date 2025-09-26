@@ -181,7 +181,7 @@ async fn test_resource_pool_management(ctx: TestContext) -> color_eyre::eyre::Re
     impl ResourcePool {
         fn new(size: usize) -> Self {
             Self {
-                _resources: (0..size).map(|i| format!("resource_{}", i)).collect(),
+                _resources: (0..size).map(|i| format!("resource_{i}")).collect(),
                 active_count: Arc::new(AtomicU32::new(size as u32)),
             }
         }
@@ -228,7 +228,7 @@ async fn test_nested_resource_dependencies(ctx: TestContext) -> color_eyre::eyre
         let _db_guard = ResourceGuard::new("database", move |resource| {
             let order = order1.clone();
             async move {
-                order.lock().await.push(format!("cleanup_{}", resource));
+                order.lock().await.push(format!("cleanup_{resource}"));
             }
         });
 
@@ -238,7 +238,7 @@ async fn test_nested_resource_dependencies(ctx: TestContext) -> color_eyre::eyre
             let _pool_guard = ResourceGuard::new("connection_pool", move |resource| {
                 let order = order2.clone();
                 async move {
-                    order.lock().await.push(format!("cleanup_{}", resource));
+                    order.lock().await.push(format!("cleanup_{resource}"));
                 }
             });
 
@@ -248,7 +248,7 @@ async fn test_nested_resource_dependencies(ctx: TestContext) -> color_eyre::eyre
                 let _tx_guard = ResourceGuard::new("transaction", move |resource| {
                     let order = order3.clone();
                     async move {
-                        order.lock().await.push(format!("cleanup_{}", resource));
+                        order.lock().await.push(format!("cleanup_{resource}"));
                     }
                 });
 
@@ -282,7 +282,7 @@ async fn test_concurrent_resource_access(ctx: TestContext) -> color_eyre::eyre::
     for i in 0..5 {
         let cleanup_counter = cleanup_count.clone();
         let handle = tokio::spawn(async move {
-            let resource_id = format!("concurrent_resource_{}", i);
+            let resource_id = format!("concurrent_resource_{i}");
             let _guard = ResourceGuard::new(resource_id.clone(), move |_resource| {
                 let counter = cleanup_counter.clone();
                 async move {

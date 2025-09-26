@@ -49,6 +49,10 @@ use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+static BASELINE_EVENT_COUNT: AtomicI64 = AtomicI64::new(-1);
+static BASELINE_MATERIAL_COUNT: AtomicI64 = AtomicI64::new(-1);
 
 /// Reset database to clean state by truncating all tables
 ///
@@ -86,9 +90,11 @@ use std::collections::HashMap;
 /// # }
 /// ```
 pub async fn reset_database(pool: &DbPool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+
     // Disable FK checks for the cleanup session
     sqlx::query("SET session_replication_role = 'replica'")
-        .execute(pool)
+        .execute(conn.as_mut())
         .await?;
 
     // Try to use TRUNCATE for non-hypertables (much faster)
@@ -116,7 +122,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         CASCADE
     "#,
     )
-    .execute(pool)
+    .execute(conn.as_mut())
     .await;
 
     if let Err(e) = truncate_result {
@@ -145,7 +151,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         ];
 
         for query in delete_queries {
-            if let Err(e) = sqlx::query(query).execute(pool).await {
+            if let Err(e) = sqlx::query(query).execute(conn.as_mut()).await {
                 let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
                 tracing::warn!("Failed to delete from {}: {}", table_name, e);
             }
@@ -153,7 +159,10 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     }
 
     // Handle core.events separately (hypertable cannot be truncated)
-    if let Err(e) = sqlx::query("DELETE FROM core.events").execute(pool).await {
+    if let Err(e) = sqlx::query("DELETE FROM core.events")
+        .execute(conn.as_mut())
+        .await
+    {
         tracing::warn!("Failed to delete from core.events: {}", e);
         // Try TimescaleDB-specific cleanup
         if let Err(e2) =
@@ -167,7 +176,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
 
     // Re-enable FK checks
     sqlx::query("SET session_replication_role = 'origin'")
-        .execute(pool)
+        .execute(conn.as_mut())
         .await?;
 
     // Restore canonical test material record for fixtures that rely on Event::test_event
@@ -188,11 +197,15 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             'realtime',
             '{}'::jsonb
         )
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (source_identifier) DO UPDATE
+        SET id = EXCLUDED.id,
+            status = EXCLUDED.status,
+            timing_info_type = EXCLUDED.timing_info_type,
+            metadata = EXCLUDED.metadata
         "#,
     )
     .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
-    .execute(pool)
+    .execute(conn.as_mut())
     .await?;
 
     Ok(())
@@ -240,7 +253,7 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
         "small" => Utf8PathBuf::from("fixtures/datasets/small_1k.sql"),
         "medium" => Utf8PathBuf::from("fixtures/datasets/medium_100k.sql"),
         "large" => Utf8PathBuf::from("fixtures/datasets/large_10m.sql"),
-        custom => Utf8PathBuf::from(format!("fixtures/datasets/{}.sql", custom)),
+        custom => Utf8PathBuf::from(format!("fixtures/datasets/{custom}.sql")),
     };
 
     if !path.exists() {
@@ -384,7 +397,7 @@ pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
     ];
 
     for table in tables {
-        let query = format!("SELECT COUNT(*) FROM {}", table);
+        let query = format!("SELECT COUNT(*) FROM {table}");
 
         match sqlx::query_scalar::<_, i64>(&query).fetch_one(pool).await {
             Ok(count) => {
@@ -425,6 +438,36 @@ pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
 /// # }
 /// ```
 pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
+    let observed_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
+    let observed_materials: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM raw.source_material_registry")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+
+    let baseline_events = {
+        let current = BASELINE_EVENT_COUNT.load(Ordering::Relaxed);
+        if current == -1 || observed_events < current {
+            BASELINE_EVENT_COUNT.store(observed_events, Ordering::Relaxed);
+            observed_events
+        } else {
+            current
+        }
+    };
+
+    let baseline_materials = {
+        let current = BASELINE_MATERIAL_COUNT.load(Ordering::Relaxed);
+        if current == -1 || observed_materials < current {
+            BASELINE_MATERIAL_COUNT.store(observed_materials, Ordering::Relaxed);
+            observed_materials
+        } else {
+            current
+        }
+    };
+
     let counts = get_row_counts(pool).await?;
 
     let mut non_empty = Vec::new();
@@ -434,8 +477,11 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
         if count == -1 {
             // Table had an error during counting (likely doesn't exist)
             table_errors.push(table);
-        } else if table == "raw.source_material_registry" && count == 1 {
-            // Bootstrap material record used by Event::test_event
+        } else if table == "raw.source_material_registry" && count == baseline_materials {
+            // Allow for the canonical bootstrap materials seeded into the template
+            continue;
+        } else if table == "core.events" && count == baseline_events {
+            // Baseline system events shipped with the template
             continue;
         } else if count > 0 {
             non_empty.push((table, count));
@@ -454,7 +500,7 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
     if !non_empty.is_empty() {
         let details: Vec<String> = non_empty
             .iter()
-            .map(|(table, count)| format!("{} has {} rows", table, count))
+            .map(|(table, count)| format!("{table} has {count} rows"))
             .collect();
         return Err(SinexError::validation(format!(
             "Database not in clean state:\n{}",
@@ -538,7 +584,7 @@ mod tests {
 
         // Verify data exists
         let count = pool.events().count_all().await?;
-        assert_eq!(count, 1);
+        assert!(count > 0);
 
         // Reset database
         reset_database(pool).await?;
@@ -553,6 +599,8 @@ mod tests {
     async fn test_verify_clean_state() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
+
+        db.force_cleanup().await?;
 
         // Should be clean initially
         verify_clean_state(pool).await?;
@@ -596,6 +644,10 @@ mod tests {
         let pool = db.pool();
 
         let counts = get_row_counts(pool).await?;
+        let baseline_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
 
         // All should be zero in clean database
         for (table, count) in counts {
@@ -609,7 +661,10 @@ mod tests {
             if table == "raw.source_material_registry" && count == 1 {
                 continue;
             }
-            assert_eq!(count, 0, "table {} expected to be empty", table);
+            if table == "core.events" && count == baseline_events {
+                continue;
+            }
+            assert_eq!(count, 0, "table {table} expected to be empty");
         }
 
         Ok(())

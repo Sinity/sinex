@@ -126,7 +126,7 @@ impl WorkerReadinessCoordinator {
         Self {
             counter: CoordinationPrimitive::event_counter(
                 target_workers,
-                format!("worker_readiness_{}", target_workers),
+                format!("worker_readiness_{target_workers}"),
             ),
             target_workers,
         }
@@ -167,13 +167,13 @@ impl WaitHelpers {
                 Ok(count >= expected_count)
             },
             timeout_secs,
-            &format!("event count >= {}", expected_count),
+            &format!("event count >= {expected_count}"),
         )
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for event count failed")
                 .with_context("expected_count", expected_count)
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
                 .with_source(e)
                 .with_operation("wait_for_event_count")
         })?;
@@ -204,14 +204,14 @@ impl WaitHelpers {
                 Ok(count as usize >= expected_count)
             },
             timeout_secs,
-            &format!("source '{}' event count >= {}", source, expected_count),
+            &format!("source '{source}' event count >= {expected_count}"),
         )
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for source events failed")
                 .with_context("source", &source)
                 .with_context("expected_count", expected_count)
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
                 .with_source(e)
                 .with_operation("wait_for_source_events")
         })?;
@@ -236,7 +236,7 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Test condition wait failed")
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
                 .with_source(e)
                 .with_operation("wait_for_condition")
         })
@@ -269,7 +269,7 @@ impl WaitHelpers {
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")
                     .with_context("condition_count", condition_count)
-                    .with_context("timeout_duration", format!("{}s", timeout_secs))
+                    .with_context("timeout_duration", format!("{timeout_secs}s"))
                     .with_source(e)
                     .with_operation("wait_for_multiple_conditions")
             })
@@ -298,7 +298,7 @@ impl TimingPatterns {
         // block on the threshold, keeping the helper usable for both sync and async flows.
         let counter = CoordinationPrimitive::event_counter(
             target_count,
-            format!("simple_counter_{}", target_count),
+            format!("simple_counter_{target_count}"),
         );
         Ok(counter)
     }
@@ -445,7 +445,7 @@ mod tests {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| SinexError::service(format!("Task join failed: {}", e)))??;
+                .map_err(|e| SinexError::service(format!("Task join failed: {e}")))??;
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), 5);
@@ -468,12 +468,12 @@ mod tests {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
 
                 // Wait at barrier
-                let _ = barrier_clone.wait(Duration::from_secs(5)).await?;
+                barrier_clone.wait(Duration::from_secs(5)).await?;
 
                 // Increment after barrier
                 counter_clone.fetch_add(10, Ordering::SeqCst);
 
-                Ok::<i32, color_eyre::eyre::Error>(i as i32)
+                Ok::<i32, color_eyre::eyre::Error>(i)
             });
             handles.push(handle);
         }
@@ -510,10 +510,10 @@ mod tests {
         // Both should timeout
         let result1 = handle1
             .await
-            .map_err(|e| SinexError::service(format!("Timeout test task 1 join failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("Timeout test task 1 join failed: {e}")))?;
         let result2 = handle2
             .await
-            .map_err(|e| SinexError::service(format!("Timeout test task 2 join failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("Timeout test task 2 join failed: {e}")))?;
 
         assert!(result1.is_err());
         assert!(result2.is_err());
@@ -543,7 +543,7 @@ mod tests {
         // Waiter should complete
         let result = waiter
             .await
-            .map_err(|e| SinexError::service(format!("Waiter task join failed: {}", e)))??;
+            .map_err(|e| SinexError::service(format!("Waiter task join failed: {e}")))??;
         assert_eq!(result, 3);
 
         Ok(())
@@ -752,9 +752,9 @@ mod tests {
 
         // Both should complete
         h1.await
-            .map_err(|e| SinexError::service(format!("Barrier task 1 join failed: {}", e)))??;
+            .map_err(|e| SinexError::service(format!("Barrier task 1 join failed: {e}")))??;
         h2.await
-            .map_err(|e| SinexError::service(format!("Barrier task 2 join failed: {}", e)))??;
+            .map_err(|e| SinexError::service(format!("Barrier task 2 join failed: {e}")))??;
 
         assert_eq!(barrier.generation(), 1);
 
@@ -795,7 +795,7 @@ mod tests {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| SinexError::service(format!("Concurrent task join failed: {}", e)))?;
+                .map_err(|e| SinexError::service(format!("Concurrent task join failed: {e}")))?;
         }
 
         assert_eq!(counter.get(), 10);

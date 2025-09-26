@@ -44,7 +44,7 @@ async fn test_sensor_simulation() -> color_eyre::eyre::Result<()> {
 
     // Simulate append stream sensor
     let mut total_bytes = 0;
-    let chunks = vec![
+    let chunks: Vec<&[u8]> = vec![
         b"chunk1: initial data\n",
         b"chunk2: more data follows\n",
         b"chunk3: final data block\n",

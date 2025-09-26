@@ -255,10 +255,6 @@ mod tests {
     use super::*;
     use sinex_test_utils::{sinex_test, TestContext};
 
-    use color_eyre::eyre::Result;
-
-    use serde_json::json;
-
     #[sinex_test]
     async fn test_retry_config_default(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let config = RetryConfig::default();

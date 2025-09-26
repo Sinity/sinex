@@ -1979,18 +1979,24 @@ mod tests {
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
+        let material_record = pool
+            .source_materials()
+            .register_in_flight(
+                crate::db::repositories::source_materials::legacy_material_types::STREAM,
+                Some("test-event-source-material"),
+                json!({ "test": true }),
+            )
+            .await?;
+        let material_id =
+            crate::types::Id::<crate::models::SourceMaterial>::from_ulid(material_record.id);
+
         // Create an event using the new dynamic pattern
         let event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("test.event"),
             json!({"test": "data"}),
         )
-        .with_provenance(Provenance::from_material(
-            crate::types::Id::<crate::models::SourceMaterial>::new(),
-            0,
-            None,
-            None,
-        ))
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
         .build()
         .with_host(HostName::new("test-host"));
 
@@ -2014,18 +2020,25 @@ mod tests {
     async fn test_event_record_with_provenance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
+        // Create backing material for the source event to satisfy FK constraints
+        let material_record = pool
+            .source_materials()
+            .register_in_flight(
+                crate::db::repositories::source_materials::legacy_material_types::STREAM,
+                Some("test-source-material"),
+                json!({ "test": true }),
+            )
+            .await?;
+        let material_id =
+            crate::types::Id::<crate::models::SourceMaterial>::from_ulid(material_record.id);
+
         // Create a source event first
         let source_event = Event::dynamic(
             EventSource::new("test.source"),
             EventType::new("source.event"),
             json!({"original": true}),
         )
-        .with_provenance(Provenance::from_material(
-            crate::types::Id::<crate::models::SourceMaterial>::new(),
-            0,
-            None,
-            None,
-        ))
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
         .build()
         .with_host(HostName::new("test-host"));
 

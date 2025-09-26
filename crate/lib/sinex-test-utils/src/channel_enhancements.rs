@@ -123,7 +123,7 @@ impl EnhancedEventSender {
                 Ok(())
             }
             Err(e) => {
-                let error_msg = format!("Failed to send {} event: {}", event_type, e);
+                let error_msg = format!("Failed to send {event_type} event: {e}");
                 self.monitor.record_error(error_msg.clone());
                 self.performance_tracker
                     .record_send_failure(start_time.elapsed());
@@ -155,10 +155,8 @@ impl EnhancedEventSender {
         match timeout(timeout_duration, self.send_event(event, context)).await {
             Ok(result) => result,
             Err(_) => {
-                let error_msg = format!(
-                    "Send timeout for {} event after {:?}",
-                    event_type, timeout_duration
-                );
+                let error_msg =
+                    format!("Send timeout for {event_type} event after {timeout_duration:?}");
                 self.monitor.record_error(error_msg.clone());
                 self.performance_tracker
                     .record_send_failure(start_time.elapsed());

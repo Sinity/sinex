@@ -9,7 +9,17 @@ use sinex_schema::ulid::Ulid;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+fn spin_for(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+    let start = Instant::now();
+    while Instant::now().duration_since(start) < duration {
+        thread::yield_now();
+    }
+}
 
 #[cfg(test)]
 mod ulid_property_tests {
@@ -194,7 +204,7 @@ mod stress_tests {
                 all_ulids.extend(burst);
 
                 // Small delay between bursts
-                thread::sleep(Duration::from_nanos(1));
+                spin_for(Duration::from_nanos(1));
             }
 
             // All ULIDs across all bursts should be unique

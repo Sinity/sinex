@@ -165,6 +165,7 @@ fn default_max_processing_time() -> u64 {
 
 impl SatelliteFigmentConfig {
     /// Load configuration for a specific satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 
@@ -185,6 +186,7 @@ impl SatelliteFigmentConfig {
 
 impl EventSourceFigmentConfig {
     /// Load configuration for an event source satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 
@@ -205,6 +207,7 @@ impl EventSourceFigmentConfig {
 
 impl AutomatonFigmentConfig {
     /// Load configuration for an automaton satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 

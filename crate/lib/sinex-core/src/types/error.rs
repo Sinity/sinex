@@ -804,10 +804,6 @@ mod tests {
     use super::SinexError;
     use sinex_test_utils::sinex_test;
 
-    use color_eyre::eyre::Result;
-
-    use serde_json::json;
-
     #[sinex_test]
     fn test_error_display_with_displaydoc() -> color_eyre::eyre::Result<()> {
         let error = SinexError::database("Connection failed");
@@ -820,7 +816,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_error_with_context() -> Result<()> {
+    fn test_error_with_context() -> color_eyre::eyre::Result<()> {
         let error = SinexError::database("Connection failed")
             .with_context("host", "localhost")
             .with_context("port", 5432);
@@ -833,7 +829,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_error_with_source_chain() -> Result<()> {
+    fn test_error_with_source_chain() -> color_eyre::eyre::Result<()> {
         let error = SinexError::service("Processing failed")
             .with_source("Database connection timed out")
             .with_source("Network unreachable");
@@ -846,7 +842,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_error_categorization() -> Result<()> {
+    fn test_error_categorization() -> color_eyre::eyre::Result<()> {
         assert!(SinexError::timeout("test").is_retryable());
         assert!(SinexError::network("test").is_retryable());
         assert!(!SinexError::validation("test").is_retryable());

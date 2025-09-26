@@ -8,13 +8,14 @@
  * - Connection pool validation
  */
 
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
 use sinex_core::types::timeouts;
 // VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::fs;
 use tracing::{debug, error, info};
 
 use super::VerificationStatus;
@@ -525,61 +526,96 @@ struct MigrationFile {
 }
 
 async fn discover_migration_files() -> Result<Vec<MigrationFile>> {
-    // Using sea-orm-migration system
-    // Migration files are now in crate/sinex-db/migration/src/
-    let migrations = vec![
-        MigrationFile {
-            version: 1,
-            description: "Initial schema".to_string(),
-            path: "crate/sinex-db/migration/src/m20240101_000001_initial_schema.rs".to_string(),
-        },
-        MigrationFile {
-            version: 2,
-            description: "Add validation functions".to_string(),
-            path: "crate/sinex-db/migration/src/m20240102_000002_add_validation_functions.rs".to_string(),
-        },
-        MigrationFile {
-            version: 3,
-            description: "Create analytics views".to_string(),
-            path: "crate/sinex-db/migration/src/m20240103_000003_create_analytics_views.rs".to_string(),
-        },
-        MigrationFile {
-            version: 4,
-            description: "Create helper functions".to_string(),
-            path: "crate/sinex-db/migration/src/m20240104_000004_create_helper_functions.rs".to_string(),
-        },
-        MigrationFile {
-            version: 5,
-            description: "Create test helper functions".to_string(),
-            path: "crate/sinex-db/migration/src/m20240105_000005_create_test_helper_functions.rs".to_string(),
-        },
-        MigrationFile {
-            version: 6,
-            description: "Create coordination tables".to_string(),
-            path: "crate/sinex-db/migration/src/m20240106_000006_create_coordination_tables.rs".to_string(),
-        },
-        MigrationFile {
-            version: 7,
-            description: "Create LLM infrastructure".to_string(),
-            path: "crate/sinex-db/migration/src/m20240107_000007_create_llm_infrastructure.rs".to_string(),
-        },
-        MigrationFile {
-            version: 8,
-            description: "Add schema content hash".to_string(),
-            path: "crate/sinex-db/migration/src/m20240108_000008_add_schema_content_hash.rs".to_string(),
-        },
-        MigrationFile {
-            version: 9,
-            description: "Add payload validation function".to_string(),
-            path: "crate/sinex-db/migration/src/m20240109_000009_add_payload_validation_function.rs".to_string(),
-        },
-        MigrationFile {
-            version: 10,
-            description: "Add event payload check constraint".to_string(),
-            path: "crate/sinex-db/migration/src/m20240110_000010_add_event_payload_check_constraint.rs".to_string(),
-        },
-    ];
-    Ok(migrations)
+    let migrations_root = Utf8PathBuf::from("crate/lib/sinex-schema/src/migrations");
+
+    if !migrations_root.exists() {
+        bail!(
+            "Migrations directory not found at {}",
+            migrations_root.to_string()
+        );
+    }
+
+    let mut discovered = Vec::new();
+
+    for entry in fs::read_dir(migrations_root.as_std_path())? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            let dir_name = entry.file_name();
+            let dir_name = dir_name.to_str().ok_or_else(|| {
+                color_eyre::eyre::eyre!("Invalid migration directory name: {:?}", path)
+            })?;
+
+            let module_path = path.join("mod.rs");
+            if !module_path.exists() {
+                continue;
+            }
+
+            let utf8_path = Utf8PathBuf::from_path_buf(module_path.clone()).map_err(|_| {
+                color_eyre::eyre::eyre!("Migration path is not valid UTF-8: {:?}", module_path)
+            })?;
+
+            let (version, description) = parse_migration_metadata(dir_name);
+            discovered.push(MigrationFile {
+                version,
+                description,
+                path: utf8_path.to_string(),
+            });
+
+            continue;
+        }
+
+        let utf8_path = Utf8PathBuf::from_path_buf(path.clone()).map_err(|_| {
+            color_eyre::eyre::eyre!("Migration path is not valid UTF-8: {:?}", path)
+        })?;
+
+        if utf8_path
+            .file_name()
+            .map(|n| n == "mod.rs")
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let file_stem = utf8_path.file_stem().unwrap_or_default();
+        let (version, description) = parse_migration_metadata(file_stem);
+
+        discovered.push(MigrationFile {
+            version,
+            description,
+            path: utf8_path.to_string(),
+        });
+    }
+
+    discovered.sort_by_key(|m| m.version);
+
+    Ok(discovered)
+}
+
+fn parse_migration_metadata(name: &str) -> (i64, String) {
+    let trimmed = name.trim_start_matches('m');
+
+    let version_str = trimmed
+        .split('_')
+        .take_while(|segment| segment.chars().all(|c| c.is_ascii_digit()))
+        .collect::<Vec<_>>()
+        .join("_");
+
+    let version = version_str
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse::<i64>()
+        .unwrap_or(0);
+
+    let description = trimmed
+        .splitn(3, '_')
+        .nth(2)
+        .unwrap_or("canonical_schema")
+        .replace('_', " ");
+
+    (version, description)
 }
 
 async fn validate_migration_syntax(migration: &MigrationFile) -> Result<()> {

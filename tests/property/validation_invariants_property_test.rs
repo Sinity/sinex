@@ -255,7 +255,6 @@ fn test_security_boundary_enforcement() -> color_eyre::eyre::Result<()> {
                 }
                 _ => {
                     // Other scenarios should be handled gracefully
-                    prop_assert!(true);
                 }
             }
         }
@@ -285,11 +284,10 @@ fn test_validation_error_recovery() -> color_eyre::eyre::Result<()> {
                         prop_assert!(result.is_ok(), "Error recovery should succeed");
 
                         // Event should remain in valid state
-                        prop_assert!(!event.source.is_empty() || event.source.is_empty(), "Event should be in consistent state");
                         prop_assert!(serde_json::to_string(&event.payload).is_ok(), "Event payload should remain serializable");
                     }
                 }
-                _ => prop_assert!(true)
+                _ => {}
             }
         }
     }
@@ -578,8 +576,8 @@ mod unit_tests {
             .new_tree(&mut runner)
             .unwrap()
             .current();
-        // Should generate without crashing
-        assert!(true);
+        // Ensure debug formatting works for generated scenarios
+        let _ = format!("{:?}", scenario);
 
         let complex_event = arb_complex_event().new_tree(&mut runner).unwrap().current();
         assert!(!complex_event.source.is_empty());
