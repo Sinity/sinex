@@ -59,7 +59,6 @@ pub enum SystemdUnitState {
 
 /// Modern systemd monitor using cgroup filesystem
 pub struct SystemdMonitor {
-    units: HashMap<String, SystemdUnit>,
     cgroup_base: PathBuf,
 }
 
@@ -75,10 +74,7 @@ impl SystemdMonitor {
             return Err(eyre!("Cannot find systemd cgroup directory"));
         };
 
-        Ok(Self {
-            units: HashMap::new(),
-            cgroup_base,
-        })
+        Ok(Self { cgroup_base })
     }
 
     /// List all systemd service units by reading cgroup

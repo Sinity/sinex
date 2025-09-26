@@ -9,7 +9,7 @@ mod common {
     // Core types facade
     pub use sinex_core::{
         db::models::{EventId, Provenance},
-        types::{domain::EventType, Id, Ulid},
+        types::{Id, Ulid},
         Event, JsonValue,
     };
 

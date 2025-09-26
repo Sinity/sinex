@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
 use sinex_core::{
-    db::models::{event::OffsetKind, Event, JsonValue, Provenance, SourceMaterial},
+    db::models::{Event, JsonValue, Provenance},
     types::{
         domain::{EventSource, EventType},
         Id, Ulid,

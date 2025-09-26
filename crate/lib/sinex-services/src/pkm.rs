@@ -327,7 +327,6 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
-        use sha2::{Digest, Sha256};
         use sinex_core::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);

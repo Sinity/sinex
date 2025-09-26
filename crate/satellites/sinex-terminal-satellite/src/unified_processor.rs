@@ -806,7 +806,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
         _args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
         let estimated_events = 100; // sensd handles the actual estimation
-        let mut warnings = vec![
+        let warnings = vec![
             "Event estimation delegated to sensd - actual numbers depend on source material"
                 .to_string(),
         ];

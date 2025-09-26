@@ -4,17 +4,13 @@
 //! from sensd and creating events with proper provenance traceability.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
-use sinex_core::{
-    db::models::Event,
-    types::{events::DocumentIngestedPayload, ulid::Ulid},
-    JsonValue,
-};
+use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -26,7 +22,7 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use sqlx::PgPool;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -418,6 +414,7 @@ impl DocumentProcessor {
         }
 
         // Create document.ingested event with proper material provenance
+        #[allow(deprecated)]
         let mut event = Event::<JsonValue>::from_material(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),

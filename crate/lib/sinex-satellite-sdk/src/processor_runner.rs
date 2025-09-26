@@ -418,7 +418,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_processor_runner_with_checkpoint() {
-        use chrono::Utc;
         use sinex_test_utils::TestContext;
 
         // Create test context

@@ -547,6 +547,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
             &consumer_group,
             &consumer_name,
             None,                                           // last_processed_id
+            0,                                              // processed_count
             Some(json!({"test": "checkpoint_operations"})), // checkpoint_data
         )
         .await

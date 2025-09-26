@@ -11,7 +11,7 @@ use sinex_test_utils::sinex_test;
 #[derive(Debug, Default, SatelliteProcessor)]
 pub struct TestProcessor {
     config: TestConfig,
-    last_scan_time: Option<chrono::DateTime<chrono::Utc>>,
+    _last_scan_time: Option<chrono::DateTime<chrono::Utc>>,
     processed_count: u64,
 }
 
@@ -135,6 +135,7 @@ async fn test_satellite_config_json_serialization() -> Result<(), Box<dyn std::e
 #[sinex_test]
 async fn test_payload_extractor_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
+    assert!(extractor.schema.is_none());
 
     // Create test payload
     let test_payload = TestPayload {
@@ -158,6 +159,7 @@ async fn test_payload_extractor_basic_functionality() -> Result<(), Box<dyn std:
 #[sinex_test]
 async fn test_payload_extractor_validation() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
+    assert!(extractor.schema.is_none());
 
     let test_payload = TestPayload {
         path: "/test/path".to_string(),

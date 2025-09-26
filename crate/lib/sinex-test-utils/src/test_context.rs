@@ -43,8 +43,8 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::{Event, Provenance};
-use sinex_core::types::{DbPool, Ulid};
+use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_core::types::{DbPool, Id, Ulid};
 
 use sinex_core::DbPoolExt;
 use std::sync::Arc;
@@ -87,8 +87,14 @@ impl TestContext {
                 if clean.contains('\\') {
                     clean = clean.replace('\\', "_");
                 }
-                if clean.chars().any(|c| c.is_control()) {
-                    clean = clean.chars().filter(|c| !c.is_control()).collect();
+                if clean
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+                {
+                    clean = clean
+                        .chars()
+                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+                        .collect();
                 }
                 *s = clean;
             }
@@ -251,6 +257,36 @@ impl TestContext {
             self.created_events.lock().push(id.clone().into());
         }
         Ok(inserted)
+    }
+
+    /// Ensure a source material record exists for tests that construct provenance manually.
+    pub async fn ensure_source_material(
+        &self,
+        id: Id<SourceMaterial>,
+        source_identifier: Option<&str>,
+    ) -> Result<()> {
+        let material_ulid_uuid = id.to_uuid();
+        let identifier = source_identifier
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("test-material-{id}"));
+
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.source_material_registry 
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+            material_ulid_uuid,
+            "annex",
+            identifier,
+            "completed",
+            "realtime"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Insert multiple events (batch operation)

@@ -510,8 +510,29 @@ fn is_valid_version_pattern(version_str: &str) -> bool {
         }
     }
 
-    // Check build part (not empty)
-    if build_part.is_empty() {
+    // Check build part (allow optional ".dirty" suffix)
+    let (build_base, dirty_suffix) = if let Some(stripped) = build_part.strip_suffix(".dirty") {
+        (stripped, true)
+    } else {
+        (build_part, false)
+    };
+
+    if build_base.is_empty() {
+        return false;
+    }
+
+    if build_base.contains('.') {
+        return false;
+    }
+
+    if !build_base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return false;
+    }
+
+    if dirty_suffix && build_base.ends_with('-') {
         return false;
     }
 

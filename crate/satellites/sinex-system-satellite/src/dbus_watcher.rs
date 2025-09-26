@@ -16,7 +16,7 @@ use sinex_core::types::events::{
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
 use sinex_core::types::Ulid;
-use sinex_core::{EventSource, EventType, JsonValue};
+use sinex_core::JsonValue;
 
 use sinex_satellite_sdk::SatelliteResult;
 use std::sync::Arc;

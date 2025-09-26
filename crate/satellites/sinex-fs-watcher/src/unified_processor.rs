@@ -959,7 +959,7 @@ mod tests {
             processing_interval_ms: 500,
         };
 
-        let mut processor = FilesystemProcessor::with_config(config.clone());
+        let processor = FilesystemProcessor::with_config(config.clone());
 
         assert_eq!(processor.config.watch_paths, config.watch_paths);
         assert_eq!(processor.config.max_depth, config.max_depth);

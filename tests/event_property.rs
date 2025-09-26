@@ -201,7 +201,7 @@ fn test_event_id_properties() -> Result<()> {
         );
         event1.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Small delay to ensure different timestamps
+        // Small delay to reduce the chance of identical ULID timestamps
         std::thread::yield_now();
 
         let mut event2 = RawEvent::test_event(
@@ -211,10 +211,10 @@ fn test_event_id_properties() -> Result<()> {
         );
         event2.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Events should be unique (different ts_ingest times)
+        // Events should be unique even if ULID timestamps collide
         prop_assert_ne!(
-            event1.id.as_ref().unwrap().as_ulid().timestamp(),
-            event2.id.as_ref().unwrap().as_ulid().timestamp()
+            event1.id.as_ref().unwrap(),
+            event2.id.as_ref().unwrap()
         );
 
         // ts_ingest should be recent
@@ -487,7 +487,12 @@ mod unit_tests {
         assert_eq!(event.source.as_str(), "test_source");
         assert_eq!(event.event_type.as_str(), "test.event");
         assert_eq!(event.payload, json!({"key": "value"}));
-        assert!(event.ts_orig.is_none());
+        let ts_orig = event
+            .ts_orig
+            .expect("RawEvent::test_event should stamp an original timestamp");
+        let now = Utc::now();
+        assert!(ts_orig <= now);
+        assert!(now - ts_orig < ChronoDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
         assert!(event.ingestor_version.is_none());
         assert!(event.payload_schema_id.is_none());

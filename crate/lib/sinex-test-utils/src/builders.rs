@@ -82,6 +82,7 @@ impl TestCheckpointBuilder {
             consumer_group,
             consumer_name,
             last_processed_id,
+            processed_count,
             checkpoint_data,
             ..
         } = self;
@@ -100,6 +101,7 @@ impl TestCheckpointBuilder {
                 &group,
                 &consumer,
                 last_processed_id,
+                processed_count,
                 checkpoint_data,
             )
             .await?;

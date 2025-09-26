@@ -394,6 +394,7 @@ impl IngestClient {
 
     /// Convert Event to protobuf format
     #[cfg(test)]
+    #[allow(dead_code)]
     fn convert_to_proto(&self, event: &Event<JsonValue>) -> SatelliteResult<ProtoEvent> {
         Self::convert_to_proto_static(event)
     }

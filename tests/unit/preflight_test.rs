@@ -527,14 +527,13 @@ async fn test_phase5_configuration_missing_env(_ctx: TestContext) -> color_eyre:
 async fn test_phase5_config_format_validation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test JSON configuration format (since we don't have toml crate)
     let test_config = r#"{
-"database": {
-"url": "postgresql:///test",
-"pool_size": 10
-Ok(())
-},
-"logging": {
-"level": "info"
-}
+  "database": {
+    "url": "postgresql:///test",
+    "pool_size": 10
+  },
+  "logging": {
+    "level": "info"
+  }
 }"#;
 
     // Parse JSON to verify it's valid

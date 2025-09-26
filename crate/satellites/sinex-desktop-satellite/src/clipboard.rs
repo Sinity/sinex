@@ -73,7 +73,7 @@ pub struct ClipboardWatcher {
 impl ClipboardWatcher {
     /// Create new clipboard watcher with sensd integration
     pub async fn new(poll_interval_secs: u64, db_pool: Option<PgPool>) -> SatelliteResult<Self> {
-        let mut watcher = Self {
+        let watcher = Self {
             poll_interval: Duration::from_secs(poll_interval_secs),
             last_content: None,
             last_primary_content: None,

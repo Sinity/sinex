@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use sinex_core::db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
 use sinex_core::types::ulid::Ulid;
 use sinex_core::{ConsumerGroup, ConsumerName, ProcessorName};
+use std::convert::TryInto;
 use tracing::{debug, info, warn};
 
 // Database record structures for query results
@@ -291,6 +292,12 @@ impl CheckpointManager {
             .await?;
 
         let checkpoint = if let Some(row) = checkpoint_result {
+            let processed_count = u64::try_from(row.processed_count).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "Stored checkpoint has negative processed_count, refusing to load".to_string(),
+                )
+            })?;
+
             debug!(
                 processor = %self.processor_name,
                 consumer_group = %self.consumer_group,
@@ -315,7 +322,7 @@ impl CheckpointManager {
 
                 CheckpointState {
                     checkpoint,
-                    processed_count: row.processed_count as u64,
+                    processed_count,
                     last_activity: row.last_activity,
                     data: None, // state field doesn't exist
                     version,
@@ -328,7 +335,7 @@ impl CheckpointManager {
 
                 let legacy = LegacyCheckpointState {
                     last_processed_id: row.last_processed_id.map(|id| id.as_ulid().to_string()),
-                    processed_count: row.processed_count as u64,
+                    processed_count,
                     last_activity: row.last_activity,
                     data: None, // state field doesn't exist
                     version,
@@ -386,6 +393,12 @@ impl CheckpointManager {
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
+        let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
+            SatelliteError::Checkpoint(
+                "processed_count exceeds supported range for storage".to_string(),
+            )
+        })?;
+
         self.pool
             .checkpoints()
             .upsert(
@@ -395,6 +408,7 @@ impl CheckpointManager {
                 last_processed_id.map(|id| {
                     sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
                 }),
+                processed_count,
                 Some(checkpoint_data),
             )
             .await?;

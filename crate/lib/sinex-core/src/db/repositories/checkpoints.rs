@@ -291,6 +291,7 @@ impl<'a> CheckpointRepository<'a> {
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
         last_processed_id: Option<Id<Event<JsonValue>>>,
+        processed_count: i64,
         checkpoint_data: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
         let id = Id::<Checkpoint>::new();
@@ -300,15 +301,15 @@ impl<'a> CheckpointRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
-                last_processed_id, checkpoint_data
+                last_processed_id, processed_count, checkpoint_data
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5::uuid, $6
+                $1::uuid, $2, $3, $4, $5::uuid, $6, $7
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
+                processed_count = EXCLUDED.processed_count,
                 checkpoint_data = EXCLUDED.checkpoint_data,
-                processed_count = core.processor_checkpoints.processed_count + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
@@ -327,6 +328,7 @@ impl<'a> CheckpointRepository<'a> {
             consumer_group.as_str(),
             consumer_name.as_str(),
             last_processed_id.map(|id| id.to_uuid()),
+            processed_count,
             checkpoint_data
         )
         .fetch_one(self.pool)
@@ -450,6 +452,7 @@ impl<'a> CheckpointRepository<'a> {
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
         last_processed_id: Option<Id<Event<JsonValue>>>,
+        processed_count: i64,
         checkpoint_data: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
         let id = Id::<Checkpoint>::new();
@@ -459,15 +462,15 @@ impl<'a> CheckpointRepository<'a> {
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
-                last_processed_id, checkpoint_data
+                last_processed_id, processed_count, checkpoint_data
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5::uuid, $6
+                $1::uuid, $2, $3, $4, $5::uuid, $6, $7
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
+                processed_count = EXCLUDED.processed_count,
                 checkpoint_data = EXCLUDED.checkpoint_data,
-                processed_count = core.processor_checkpoints.processed_count + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
@@ -486,6 +489,7 @@ impl<'a> CheckpointRepository<'a> {
             consumer_group.as_str(),
             consumer_name.as_str(),
             last_processed_id.map(|id| id.to_uuid()),
+            processed_count,
             checkpoint_data
         )
         .fetch_one(&mut **tx)
@@ -525,6 +529,7 @@ impl CheckpointExt for Checkpoint {
                 &consumer_group,
                 &consumer_name,
                 self.last_processed_id,
+                0,
                 self.checkpoint_data,
             )
             .await

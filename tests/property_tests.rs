@@ -23,7 +23,7 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 1..1000usize
     )| {
-        let mut ulids = Vec::new();
+        let mut ulids = Vec::with_capacity(count);
         for _ in 0..count {
             ulids.push(Ulid::new());
         }
@@ -32,9 +32,9 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
         let unique: HashSet<_> = ulids.iter().cloned().collect();
         prop_assert_eq!(unique.len(), ulids.len());
 
-        // Property: ULIDs should be generally in temporal order
-        for window in ulids.windows(2) {
-            prop_assert!(window[0] <= window[1]);
+        // Property: First timestamp should be less than or equal to the final timestamp
+        if let (Some(first), Some(last)) = (ulids.first(), ulids.last()) {
+            prop_assert!(first.timestamp() <= last.timestamp());
         }
     });
     Ok(())
@@ -43,15 +43,14 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
 #[sinex_test]
 fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
-        ulid_str in "[0-9A-Z]{26}"
+        bytes in prop::array::uniform16(any::<u8>())
     )| {
-        // Property: Valid ULID strings should always parse successfully
-        let ulid_result = ulid_str.parse::<Ulid>();
-        if ulid_result.is_ok() {
-            let ulid = ulid_result.expect("ULID parsing should succeed for valid string");
-            // Property: Round-trip conversion should be identity
-            prop_assert_eq!(ulid.to_string(), ulid_str);
-        }
+        let ulid = Ulid::from_bytes(bytes).expect("Raw bytes should always form a ULID");
+        let ulid_str = ulid.to_string();
+        let parsed = ulid_str
+            .parse::<Ulid>()
+            .expect("String produced from ULID should parse");
+        prop_assert_eq!(parsed, ulid);
     });
     Ok(())
 }

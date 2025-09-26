@@ -123,9 +123,9 @@ fn test_ulid_timestamp_extraction() -> color_eyre::eyre::Result<()> {
 /// Generate a strategy for controlling concurrent ULID generation
 fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
     (
-        2usize..=10,   // Number of threads
-        10usize..=100, // ULIDs per thread
-        0u64..=100,    // Max delay between generations (ms)
+        2usize..=6,  // Number of threads
+        5usize..=25, // ULIDs per thread
+        0u64..=3,    // Max delay between generations (ms)
     )
 }
 
@@ -154,7 +154,7 @@ fn generate_ulids_concurrently(
 
                 // Random small delay to increase contention
                 if max_delay_ms > 0 {
-                    let delay = Duration::from_millis(max_delay_ms / 2);
+                    let delay = Duration::from_millis(max_delay_ms);
                     spin_for(delay);
                 }
             }

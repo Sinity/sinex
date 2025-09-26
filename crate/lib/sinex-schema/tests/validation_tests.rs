@@ -4,22 +4,19 @@
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
 use chrono::Utc;
-use color_eyre::eyre::Result;
-use rstest::*;
 use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::{sinex_test, TestContext};
 use sqlx::PgPool;
-
 #[cfg(test)]
 mod constraint_validation_tests {
     use super::*;
+    #[allow(dead_code)]
+    type Result<T> = color_eyre::eyre::Result<T>;
 
     async fn setup_test_tables(pool: &PgPool) {
         // Create all necessary tables for constraint testing
-        use color_eyre::eyre::Result;
-        use sea_orm_migration::prelude::PostgresQueryBuilder;
         sqlx::query(
             &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
         )

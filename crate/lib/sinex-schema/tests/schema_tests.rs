@@ -3,7 +3,6 @@
 //! These tests validate that all schema definitions are correct and can be
 //! executed against a real PostgreSQL database with the required extensions.
 
-use rstest::*;
 use sea_orm_migration::prelude::*;
 use sinex_schema::schema::*;
 use sinex_test_utils::TestContext;
@@ -196,7 +195,7 @@ mod constraint_tests {
 
         let event_id = sinex_schema::ulid::Ulid::new();
         let material_id = sinex_schema::ulid::Ulid::new();
-        let source_event_id = sinex_schema::ulid::Ulid::new();
+        let _source_event_id = sinex_schema::ulid::Ulid::new();
 
         // First insert a source material
         sqlx::query!(
@@ -475,6 +474,7 @@ mod migration_tests {
 // Helper functions for testing
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ColumnInfo {
     column_name: String,
     data_type: String,
@@ -538,6 +538,7 @@ async fn get_table_columns(
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct IndexInfo {
     index_name: String,
     is_unique: bool,

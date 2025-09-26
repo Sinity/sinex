@@ -730,14 +730,38 @@ impl DatabasePool {
                                     }
                                 } else {
                                     needs_recreate = true;
-                            eprintln!("  Failed to verify schema in {name}, recreating");
+                                    eprintln!("  Failed to verify schema in {name}, recreating");
+                                }
+                            }
+
+                            if !needs_recreate {
+                                match sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+                                )
+                                .fetch_one(&db_pool)
+                                .await
+                                {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Database {name} missing core.events.associated_blob_ids; recreating"
+                                        );
+                                    }
+                                    Err(err) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Failed to inspect columns in {name} ({err}); recreating"
+                                        );
+                                    }
                                 }
                             }
                         } else {
                             // Unable to query extensions; assume drift and recreate
                             needs_recreate = true;
-                    eprintln!(
-                        "  Unable to query extensions for {name}, forcing recreation"
+                            eprintln!(
+                                "  Unable to query extensions for {name}, forcing recreation"
                     );
                         }
                         let _ = db_pool.close().await;
@@ -925,7 +949,7 @@ impl DatabasePool {
             }
 
             attempts += 1;
-            if attempts > 100 {
+            if attempts > 250 {
                 let total_time = start_time.elapsed();
                 return Err(SinexError::unknown(format!(
                     "Failed to acquire database after {attempts} attempts ({total_time:.1?})"
@@ -1130,10 +1154,30 @@ async fn ensure_template_database(
                     match collect_extension_versions(&pool).await {
                         Ok(current_exts) => {
                             if current_exts == stamp.extensions {
-                                eprintln!(
-                                    "✅ Template database {template_name} reused (migrations unchanged)"
-                                );
-                                reuse_allowed = true;
+                                match sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+                                )
+                                .fetch_one(&pool)
+                                .await
+                                {
+                                    Ok(true) => {
+                                        eprintln!(
+                                            "✅ Template database {template_name} reused (migrations unchanged)"
+                                        );
+                                        reuse_allowed = true;
+                                    }
+                                    Ok(false) => {
+                                        eprintln!(
+                                            "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
+                                        );
+                                    }
+                                    Err(err) => {
+                                        eprintln!(
+                                            "⚠️  Failed to inspect template schema ({err}); forcing recreation"
+                                        );
+                                    }
+                                }
                             } else {
                                 eprintln!(
                                     "♻️  Template database '{template_name}' extensions drifted; recreating"

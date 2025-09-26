@@ -683,7 +683,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
 
     assert_eq!(retrieved_events.len(), 5);
 
-    // Events should be in insertion order; compare ULID (time-ordered)
+    // Results are returned newest-first; successive entries should have non-increasing ULIDs
     for i in 0..4 {
         let a = retrieved_events[i]
             .id
@@ -695,7 +695,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
             .as_ref()
             .expect("persisted event has id")
             .as_ulid();
-        assert!(a <= b, "Events should be ordered by insertion time");
+        assert!(a >= b, "Events should be in reverse insertion order");
     }
 
     Ok(())

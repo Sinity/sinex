@@ -7,9 +7,8 @@ use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use sinex_schema::ulid::Ulid;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 fn spin_for(duration: Duration) {
     if duration.is_zero() {

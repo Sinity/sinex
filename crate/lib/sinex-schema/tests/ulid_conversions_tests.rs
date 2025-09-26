@@ -3,7 +3,6 @@
 //! These tests validate the database boundary conversion functions
 //! that handle ULID <-> UUID transformations for PostgreSQL operations.
 
-use rstest::*;
 use sinex_schema::ulid::Ulid;
 use sinex_schema::ulid_conversions::*;
 use sqlx::types::Uuid as SqlxUuid;

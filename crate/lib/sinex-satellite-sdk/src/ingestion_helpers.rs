@@ -535,7 +535,7 @@ mod tests {
         }];
 
         let reader = LedgerReader::new(Ulid::new(), entries);
-        let (ts, quality) = reader.derive_ts_orig(50, None);
+        let (_ts, quality) = reader.derive_ts_orig(50, None);
 
         assert_eq!(quality, TimeQuality::RealtimeCapture);
     }
