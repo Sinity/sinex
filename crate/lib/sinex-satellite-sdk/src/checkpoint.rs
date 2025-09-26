@@ -402,9 +402,11 @@ impl CheckpointManager {
         self.pool
             .checkpoints()
             .upsert(
-                &processor_name,
-                &consumer_group,
-                &consumer_name,
+                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                    processor: &processor_name,
+                    consumer_group: &consumer_group,
+                    consumer_name: &consumer_name,
+                },
                 last_processed_id.map(|id| {
                     sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
                 }),

@@ -97,9 +97,11 @@ impl TestCheckpointBuilder {
 
         pool.checkpoints()
             .upsert(
-                &processor_name,
-                &group,
-                &consumer,
+                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                    processor: &processor_name,
+                    consumer_group: &group,
+                    consumer_name: &consumer,
+                },
                 last_processed_id,
                 processed_count,
                 checkpoint_data,

@@ -543,9 +543,11 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
     let checkpoint = pool
         .checkpoints()
         .upsert(
-            &processor_name,
-            &consumer_group,
-            &consumer_name,
+            sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                processor: &processor_name,
+                consumer_group: &consumer_group,
+                consumer_name: &consumer_name,
+            },
             None,                                           // last_processed_id
             0,                                              // processed_count
             Some(json!({"test": "checkpoint_operations"})), // checkpoint_data

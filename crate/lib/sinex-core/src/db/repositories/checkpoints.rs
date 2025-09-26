@@ -49,6 +49,12 @@ pub struct Checkpoint {
     pub checkpoint_data: Option<JsonValue>,
 }
 
+pub struct CheckpointIdentity<'a> {
+    pub processor: &'a ProcessorName,
+    pub consumer_group: &'a ConsumerGroup,
+    pub consumer_name: &'a ConsumerName,
+}
+
 impl Checkpoint {
     /// Create a new checkpoint for a processor
     pub fn new(processor_name: impl Into<ProcessorName>) -> Self {
@@ -287,13 +293,16 @@ impl<'a> CheckpointRepository<'a> {
 
     pub async fn upsert(
         &self,
-        processor_name: &ProcessorName,
-        consumer_group: &ConsumerGroup,
-        consumer_name: &ConsumerName,
+        identity: CheckpointIdentity<'_>,
         last_processed_id: Option<Id<Event<JsonValue>>>,
         processed_count: i64,
         checkpoint_data: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
+        let CheckpointIdentity {
+            processor,
+            consumer_group,
+            consumer_name,
+        } = identity;
         let id = Id::<Checkpoint>::new();
 
         sqlx::query_as!(
@@ -320,11 +329,11 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
-                last_activity as "last_activity!",
-                updated_at as "updated_at!"
+            last_activity as "last_activity!",
+            updated_at as "updated_at!"
             "#,
             id.to_uuid(),
-            processor_name.as_str(),
+            processor.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
             last_processed_id.map(|id| id.to_uuid()),
@@ -448,13 +457,16 @@ impl<'a> CheckpointRepository<'a> {
     pub async fn upsert_with_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        processor_name: &ProcessorName,
-        consumer_group: &ConsumerGroup,
-        consumer_name: &ConsumerName,
+        identity: CheckpointIdentity<'_>,
         last_processed_id: Option<Id<Event<JsonValue>>>,
         processed_count: i64,
         checkpoint_data: Option<JsonValue>,
     ) -> DbResult<CheckpointRecord> {
+        let CheckpointIdentity {
+            processor,
+            consumer_group,
+            consumer_name,
+        } = identity;
         let id = Id::<Checkpoint>::new();
 
         sqlx::query_as!(
@@ -481,11 +493,11 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
-                last_activity as "last_activity!",
-                updated_at as "updated_at!"
+            last_activity as "last_activity!",
+            updated_at as "updated_at!"
             "#,
             id.to_uuid(),
-            processor_name.as_str(),
+            processor.as_str(),
             consumer_group.as_str(),
             consumer_name.as_str(),
             last_processed_id.map(|id| id.to_uuid()),
@@ -525,9 +537,11 @@ impl CheckpointExt for Checkpoint {
 
         CheckpointRepository::new(pool)
             .upsert(
-                &processor_name,
-                &consumer_group,
-                &consumer_name,
+                CheckpointIdentity {
+                    processor: &processor_name,
+                    consumer_group: &consumer_group,
+                    consumer_name: &consumer_name,
+                },
                 self.last_processed_id,
                 0,
                 self.checkpoint_data,
