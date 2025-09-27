@@ -151,8 +151,8 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> Result<Value>
 
     // Required binaries for Sinex operation
     let required_binaries = vec![
-        ("sinex-collector", "Main event collection service", true),
-        ("sinex-router", "Event routing service", true),
+        ("sinex-ingestd", "Ingestion daemon", true),
+        ("sinex-gateway", "API gateway", true),
         ("sinex-preflight", "Pre-flight verification service", true),
         ("psql", "PostgreSQL client", true),
         ("systemctl", "SystemD control", true),

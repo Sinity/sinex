@@ -174,7 +174,7 @@ async fn handle_rpc(
 #[derive(Debug)]
 enum BindAddress {
     Tcp { host: String, port: u16 },
-    UnixSocket { _path: Utf8PathBuf },
+    UnixSocket { path: Utf8PathBuf },
 }
 
 impl BindAddress {
@@ -198,7 +198,7 @@ impl BindAddress {
         }
 
         // Default to Unix socket elsewhere
-        BindAddress::UnixSocket { _path: socket_path }
+        BindAddress::UnixSocket { path: socket_path }
     }
 }
 
@@ -226,15 +226,36 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             info!("RPC server listening on TCP {}", addr);
             axum::serve(listener, app).await?;
         }
-        BindAddress::UnixSocket { .. } => {
-            // Simplify: fallback to TCP bind for compilation clarity
-            let addr = "127.0.0.1:9999";
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            info!(
-                "RPC server listening on TCP {} (Unix socket handling disabled)",
-                addr
-            );
-            axum::serve(listener, app).await?;
+        BindAddress::UnixSocket { path } => {
+            let path_str = path.as_str();
+            let socket_path = std::path::Path::new(path_str);
+
+            if let Some(parent) = socket_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .context("Failed to create Unix socket directory")?;
+            }
+
+            if socket_path.exists() {
+                if let Err(e) = tokio::fs::remove_file(socket_path).await {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(color_eyre::eyre::eyre!(
+                            "Failed to remove existing Unix socket {}: {}",
+                            path_str,
+                            e
+                        ));
+                    }
+                }
+            }
+
+            let listener = tokio::net::UnixListener::bind(socket_path)
+                .context("Failed to bind Unix socket")?;
+            info!("RPC server listening on Unix socket {}", path_str);
+
+            let incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
+            axum::Server::builder(hyper::server::accept::from_stream(incoming))
+                .serve(app.into_make_service())
+                .await?;
         }
     }
 

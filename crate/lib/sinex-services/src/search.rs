@@ -22,6 +22,7 @@ pub struct SearchResult {
     pub event_id: Ulid,
     pub source: String,
     pub event_type: String,
+    pub host: String,
     pub timestamp: DateTime<Utc>,
     pub snippet: String,
     pub score: f64,
@@ -33,6 +34,7 @@ struct SearchResultRow {
     event_id: Option<String>,
     source: String,
     event_type: String,
+    host: String,
     ts_ingest: DateTime<Utc>,
     payload: serde_json::Value,
     score: f64,
@@ -51,7 +53,7 @@ impl SearchService {
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
         // Base select. Score is a placeholder (1.0) to keep response shape stable.
         let mut sql = String::from(
-            "SELECT id::text AS event_id, source, event_type, ts_ingest, payload, 1.0::float8 AS score \
+            "SELECT id::text AS event_id, source, event_type, host, ts_ingest, payload, 1.0::float8 AS score \
              FROM core.events",
         );
 
@@ -154,6 +156,7 @@ impl SearchService {
                         event_id: ulid,
                         source: row.source,
                         event_type: row.event_type,
+                        host: row.host,
                         timestamp: row.ts_ingest,
                         snippet: Self::extract_snippet(&row.payload, query.text.as_deref()),
                         score: row.score,
@@ -170,7 +173,9 @@ impl SearchService {
 
         if let Some(text) = search_text {
             // Find the search text and return surrounding context
-            if let Some(pos) = payload_str.to_lowercase().find(&text.to_lowercase()) {
+            let haystack = payload_str.to_ascii_lowercase();
+            let needle = text.to_ascii_lowercase();
+            if let Some(pos) = haystack.find(&needle) {
                 return Self::safe_substring_with_context(&payload_str, pos, text.len(), 50);
             }
         }

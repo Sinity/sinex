@@ -80,13 +80,29 @@ impl EventRecordExt for EventRecord {
                     operation_id: None,
                 }
             }
-            (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
-                id: Id::<SourceMaterial>::from_ulid(material_id),
-                anchor_byte,
-                offset_start: self.offset_start,
-                offset_end: self.offset_end,
-                offset_kind: OffsetKind::default(),
-            },
+            (None, Some(material_id), Some(anchor_byte)) => {
+                let offset_kind = match self.offset_kind.as_deref() {
+                    Some("line") => OffsetKind::Line,
+                    Some("rowid") => OffsetKind::Record,
+                    Some("logical") => OffsetKind::Character,
+                    Some("byte") | None => OffsetKind::Byte,
+                    Some(other) => {
+                        tracing::warn!(
+                            offset_kind = other,
+                            "Unknown offset_kind, defaulting to byte"
+                        );
+                        OffsetKind::Byte
+                    }
+                };
+
+                Provenance::Material {
+                    id: Id::<SourceMaterial>::from_ulid(material_id),
+                    anchor_byte,
+                    offset_start: self.offset_start,
+                    offset_end: self.offset_end,
+                    offset_kind,
+                }
+            }
             _ => {
                 // Default to material provenance with placeholder values if no provenance
                 // (shouldn't happen in production, but needed for type safety)
@@ -110,7 +126,9 @@ impl EventRecordExt for EventRecord {
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id,
             provenance,
-            associated_blob_ids: None,
+            associated_blob_ids: self
+                .associated_blob_ids
+                .map(|ids| ids.into_iter().collect()),
         }
     }
 }

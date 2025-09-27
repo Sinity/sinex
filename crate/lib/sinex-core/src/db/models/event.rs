@@ -205,64 +205,6 @@ impl<T> Event<T> {
         self
     }
 
-    // Deprecated constructors for backwards compatibility
-    #[deprecated(since = "0.5.0", note = "Use Event::create() or Event::new() instead")]
-    pub fn from_material(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: T,
-        material_id: impl Into<Id<SourceMaterial>>,
-        anchor_byte: i64,
-    ) -> Self {
-        Self::create(
-            source,
-            event_type,
-            payload,
-            Provenance::from_material(material_id, anchor_byte, None, None),
-        )
-    }
-
-    #[deprecated(since = "0.5.0", note = "Use Event::create() or Event::new() instead")]
-    pub fn from_synthesis<I>(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: T,
-        parent_ids: I,
-    ) -> Self
-    where
-        I: IntoIterator<Item = EventId>,
-    {
-        Self::create(
-            source,
-            event_type,
-            payload,
-            Provenance::from_synthesis(parent_ids)
-                .unwrap_or_else(|| panic!("from_synthesis requires at least one parent ID")),
-        )
-    }
-
-    #[deprecated(since = "0.5.0", note = "Events should have real provenance")]
-    pub fn system_event(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: T,
-    ) -> Self {
-        let system_bootstrap_id = EventId::from_ulid(
-            crate::types::Ulid::from_bytes([
-                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00,
-            ])
-            .unwrap_or_else(|_| panic!("hardcoded ULID bytes should be valid")),
-        );
-
-        Self::create(
-            source,
-            event_type,
-            payload,
-            Provenance::from_synthesis_safe(system_bootstrap_id, vec![]),
-        )
-    }
-
     #[cfg(feature = "testing")]
     /// Create a test event with dummy Material provenance
     ///
@@ -283,10 +225,12 @@ impl<T> Event<T> {
             }),
         );
 
-        #[allow(deprecated)]
-        {
-            Self::from_material(source, event_type, payload, test_material_id, 0)
-        }
+        Self::create(
+            source,
+            event_type,
+            payload,
+            Provenance::from_material(test_material_id, 0, None, None),
+        )
     }
 }
 
@@ -298,31 +242,6 @@ where
     /// Quick constructor for typed events - derives source/type from payload
     pub fn new(payload: T, provenance: Provenance) -> Self {
         Self::create(T::SOURCE, T::EVENT_TYPE, payload, provenance)
-    }
-
-    /// Temporary constructor for telemetry events that haven't gone through sensd yet
-    /// TODO: Telemetry should go through sensd and get proper source material IDs
-    #[deprecated(
-        since = "0.5.0",
-        note = "Telemetry events should go through sensd for proper provenance"
-    )]
-    pub fn new_telemetry(payload: T) -> Self {
-        // Using a well-known telemetry bootstrap event ID
-        // This indicates the telemetry hasn't been properly ingested yet
-        let telemetry_bootstrap_id = EventId::from_ulid(
-            crate::types::Ulid::from_bytes([
-                0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x01,
-            ])
-            .unwrap_or_else(|_| panic!("hardcoded telemetry ULID bytes should be valid")),
-        );
-
-        Self::create(
-            T::SOURCE,
-            T::EVENT_TYPE,
-            payload,
-            Provenance::from_synthesis_safe(telemetry_bootstrap_id, vec![]),
-        )
     }
 
     /// Start building a typed event with builder pattern

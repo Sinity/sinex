@@ -227,6 +227,11 @@ class SinexRPCClient:
     
     def _parse_datetime(self, date_str: str) -> datetime:
         """Parse datetime string in various formats."""
+        try:
+            return datetime.fromisoformat(date_str)
+        except ValueError:
+            pass
+
         formats = [
             '%Y-%m-%dT%H:%M:%S.%fZ',  # ISO format with microseconds
             '%Y-%m-%dT%H:%M:%SZ',     # ISO format without microseconds

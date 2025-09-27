@@ -12,7 +12,6 @@ use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::info;
-use tracing::warn;
 
 /// Standard CLI arguments for all stream processor satellites
 #[derive(Parser, Debug, Clone)]
@@ -45,16 +44,6 @@ pub struct ProcessorCli {
     /// Processor-specific configuration as JSON
     #[arg(long)]
     pub processor_config: Option<String>,
-
-    /// DEPRECATED: Direct NATS publishing bypasses ingestd single-writer principle (ignored)
-    #[arg(long, env = "SINEX_USE_NATS", hide = true)]
-    #[allow(dead_code)]
-    pub use_nats: bool,
-
-    /// DEPRECATED: NATS server URLs - no longer used, all events go through gRPC to ingestd
-    #[arg(long, env = "SINEX_NATS_SERVERS", hide = true)]
-    #[allow(dead_code)]
-    pub nats_servers: Option<String>,
 
     #[command(subcommand)]
     pub command: ProcessorCommand,
@@ -525,10 +514,6 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 };
 
                 // Always use gRPC to enforce single-writer principle through ingestd
-                if args.use_nats {
-                    warn!("--use-nats flag is deprecated and ignored. All events now go through gRPC to ingestd to enforce single-writer principle.");
-                }
-
                 info!("Using gRPC for event publishing");
 
                 // Create ingest client
@@ -645,10 +630,6 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 };
 
                 // Initialize runner with gRPC by default (always for dry runs, optional NATS bypass)
-                if args.use_nats {
-                    warn!("--use-nats flag is deprecated and ignored. All events now go through gRPC to ingestd to enforce single-writer principle.");
-                }
-
                 info!("Using gRPC for event publishing");
 
                 let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())

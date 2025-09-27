@@ -608,6 +608,18 @@ impl IngestService {
                 // Note: This is in a static context, so telemetry is not available here
                 // Consider refactoring to pass telemetry if needed
                 stats.db_errors.fetch_add(1, Ordering::Relaxed);
+                let mut buffer = event_buffer.lock().await;
+                // Prepend failed events so they are retried on next flush
+                let mut requeue = events;
+                if requeue.is_empty() {
+                    return;
+                }
+                if buffer.is_empty() {
+                    *buffer = requeue;
+                } else {
+                    requeue.extend(buffer.drain(..));
+                    *buffer = requeue;
+                }
                 return;
             }
         }

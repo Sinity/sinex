@@ -414,8 +414,7 @@ impl DocumentProcessor {
         }
 
         // Create document.ingested event with proper material provenance
-        #[allow(deprecated)]
-        let mut event = Event::<JsonValue>::from_material(
+        let mut event = Event::<JsonValue>::dynamic(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),
             serde_json::json!({
@@ -425,18 +424,14 @@ impl DocumentProcessor {
                 "mime_type": mime_type,
                 "encoding": encoding,
             }),
-            material_id,
-            0, // Start offset - document processed as complete unit
-        );
-
-        // Set proper provenance with material information
-        event.provenance = sinex_core::db::models::event::Provenance::Material {
-            id: sinex_core::types::Id::from(material_id),
-            anchor_byte: 0,
-            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
-            offset_start: Some(0),
-            offset_end: Some(document_data.len() as i64),
-        };
+        )
+        .with_provenance(sinex_core::db::models::event::Provenance::from_material(
+            sinex_core::types::Id::from(material_id),
+            0,
+            Some(0),
+            Some(document_data.len() as i64),
+        ))
+        .build();
 
         events.push(event);
 

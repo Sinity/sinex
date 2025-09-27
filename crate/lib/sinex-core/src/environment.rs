@@ -237,10 +237,7 @@ impl SinexEnvironment {
 
     /// Get environment-specific runtime directory
     pub fn runtime_dir(&self) -> PathBuf {
-        self.socket_path("/run/sinex")
-            .parent()
-            .unwrap()
-            .to_path_buf()
+        Path::new("/run").join(format!("sinex-{}", self.name))
     }
 
     /// Validate that all environment resources are properly isolated

@@ -174,11 +174,7 @@
             # Support services
             healthAggregator = buildRustPackage "sinex-health-aggregator";
             sinexHealthAggregator = buildRustPackage "sinex-health-aggregator";
-            sinexPreflight = buildRustPackage "sinex-preflight";
             sinexCli = sinex-cli;
-
-            # Database migration tool
-            sinexDbMigration = buildRustPackage "sinex-db-migration";
 
             # Default package is now the ingestion daemon
             default = buildRustPackage "sinex-ingestd";

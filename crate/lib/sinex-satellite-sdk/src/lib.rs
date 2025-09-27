@@ -133,7 +133,6 @@ pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod lifecycle;
 #[cfg(feature = "nats-bypass")]
-pub mod nats;
 pub mod preflight;
 pub mod prelude;
 pub mod processor_runner;

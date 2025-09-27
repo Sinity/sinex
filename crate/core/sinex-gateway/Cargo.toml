@@ -27,6 +27,7 @@ axum = { workspace = true }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 hyper = "1.0"
+tokio-stream = { workspace = true }
 
 # JSON-RPC
 serde = { workspace = true }
