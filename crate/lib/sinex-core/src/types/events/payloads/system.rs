@@ -6,10 +6,9 @@ use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
-// System monitoring
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "system", event_type = "scan.started")]
+/// Emitted when a system scan kicks off.
 pub struct ScanStartedPayload {
     pub scan_type: String,
     pub target: String,
@@ -18,6 +17,7 @@ pub struct ScanStartedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "system", event_type = "scan.completed")]
+/// Summarises a completed scan.
 pub struct ScanCompletedPayload {
     pub scan_type: String,
     pub target: String,
@@ -27,10 +27,9 @@ pub struct ScanCompletedPayload {
     pub errors: Vec<String>,
 }
 
-// Journal/systemd events
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "journald", event_type = "log_entry.captured")]
+/// Captures a journald log entry with raw fields.
 pub struct JournalEntryPayload {
     pub unit: Option<String>,
     pub priority: u8,
@@ -41,6 +40,7 @@ pub struct JournalEntryPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "journald", event_type = "sync.completed")]
+/// Records the outcome of a journald cursor sync.
 pub struct JournalSyncCompletedPayload {
     pub sync_type: String,
     pub start_cursor: Option<String>,
@@ -53,6 +53,7 @@ pub struct JournalSyncCompletedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "journald", event_type = "entry.written")]
+/// Describes a journald entry flushed to disk.
 pub struct JournalEntryWrittenPayload {
     pub cursor: String,
     pub timestamp_us: i64,
@@ -72,10 +73,9 @@ pub struct JournalEntryWrittenPayload {
     pub fields: HashMap<String, String>,
 }
 
-// D-Bus events
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "signal.received")]
+/// Raw D-Bus signal payload.
 pub struct DbusSignalPayload {
     pub bus: String,
     pub sender: String,
@@ -88,6 +88,7 @@ pub struct DbusSignalPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "method.called")]
+/// Invocation of a D-Bus method.
 pub struct DbusMethodCalledPayload {
     pub bus: String,
     pub sender: String,
@@ -101,6 +102,7 @@ pub struct DbusMethodCalledPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "notification.sent")]
+/// Desktop notification dispatched over D-Bus.
 pub struct DbusNotificationSentPayload {
     pub app_name: String,
     pub summary: String,
@@ -114,6 +116,7 @@ pub struct DbusNotificationSentPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "media.state_changed")]
+/// Media player metadata snapshot extracted from D-Bus.
 pub struct DbusMediaStateChangedPayload {
     pub player: String,
     pub player_instance: String,
@@ -140,6 +143,7 @@ pub struct DbusMediaStateChangedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "power.state_changed")]
+/// High-level power management notification.
 pub struct DbusPowerStateChangedPayload {
     pub event_type: String,
     pub details: serde_json::Value,
@@ -148,6 +152,7 @@ pub struct DbusPowerStateChangedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "device.connected")]
+/// D-Bus announcement for a newly connected device.
 pub struct DbusDeviceConnectedPayload {
     pub device_type: String,
     pub event_type: String,
@@ -650,8 +655,6 @@ impl ScanCompletedPayload {
 }
 
 impl ComponentHealth {
-    /// Create a test component health with sensible defaults
-
     /// Builder-style method for status
     pub fn with_status(mut self, status: HealthStatus) -> Self {
         self.status = status;

@@ -350,7 +350,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_valid: false,
                 errors: vec![ValidationError {
                     path: "".to_string(),
-                    message: format!("Invalid schema: {}", e),
+                    message: format!("Invalid schema: {e}"),
                     error_type: "schema_error".to_string(),
                 }],
                 warnings: vec![],
@@ -370,7 +370,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let schema = if let Some(sid) = schema_id {
             self.get_schema_by_id(&sid).await?
         } else {
-            self.get_active_schema(&event.source.to_string(), &event.event_type.to_string())
+            self.get_active_schema(event.source.as_ref(), event.event_type.as_ref())
                 .await?
         };
 
@@ -402,7 +402,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_valid: false,
                 errors: vec![ValidationError {
                     path: "".to_string(),
-                    message: format!("Invalid schema: {}", e),
+                    message: format!("Invalid schema: {e}"),
                     error_type: "schema_error".to_string(),
                 }],
                 warnings: vec![],

@@ -88,14 +88,14 @@ pub fn db_error(err: SqlxError, context: &str) -> SinexError {
         SqlxError::RowNotFound => SinexError::not_found(context.to_string()),
         SqlxError::Database(db_err) => {
             if db_err.is_unique_violation() {
-                SinexError::database(format!("{}: unique constraint violation", context))
+                SinexError::database(format!("{context}: unique constraint violation"))
             } else if db_err.is_foreign_key_violation() {
-                SinexError::database(format!("{}: foreign key violation", context))
+                SinexError::database(format!("{context}: foreign key violation"))
             } else {
-                SinexError::database(format!("{}: {}", context, db_err))
+                SinexError::database(format!("{context}: {db_err}"))
             }
         }
-        _ => SinexError::database(format!("{}: {}", context, err)),
+        _ => SinexError::database(format!("{context}: {err}")),
     }
 }
 

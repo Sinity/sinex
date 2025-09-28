@@ -50,14 +50,12 @@ pub enum StreamFrame {
     },
 }
 
-/// MaterialSliceStream for ingestors
 pub struct MaterialSliceStream {
     db_pool: PgPool,
     material_id: Ulid,
     current_offset: i64,
     batch_size: usize,
     finished: bool,
-    /// Buffer for current batch of slices
     buffer: VecDeque<MaterialSlice>,
 }
 
@@ -128,11 +126,7 @@ impl MaterialSliceStream {
             // Load actual data from storage backend
             let data = self
                 .load_material_data(record.material_id, record.offset_start, record.offset_end)
-                .await
-                .unwrap_or_else(|e| {
-                    error!("Failed to load material data: {}", e);
-                    vec![] // Return empty data on error
-                });
+                .await?;
 
             let slice = MaterialSlice {
                 material_id: record.material_id,
@@ -181,31 +175,31 @@ impl MaterialSliceStream {
 
         if let Some(blob_id) = material.optional_blob_id {
             // Load from external blob storage
-            match self.load_blob_data(blob_id).await {
-                Ok(blob_data) => {
-                    // Extract slice from blob based on offsets
-                    let start = offset_start as usize;
-                    let end = offset_end as usize;
-                    if end <= blob_data.len() && start <= end {
-                        Ok(blob_data[start..end].to_vec())
-                    } else {
-                        error!(
-                            "Blob data size {} is smaller than slice end offset {}",
-                            blob_data.len(),
-                            end
-                        );
-                        Ok(vec![])
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to load blob {}: {}", blob_id, e);
-                    Ok(vec![])
-                }
+            let blob_data = self.load_blob_data(blob_id).await.map_err(|e| {
+                error!("Failed to load blob {}: {}", blob_id, e);
+                eyre!("Failed to load blob {blob_id}: {e}")
+            })?;
+
+            // Extract slice from blob based on offsets
+            let start = offset_start as usize;
+            let end = offset_end as usize;
+            if end <= blob_data.len() && start <= end {
+                Ok(blob_data[start..end].to_vec())
+            } else {
+                error!(
+                    "Blob data size {} is smaller than slice end offset {}",
+                    blob_data.len(),
+                    end
+                );
+                Err(eyre!(
+                    "Invalid slice bounds {start}..{end} for blob {blob_id} with size {}",
+                    blob_data.len()
+                ))
             }
         } else {
             // No blob associated with this material
             error!("Material {} has no associated blob", material_id);
-            Ok(vec![])
+            Err(eyre!("Material {material_id} has no associated blob"))
         }
     }
 
@@ -228,51 +222,65 @@ impl MaterialSliceStream {
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        // Compose the annex key from components
-        // original_filename is already a String, not Option<String>
-        let filename = if blob.original_filename.is_empty() {
-            "file".to_string()
+        // Compose the annex key using the stored hash when available
+        let hash_fragment = if blob.content_hash.is_empty() {
+            if blob.original_filename.is_empty() {
+                "file".to_string()
+            } else {
+                blob.original_filename.clone()
+            }
         } else {
-            blob.original_filename.clone()
+            blob.content_hash.clone()
         };
-        let annex_key = format!("{}-s{}--{}", blob.annex_backend, blob.size_bytes, filename);
 
         if blob.annex_backend.starts_with("SHA256") {
-            // Load from git-annex storage
-            // Git-annex stores files in .git/annex/objects/XX/YY/KEY/KEY
-            let key_hash = &blob.content_hash;
+            let annex_key = format!(
+                "{}-s{}--{}",
+                blob.annex_backend,
+                blob.size_bytes,
+                hash_fragment.clone()
+            );
+
+            let annex_root = std::env::var("SINEX_ANNEX_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                });
+            let annex_objects = annex_root.join(".git").join("annex").join("objects");
+
+            let key_hash = if !blob.content_hash.is_empty() {
+                blob.content_hash.clone()
+            } else {
+                hash_fragment.clone()
+            };
+
             let annex_path = if key_hash.len() >= 4 {
-                std::path::Path::new(".git/annex/objects")
+                annex_objects
                     .join(&key_hash[0..2])
                     .join(&key_hash[2..4])
                     .join(&annex_key)
                     .join(&annex_key)
             } else {
-                // Fallback for short hashes
-                std::path::Path::new(".git/annex/objects").join(&annex_key)
+                annex_objects.join(&annex_key)
             };
 
             if annex_path.exists() {
                 tokio::fs::read(&annex_path)
                     .await
-                    .map_err(|e| eyre!("Failed to read annex file: {}", e))
+                    .map_err(|e| eyre!("Failed to read annex file {:?}: {}", annex_path, e))
             } else {
-                Err(eyre!("Annex file not found at {:?}", annex_path))
+                Err(eyre!(
+                    "Annex file not found at {:?}. Set SINEX_ANNEX_PATH to the git-annex repository root",
+                    annex_path
+                ))
             }
         } else if blob.annex_backend.starts_with("s3://") {
-            // S3 support requires additional dependencies (AWS SDK)
-            // To implement S3 support:
-            // 1. Add aws-sdk-s3 to Cargo.toml dependencies
-            // 2. Implement S3Client initialization with credentials
-            // 3. Use blob.annex_backend as S3 object key to retrieve data
             Err(eyre!(
                 "S3 storage backend not implemented. Blob {} uses S3 storage \
-                     but S3 support requires AWS SDK dependencies and configuration. \
-                     Consider using git-annex or filesystem storage backends instead.",
+                     but S3 support requires AWS SDK dependencies and configuration.",
                 blob_id
             ))
         } else {
-            // Try as a filesystem path
             let path = std::path::Path::new(&blob.annex_backend);
             if path.exists() {
                 tokio::fs::read(path)

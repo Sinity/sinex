@@ -94,7 +94,7 @@ impl SinexEnvironment {
 
         // Separate query from main part first so we don't mis-detect slashes inside the query
         let (main, query) = match base_url.split_once('?') {
-            Some((m, q)) => (m, format!("?{}", q)),
+            Some((m, q)) => (m, format!("?{q}")),
             None => (base_url, String::new()),
         };
 
@@ -147,7 +147,7 @@ impl SinexEnvironment {
             );
             base_name.to_string()
         } else {
-            format!("{}_{}", env_prefix, base_name)
+            format!("{env_prefix}_{base_name}")
         }
     }
 

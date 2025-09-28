@@ -1,83 +1,9 @@
-//! Satellite coordination for leadership election and handoff
+//! Coordination helpers for leader election, handoff, and failure recovery.
 //!
-//! This module implements the sophisticated satellite coordination system including:
-//! - Version-based leadership election
-//! - Graceful handoff mechanisms  
-//! - Hot standby pattern
-//! - Preflight integration
-//! - Failure detection and takeover
-//! - Work tracking for graceful shutdown
-//! - Heartbeat monitoring integration
-//!
-//! ## Satellite Lifecycle States
-//!
-//! Satellites progress through these coordination states:
-//!
-//! ### 1. Startup Phase
-//! - **Initialize**: Create SatelliteCoordination instance
-//! - **Preflight**: Verify service dependencies and configuration
-//! - **Registration**: Register instance in coordination database
-//! - **Standby**: Enter monitoring mode, waiting for leadership opportunity
-//!
-//! ### 2. Leadership Election
-//! - **Version Check**: Compare versions with other instances
-//! - **Advisory Lock**: Attempt to acquire PostgreSQL advisory lock
-//! - **Preflight Recheck**: Verify readiness before accepting leadership
-//! - **Leadership**: Begin processing events if election successful
-//!
-//! ### 3. Active Leadership
-//! - **Event Processing**: Process incoming events via StatefulStreamProcessor
-//! - **Heartbeat**: Emit periodic status via HeartbeatEmitter
-//! - **Work Tracking**: Monitor in-flight operations via WorkTracker
-//! - **Handoff Monitoring**: Watch for newer versions requesting handoff
-//!
-//! ### 4. Graceful Handoff
-//! - **Handoff Request**: Newer version requests leadership transfer
-//! - **Work Completion**: Wait for in-flight operations to complete
-//! - **Signal Ready**: Atomically signal completion and readiness
-//! - **Release**: Release advisory lock and transition to standby
-//!
-//! ### 5. Failure Recovery
-//! - **Failure Detection**: Monitor for critical errors or heartbeat timeouts
-//! - **Immediate Takeover**: Signal other instances for emergency takeover
-//! - **Cleanup**: Attempt graceful cleanup of partial work
-//! - **Restart**: May restart service or transition to standby
-//!
-//! ## Leadership Election Algorithm
-//!
-//! The coordination system uses a hybrid approach combining:
-//!
-//! 1. **Version-Based Priority**: Higher semantic versions take precedence
-//! 2. **Advisory Locking**: PostgreSQL advisory locks prevent split-brain
-//! 3. **Preflight Validation**: Only healthy instances can become leader
-//! 4. **Graceful Handoff**: Work completion before leadership transfer
-//!
-//! ```text
-//! ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-//! │   Instance A        │     │   Instance B        │     │   Instance C        │
-//! │   Version: 1.2.0    │     │   Version: 1.2.1    │     │   Version: 1.1.0    │
-//! │   Status: Leader    │────▶│   Status: Standby   │     │   Status: Standby   │
-//! │                     │     │   (Waiting for      │     │   (Lower version)   │
-//! │   ┌─────────────┐   │     │    handoff)         │     │                     │
-//! │   │ Advisory    │   │     │                     │     │                     │
-//! │   │ Lock Held   │   │     │                     │     │                     │
-//! │   └─────────────┘   │     │                     │     │                     │
-//! └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-//!                                       │                           
-//!                                       ▼                           
-//!                               ┌─────────────────────┐             
-//!                               │ Handoff Request     │             
-//!                               │ B→A: "Please hand   │             
-//!                               │ over leadership"    │             
-//!                               └─────────────────────┘             
-//! ```
-//!
-//! ## Work Tracking for Graceful Shutdown
-//!
-//! The `WorkTracker` component ensures no data loss during leadership transitions:
-//!
-//! - **Operation Counting**: Track in-flight operations with atomic counters
-//! - **Shutdown Signaling**: Coordinate graceful shutdown across components
+//! The module wraps advisory-lock arbitration, version-aware priority, optional
+//! preflight gating, and the work-tracking needed to leave leadership cleanly.
+//! Refer to `docs/architecture/satellite-implementation.md` for the lifecycle
+//! narrative and timing diagrams that inform this implementation.
 //! - **Timeout Handling**: Force shutdown if graceful completion takes too long
 //! - **Heartbeat Integration**: Report work status via heartbeat metrics
 //!
@@ -478,6 +404,7 @@ impl SatelliteCoordination {
     }
 
     /// Verify preflight checks before becoming leader
+    #[cfg(feature = "preflight")]
     #[instrument(skip(self), fields(service = %self.instance.service_name))]
     async fn verify_preflight_checks(&self) -> Result<bool> {
         match crate::preflight::services::verify_service_dependencies().await {
@@ -508,6 +435,16 @@ impl SatelliteCoordination {
                 Ok(false) // Fail safe
             }
         }
+    }
+
+    #[cfg(not(feature = "preflight"))]
+    #[instrument(skip(self), fields(service = %self.instance.service_name))]
+    async fn verify_preflight_checks(&self) -> Result<bool> {
+        debug!(
+            "Preflight checks skipped for {} because feature 'preflight' is disabled",
+            self.instance.service_name
+        );
+        Ok(true)
     }
 
     /// Get all active instances from database

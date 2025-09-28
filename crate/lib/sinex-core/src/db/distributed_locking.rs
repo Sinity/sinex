@@ -83,8 +83,7 @@ impl AdvisoryLock {
         match timeout_future {
             Ok(result) => result,
             Err(_) => Err(SinexError::timeout(format!(
-                "Advisory lock timeout for key: {}",
-                key
+                "Advisory lock timeout for key: {key}"
             ))),
         }
     }
@@ -163,7 +162,7 @@ impl DistributedCoordination {
         &self,
         service_name: &str,
     ) -> CoreResult<Option<ResourceGuard<AdvisoryLock>>> {
-        let leadership_key = format!("leader:{}", service_name);
+        let leadership_key = format!("leader:{service_name}");
         AdvisoryLock::try_acquire(&self.pool, &leadership_key).await
     }
 
@@ -173,7 +172,7 @@ impl DistributedCoordination {
         &self,
         job_id: &str,
     ) -> CoreResult<Option<ResourceGuard<AdvisoryLock>>> {
-        let job_key = format!("job:{}", job_id);
+        let job_key = format!("job:{job_id}");
         AdvisoryLock::try_acquire(&self.pool, &job_key).await
     }
 
@@ -183,19 +182,19 @@ impl DistributedCoordination {
         resource_name: &str,
         timeout: Duration,
     ) -> CoreResult<ResourceGuard<AdvisoryLock>> {
-        let resource_key = format!("resource:{}", resource_name);
+        let resource_key = format!("resource:{resource_name}");
         AdvisoryLock::acquire_or_wait(&self.pool, &resource_key, timeout).await
     }
 
     /// Check if a service has a current leader
     pub async fn has_leader(&self, service_name: &str) -> CoreResult<bool> {
-        let leadership_key = format!("leader:{}", service_name);
+        let leadership_key = format!("leader:{service_name}");
         AdvisoryLock::is_locked(&self.pool, &leadership_key).await
     }
 
     /// Check if a job is currently being processed
     pub async fn is_job_locked(&self, job_id: &str) -> CoreResult<bool> {
-        let job_key = format!("job:{}", job_id);
+        let job_key = format!("job:{job_id}");
         AdvisoryLock::is_locked(&self.pool, &job_key).await
     }
 }

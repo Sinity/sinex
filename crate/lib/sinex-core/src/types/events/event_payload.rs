@@ -56,9 +56,8 @@ pub trait EventPayload: Serialize + JsonSchema + Send + Sync + 'static {
         // Default: attempt direct deserialization
         // This works when changes are backward-compatible (e.g., new optional fields)
         let _ = version; // Unused in default implementation
-        serde_json::from_value(value).map_err(|e| {
-            SinexError::serialization(format!("Failed to deserialize {}: {}", version, e))
-        })
+        serde_json::from_value(value)
+            .map_err(|e| SinexError::serialization(format!("Failed to deserialize {version}: {e}")))
     }
 }
 

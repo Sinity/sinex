@@ -83,7 +83,7 @@ impl FileWatcher {
             .collect();
 
         let validated_paths = validate_watch_paths(&watch_path_strings, &config.security_policy)
-            .map_err(|e| SinexError::validation(format!("Watch path validation failed: {}", e)))?;
+            .map_err(|e| SinexError::validation(format!("Watch path validation failed: {e}")))?;
 
         let (event_sender, event_receiver) = mpsc::channel(config.max_buffer_size);
         let event_kinds = config.event_kinds.clone();
@@ -111,7 +111,7 @@ impl FileWatcher {
             Config::default(),
         )
         .map_err(|e| {
-            SinexError::io(format!("Failed to create file watcher: {}", e))
+            SinexError::io(format!("Failed to create file watcher: {e}"))
                 .with_operation("notify::watcher::new")
         })?;
 
@@ -124,7 +124,7 @@ impl FileWatcher {
             };
 
             watcher.watch(path.as_std_path(), mode).map_err(|e| {
-                SinexError::io(format!("Failed to watch validated path: {}", e))
+                SinexError::io(format!("Failed to watch validated path: {e}"))
                     .with_path(path)
                     .with_context("recursive", config.recursive)
                     .with_operation("watcher.watch")

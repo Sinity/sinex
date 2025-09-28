@@ -97,11 +97,11 @@ impl<'a> SqliteQueryBuilder<'a> {
             let mut error_msg = format!("Database error (operation: {}): {}", self.operation, e);
 
             if let Some(qt) = self.query_type {
-                error_msg.push_str(&format!(", query_type: {}", qt));
+                error_msg.push_str(&format!(", query_type: {qt}"));
             }
 
             for (key, value) in self.context {
-                error_msg.push_str(&format!(", {}: {}", key, value));
+                error_msg.push_str(&format!(", {key}: {value}"));
             }
 
             SinexError::database(error_msg)

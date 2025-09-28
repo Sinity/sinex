@@ -69,10 +69,11 @@ impl FileWatchingSecurityPolicy {
 
     /// Create a restrictive policy for production
     pub fn restrictive() -> Self {
-        let mut policy = Self::default();
-        policy.max_watch_depth = Some(5);
-        policy.max_watched_files = Some(10_000);
-        policy
+        Self {
+            max_watch_depth: Some(5),
+            max_watched_files: Some(10_000),
+            ..Self::default()
+        }
     }
 }
 
@@ -85,8 +86,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     for forbidden in &policy.forbidden_paths {
         if cleaned_path == *forbidden {
             return Err(ValidationError::Path(format!(
-                "Path '{}' is explicitly forbidden for watching",
-                path
+                "Path '{path}' is explicitly forbidden for watching"
             )));
         }
     }
@@ -95,8 +95,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     for prefix in &policy.forbidden_prefixes {
         if cleaned_path.starts_with(prefix) {
             return Err(ValidationError::Path(format!(
-                "Path '{}' is under forbidden prefix '{}'",
-                path, prefix
+                "Path '{path}' is under forbidden prefix '{prefix}'"
             )));
         }
     }
@@ -111,8 +110,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
             let sys_path = PathBuf::from(sys_prefix);
             if cleaned_path.starts_with(&sys_path) {
                 return Err(ValidationError::Path(format!(
-                    "System directory '{}' is not allowed for watching",
-                    sys_prefix
+                    "System directory '{sys_prefix}' is not allowed for watching"
                 )));
             }
         }
@@ -123,8 +121,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
         if let Ok(metadata) = std::fs::symlink_metadata(&cleaned_path) {
             if metadata.is_symlink() {
                 return Err(ValidationError::Path(format!(
-                    "Symlink '{}' detected but policy forbids following symlinks",
-                    path
+                    "Symlink '{path}' detected but policy forbids following symlinks"
                 )));
             }
         }
@@ -156,8 +153,7 @@ pub fn validate_watch_paths(
 
                 if total_estimated_files > max_files {
                     return Err(ValidationError::Path(format!(
-                        "Estimated file count {} exceeds policy limit {}",
-                        total_estimated_files, max_files
+                        "Estimated file count {total_estimated_files} exceeds policy limit {max_files}"
                     )));
                 }
             }
@@ -223,8 +219,7 @@ pub fn validate_discovered_file(
         if let Ok(metadata) = std::fs::symlink_metadata(&validated_within_root) {
             if metadata.is_symlink() {
                 return Err(ValidationError::Path(format!(
-                    "Discovered symlink '{}' but policy forbids following symlinks",
-                    file_path
+                    "Discovered symlink '{file_path}' but policy forbids following symlinks"
                 )));
             }
         }
@@ -239,8 +234,7 @@ pub fn check_path_depth(path: &Path, max_depth: Option<usize>) -> Result<()> {
         let depth = path.components().count();
         if depth > max {
             return Err(ValidationError::Path(format!(
-                "Path depth {} exceeds maximum allowed depth {}",
-                depth, max
+                "Path depth {depth} exceeds maximum allowed depth {max}"
             )));
         }
     }

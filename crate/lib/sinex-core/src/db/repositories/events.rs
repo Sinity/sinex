@@ -9,6 +9,7 @@ use crate::types::error::SinexError;
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
+use sinex_schema::ulid::Ulid;
 
 macro_rules! event_select_columns {
     () => {
@@ -70,10 +71,7 @@ impl EventRecordExt for EventRecord {
             self.anchor_byte,
         ) {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
-                let ids: Vec<EventId> = event_ids
-                    .into_iter()
-                    .map(|ulid| EventId::from_ulid(ulid))
-                    .collect();
+                let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
                 Provenance::Synthesis {
                     source_event_ids: NonEmptyVec::from_vec(ids)
                         .expect("already checked non-empty"),
@@ -134,15 +132,15 @@ impl EventRecordExt for EventRecord {
 }
 
 /// Extract provenance fields from domain Event for database storage
-fn extract_provenance(
-    event: &Event<JsonValue>,
-) -> (
-    Option<Vec<sinex_schema::ulid::Ulid>>, // source_event_ids
-    Option<sinex_schema::ulid::Ulid>,      // source_material_id
-    Option<i64>,                           // offset_start
-    Option<i64>,                           // offset_end
-    Option<i64>,                           // anchor_byte
-) {
+type ExtractedProvenance = (
+    Option<Vec<Ulid>>, // source_event_ids
+    Option<Ulid>,      // source_material_id
+    Option<i64>,       // offset_start
+    Option<i64>,       // offset_end
+    Option<i64>,       // anchor_byte
+);
+
+fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
     match &event.provenance {
         Provenance::Synthesis {
             source_event_ids, ..
@@ -592,8 +590,8 @@ impl<'a> EventRepository<'a> {
     pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event<JsonValue>>> {
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
-        let limit = filters.limit.unwrap_or(100) as u64;
-        let offset = filters.offset.unwrap_or(0) as u64;
+        let limit = filters.limit.unwrap_or(100);
+        let offset = filters.offset.unwrap_or(0);
 
         // Build dynamic query with SeaQuery
         let mut query = Query::select()
@@ -714,7 +712,7 @@ impl<'a> EventRepository<'a> {
                     Alias::new("events"),
                     Alias::new("ts_ingest"),
                 ))
-                .gte(after.clone()),
+                .gte(*after),
             );
         }
 
@@ -725,7 +723,7 @@ impl<'a> EventRepository<'a> {
                     Alias::new("events"),
                     Alias::new("ts_ingest"),
                 ))
-                .lte(before.clone()),
+                .lte(*before),
             );
         }
 
@@ -1580,12 +1578,12 @@ impl<'a> EventRepository<'a> {
         let mut _bind_index = 1;
 
         if source.is_some() {
-            query_parts.push(format!(" AND source = ${}", _bind_index));
+            query_parts.push(format!(" AND source = ${_bind_index}"));
             _bind_index += 1;
         }
 
         if event_type.is_some() {
-            query_parts.push(format!(" AND event_type = ${}", _bind_index));
+            query_parts.push(format!(" AND event_type = ${_bind_index}"));
             _bind_index += 1;
         }
 

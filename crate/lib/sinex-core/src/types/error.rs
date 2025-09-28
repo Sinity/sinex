@@ -265,7 +265,7 @@ impl fmt::Display for ErrorDetails {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "{}: {}", k, v)?;
+                write!(f, "{k}: {v}")?;
             }
             write!(f, ")")?;
         }

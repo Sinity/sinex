@@ -49,14 +49,14 @@ impl DirectoryManager {
 
         if self.config.create_parents {
             fs::create_dir_all(&full_path).await.map_err(|e| {
-                SinexError::io(format!("Failed to create directory: {}", e))
+                SinexError::io(format!("Failed to create directory: {e}"))
                     .with_path(&full_path)
                     .with_operation("create_directory_all")
                     .with_context("create_parents", true)
             })?;
         } else {
             fs::create_dir(&full_path).await.map_err(|e| {
-                SinexError::io(format!("Failed to create directory: {}", e))
+                SinexError::io(format!("Failed to create directory: {e}"))
                     .with_path(&full_path)
                     .with_operation("create_directory")
                     .with_context("create_parents", false)
@@ -73,7 +73,7 @@ impl DirectoryManager {
         let full_path = self.config.base_path.join(path);
 
         fs::remove_dir_all(&full_path).await.map_err(|e| {
-            SinexError::io(format!("Failed to remove directory: {}", e))
+            SinexError::io(format!("Failed to remove directory: {e}"))
                 .with_path(&full_path)
                 .with_operation("remove_directory")
         })?;

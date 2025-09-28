@@ -1,54 +1,24 @@
-//! Blob management with PostgreSQL metadata and git-annex storage
+//! Git-annex blob management utilities.
 //!
-//! ## Core Workflow Integration
+//! The manager deduplicates incoming content, registers metadata in `core.blobs`,
+//! wires provenance through source_material records, and emits ingestion/health
+//! events that downstream services can rely on.
 //!
-//! 1. **File Detection**: Ingestors detect large files (>100KB threshold)
-//! 2. **Annex Addition**: `git annex add <file>` stores content by hash
-//! 3. **Metadata Extraction**: Parse annex key, compute checksums
-//! 4. **Database Registration**: Insert metadata into core.blobs table
-//! 5. **Event Generation**: Log blob registration events
-//!
-//! ## Database Schema (core.blobs)
-//!
-//! ```sql
-//! CREATE TABLE core.blobs (
-//!     id                ULID PRIMARY KEY,
-//!     annex_key         TEXT NOT NULL UNIQUE,
-//!     original_filename TEXT NOT NULL,
-//!     size_bytes        BIGINT NOT NULL,
-//!     mime_type         TEXT,
-//!     checksum_sha256   TEXT NOT NULL,
-//!     checksum_blake3   TEXT,
-//!     storage_backend   TEXT NOT NULL DEFAULT 'git-annex',
-//!     metadata          JSONB NOT NULL DEFAULT '{}',
-//!     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-//!     last_verified_at  TIMESTAMPTZ,
-//!     verification_status TEXT
-//! );
-//! ```
-//!
-//! ## Deduplication Strategy
-//!
-//! - Check BLAKE3 hash before ingestion
-//! - If exists, create new reference to existing blob
-//! - Save ~30-90% storage for common duplicates
-//!
-//! ## Performance Optimization
-//!
-//! - Batch operations for multiple files
-//! - Async I/O for file operations
-//! - Connection pooling for database access
-//! - Caching of frequently accessed blobs
+//! See `docs/architecture/Core_Architecture.md` (blob storage) and the
+//! `m20241028_000001_create_canonical_schema` migration for the canonical design
+//! and schema definition.
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{bail, eyre, Context, Result};
+use serde_json::json;
+use sinex_core::db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_core::types::{ulid::Ulid, validate_path};
+use sinex_core::types::validate_path;
 use sinex_core::DbPoolExt;
-use sinex_core::{Blob, Event, JsonValue};
+use sinex_core::{Blob, Event, Id, JsonValue, SourceMaterial};
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -79,21 +49,90 @@ impl BlobManager {
         })
     }
 
-    /// Helper to create blob events
-    fn create_blob_event<T: serde::Serialize>(event_type: &str, payload: T) -> Event<JsonValue> {
-        use sinex_core::Provenance;
+    /// Builds an event tied to the supplied source material.
+    fn create_blob_event<T: serde::Serialize>(
+        event_type: &str,
+        payload: T,
+        material_id: Id<SourceMaterial>,
+    ) -> Event<JsonValue> {
         Event::dynamic(
             "blob-manager",
             event_type,
             serde_json::to_value(payload).expect("Payload serialization should not fail"),
         )
-        .with_provenance(Provenance::Synthesis {
-            source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                sinex_core::EventId::from_ulid(Ulid::new()),
-            ),
-            operation_id: None,
-        })
+        .from_material(material_id, 0)
         .build()
+    }
+
+    async fn ensure_material_for_blob(&self, blob: &Blob) -> Result<Id<SourceMaterial>> {
+        let repo = self.db_pool.source_materials();
+
+        if let Some(existing) = repo
+            .find_by_blob_id(blob.id.clone())
+            .await
+            .wrap_err("Failed to query source material by blob id")?
+        {
+            return Ok(Id::<SourceMaterial>::from_ulid(existing.id));
+        }
+
+        let filename = blob
+            .original_filename
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let mut material = if blob
+            .mime_type
+            .as_deref()
+            .map(|mime| mime.starts_with("text/"))
+            .unwrap_or(false)
+        {
+            SourceMaterialRegistration::blob_text(filename.clone())
+        } else {
+            SourceMaterialRegistration::blob_binary(filename.clone())
+        };
+
+        if let Some(metadata) = &blob.metadata {
+            material = material.with_metadata(metadata.clone());
+        }
+
+        if let Some(mime) = &blob.mime_type {
+            material = material.with_metadata(json!({ "mime_type": mime }));
+        }
+
+        if let Some(checksum) = &blob.checksum_blake3 {
+            material = material.with_metadata(json!({ "checksum_blake3": checksum }));
+        }
+
+        material = material.with_blob_id(blob.id.clone()).with_metadata(json!({
+            "annex_backend": blob.annex_backend,
+            "content_hash": blob.content_hash,
+            "annex_key": blob.annex_key(),
+            "size_bytes": blob.size_bytes,
+        }));
+
+        let record = repo
+            .register_material(material)
+            .await
+            .wrap_err("Failed to register source material for blob")?;
+
+        Ok(Id::<SourceMaterial>::from_ulid(record.id))
+    }
+
+    async fn publish_blob_event<T: serde::Serialize>(
+        &self,
+        event_type: &str,
+        payload: T,
+        blob: &Blob,
+    ) -> Result<()> {
+        let material_id = self.ensure_material_for_blob(blob).await?;
+        let event = Self::create_blob_event(event_type, payload, material_id);
+
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
+            .await
+            .map_err(|e| eyre!("Failed to emit {event_type} event via ingestd: {}", e))?;
+        Ok(())
     }
 
     /// Ingest a file into the blob management system
@@ -126,8 +165,7 @@ impl BlobManager {
                 self.add_original_filename(&existing_key, filename).await?;
             }
 
-            // Emit deduplication event via ingestd
-            let event = Self::create_blob_event(
+            self.publish_blob_event(
                 "blob.ingested",
                 BlobIngestedPayload {
                     blob_id: existing_key.clone(),
@@ -140,13 +178,9 @@ impl BlobManager {
                         .unwrap_or("unknown")
                         .to_string(),
                 },
-            );
-
-            let mut client = self.ingest_client.clone();
-            client
-                .ingest_event(&event)
-                .await
-                .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
+                &existing,
+            )
+            .await?;
 
             return Ok(existing);
         }
@@ -185,8 +219,7 @@ impl BlobManager {
         let blob_key = blob_metadata.annex_key().clone();
         info!("Successfully ingested blob: {}", blob_key);
 
-        // Emit blob ingested event via ingestd
-        let event = Self::create_blob_event(
+        self.publish_blob_event(
             "blob.ingested",
             BlobIngestedPayload {
                 blob_id: blob_key.clone(),
@@ -196,13 +229,9 @@ impl BlobManager {
                 deduplicated: false,
                 original_filename: filename.to_string(),
             },
-        );
-
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
+            &blob_metadata,
+        )
+        .await?;
 
         Ok(blob_metadata)
     }
@@ -232,8 +261,7 @@ impl BlobManager {
             // Update original_filenames array if this is a new filename
             self.add_original_filename(&existing_key, filename).await?;
 
-            // Emit deduplication event via ingestd
-            let event = Self::create_blob_event(
+            self.publish_blob_event(
                 "blob.ingested",
                 BlobIngestedPayload {
                     blob_id: existing_key.clone(),
@@ -243,13 +271,9 @@ impl BlobManager {
                     deduplicated: true,
                     original_filename: filename.to_string(),
                 },
-            );
-
-            let mut client = self.ingest_client.clone();
-            client
-                .ingest_event(&event)
-                .await
-                .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
+                &existing,
+            )
+            .await?;
 
             return Ok(existing);
         }
@@ -293,8 +317,7 @@ impl BlobManager {
         let blob_key = blob_metadata.annex_key().clone();
         info!("Successfully ingested blob: {}", blob_key);
 
-        // Emit blob ingested event via ingestd
-        let event = Self::create_blob_event(
+        self.publish_blob_event(
             "blob.ingested",
             BlobIngestedPayload {
                 blob_id: blob_key.clone(),
@@ -304,13 +327,9 @@ impl BlobManager {
                 deduplicated: false,
                 original_filename: filename.to_string(),
             },
-        );
-
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
+            &blob_metadata,
+        )
+        .await?;
 
         Ok(blob_metadata)
     }
@@ -330,21 +349,17 @@ impl BlobManager {
             .await
             .wrap_err("Failed to read blob content")?;
 
-        // Emit blob retrieved event via ingestd
-        let event = Self::create_blob_event(
+        let blob = self.get_blob_metadata(annex_key).await?;
+        self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
-                blob_id: annex_key.to_string(), // Using annex_key as blob identifier
+                blob_id: annex_key.to_string(),
                 retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                cache_hit: true, // git-annex get ensures it's local
+                cache_hit: true,
             },
-        );
-
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
+            &blob,
+        )
+        .await?;
 
         Ok(content)
     }
@@ -357,21 +372,16 @@ impl BlobManager {
         // Ensure content is available locally
         self.annex.get_content(&blob.annex_key()).await?;
 
-        // Emit blob retrieved event via ingestd
-        let event = Self::create_blob_event(
+        self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
                 blob_id: annex_key.to_string(),
                 retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                cache_hit: true, // git-annex get ensures it's local
+                cache_hit: true,
             },
-        );
-
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
+            &blob,
+        )
+        .await?;
 
         // Find the symlink path in the repository
         self.find_symlink_path(&blob.annex_key()).await
@@ -380,7 +390,7 @@ impl BlobManager {
     /// Verify blob integrity
     pub async fn verify_blob(&self, annex_key: &str) -> Result<bool> {
         let _start = Instant::now();
-        let _blob = self.get_blob_metadata(annex_key).await?;
+        let blob = self.get_blob_metadata(annex_key).await?;
 
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;
@@ -392,21 +402,16 @@ impl BlobManager {
         let status = if is_verified { "verified" } else { "corrupted" };
         self.update_verification_status(annex_key, status).await?;
 
-        // Emit blob verified event via ingestd
-        let event = Self::create_blob_event(
+        self.publish_blob_event(
             "blob.verified",
             BlobVerifiedPayload {
                 blob_id: annex_key.to_string(),
                 verification_status: status.to_string(),
                 checksum_matched: is_verified,
             },
-        );
-
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob verified event via ingestd: {}", e))?;
+            &blob,
+        )
+        .await?;
 
         Ok(is_verified)
     }
@@ -526,7 +531,18 @@ impl BlobManager {
         let total_size = stats.total_size_bytes;
         let failed_count = stats.failed_verifications;
 
-        // Insert metric event via ingestd
+        let metrics_material = self
+            .db_pool
+            .source_materials()
+            .register_material(SourceMaterialRegistration::blob().with_metadata(json!({
+                "component": "blob-manager",
+                "purpose": "storage_statistics",
+            })))
+            .await
+            .wrap_err("Failed to register metrics source material")?;
+
+        let material_id = Id::<SourceMaterial>::from_ulid(metrics_material.id);
+
         let new_event = Self::create_blob_event(
             "storage.statistics",
             StorageStatisticsPayload {
@@ -535,6 +551,7 @@ impl BlobManager {
                 failed_verifications: failed_count,
                 storage_backend: "git-annex".to_string(),
             },
+            material_id,
         );
 
         let mut client = self.ingest_client.clone();

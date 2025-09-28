@@ -128,7 +128,7 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
             _ => {
                 let secs = timestamp.checked_div(1_000_000_000).unwrap_or(0);
                 let nanos_remainder = timestamp.checked_rem(1_000_000_000).unwrap_or(0);
-                let nanos = nanos_remainder.abs() as u32; // Handle negative remainders correctly
+                let nanos = nanos_remainder.unsigned_abs() as u32; // Handle negative remainders correctly
                 DateTime::from_timestamp(secs, nanos)
             }
         }

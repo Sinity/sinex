@@ -29,13 +29,13 @@ impl From<std::io::Error> for ValidationError {
 
 impl From<sqlx::Error> for ValidationError {
     fn from(e: sqlx::Error) -> Self {
-        ValidationError::General(format!("Database error: {}", e))
+        ValidationError::General(format!("Database error: {e}"))
     }
 }
 
 impl From<crate::error::SinexError> for ValidationError {
     fn from(e: crate::error::SinexError) -> Self {
-        ValidationError::General(format!("System error: {}", e))
+        ValidationError::General(format!("System error: {e}"))
     }
 }
 
@@ -150,7 +150,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     } else {
         camino::Utf8PathBuf::from_path_buf(
             std::env::current_dir()
-                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?,
+                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {e}")))?,
         )
         .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
         .join(&path_buf)
@@ -163,7 +163,7 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     } else {
         camino::Utf8PathBuf::from_path_buf(
             std::env::current_dir()
-                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?,
+                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {e}")))?,
         )
         .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
         .join(&root_path)
@@ -183,18 +183,17 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
                 .and_then(|parent| parent.as_std_path().canonicalize())
                 .map(|parent| parent.join(abs_path.file_name().unwrap_or_default()))
         })
-        .map_err(|e| ValidationError::Path(format!("Path canonicalization failed: {}", e)))?;
+        .map_err(|e| ValidationError::Path(format!("Path canonicalization failed: {e}")))?;
 
     let canonical_root = abs_root
         .as_std_path()
         .canonicalize()
-        .map_err(|e| ValidationError::Path(format!("Root canonicalization failed: {}", e)))?;
+        .map_err(|e| ValidationError::Path(format!("Root canonicalization failed: {e}")))?;
 
     // Check if the canonical path starts with the canonical root
     if !canonical_path.starts_with(&canonical_root) {
         return Err(ValidationError::Path(format!(
-            "Path '{}' escapes watch root '{}'",
-            path, root
+            "Path '{path}' escapes watch root '{root}'"
         )));
     }
 
@@ -214,7 +213,7 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
 
     // Parse
     let value: Value = serde_json::from_str(json_str)
-        .map_err(|e| ValidationError::Json(format!("Invalid JSON: {}", e)))?;
+        .map_err(|e| ValidationError::Json(format!("Invalid JSON: {e}")))?;
 
     // Validate structure
     validate_json_structure(&value, 0)?;
@@ -223,6 +222,7 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
 }
 
 /// Validate a JSON Value with depth and structure limits
+#[allow(dead_code)]
 pub fn validate_json_value(value: &Value) -> Result<()> {
     // Validate structure (depth and key count)
     validate_json_structure(value, 0)?;
@@ -230,6 +230,7 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
 }
 
 /// Deserialize JSON with validation and enhanced error handling
+#[allow(dead_code)]
 pub fn deserialize_json_with_validation<T>(json_str: &str) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
@@ -240,14 +241,13 @@ where
     // Then deserialize with path-to-error tracking
     let deserializer = serde_json::from_value::<T>(value);
 
-    deserializer.map_err(|e| ValidationError::Json(format!("Deserialization failed: {}", e)))
+    deserializer.map_err(|e| ValidationError::Json(format!("Deserialization failed: {e}")))
 }
 
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(ValidationError::Json(format!(
-            "JSON too deep: {} levels",
-            depth
+            "JSON too deep: {depth} levels"
         )));
     }
 

@@ -136,7 +136,7 @@ impl<T: fmt::Display> fmt::Display for NonEmptyVec<T> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", item)?;
+            write!(f, "{item}")?;
         }
         write!(f, "]")
     }

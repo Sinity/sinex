@@ -50,8 +50,7 @@ impl SecurityValidator {
         for pattern in &dangerous_patterns {
             if check_str.contains(pattern) {
                 return Err(SecurityError::PathTraversal(format!(
-                    "Path contains dangerous traversal sequence: {}",
-                    pattern
+                    "Path contains dangerous traversal sequence: {pattern}"
                 )));
             }
         }
@@ -103,8 +102,7 @@ impl SecurityValidator {
         ) -> SecurityResult<()> {
             if current_depth > max {
                 return Err(SecurityError::ResourceLimit(format!(
-                    "JSON nesting depth {} exceeds maximum of {}",
-                    current_depth, max
+                    "JSON nesting depth {current_depth} exceeds maximum of {max}"
                 )));
             }
 
@@ -144,8 +142,7 @@ impl SecurityValidator {
         let element_count = count_elements(value);
         if element_count > max_size {
             return Err(SecurityError::ResourceLimit(format!(
-                "JSON element count {} exceeds maximum of {}",
-                element_count, max_size
+                "JSON element count {element_count} exceeds maximum of {max_size}"
             )));
         }
 
@@ -179,8 +176,7 @@ impl SecurityValidator {
         for pattern in &dangerous_patterns {
             if content.contains(pattern) {
                 return Err(SecurityError::PathTraversal(format!(
-                    "Dangerous pattern detected in configuration: {}",
-                    pattern
+                    "Dangerous pattern detected in configuration: {pattern}"
                 )));
             }
         }

@@ -132,7 +132,7 @@ pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod lifecycle;
-#[cfg(feature = "nats-bypass")]
+#[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
 pub mod processor_runner;
@@ -169,6 +169,7 @@ pub use version::{SatelliteInstance, SatelliteVersion};
 
 // Re-export preflight utilities
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+#[cfg(feature = "preflight")]
 pub use preflight::{run_preflight_checks, verify_service_dependencies, VerificationStatus};
 
 /// Version information for satellite components

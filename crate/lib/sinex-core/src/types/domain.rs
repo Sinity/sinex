@@ -512,7 +512,7 @@ impl AbsoluteUri {
         }
 
         use url::Url;
-        let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
+        let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {e}"))?;
 
         if !parsed.scheme().is_empty() && parsed.cannot_be_a_base() {
             return Err("URI must be absolute".into());

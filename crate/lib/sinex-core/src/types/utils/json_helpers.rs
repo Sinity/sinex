@@ -16,8 +16,7 @@ pub fn parse_json<T: DeserializeOwned>(
     // First validate the JSON structure
     let validated_value = crate::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
-            "Invalid JSON structure for {} (operation: {}): {}",
-            context_type, operation, e
+            "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))
     })?;
 
@@ -66,8 +65,7 @@ pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> 
     // Use sinex_types to parse and validate in one step
     crate::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
-            "Invalid JSON structure for {} (operation: {}): {}",
-            context_type, operation, e
+            "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))
     })
 }
@@ -92,8 +90,7 @@ pub fn extract_field<T: DeserializeOwned>(
 
     serde_json::from_value(field_value.clone()).map_err(|e| {
         SinexError::serialization(format!(
-            "Failed to deserialize field: {} (operation: {}): {}",
-            field_name, operation, e
+            "Failed to deserialize field: {field_name} (operation: {operation}): {e}"
         ))
     })
 }
@@ -106,8 +103,7 @@ pub fn to_json_value<T: serde::Serialize>(
 ) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| {
         SinexError::serialization(format!(
-            "Failed to serialize {} (operation: {}): {}",
-            context_type, operation, e
+            "Failed to serialize {context_type} (operation: {operation}): {e}"
         ))
     })
 }
