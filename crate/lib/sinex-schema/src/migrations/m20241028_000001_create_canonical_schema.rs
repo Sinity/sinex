@@ -131,6 +131,9 @@ impl MigrationTrait for Migration {
             .create_table(SatelliteInstances::create_table_statement())
             .await?;
         manager
+            .create_table(SatelliteSignals::create_table_statement())
+            .await?;
+        manager
             .create_table(SensorJobs::create_table_statement())
             .await?;
         manager
@@ -173,6 +176,20 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .create_table(TransactionalOutbox::create_table_statement())
+            .await?;
+
+        // Coordination indexes to keep leadership queries fast
+        manager
+            .get_connection()
+            .execute_unprepared(SatelliteInstances::create_indexes_sql())
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared(SatelliteSignals::create_indexes_sql())
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared(ServiceLeadership::create_indexes_sql())
             .await?;
 
         // --- Phase 3: Apply Foreign Keys and Triggers ---
