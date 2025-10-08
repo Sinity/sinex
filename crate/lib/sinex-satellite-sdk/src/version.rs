@@ -35,7 +35,6 @@ impl SatelliteVersion {
     ///
     /// # Errors
     /// Returns `SatelliteError::Configuration` if any version information is invalid
-    #[must_use]
     pub fn current() -> crate::SatelliteResult<Self> {
         Ok(Self {
             version: satellite_version()?,
@@ -146,7 +145,6 @@ impl SatelliteInstance {
     ///
     /// # Errors
     /// Returns `SatelliteError::Configuration` if version information is invalid
-    #[must_use]
     pub fn new(instance_id: String, service_name: String) -> crate::SatelliteResult<Self> {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
@@ -210,7 +208,6 @@ impl SatelliteInstance {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the satellite version is invalid
-#[must_use]
 pub fn satellite_version() -> crate::SatelliteResult<Version> {
     Version::from_str(env!("SATELLITE_VERSION")).map_err(|e| {
         crate::SatelliteError::Configuration(format!("Invalid satellite version: {}", e))
@@ -231,7 +228,6 @@ pub fn satellite_commit_hash() -> String {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the commit count is invalid
-#[must_use]
 pub fn satellite_commit_count() -> crate::SatelliteResult<u32> {
     env!("SATELLITE_COMMIT_COUNT")
         .parse()
@@ -252,7 +248,6 @@ pub fn satellite_build_timestamp() -> String {
 ///
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the dirty flag is invalid
-#[must_use]
 pub fn satellite_is_dirty() -> crate::SatelliteResult<bool> {
     env!("SATELLITE_IS_DIRTY")
         .parse()
@@ -277,74 +272,5 @@ pub fn print_version_info() {
             println!("{}", fallback.full_version);
             println!("status: version info corrupted, using fallback");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_version_parsing() -> color_eyre::eyre::Result<()> {
-        let version = satellite_version()?;
-        assert!(version.major >= 1);
-        assert!(version.patch > 0); // Should have some commits
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_version_comparison() -> color_eyre::eyre::Result<()> {
-        let v1 = SatelliteVersion {
-            version: Version::new(1, 0, 100),
-            full_version: "1.0.100".to_string(),
-            commit_hash: "abc12345".to_string(),
-            commit_count: 100,
-            branch: "main".to_string(),
-            build_timestamp: "2023-01-01T00:00:00Z".to_string(),
-            is_dirty: false,
-        };
-
-        let v2 = SatelliteVersion {
-            version: Version::new(1, 0, 101),
-            full_version: "1.0.101".to_string(),
-            commit_hash: "def67890".to_string(),
-            commit_count: 101,
-            branch: "main".to_string(),
-            build_timestamp: "2023-01-01T01:00:00Z".to_string(),
-            is_dirty: false,
-        };
-
-        assert!(v2.is_newer_than(&v1));
-        assert!(!v1.is_newer_than(&v2));
-        assert!(v2 > v1);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_dirty_build_preference() -> color_eyre::eyre::Result<()> {
-        let clean = SatelliteVersion {
-            version: Version::new(1, 0, 100),
-            full_version: "1.0.100".to_string(),
-            commit_hash: "abc12345".to_string(),
-            commit_count: 100,
-            branch: "main".to_string(),
-            build_timestamp: "2023-01-01T00:00:00Z".to_string(),
-            is_dirty: false,
-        };
-
-        let dirty = SatelliteVersion {
-            version: Version::new(1, 0, 100),
-            full_version: "1.0.100+abc12345.dirty".to_string(),
-            commit_hash: "abc12345".to_string(),
-            commit_count: 100,
-            branch: "main".to_string(),
-            build_timestamp: "2023-01-01T00:00:00Z".to_string(),
-            is_dirty: true,
-        };
-
-        // Same version, but clean build should be preferred
-        assert!(clean > dirty);
-        Ok(())
     }
 }

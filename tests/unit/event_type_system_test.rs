@@ -14,12 +14,20 @@ use sinex_test_utils::prelude::*;
 
 // Additional imports for specific payload types
 use sinex_core::db::models::event::SourceMaterial;
-use sinex_core::types::events::event_payload::EventPayload as _;
 use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_core::{Event, Id, Provenance};
+use sinex_core::{Event, Id, JsonValue, Provenance, Ulid};
+
+async fn ensure_material(
+    ctx: &TestContext,
+    label: &str,
+) -> color_eyre::eyre::Result<Id<SourceMaterial>> {
+    let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+    ctx.ensure_source_material(material_id, Some(label)).await?;
+    Ok(material_id)
+}
 
 // =============================================================================
 // EVENT SOURCE CONSTANTS AND VALIDATION TESTS
@@ -28,27 +36,32 @@ use sinex_core::{Event, Id, Provenance};
 /// Test event source constants and consistent naming patterns
 #[sinex_test]
 async fn test_event_source_patterns(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let test_cases = vec![
-        ("fs-watcher", "fs"),
-        ("shell.kitty", "shell."),
-        ("shell.atuin", "shell."),
-        ("shell.history", "shell."),
-        ("terminal.kitty", "terminal."),
-        ("clipboard", "clipboard"),
-        ("system", "system"),
+    let sources = vec![
+        FileCreatedPayload::SOURCE.to_string(),
+        FileModifiedPayload::SOURCE.to_string(),
+        FileDeletedPayload::SOURCE.to_string(),
+        KittyCommandExecutedPayload::SOURCE.to_string(),
+        AtuinCommandExecutedPayload::SOURCE.to_string(),
+        ClipboardCopiedPayload::SOURCE.to_string(),
     ];
 
-    for (source_name, expected_prefix) in test_cases {
-        if expected_prefix.ends_with('.') {
+    for source in &sources {
+        assert!(!source.is_empty(), "Event source should not be empty");
+        assert!(
+            source
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || matches!(c, '.' | '-' | '_')),
+            "Source {source} contains invalid characters"
+        );
+        assert!(
+            !source.starts_with('.') && !source.ends_with('.'),
+            "Source {source} should not start or end with a dot"
+        );
+        if source.contains('.') {
             assert!(
-                source_name.starts_with(expected_prefix),
-                "Source '{}' should start with '{}'",
-                source_name,
-                expected_prefix
+                source.split('.').all(|segment| !segment.is_empty()),
+                "Dot-separated segments in {source} must be non-empty"
             );
-        } else {
-            // For exact matches like "clipboard", "system"
-            assert_eq!(source_name, expected_prefix);
         }
     }
     Ok(())
@@ -57,31 +70,26 @@ async fn test_event_source_patterns(_ctx: TestContext) -> color_eyre::eyre::Resu
 /// Test that event sources follow consistent naming patterns  
 #[sinex_test]
 async fn test_source_naming_conventions(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let test_sources = vec![
-        "fs-watcher",
-        "shell.kitty",
-        "shell.atuin",
-        "clipboard",
-        "system",
-    ];
-
-    for source in test_sources {
+    let validated_sources = ["fs-watcher", "clipboard", "system"];
+    for source in validated_sources {
         let source_type = EventSource::new(source);
-
-        // Validate using the domain type validation
         source_type
             .validate()
             .map_err(|e| color_eyre::eyre::eyre!(e))?;
+    }
 
-        // Additional specific checks
-        assert!(!source.is_empty(), "Source cannot be empty");
-        assert!(!source.starts_with('.'), "Source cannot start with dot");
-        assert!(!source.ends_with('.'), "Source cannot end with dot");
+    let dot_sources = [
+        "shell.kitty",
+        "shell.atuin",
+        "shell.history",
+        "terminal.kitty",
+    ];
+    for source in dot_sources {
+        let constant = EventSource::from_static(source);
+        assert_eq!(constant.as_str(), source);
         assert!(
-            source
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c == '.' || c == '-' || c == '_'),
-            "Source should only contain lowercase, dots, hyphens, underscores"
+            EventSource::new(source).validate().is_err(),
+            "Dot-separated source {source} should require explicit allowance"
         );
     }
 
@@ -118,15 +126,12 @@ async fn test_event_type_validation(_ctx: TestContext) -> color_eyre::eyre::Resu
         if should_be_valid {
             assert!(
                 result.is_ok(),
-                "Event type '{}' should be valid, but got error: {:?}",
-                event_type,
-                result
+                "Event type '{event_type}' should be valid, but got error: {result:?}"
             );
         } else {
             assert!(
                 result.is_err(),
-                "Event type '{}' should be invalid but passed validation",
-                event_type
+                "Event type '{event_type}' should be invalid but passed validation"
             );
         }
     }
@@ -153,8 +158,7 @@ async fn test_event_type_hierarchical_structure(_ctx: TestContext) -> color_eyre
         assert_eq!(
             parts.len(),
             2,
-            "Event type should have exactly 2 parts: {}",
-            event_type
+            "Event type should have exactly 2 parts: {event_type}"
         );
 
         assert_eq!(parts[0], expected_object, "Object part should match");
@@ -172,13 +176,13 @@ async fn test_event_type_hierarchical_structure(_ctx: TestContext) -> color_eyre
 #[sinex_test]
 async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test FileCreatedPayload
-    let file_payload = FileCreatedPayload::test_default("/test/file.txt")
+    let file_payload = FileCreatedPayload::test_default("/test/file.txt".to_string())
         .with_size(1024)
         .with_permissions(0o644);
 
     // Build a typed event and convert to JSON for storage
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "shell-kitty").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let file_event = Event::create(
         FileCreatedPayload::SOURCE,
         FileCreatedPayload::EVENT_TYPE,
@@ -197,12 +201,12 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
     assert_eq!(file_event.payload.path.as_str(), "/test/file.txt");
 
     // Test FileModifiedPayload
-    let modified_payload = FileModifiedPayload::test_default("/test/modified.txt")
+    let modified_payload = FileModifiedPayload::test_default("/test/modified.txt".to_string())
         .with_size(2048)
         .with_modification_type("content");
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "shell-atuin").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let modified_event = Event::create(
         FileModifiedPayload::SOURCE,
         FileModifiedPayload::EVENT_TYPE,
@@ -234,13 +238,13 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
 async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
-        .with_working_directory("/home/user")
+        .with_working_directory("/home/user".to_string())
         .with_exit_status(0)
         .with_execution_time_ms(150)
         .with_shell_type("bash");
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "clipboard").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let kitty_event = Event::create(
         KittyCommandExecutedPayload::SOURCE,
         KittyCommandExecutedPayload::EVENT_TYPE,
@@ -257,13 +261,14 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
     assert_eq!(kitty_event.payload.command.as_str(), "ls -la");
 
     // Test AtuinCommandExecutedPayload
-    let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", "/repo")
-        .with_exit_code(0)
-        .with_duration_ns(2000000)
-        .with_hostname("dev-machine");
+    let atuin_payload =
+        AtuinCommandExecutedPayload::test_default("git status", "/repo".to_string())
+            .with_exit_code(0)
+            .with_duration_ns(2000000)
+            .with_hostname("dev-machine");
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "shell-atuin").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let atuin_event = Event::create(
         AtuinCommandExecutedPayload::SOURCE,
         AtuinCommandExecutedPayload::EVENT_TYPE,
@@ -291,8 +296,8 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> color_eyre::eyre::Re
     // Test ClipboardCopiedPayload
     let clipboard_payload = ClipboardCopiedPayload::test_default("test-hash");
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "clipboard").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let clipboard_event = Event::create(
         ClipboardCopiedPayload::SOURCE,
         ClipboardCopiedPayload::EVENT_TYPE,
@@ -383,8 +388,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
             assert_eq!(
                 event.source.as_str(),
                 source,
-                "Event should have source '{}'",
-                source
+                "Event should have source '{source}'"
             );
         }
 
@@ -398,8 +402,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
 
         assert_eq!(
             actual_types, expected_set,
-            "Should create all expected event types for source '{}'",
-            source
+            "Should create all expected event types for source '{source}'"
         );
 
         // Verify mapping was successful (no snapshot needed for simple validation)
@@ -430,17 +433,16 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx);
         let handle = task::spawn(async move {
-            let mut events: Vec<RawEvent> = Vec::new();
+            let mut events: Vec<Event<JsonValue>> = Vec::new();
 
             // Create filesystem event
-            let fs_payload = FileCreatedPayload::test_default(&format!("/test/file{}.txt", i))
+            let fs_payload = FileCreatedPayload::test_default(format!("/test/file{i}.txt"))
                 .with_size((i as u64) * 1024);
-            let prov = Provenance::from_material(
-                Id::<SourceMaterial>::from_ulid(Ulid::new()),
-                0,
-                None,
-                None,
-            );
+            let fs_material = Id::<SourceMaterial>::from_ulid(Ulid::new());
+            ctx_clone
+                .ensure_source_material(fs_material, Some(&format!("fs-{i}")))
+                .await?;
+            let prov = Provenance::from_material(fs_material, 0, None, None);
             events.push(
                 Event::create(
                     FileCreatedPayload::SOURCE,
@@ -453,14 +455,13 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
             );
 
             // Create shell event
-            let shell_payload = KittyCommandExecutedPayload::test_default(&format!("cmd{}", i))
-                .with_kitty_ids(&format!("win{}", i), &format!("tab{}", i));
-            let prov = Provenance::from_material(
-                Id::<SourceMaterial>::from_ulid(Ulid::new()),
-                0,
-                None,
-                None,
-            );
+            let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{i}"))
+                .with_kitty_ids(format!("win{i}"), format!("tab{i}"));
+            let shell_material = Id::<SourceMaterial>::from_ulid(Ulid::new());
+            ctx_clone
+                .ensure_source_material(shell_material, Some(&format!("shell-{i}")))
+                .await?;
+            let prov = Provenance::from_material(shell_material, 0, None, None);
             events.push(
                 Event::create(
                     KittyCommandExecutedPayload::SOURCE,
@@ -477,13 +478,13 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
                 ctx_clone.pool.events().insert(event.clone()).await?;
             }
 
-            Ok::<(Vec<RawEvent>, usize), color_eyre::eyre::Error>((events, i))
+            Ok::<(Vec<Event<JsonValue>>, usize), color_eyre::eyre::Error>((events, i))
         });
         handles.push(handle);
     }
 
     // Wait for all tasks to complete
-    let results = futures::future::join_all(handles).await;
+    let results = future::join_all(handles).await;
 
     // Verify all tasks completed successfully
     assert_eq!(results.len(), 5);
@@ -533,14 +534,12 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
 
             // Create multiple events per task
             for j in 0..3 {
-                let payload =
-                    FileCreatedPayload::test_default(format!("/test/file{}_{}.txt", i, j));
-                let prov = Provenance::from_material(
-                    Id::<SourceMaterial>::from_ulid(Ulid::new()),
-                    0,
-                    None,
-                    None,
-                );
+                let payload = FileCreatedPayload::test_default(format!("/test/file{i}_{j}.txt"));
+                let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+                ctx_clone
+                    .ensure_source_material(material_id, Some(&format!("fs-{i}-{j}")))
+                    .await?;
+                let prov = Provenance::from_material(material_id, 0, None, None);
                 let event = Event::create(
                     FileCreatedPayload::SOURCE,
                     FileCreatedPayload::EVENT_TYPE,
@@ -570,13 +569,13 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
                 }
             }
 
-            Ok::<Vec<Id<RawEvent>>, color_eyre::eyre::Error>(event_ids)
+            Ok::<Vec<Id<Event<JsonValue>>>, color_eyre::eyre::Error>(event_ids)
         });
         handles.push(handle);
     }
 
     // Wait for all tasks to complete
-    let results = futures::future::join_all(handles).await;
+    let results = future::join_all(handles).await;
 
     // Collect all event IDs using ULID strings
     let mut all_ids = HashSet::new();
@@ -586,8 +585,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
             let id_string = id.to_string();
             assert!(
                 all_ids.insert(id_string.clone()),
-                "Event ID {} should be unique",
-                id_string
+                "Event ID {id_string} should be unique"
             );
         }
     }
@@ -614,8 +612,8 @@ async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::R
         .with_size(1024)
         .with_permissions(0o644);
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let material_id = ensure_material(&ctx, "payload-valid").await?;
+    let prov = Provenance::from_material(material_id, 0, None, None);
     let valid_event = Event::create(
         FileCreatedPayload::SOURCE,
         FileCreatedPayload::EVENT_TYPE,
@@ -643,15 +641,15 @@ async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::R
 
 /// Test event type constants are consistent
 #[sinex_test]
-async fn test_event_type_constants_consistency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_type_constants_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that the EventPayload macro generates consistent event types
     let file_created = FileCreatedPayload::test_default("/test".to_string());
     let file_modified = FileModifiedPayload::test_default("/test".to_string());
     let file_deleted = FileDeletedPayload::test_default("/test".to_string());
 
     // Create events and check their types
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let fs_material = ensure_material(&ctx, "event-constants-fs").await?;
+    let prov = Provenance::from_material(fs_material, 0, None, None);
     let created_event = Event::create(
         FileCreatedPayload::SOURCE,
         FileCreatedPayload::EVENT_TYPE,
@@ -685,19 +683,19 @@ async fn test_event_type_constants_consistency(_ctx: TestContext) -> color_eyre:
     let kitty_executed = KittyCommandExecutedPayload::test_default("test");
     let atuin_executed = AtuinCommandExecutedPayload::test_default("test", "/".to_string());
 
-    let prov =
-        Provenance::from_material(Id::<SourceMaterial>::from_ulid(Ulid::new()), 0, None, None);
+    let shell_material = ensure_material(&ctx, "event-constants-shell").await?;
+    let shell_prov = Provenance::from_material(shell_material, 0, None, None);
     let kitty_event = Event::create(
         KittyCommandExecutedPayload::SOURCE,
         KittyCommandExecutedPayload::EVENT_TYPE,
         kitty_executed,
-        prov.clone(),
+        shell_prov.clone(),
     );
     let atuin_event = Event::create(
         AtuinCommandExecutedPayload::SOURCE,
         AtuinCommandExecutedPayload::EVENT_TYPE,
         atuin_executed,
-        prov.clone(),
+        shell_prov.clone(),
     );
 
     // Different sources but same event type

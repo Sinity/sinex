@@ -187,9 +187,21 @@ in {
 
 
     nats = {
+      port = mkOption {
+        type = types.port;
+        default = 4222;
+        description = "Port for the embedded NATS server";
+      };
+
+      monitoringPort = mkOption {
+        type = types.port;
+        default = 8222;
+        description = "HTTP monitoring/metrics port for NATS";
+      };
+
       servers = mkOption {
         type = types.str;
-        default = "nats://localhost:4222";
+        default = "nats://127.0.0.1:4222";
         description = "NATS server URLs (comma-separated)";
       };
     };
@@ -602,6 +614,8 @@ in {
 
     users.groups.${cfg.satelliteUser} = {};
 
+    services.sinex.satelliteUser = mkDefault cfg.database.user;
+
     # Enable required services
     services.postgresql = mkIf cfg.database.autoSetup {
       enable = true;
@@ -619,8 +633,14 @@ in {
       enable = true;
       serverName = "sinex-nats";
       jetstream = true;
+      port = cfg.satellite.nats.port;
       settings = {
         server_name = "sinex-nats";
+        host = "127.0.0.1";
+        http = {
+          host = "127.0.0.1";
+          port = cfg.satellite.nats.monitoringPort;
+        };
         jetstream = {
           store_dir = "/var/lib/nats/jetstream";
           max_memory_store = "1G";
@@ -629,71 +649,74 @@ in {
       };
     };
 
-    # Coordination database setup service
-    systemd.services.sinex-coordination-setup = mkIf cfg.satellite.coordination.enable {
-      description = "Setup Sinex Coordination Database Tables";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" ];
-      requires = [ "postgresql.service" ];
-      
-      serviceConfig = {
-        Type = "oneshot";
-        User = cfg.satelliteUser;
-        Group = cfg.satelliteUser;
-        RemainAfterExit = true;
+    services.sinex.satellite.nats.servers = mkDefault "nats://127.0.0.1:${toString cfg.satellite.nats.port}";
+
+    # Generate systemd services for all satellites and supporting setup jobs
+    systemd.services =
+      satelliteConfigs
+      // optionalAttrs cfg.satellite.coordination.enable {
+        sinex-coordination-setup = {
+          description = "Setup Sinex Coordination Database Tables";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "postgresql.service" ];
+          requires = [ "postgresql.service" ];
+          serviceConfig = {
+            Type = "oneshot";
+            User = cfg.satelliteUser;
+            Group = cfg.satelliteUser;
+            RemainAfterExit = true;
+          };
+          script = ''
+            ${pkgs.postgresql}/bin/psql "${cfg.satellite.database.url}" <<'EOF'
+            CREATE SCHEMA IF NOT EXISTS core;
+
+            -- Create satellite coordination tables
+            CREATE TABLE IF NOT EXISTS core.satellite_instances (
+                instance_id UUID PRIMARY KEY,
+                service_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                start_time TIMESTAMPTZ NOT NULL,
+                last_heartbeat TIMESTAMPTZ NOT NULL,
+                host_name TEXT NOT NULL,
+                metadata JSONB DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS core.satellite_signals (
+                id SERIAL PRIMARY KEY,
+                target_instance TEXT NOT NULL,
+                signal_type TEXT NOT NULL,
+                message TEXT,
+                payload JSONB DEFAULT '{}',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                processed_at TIMESTAMPTZ,
+                processed_by UUID
+            );
+
+            CREATE TABLE IF NOT EXISTS core.service_leadership (
+                service_name TEXT PRIMARY KEY,
+                instance_id UUID NOT NULL,
+                acquired_at TIMESTAMPTZ NOT NULL,
+                last_heartbeat TIMESTAMPTZ NOT NULL,
+                version TEXT NOT NULL,
+                metadata JSONB DEFAULT '{}'
+            );
+
+            -- Create indexes for performance
+            CREATE INDEX IF NOT EXISTS idx_satellite_instances_service_version 
+                ON core.satellite_instances(service_name, version DESC, start_time ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_satellite_signals_target_unprocessed 
+                ON core.satellite_signals(target_instance, created_at) 
+                WHERE processed_at IS NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_service_leadership_heartbeat 
+                ON core.service_leadership(last_heartbeat);
+            EOF
+          '';
+        };
       };
-      
-      script = ''
-        ${pkgs.postgresql}/bin/psql "${cfg.satellite.database.url}" <<'EOF'
-        -- Create satellite coordination tables
-        CREATE TABLE IF NOT EXISTS core.satellite_instances (
-            instance_id UUID PRIMARY KEY,
-            service_name TEXT NOT NULL,
-            version TEXT NOT NULL,
-            start_time TIMESTAMPTZ NOT NULL,
-            last_heartbeat TIMESTAMPTZ NOT NULL,
-            host_name TEXT NOT NULL,
-            metadata JSONB DEFAULT '{}',
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS core.satellite_signals (
-            id SERIAL PRIMARY KEY,
-            target_instance TEXT NOT NULL,
-            signal_type TEXT NOT NULL,
-            message TEXT,
-            payload JSONB DEFAULT '{}',
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            processed_at TIMESTAMPTZ,
-            processed_by UUID
-        );
-
-        CREATE TABLE IF NOT EXISTS core.service_leadership (
-            service_name TEXT PRIMARY KEY,
-            instance_id UUID NOT NULL,
-            acquired_at TIMESTAMPTZ NOT NULL,
-            last_heartbeat TIMESTAMPTZ NOT NULL,
-            version TEXT NOT NULL,
-            metadata JSONB DEFAULT '{}'
-        );
-
-        -- Create indexes for performance
-        CREATE INDEX IF NOT EXISTS idx_satellite_instances_service_version 
-            ON core.satellite_instances(service_name, version DESC, start_time ASC);
-
-        CREATE INDEX IF NOT EXISTS idx_satellite_signals_target_unprocessed 
-            ON core.satellite_signals(target_instance, created_at) 
-            WHERE processed_at IS NULL;
-
-        CREATE INDEX IF NOT EXISTS idx_service_leadership_heartbeat 
-            ON core.service_leadership(last_heartbeat);
-        EOF
-      '';
-    };
-
-    # Generate systemd services for all satellites
-    systemd.services = satelliteConfigs;
 
     # Directory setup
     systemd.tmpfiles.rules = [
@@ -702,8 +725,6 @@ in {
       "d /run/sinex 0755 ${cfg.satelliteUser} ${cfg.satelliteUser} -"
     ];
 
-    # Add satellite user option if not already defined
-    services.sinex.satelliteUser = mkDefault cfg.database.user;
 
     # Assertions
     assertions = [

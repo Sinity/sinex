@@ -8,7 +8,7 @@ import sys
 import json
 import subprocess
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -134,7 +134,7 @@ def _query_with_database(source: Optional[str], event_type: Optional[str],
             if last:
                 time_delta = parse_time_delta(last)
                 conditions.append("ts_ingest > %s")
-                params.append(datetime.now(datetime.timezone.utc) - time_delta)
+                params.append(datetime.now(timezone.utc) - time_delta)
             
             if conditions:
                 query_parts.append("WHERE " + " AND ".join(conditions))
@@ -326,7 +326,7 @@ def _stats_with_database() -> None:
         for agent in agent_health:
             last_hb = agent['last_heartbeat']
             if last_hb:
-                age = datetime.now(datetime.timezone.utc) - last_hb.replace(tzinfo=None)
+                age = datetime.now(timezone.utc) - last_hb.replace(tzinfo=None)
                 if age.total_seconds() < 300:  # 5 minutes
                     status_icon = "🟢"
                 elif age.total_seconds() < 3600:  # 1 hour
@@ -619,7 +619,7 @@ def processor_list(type: Optional[str], status: Optional[str]):
         last_heartbeat = processor['last_heartbeat_ts']
         if last_heartbeat:
             # Check if heartbeat is recent (within 5 minutes)
-            age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
+            age = datetime.now(timezone.utc) - last_heartbeat.replace(tzinfo=None)
             if age.total_seconds() < 300:
                 heartbeat_style = "green"
                 heartbeat_text = "🟢 " + last_heartbeat.strftime('%H:%M:%S')
@@ -743,7 +743,7 @@ def automaton_list(status: Optional[str]):
         last_heartbeat = automaton['last_heartbeat_ts']
         if last_heartbeat:
             # Check if heartbeat is recent (within 5 minutes)
-            age = datetime.now(datetime.timezone.utc) - last_heartbeat.replace(tzinfo=None)
+            age = datetime.now(timezone.utc) - last_heartbeat.replace(tzinfo=None)
             if age.total_seconds() < 300:
                 heartbeat_style = "green"
                 heartbeat_text = "🟢 " + last_heartbeat.strftime('%H:%M:%S')
@@ -2015,7 +2015,7 @@ def dlq_show(dlq_id: str):
     if entry['next_retry_at']:
         panel_content.append(f"[bold]Next Retry:[/bold] {entry['next_retry_at']}")
     
-    age_seconds = int((datetime.now(datetime.timezone.utc) - entry['failed_at'].replace(tzinfo=None)).total_seconds())
+    age_seconds = int((datetime.now(timezone.utc) - entry['failed_at'].replace(tzinfo=None)).total_seconds())
     panel_content.append(f"[bold]Age:[/bold] {format_duration(age_seconds)}")
     
     if entry['resolved_at']:
@@ -2079,7 +2079,7 @@ def dlq_retry(dlq_id: str, dry_run: bool):
         with conn.cursor() as cur:
             # Calculate next retry time with exponential backoff
             next_retry_seconds = min(300 * (2 ** entry['retry_count']), 3600)  # Cap at 1 hour
-            next_retry_at = datetime.now(datetime.timezone.utc) + timedelta(seconds=next_retry_seconds)
+            next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=next_retry_seconds)
             
             cur.execute("""
                 UPDATE sinex_schemas.dlq_events 

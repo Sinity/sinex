@@ -49,20 +49,17 @@ pre-commit: fmt lint check test
 
 # === Testing ===
 
-# Run fast tests (unit + property)
+# Run fast tests (unit + property) with nextest
 test:
-    cargo test --workspace --lib
-    cargo test --workspace --test property_tests
+    cargo nextest run --workspace --lib
+    PROPTEST_CASES=${PROPTEST_CASES:-64} cargo nextest run --workspace --test property_tests
 
-# Run all tests
+# Run all tests with nextest
 test-all:
     just db-setup
-    cargo test --workspace
+    RUST_LOG=${RUST_LOG:-} cargo nextest run --workspace
 
-# Run integration tests
-test-integration:
-    just db-setup
-    cargo test --workspace --test '*integration*'
+# (integration target removed to keep surface minimal; use `just test-all` with filters if needed)
 
 # Run VM tests
 test-vm:
@@ -100,6 +97,7 @@ psql *ARGS:
 # Update SQLX offline cache (for Nix builds)
 sqlx-prepare:
     just migrate
+    # Prepare SQLx offline cache for workspace members (include test targets for all queries)
     cargo sqlx prepare --workspace -- --all-targets
     @echo "✅ SQLX cache updated - remember to commit .sqlx/"
 

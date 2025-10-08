@@ -159,32 +159,61 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
-    # Auto-apply sensible database performance defaults when autoSetup is enabled
-    services.postgresql = mkIf cfg.database.autoSetup {
-      settings = {
-        # Connection and timeout settings
-        statement_timeout = mkDefault "60s";
-        lock_timeout = mkDefault "30s"; 
-        idle_in_transaction_session_timeout = mkDefault "300s";
-        
-        # Performance settings
-        shared_buffers = mkDefault "256MB";
-        effective_cache_size = mkDefault "1GB";
-        maintenance_work_mem = mkDefault "256MB";
-        checkpoint_completion_target = mkDefault "0.9";
-        
-        # Prepared statements
-        max_prepared_transactions = mkDefault 256;
-        
-        # Logging for monitoring
-        log_statement = mkDefault "mod";
-        log_duration = mkDefault true;
-        log_min_duration_statement = mkDefault "1000ms";
-        
-        # Connection limits
-        max_connections = mkDefault cfg.database.connectionPool.maxConnections;
+  config =
+    let
+      perServiceConnections = lib.max 1 cfg.database.connectionPool.maxConnections;
+
+      satelliteEnabled = cfg.satellite.enable or false;
+
+      coreServiceCount =
+        if satelliteEnabled && cfg.satellite.coreServices.enable then 2 else 0;
+
+      eventSourceCount =
+        if satelliteEnabled then
+          (if cfg.satellite.eventSources.filesystem.enable then cfg.satellite.eventSources.filesystem.instances else 0)
+          + (if cfg.satellite.eventSources.terminal.enable then cfg.satellite.eventSources.terminal.instances else 0)
+          + (if cfg.satellite.eventSources.desktop.enable then cfg.satellite.eventSources.desktop.instances else 0)
+          + (if cfg.satellite.eventSources.system.enable then cfg.satellite.eventSources.system.instances else 0)
+        else 0;
+
+      automataCount =
+        if satelliteEnabled then
+          (if cfg.satellite.automata.canonicalCommandSynthesizer.enable then 1 else 0)
+          + (if cfg.satellite.automata.healthAggregator.enable then 1 else 0)
+        else 0;
+
+      totalServiceCount = coreServiceCount + eventSourceCount + automataCount;
+
+      computedMaxConnections =
+        let baseline = totalServiceCount * perServiceConnections + 50;
+        in lib.max (perServiceConnections + 10) baseline;
+    in
+    mkIf cfg.enable {
+      # Auto-apply sensible database performance defaults when autoSetup is enabled
+      services.postgresql = mkIf cfg.database.autoSetup {
+        settings = {
+          # Connection and timeout settings
+          statement_timeout = mkDefault "60s";
+          lock_timeout = mkDefault "30s"; 
+          idle_in_transaction_session_timeout = mkDefault "300s";
+          
+          # Performance settings
+          shared_buffers = mkDefault "256MB";
+          effective_cache_size = mkDefault "1GB";
+          maintenance_work_mem = mkDefault "256MB";
+          checkpoint_completion_target = mkDefault "0.9";
+          
+          # Prepared statements
+          max_prepared_transactions = mkDefault 256;
+          
+          # Logging for monitoring
+          log_statement = mkDefault "mod";
+          log_duration = mkDefault true;
+          log_min_duration_statement = mkDefault "1000ms";
+          
+          # Connection limits
+          max_connections = mkDefault computedMaxConnections;
+        };
       };
     };
-  };
 }

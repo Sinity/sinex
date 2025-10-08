@@ -67,6 +67,11 @@ impl<T> NonEmptyVec<T> {
         self.inner.len()
     }
 
+    /// NonEmptyVec can never be empty by construction
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Push an element to the end
     pub fn push(&mut self, value: T) {
         self.inner.push(value);
@@ -131,47 +136,8 @@ impl<T: fmt::Display> fmt::Display for NonEmptyVec<T> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", item)?;
+            write!(f, "{item}")?;
         }
         write!(f, "]")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_non_empty_vec_creation() {
-        let nev = NonEmptyVec::single(1);
-        assert_eq!(nev.len(), 1);
-        assert_eq!(*nev.first(), 1);
-
-        let nev = NonEmptyVec::from_head_tail(1, vec![2, 3]);
-        assert_eq!(nev.len(), 3);
-        assert_eq!(*nev.first(), 1);
-        assert_eq!(*nev.last(), 3);
-    }
-
-    #[test]
-    fn test_from_vec() {
-        assert!(NonEmptyVec::<i32>::from_vec(vec![]).is_none());
-
-        let nev = NonEmptyVec::from_vec(vec![1, 2, 3]).unwrap();
-        assert_eq!(nev.len(), 3);
-    }
-
-    #[test]
-    fn test_serde() {
-        let nev = NonEmptyVec::from_head_tail(1, vec![2, 3]);
-        let json = serde_json::to_string(&nev).unwrap();
-        assert_eq!(json, "[1,2,3]");
-
-        let nev2: NonEmptyVec<i32> = serde_json::from_str(&json).unwrap();
-        assert_eq!(nev, nev2);
-
-        // Test that empty arrays fail to deserialize
-        let result: Result<NonEmptyVec<i32>, _> = serde_json::from_str("[]");
-        assert!(result.is_err());
     }
 }

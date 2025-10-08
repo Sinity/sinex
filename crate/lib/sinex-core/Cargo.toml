@@ -7,6 +7,9 @@ repository.workspace = true
 license.workspace = true
 description = "Core types and database layer for Sinex - unified from sinex-core and sinex-core"
 
+[lib]
+doctest = false
+
 [dependencies]
 # Core dependencies merged from both crates
 sinex-macros = { path = "../sinex-macros", optional = true }

@@ -23,14 +23,13 @@
 use sinex_test_utils::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};
-use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,
 };
-use sinex_core::{Event, Id, JsonValue, Ulid}; // Modern Event API
+use sinex_core::{Event, Id}; // Modern Event API helpers
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data
@@ -406,22 +405,10 @@ fn test_event_creation_never_panics_with_fuzzed_data() -> Result<()> {
         // It should either succeed or return an error gracefully
 
         // Test JSON serialization (used throughout the system)
-        let json_result = serde_json::to_string(&event);
-        match json_result {
-            Ok(_) => {
-                // Success is fine
-            }
-            Err(_) => {
-                // Serialization errors are acceptable as long as no panic
-            }
-        }
+        let _ = serde_json::to_string(&event);
 
         // Test pretty printing as well (used in stdout output)
-        let pretty_result = serde_json::to_string_pretty(&event);
-        match pretty_result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
+        let _ = serde_json::to_string_pretty(&event);
 
         // Test that we can access event fields without panicking
         let _ = event.source.as_str();
@@ -627,11 +614,7 @@ fn test_json_serialization_robustness() -> Result<()> {
         }
 
         // Test pretty printing as well (used in stdout output)
-        let pretty_result = serde_json::to_string_pretty(&event);
-        match pretty_result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
+        let _ = serde_json::to_string_pretty(&event);
     });
     Ok(())
 }
@@ -685,8 +668,9 @@ fn test_string_handling_robustness() -> Result<()> {
         // Test serialization with problematic strings
         let _json_result = serde_json::to_string(&event);
 
-        // Test that we can create the struct without panicking
-        prop_assert!(true); // If we get here, no panic occurred
+        // Test that we can create the struct without panicking by checking key fields
+        prop_assert_eq!(event.source.as_str(), source.as_str());
+        prop_assert_eq!(event.host.as_str(), host.as_str());
     });
     Ok(())
 }
@@ -785,14 +769,13 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
                 if deserialize_result.is_err() {
                     // Log for debugging but don't fail - the important thing is no panic
                     eprintln!(
-                        "Warning: Event {} failed to deserialize after successful serialization",
-                        i
+                        "Warning: Event {i} failed to deserialize after successful serialization"
                     );
                 }
             }
             Err(e) => {
                 // Serialization errors are acceptable - log for analysis
-                eprintln!("Event {} serialization failed gracefully: {}", i, e);
+                eprintln!("Event {i} serialization failed gracefully: {e}");
             }
         }
     }

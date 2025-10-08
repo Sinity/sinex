@@ -5,8 +5,13 @@
 
 use crate::config::TemporalLedgerConfig;
 use chrono::{DateTime, Utc};
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{eyre, Context, Result};
+use serde_json::json;
+use sinex_core::db::repositories::legacy_material_types;
 use sinex_core::types::Ulid;
+use sinex_core::DbPoolExt;
+use sinex_core::Id;
+use sinex_core::SourceMaterialRecord;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -51,18 +56,8 @@ impl TemporalLedger {
 
     /// Create in-memory temporal ledger for testing
     pub async fn new_in_memory() -> Result<Self> {
-        // For testing, we create a mock temporal ledger that doesn't require a real database
-        let (entry_sender, entry_receiver) = mpsc::channel(1000);
-
-        // Create a mock database connection pool - this will only work for tests
-        // that don't actually call database methods
-        let mock_pool = PgPool::connect("postgres://test:test@localhost/test")
-            .await
-            .unwrap_or_else(|_| {
-                // If we can't connect to a real database, create a minimal mock
-                // This is a temporary solution for tests
-                panic!("new_in_memory() requires a test database or mock implementation")
-            });
+        let database_url = std::env::var("DATABASE_URL")
+            .wrap_err("TemporalLedger::new_in_memory requires DATABASE_URL to be set")?;
 
         let config = TemporalLedgerConfig {
             batch_size: 100,
@@ -70,13 +65,95 @@ impl TemporalLedger {
             max_slice_size: 10 * 1024 * 1024, // 10MB
         };
 
-        Ok(Self {
-            db_pool: mock_pool,
-            config,
-            entry_buffer: Arc::new(Mutex::new(Vec::new())),
-            entry_sender,
-            entry_receiver: Arc::new(Mutex::new(entry_receiver)),
-        })
+        let pool = PgPool::connect(&database_url)
+            .await
+            .wrap_err("Failed to connect to database for TemporalLedger::new_in_memory")?;
+
+        Self::new(pool, config).await
+    }
+
+    /// Register a new in-flight source material for sensing pipelines
+    pub async fn create_material(
+        &self,
+        source_identifier: &str,
+        source_type: &str,
+        source_uri: Option<&str>,
+        material_hint: Option<&str>,
+    ) -> Result<Ulid> {
+        let legacy_hint = material_hint.unwrap_or(legacy_material_types::STREAM);
+
+        let mut metadata = json!({
+            "source_type": source_type,
+            "source_identifier": source_identifier,
+        });
+
+        if let Some(hint) = material_hint {
+            let key = if hint.contains('/') {
+                "content_type"
+            } else {
+                "material_hint"
+            };
+
+            metadata
+                .as_object_mut()
+                .expect("metadata is an object")
+                .insert(key.to_string(), json!(hint));
+        }
+
+        let record = self
+            .db_pool
+            .source_materials()
+            .register_in_flight(legacy_hint, source_uri, metadata)
+            .await
+            .wrap_err("Failed to register in-flight source material")?;
+
+        Ok(record.id)
+    }
+
+    /// Finalize a source material once capture is complete
+    pub async fn finalize_material(
+        &self,
+        material_id: Ulid,
+        reason: &str,
+        total_bytes: Option<i64>,
+    ) -> Result<()> {
+        let repo = self.db_pool.source_materials();
+        let id: Id<SourceMaterialRecord> = Id::from_ulid(material_id);
+
+        // Attach finalize metadata for observability
+        let metadata = json!({
+            "finalize_reason": reason,
+            "finalized_at": Utc::now().to_rfc3339(),
+        });
+        let _ = repo
+            .update_metadata(id, metadata)
+            .await
+            .wrap_err("Failed to update material metadata before finalize")?;
+
+        let id: Id<SourceMaterialRecord> = Id::from_ulid(material_id);
+        repo.finalize_in_flight(id, None, None, None, total_bytes)
+            .await
+            .wrap_err("Failed to finalize source material")?;
+
+        info!(%material_id, reason, total_bytes, "Finalized source material");
+        Ok(())
+    }
+
+    /// Retrieve total captured bytes for a material
+    pub async fn get_material_bytes(&self, material_id: Ulid) -> Result<i64> {
+        let total_bytes: i64 = sqlx::query_scalar!(
+            r#"
+            SELECT COALESCE(MAX(offset_end), 0)::BIGINT AS "size!"
+            FROM raw.temporal_ledger
+            WHERE source_material_id = $1::ulid
+            "#,
+            material_id as Ulid
+        )
+        .fetch_one(&self.db_pool)
+        .await
+        .wrap_err("Failed to compute material size from temporal ledger")?;
+
+        Ok(total_bytes)
     }
 
     /// Record a new ledger entry
@@ -160,98 +237,5 @@ impl TemporalLedger {
         entries.clear();
 
         Ok(())
-    }
-
-    /// Create a new material record
-    pub async fn create_material(
-        &self,
-        source_identifier: &str,
-        source_type: &str,
-        source_path: Option<&str>,
-        content_type: Option<&str>,
-    ) -> Result<Ulid> {
-        let material_id = Ulid::new();
-
-        sqlx::query!(
-            r#"
-            INSERT INTO raw.source_material_registry (
-                id, source_identifier, material_kind, status, 
-                timing_info_type, metadata, staged_at, staged_by
-            )
-            VALUES ($1::ulid, $2, $3, 'active', 'realtime', $4, NOW(), 'temporal_ledger')
-            "#,
-            material_id as Ulid,
-            source_identifier,
-            source_type,
-            serde_json::json!({
-                "source_path": source_path,
-                "content_type": content_type
-            }),
-        )
-        .execute(&self.db_pool)
-        .await?;
-
-        info!(
-            "Created new material: {} for {}",
-            material_id, source_identifier
-        );
-
-        Ok(material_id)
-    }
-
-    /// Finalize a material record
-    pub async fn finalize_material(
-        &self,
-        material_id: Ulid,
-        status: &str,
-        total_bytes: Option<i64>,
-    ) -> Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE raw.source_material_registry
-            SET status = $2,
-                metadata = jsonb_set(
-                    metadata,
-                    '{total_bytes}',
-                    to_jsonb($3::bigint)
-                )
-            WHERE id = $1::ulid
-            "#,
-            material_id as Ulid,
-            status,
-            total_bytes,
-        )
-        .execute(&self.db_pool)
-        .await?;
-
-        info!(
-            "Finalized material: {} with status: {}",
-            material_id, status
-        );
-
-        Ok(())
-    }
-
-    /// Get total bytes for a material from temporal ledger
-    pub async fn get_material_bytes(&self, material_id: Ulid) -> Result<i64> {
-        // Query temporal ledger for total bytes written for this material
-        let result = sqlx::query!(
-            r#"
-            SELECT SUM(offset_end - offset_start) as total_bytes
-            FROM raw.temporal_ledger
-            WHERE source_material_id = $1::ulid
-            "#,
-            material_id as Ulid
-        )
-        .fetch_optional(&self.db_pool)
-        .await?;
-
-        use sqlx::types::BigDecimal;
-        use std::str::FromStr;
-
-        Ok(result
-            .and_then(|row| row.total_bytes)
-            .and_then(|bd| bd.to_string().parse::<i64>().ok())
-            .unwrap_or(0))
     }
 }

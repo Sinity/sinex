@@ -77,28 +77,34 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_core::*;
-        use sinex_core::*;
+        let Self {
+            processor_name,
+            consumer_group,
+            consumer_name,
+            last_processed_id,
+            processed_count,
+            checkpoint_data,
+            ..
+        } = self;
 
-        let processor_name = ProcessorName::new(&self.processor_name);
-        let group = ConsumerGroup::new(
-            &self
-                .consumer_group
-                .unwrap_or_else(|| format!("{}-group", self.processor_name)),
-        );
-        let consumer = ConsumerName::new(
-            &self
-                .consumer_name
-                .unwrap_or_else(|| format!("{}-consumer", self.processor_name)),
-        );
+        let raw_processor_name = processor_name;
+        let processor_name = ProcessorName::new(&raw_processor_name);
+        let group_name = consumer_group.unwrap_or_else(|| format!("{raw_processor_name}-group"));
+        let consumer_name =
+            consumer_name.unwrap_or_else(|| format!("{raw_processor_name}-consumer"));
+        let group = ConsumerGroup::new(group_name);
+        let consumer = ConsumerName::new(consumer_name);
 
         pool.checkpoints()
             .upsert(
-                &processor_name,
-                &group,
-                &consumer,
-                self.last_processed_id,
-                self.checkpoint_data,
+                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                    processor: &processor_name,
+                    consumer_group: &group,
+                    consumer_name: &consumer,
+                },
+                last_processed_id,
+                processed_count,
+                checkpoint_data,
             )
             .await?;
 
@@ -157,7 +163,7 @@ impl TestScenarioBuilder {
 
         // Insert all checkpoints
         for checkpoint in self.checkpoints {
-            checkpoint.insert(&pool).await?;
+            checkpoint.insert(pool).await?;
         }
 
         Ok(event_ids)
@@ -165,6 +171,7 @@ impl TestScenarioBuilder {
 }
 
 /// Builder for creating database analysis metrics
+#[allow(unexpected_cfgs)]
 #[derive(Clone, Debug, Builder)]
 #[builder(on(String, into))]
 pub(crate) struct DatabaseMetricsBuilder {

@@ -1,3 +1,6 @@
+#![allow(unexpected_cfgs)]
+#![allow(dead_code)]
+
 //! Event Validation Property Tests
 //!
 //! Migrated from test/property/event_validation_property_test.rs to modern infrastructure.
@@ -344,7 +347,7 @@ fn test_source_event_id_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_source_event_id_validation(
             parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
-            event in arbitrary_event()
+            _event in arbitrary_event()
         ) {
             // Property: Source event IDs should be valid ULIDs
             // Note: source_event_ids field is not available in the current Event type

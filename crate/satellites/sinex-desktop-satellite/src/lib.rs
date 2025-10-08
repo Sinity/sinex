@@ -22,6 +22,7 @@ pub mod desktop_sensd_integration;
 pub mod sensd_job_submitter;
 
 // Local facade module to reduce import verbosity
+#[allow(unused_imports)]
 mod common {
     // Core types facade
     pub use sinex_core::{

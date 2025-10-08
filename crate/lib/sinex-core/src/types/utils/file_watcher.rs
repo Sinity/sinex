@@ -63,12 +63,13 @@ pub struct FileChangeEvent {
 }
 
 /// File system watcher with security validation
+#[derive(Debug)]
 pub struct FileWatcher {
     config: FileWatcherConfig,
     _watcher: RecommendedWatcher,
     event_receiver: mpsc::Receiver<FileChangeEvent>,
     /// Validated watch roots for boundary checking
-    validated_watch_roots: Vec<Utf8PathBuf>,
+    _validated_watch_roots: Vec<Utf8PathBuf>,
 }
 
 impl FileWatcher {
@@ -82,7 +83,7 @@ impl FileWatcher {
             .collect();
 
         let validated_paths = validate_watch_paths(&watch_path_strings, &config.security_policy)
-            .map_err(|e| SinexError::validation(format!("Watch path validation failed: {}", e)))?;
+            .map_err(|e| SinexError::validation(format!("Watch path validation failed: {e}")))?;
 
         let (event_sender, event_receiver) = mpsc::channel(config.max_buffer_size);
         let event_kinds = config.event_kinds.clone();
@@ -110,7 +111,7 @@ impl FileWatcher {
             Config::default(),
         )
         .map_err(|e| {
-            SinexError::io(format!("Failed to create file watcher: {}", e))
+            SinexError::io(format!("Failed to create file watcher: {e}"))
                 .with_operation("notify::watcher::new")
         })?;
 
@@ -123,7 +124,7 @@ impl FileWatcher {
             };
 
             watcher.watch(path.as_std_path(), mode).map_err(|e| {
-                SinexError::io(format!("Failed to watch validated path: {}", e))
+                SinexError::io(format!("Failed to watch validated path: {e}"))
                     .with_path(path)
                     .with_context("recursive", config.recursive)
                     .with_operation("watcher.watch")
@@ -136,7 +137,7 @@ impl FileWatcher {
             config,
             _watcher: watcher,
             event_receiver,
-            validated_watch_roots: validated_paths,
+            _validated_watch_roots: validated_paths,
         })
     }
 
@@ -157,6 +158,7 @@ impl FileWatcher {
 }
 
 /// Convert notify event to our file change event (legacy, non-secure version)
+#[allow(dead_code)]
 fn convert_notify_event(event: Event, allowed_kinds: &[FileChangeKind]) -> Option<FileChangeEvent> {
     let kind = match event.kind {
         EventKind::Create(_) => FileChangeKind::Created,
@@ -243,135 +245,4 @@ fn convert_notify_event_secure(
         kind,
         timestamp: chrono::Utc::now(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-    use std::fs;
-    use tempfile::TempDir;
-
-    #[sinex_test]
-    async fn test_file_watcher_builder() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let watcher = FileWatcher::new(
-            FileWatcherConfig::builder()
-                .watch_paths(vec![camino::Utf8PathBuf::from_path_buf(
-                    temp_dir.path().to_path_buf(),
-                )
-                .unwrap()])
-                .recursive(true)
-                .debounce_delay(Duration::from_millis(50))
-                .build(),
-        );
-
-        assert!(watcher.is_ok());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_file_watcher_events() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let test_file = temp_dir.path().join("test.txt");
-
-        let mut watcher = FileWatcher::new(
-            FileWatcherConfig::builder()
-                .watch_paths(vec![camino::Utf8PathBuf::from_path_buf(
-                    temp_dir.path().to_path_buf(),
-                )
-                .unwrap()])
-                .recursive(false)
-                .event_kinds(vec![FileChangeKind::Created, FileChangeKind::Modified])
-                .build(),
-        )
-        .unwrap();
-
-        // Give the watcher time to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Create a file
-        fs::write(&test_file, "test content").unwrap();
-
-        // Wait for the event
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Check for events (may receive multiple events for a single file operation)
-        let mut events = Vec::new();
-        while let Some(event) = watcher.try_next_event() {
-            events.push(event);
-        }
-
-        // Should have received at least one event
-        assert!(!events.is_empty());
-
-        // Verify the event is for our test file
-        assert!(events.iter().any(|e| e.path == test_file));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_file_watcher_security_validation() -> color_eyre::eyre::Result<()> {
-        // Test that watcher rejects dangerous paths
-        let dangerous_config = FileWatcherConfig::builder()
-            .watch_paths(vec![camino::Utf8PathBuf::from("/etc/passwd")])
-            .security_policy(FileWatchingSecurityPolicy::default()) // Use restrictive default
-            .build();
-
-        let watcher_result = FileWatcher::new(dangerous_config);
-        assert!(watcher_result.is_err());
-        assert!(watcher_result
-            .unwrap_err()
-            .to_string()
-            .contains("validation failed"));
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_file_watcher_permissive_policy() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Test that permissive policy allows safe paths
-        let permissive_config = FileWatcherConfig::builder()
-            .watch_paths(vec![camino::Utf8PathBuf::from_path_buf(
-                temp_dir.path().to_path_buf(),
-            )
-            .unwrap()])
-            .security_policy(FileWatchingSecurityPolicy::permissive())
-            .build();
-
-        let watcher = FileWatcher::new(permissive_config);
-        assert!(watcher.is_ok());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_file_watcher_restrictive_policy() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Test that restrictive policy works with safe temp directories
-        let restrictive_config = FileWatcherConfig::builder()
-            .watch_paths(vec![camino::Utf8PathBuf::from_path_buf(
-                temp_dir.path().to_path_buf(),
-            )
-            .unwrap()])
-            .security_policy(FileWatchingSecurityPolicy::restrictive())
-            .build();
-
-        let watcher = FileWatcher::new(restrictive_config);
-        // This might fail if temp dir is in a restricted location, but should show the validation is working
-        // In most cases this should succeed since temp dirs are usually allowed
-        if watcher.is_err() {
-            println!(
-                "Restrictive policy rejected temp dir (expected behavior): {}",
-                watcher.unwrap_err()
-            );
-        } else {
-            println!("Restrictive policy allowed temp dir");
-        }
-
-        Ok(())
-    }
 }

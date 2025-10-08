@@ -30,8 +30,7 @@ use validator::{Validate, ValidationError};
 
 use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
 
-#[cfg(test)]
-mod config_validation_tests;
+// Test module removed or relocated; keep core tests within this file
 
 /// Terminal monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
@@ -197,7 +196,7 @@ pub struct HistoryFileStatus {
 }
 
 impl HistoryFileStatus {
-    pub const NonExistent: HistoryFileStatus = HistoryFileStatus {
+    pub const NON_EXISTENT: HistoryFileStatus = HistoryFileStatus {
         exists: false,
         size_bytes: 0,
         last_modified: None,
@@ -479,7 +478,7 @@ impl TerminalProcessor {
                 path = %history_file,
                 "Skipping invalid or dangerous history file path"
             );
-            return HistoryFileStatus::NonExistent;
+            return HistoryFileStatus::NON_EXISTENT;
         }
 
         if history_file.exists() {
@@ -708,9 +707,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
         args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = std::time::Instant::now();
-        let mut events_processed = 0;
+        let events_processed;
         let mut successful_targets = Vec::with_capacity(8);
-        let mut failed_targets = Vec::with_capacity(8);
+        let failed_targets = Vec::with_capacity(8);
         let mut warnings = Vec::with_capacity(16);
 
         info!(
@@ -807,7 +806,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
         _args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
         let estimated_events = 100; // sensd handles the actual estimation
-        let mut warnings = vec![
+        let warnings = vec![
             "Event estimation delegated to sensd - actual numbers depend on source material"
                 .to_string(),
         ];

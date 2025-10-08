@@ -260,8 +260,8 @@ mod tests {
 
             events {
                 filesystem => FILESYSTEM {
-                    FILE_CREATED => event_types::file::CREATED with FileCreatedPayload,
-                    FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
+                    FILE_CREATED => "file.created" with FileCreatedPayload,
+                    FILE_MODIFIED => "file.modified" with FileModifiedPayload,
                 },
             }
         };

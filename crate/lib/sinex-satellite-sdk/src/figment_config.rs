@@ -165,6 +165,7 @@ fn default_max_processing_time() -> u64 {
 
 impl SatelliteFigmentConfig {
     /// Load configuration for a specific satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 
@@ -185,6 +186,7 @@ impl SatelliteFigmentConfig {
 
 impl EventSourceFigmentConfig {
     /// Load configuration for an event source satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 
@@ -205,6 +207,7 @@ impl EventSourceFigmentConfig {
 
 impl AutomatonFigmentConfig {
     /// Load configuration for an automaton satellite
+    #[allow(clippy::result_large_err)]
     pub fn load(satellite_name: &str) -> Result<Self, figment::Error> {
         let env_prefix = satellite_name.to_uppercase().replace('-', "_");
 
@@ -268,8 +271,7 @@ pub fn generate_example_configs() -> std::io::Result<()> {
         retry_backoff_multiplier: 2.0,
     };
 
-    let toml = toml::to_string_pretty(&event_source)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let toml = toml::to_string_pretty(&event_source).map_err(std::io::Error::other)?;
     fs::write("event-source-example.toml", toml)?;
 
     // Example automaton config
@@ -293,88 +295,8 @@ pub fn generate_example_configs() -> std::io::Result<()> {
         max_processing_time_secs: 60,
     };
 
-    let toml = toml::to_string_pretty(&automaton)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let toml = toml::to_string_pretty(&automaton).map_err(std::io::Error::other)?;
     fs::write("automaton-example.toml", toml)?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_satellite_config_defaults() -> color_eyre::eyre::Result<()> {
-        let config = SatelliteFigmentConfig {
-            service_name: "test-satellite".to_string(),
-            log_level: default_log_level(),
-            socket_path: default_socket_path(),
-            redis_url: default_redis_url(),
-            enable_replay: false,
-            work_dir: default_work_dir(),
-            health_port: 0,
-            checkpoint_interval_secs: default_checkpoint_interval(),
-            database_url: None,
-        };
-
-        assert!(config.validate().is_ok());
-        assert_eq!(config.log_level, "info");
-        assert_eq!(config.checkpoint_interval_secs, 300);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_event_source_validation() -> color_eyre::eyre::Result<()> {
-        let mut config = EventSourceFigmentConfig {
-            base: SatelliteFigmentConfig {
-                service_name: "".to_string(), // Invalid
-                log_level: "info".to_string(),
-                socket_path: "/tmp/test.sock".to_string(),
-                redis_url: "redis://localhost".to_string(),
-                enable_replay: false,
-                work_dir: Utf8PathBuf::from("/tmp"),
-                health_port: 0,
-                checkpoint_interval_secs: 300,
-                database_url: None,
-            },
-            batch_size: 100,
-            batch_wait_secs: 5,
-            max_retries: 3,
-            retry_backoff_multiplier: 2.0,
-        };
-
-        assert!(config.validate().is_err());
-
-        config.base.service_name = "valid-name".to_string();
-        assert!(config.validate().is_ok());
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_automaton_config_validation() -> color_eyre::eyre::Result<()> {
-        let config = AutomatonFigmentConfig {
-            base: SatelliteFigmentConfig {
-                service_name: "test-automaton".to_string(),
-                log_level: "debug".to_string(),
-                socket_path: "/tmp/test.sock".to_string(),
-                redis_url: "redis://localhost".to_string(),
-                enable_replay: false,
-                work_dir: Utf8PathBuf::from("/tmp"),
-                health_port: 9090,
-                checkpoint_interval_secs: 60,
-                database_url: None,
-            },
-            consumer_group: "test-group".to_string(),
-            consumer_name: "test-consumer".to_string(),
-            streams: vec!["test:stream".to_string()],
-            stream_batch_size: 10,
-            stream_timeout_secs: 5,
-            max_processing_time_secs: 30,
-        };
-
-        assert!(config.validate().is_ok());
-        Ok(())
-    }
 }

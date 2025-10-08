@@ -489,7 +489,7 @@ impl StreamProcessorContext {
         sinex_macros::auto_event_metrics(event_type = "emit")
     )]
     pub async fn emit_event(&self, event: Event<JsonValue>) -> SatelliteResult<()> {
-        let start = std::time::Instant::now();
+        let _start = std::time::Instant::now();
         let event_type = event.event_type.clone();
 
         if self.dry_run {

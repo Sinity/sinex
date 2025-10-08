@@ -22,6 +22,8 @@ pub mod seaquery_helpers;
 // Migration support
 #[cfg(feature = "migration")]
 pub mod migration;
+#[cfg(feature = "migration")]
+pub use migration::run_migrations_for_url;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
@@ -106,6 +108,8 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     config
         .validate()
         .map_err(|e| eyre!("Invalid pool configuration: {}", e))?;
+
+    // Keep environment behavior unchanged; do not force SQLx simple protocol here.
 
     // Validate configuration against PostgreSQL limits if requested
     if config.validate_against_postgres_max {
@@ -223,6 +227,8 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         idle_timeout_secs: 300,
         validate_against_postgres_max: false, // Skip validation in tests
     };
+
+    // Keep environment behavior unchanged during tests.
 
     let pool = PgPoolOptions::new()
         .max_connections(test_config.max_connections)

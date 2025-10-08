@@ -33,35 +33,32 @@ fn generate_version_info() {
     let minor = env::var("SATELLITE_MINOR_VERSION").unwrap_or_else(|_| "0".to_string());
 
     // Create semantic version
-    let version = format!("{}.{}.{}", major, minor, commit_count);
+    let version = format!("{major}.{minor}.{commit_count}");
     let full_version = if is_dirty {
-        format!("{}+{}.dirty", version, commit_hash)
+        format!("{version}+{commit_hash}.dirty")
     } else {
-        format!("{}+{}", version, commit_hash)
+        format!("{version}+{commit_hash}")
     };
 
     // Build timestamp
     let build_timestamp = chrono::Utc::now().to_rfc3339();
 
     // Set environment variables for use in code
-    println!("cargo:rustc-env=SATELLITE_VERSION={}", version);
-    println!("cargo:rustc-env=SATELLITE_FULL_VERSION={}", full_version);
-    println!("cargo:rustc-env=SATELLITE_COMMIT_HASH={}", commit_hash);
-    println!("cargo:rustc-env=SATELLITE_COMMIT_COUNT={}", commit_count);
-    println!("cargo:rustc-env=SATELLITE_BRANCH={}", branch);
-    println!(
-        "cargo:rustc-env=SATELLITE_BUILD_TIMESTAMP={}",
-        build_timestamp
-    );
-    println!("cargo:rustc-env=SATELLITE_IS_DIRTY={}", is_dirty);
+    println!("cargo:rustc-env=SATELLITE_VERSION={version}");
+    println!("cargo:rustc-env=SATELLITE_FULL_VERSION={full_version}");
+    println!("cargo:rustc-env=SATELLITE_COMMIT_HASH={commit_hash}");
+    println!("cargo:rustc-env=SATELLITE_COMMIT_COUNT={commit_count}");
+    println!("cargo:rustc-env=SATELLITE_BRANCH={branch}");
+    println!("cargo:rustc-env=SATELLITE_BUILD_TIMESTAMP={build_timestamp}");
+    println!("cargo:rustc-env=SATELLITE_IS_DIRTY={is_dirty}");
 
-    // Print version info for build logs
-    println!("cargo:warning=Building satellite version: {}", full_version);
+    // Print version info for build logs without emitting a Cargo warning
+    eprintln!("Building satellite version: {full_version}");
 }
 
 fn get_commit_count() -> Option<u32> {
     let output = Command::new("git")
-        .args(&["rev-list", "--count", "HEAD"])
+        .args(["rev-list", "--count", "HEAD"])
         .output()
         .ok()?;
 
@@ -74,7 +71,7 @@ fn get_commit_count() -> Option<u32> {
 
 fn get_commit_hash() -> Option<String> {
     let output = Command::new("git")
-        .args(&["rev-parse", "--short=8", "HEAD"])
+        .args(["rev-parse", "--short=8", "HEAD"])
         .output()
         .ok()?;
 
@@ -87,7 +84,7 @@ fn get_commit_hash() -> Option<String> {
 
 fn get_current_branch() -> Option<String> {
     let output = Command::new("git")
-        .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .ok()?;
 
@@ -99,9 +96,7 @@ fn get_current_branch() -> Option<String> {
 }
 
 fn is_working_directory_dirty() -> bool {
-    let output = Command::new("git")
-        .args(&["status", "--porcelain"])
-        .output();
+    let output = Command::new("git").args(["status", "--porcelain"]).output();
 
     match output {
         Ok(output) if output.status.success() => !output.stdout.is_empty(),

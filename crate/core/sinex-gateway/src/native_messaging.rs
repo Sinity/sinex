@@ -51,7 +51,6 @@ use serde_json::Value;
 use std::io::{self, Read, Write};
 use tracing::{debug, error, info};
 
-use crate::handlers::*;
 use crate::service_container::ServiceContainer;
 
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
@@ -102,14 +101,14 @@ fn read_message() -> Result<Option<NativeMessage>> {
     let stdin = io::stdin();
     let mut handle = stdin.lock();
 
-    // Read message length (4 bytes, native endian)
+    // Read message length (4 bytes, little-endian per native messaging spec)
     let mut len_bytes = [0u8; 4];
     match handle.read_exact(&mut len_bytes) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e.into()),
     }
-    let length = u32::from_ne_bytes(len_bytes) as usize;
+    let length = u32::from_le_bytes(len_bytes) as usize;
 
     // Validate length (Chrome/Firefox limit is 1MB)
     if length > MAX_MESSAGE_SIZE {
@@ -135,8 +134,8 @@ fn write_message(response: &NativeResponse) -> Result<()> {
     // Serialize to JSON
     let json = serde_json::to_vec(response)?;
 
-    // Write message length (4 bytes, native endian)
-    let len_bytes = (json.len() as u32).to_ne_bytes();
+    // Write message length (4 bytes, little-endian per native messaging spec)
+    let len_bytes = (json.len() as u32).to_le_bytes();
     handle.write_all(&len_bytes)?;
 
     // Write message content

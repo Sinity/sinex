@@ -232,7 +232,7 @@ pub struct Ulid(InnerUlid);
 
 impl fmt::Debug for Ulid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ulid({})", self)
+        write!(f, "Ulid({self})")
     }
 }
 
@@ -484,8 +484,7 @@ impl FromStr for Ulid {
                 }
                 _ => {
                     return Err(UlidError::InvalidFormat(format!(
-                        "ULID contains invalid base32 character: '{}'",
-                        ch
+                        "ULID contains invalid base32 character: '{ch}'"
                     )));
                 }
             }
@@ -502,8 +501,7 @@ impl FromStr for Ulid {
 
         if timestamp_ms > max_timestamp {
             return Err(UlidError::InvalidFormat(format!(
-                "ULID timestamp {} exceeds maximum allowed value {}",
-                timestamp_ms, max_timestamp
+                "ULID timestamp {timestamp_ms} exceeds maximum allowed value {max_timestamp}"
             )));
         }
 
@@ -544,19 +542,17 @@ mod sqlx_impl {
 
     impl Type<Postgres> for Ulid {
         fn type_info() -> PgTypeInfo {
-            // Register as the ULID type from PostgreSQL
-            PgTypeInfo::with_name("ulid")
+            <Uuid as Type<Postgres>>::type_info()
         }
 
         fn compatible(ty: &PgTypeInfo) -> bool {
-            // ULID is compatible with both ulid and uuid types
-            ty.name() == "ulid" || ty.name() == "uuid"
+            ty.name() == "ulid" || <Uuid as Type<Postgres>>::compatible(ty)
         }
     }
 
     impl PgHasArrayType for Ulid {
         fn array_type_info() -> PgTypeInfo {
-            PgTypeInfo::with_name("_ulid")
+            <Uuid as PgHasArrayType>::array_type_info()
         }
     }
 

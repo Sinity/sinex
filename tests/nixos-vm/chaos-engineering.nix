@@ -1,11 +1,20 @@
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 {
   name = "sinex-chaos-engineering";
 
-  nodes.machine = { pkgs, config, ... }: {
+  nodes.machine = { pkgs, config, lib, ... }: {
     imports = [
-      ./common/test-base.nix
+      (import ./common/test-base.nix {
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+      })
       ./common/chaos-toolkit.nix
     ];
 

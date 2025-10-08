@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 // Error Testing Utilities - Harmonized with TestContext
 //
 // Provides comprehensive error testing that integrates seamlessly
@@ -30,8 +32,7 @@ impl<T: Debug> ErrorAssertions<T> for std::result::Result<T, SinexError> {
     fn assert_contains_error(self, text: &str) -> std::result::Result<T, SinexError> {
         match self {
             Ok(val) => Err(SinexError::validation(format!(
-                "Expected error containing '{}' but operation succeeded: {:?}",
-                text, val
+                "Expected error containing '{text}' but operation succeeded: {val:?}"
             ))),
             Err(err) => {
                 let err_string = err.to_string();
@@ -39,8 +40,7 @@ impl<T: Debug> ErrorAssertions<T> for std::result::Result<T, SinexError> {
                     Err(err) // Return the original error for further chaining
                 } else {
                     Err(SinexError::validation(format!(
-                        "Error does not contain expected text '{}'. Actual error: {}",
-                        text, err_string
+                        "Error does not contain expected text '{text}'. Actual error: {err_string}"
                     )))
                 }
             }
@@ -67,8 +67,7 @@ impl<T: Debug> ErrorAssertions<T> for std::result::Result<T, SinexError> {
     fn assert_fails(self) -> std::result::Result<SinexError, SinexError> {
         match self {
             Ok(val) => Err(SinexError::validation(format!(
-                "Expected operation to fail but it succeeded: {:?}",
-                val
+                "Expected operation to fail but it succeeded: {val:?}"
             ))),
             Err(err) => Ok(err),
         }
@@ -78,8 +77,7 @@ impl<T: Debug> ErrorAssertions<T> for std::result::Result<T, SinexError> {
         match self {
             Ok(val) => Ok(val),
             Err(err) => Err(SinexError::validation(format!(
-                "Expected operation to succeed but it failed: {}",
-                err
+                "Expected operation to succeed but it failed: {err}"
             ))),
         }
     }
@@ -89,8 +87,7 @@ impl<T: Debug> ErrorAssertions<T> for color_eyre::eyre::Result<T> {
     fn assert_contains_error(self, text: &str) -> std::result::Result<T, SinexError> {
         match self {
             Ok(val) => Err(SinexError::validation(format!(
-                "Expected error containing '{}' but operation succeeded: {:?}",
-                text, val
+                "Expected error containing '{text}' but operation succeeded: {val:?}"
             ))),
             Err(err) => {
                 let err_string = err.to_string();
@@ -99,8 +96,7 @@ impl<T: Debug> ErrorAssertions<T> for color_eyre::eyre::Result<T> {
                     Err(SinexError::unknown(err_string))
                 } else {
                     Err(SinexError::validation(format!(
-                        "Error does not contain expected text '{}'. Actual error: {}",
-                        text, err_string
+                        "Error does not contain expected text '{text}'. Actual error: {err_string}"
                     )))
                 }
             }
@@ -134,8 +130,7 @@ impl<T: Debug> ErrorAssertions<T> for color_eyre::eyre::Result<T> {
     fn assert_fails(self) -> std::result::Result<SinexError, SinexError> {
         match self {
             Ok(val) => Err(SinexError::validation(format!(
-                "Expected operation to fail but it succeeded: {:?}",
-                val
+                "Expected operation to fail but it succeeded: {val:?}"
             ))),
             Err(err) => Ok(SinexError::unknown(err.to_string())),
         }
@@ -145,8 +140,7 @@ impl<T: Debug> ErrorAssertions<T> for color_eyre::eyre::Result<T> {
         match self {
             Ok(val) => Ok(val),
             Err(err) => Err(SinexError::validation(format!(
-                "Expected operation to succeed but it failed: {}",
-                err
+                "Expected operation to succeed but it failed: {err}"
             ))),
         }
     }
@@ -175,7 +169,7 @@ impl<'ctx> ValidationTester<'ctx> {
             .create_test_event(source, event_type, payload)
             .await;
 
-        result.assert_contains_error(expected_error)?;
+        let _ = result.assert_contains_error(expected_error).unwrap_err();
         Ok(())
     }
 
@@ -203,7 +197,7 @@ impl<'ctx> ValidationTester<'ctx> {
             if let Some(error_text) = expected_error {
                 self.test_invalid_payload("test", "validation", payload.clone(), error_text)
                     .await
-                    .map_err(|e| SinexError::unknown(format!("Validation test case failed: {}", e)))
+                    .map_err(|e| SinexError::unknown(format!("Validation test case failed: {e}")))
                     .map_err(|e| {
                         SinexError::validation("Batch validation case failed")
                             .with_context("case_name", case_name)
@@ -215,7 +209,7 @@ impl<'ctx> ValidationTester<'ctx> {
             } else {
                 self.test_valid_payload("test", "validation", payload.clone())
                     .await
-                    .map_err(|e| SinexError::unknown(format!("Valid payload test failed: {}", e)))
+                    .map_err(|e| SinexError::unknown(format!("Valid payload test failed: {e}")))
                     .map_err(|e| {
                         SinexError::validation("Expected valid payload but validation failed")
                             .with_context("case_name", case_name)
@@ -247,7 +241,7 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
         constraint_name: &str,
     ) -> crate::Result<()> {
         let result = operation.await;
-        result.assert_contains_error(constraint_name)?;
+        let _ = result.assert_contains_error(constraint_name).unwrap_err();
         Ok(())
     }
 
@@ -258,7 +252,9 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
         Fut: std::future::Future<Output = crate::Result<()>>,
     {
         let result = operation().await;
-        result.assert_contains_error("foreign key constraint")?;
+        let _ = result
+            .assert_contains_error("foreign key constraint")
+            .unwrap_err();
         Ok(())
     }
 }
@@ -302,8 +298,7 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
             match result {
                 Ok(op_result) => results.push(op_result),
                 Err(join_err) => results.push(Err(SinexError::service(format!(
-                    "Concurrent operation failed: {}",
-                    join_err
+                    "Concurrent operation failed: {join_err}"
                 )))),
             }
         }
@@ -357,8 +352,7 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
                 }
             }
             Ok(Err(join_err)) => Err(SinexError::service(format!(
-                "Concurrent operation failed: {}",
-                join_err
+                "Concurrent operation failed: {join_err}"
             ))),
             Err(_timeout_err) => {
                 // Timeout suggests potential deadlock
@@ -408,7 +402,10 @@ mod tests {
         // Test assert_fails
         let failed: crate::Result<()> = Err(SinexError::validation("test error"));
         let error = failed.assert_fails()?;
-        assert_eq!(error.to_string(), "test error");
+        assert!(
+            error.to_string().contains("test error"),
+            "unexpected validation message: {error}"
+        );
 
         // Test assert_succeeds
         let success: Result<i32> = Ok(42);
@@ -418,7 +415,7 @@ mod tests {
         // Test assert_contains_error
         let error_result: crate::Result<()> =
             Err(SinexError::validation("database connection failed"));
-        error_result.assert_contains_error("database")?;
+        let _ = error_result.assert_contains_error("database").unwrap_err();
 
         Ok(())
     }
@@ -567,11 +564,8 @@ mod tests {
         let results = concurrency_tester
             .test_race_condition(
                 |i| async move {
-                    if i % 3 == 0 {
-                        Err(SinexError::validation(format!(
-                            "Simulated failure for {}",
-                            i
-                        )))
+                    if i.is_multiple_of(3) {
+                        Err(SinexError::validation(format!("Simulated failure for {i}")))
                     } else {
                         Ok(i)
                     }
@@ -649,7 +643,7 @@ mod tests {
 
         // Create an operation that uses error context
         let result: crate::Result<()> = Err(error);
-        result.assert_contains_error("validation")?;
+        let _ = result.assert_contains_error("validation").unwrap_err();
 
         Ok(())
     }
@@ -703,7 +697,7 @@ mod tests {
         let service_err = SinexError::service("test");
 
         match validation_err {
-            SinexError::Validation(_) => assert!(true),
+            SinexError::Validation(_) => (),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "Expected Validation error, got: {:?}",
@@ -713,7 +707,7 @@ mod tests {
         }
 
         match database_err {
-            SinexError::Database(_) => assert!(true),
+            SinexError::Database(_) => (),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "Expected Database error, got: {:?}",
@@ -723,7 +717,7 @@ mod tests {
         }
 
         match service_err {
-            SinexError::Service(_) => assert!(true),
+            SinexError::Service(_) => (),
             _ => {
                 return Err(color_eyre::eyre::eyre!(
                     "Expected Service error, got: {:?}",

@@ -167,18 +167,18 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> color_eyre::ey
 
     // Initialize multiple automata by creating their CheckpointManagers
     let mut managers = HashMap::new();
-    for name in &automaton_names {
+    for &name in &automaton_names {
         let manager = CheckpointManager::new(
             ctx.pool.clone(),
             name.to_string(),
             "default".to_string(),
-            format!("test-consumer-{}", name),
+            format!("test-consumer-{name}"),
         );
-        managers.insert(name.clone(), manager);
+        managers.insert(name.to_string(), manager);
     }
 
     // Simulate concurrent processing by each automaton
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, &name) in automaton_names.iter().enumerate() {
         let manager = managers.get(name).unwrap();
 
         // Load initial checkpoint
@@ -194,7 +194,7 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> color_eyre::ey
                 "events_processed": events_to_process,
                 "position": format!("position-{}", events_to_process)
             }),
-            description: format!("Coordination test for {}", name),
+            description: format!("Coordination test for {name}"),
         };
 
         // Save the checkpoint
@@ -205,15 +205,14 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> color_eyre::ey
     }
 
     // Verify all automata processed events without conflicts
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, &name) in automaton_names.iter().enumerate() {
         let manager = managers.get(name).unwrap();
         let checkpoint = manager.load_checkpoint().await?;
         let expected_count = (i + 1) as u64;
 
         assert_eq!(
             checkpoint.processed_count, expected_count,
-            "Automaton {} should have processed {} events",
-            name, expected_count
+            "Automaton {name} should have processed {expected_count} events"
         );
     }
 
@@ -406,7 +405,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> color_eyre::
         .await?;
 
         // Small delay to avoid overwhelming the system
-        if i % 10 == 0 {
+        if i.is_multiple_of(10) {
             sleep(std::time::Duration::from_millis(1)).await;
         }
     }
@@ -455,8 +454,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> color_eyre::
         // Performance assertion - batch should complete within reasonable time
         assert!(
             batch_duration < Duration::seconds(5),
-            "Batch processing took too long: {:?}",
-            batch_duration
+            "Batch processing took too long: {batch_duration:?}"
         );
     }
 
@@ -470,8 +468,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> color_eyre::
     let events_per_second = event_count as f64 / total_duration.num_seconds() as f64;
     assert!(
         events_per_second > 5.0,
-        "Processing rate too slow: {} events/second",
-        events_per_second
+        "Processing rate too slow: {events_per_second} events/second"
     );
 
     tracing::info!("Automaton performance test completed successfully");

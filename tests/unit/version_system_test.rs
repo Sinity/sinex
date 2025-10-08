@@ -31,12 +31,11 @@ async fn test_version_string_parsing_patterns(_ctx: TestContext) -> color_eyre::
         // Validate the pattern structure (major.minor.patch+build)
         assert!(
             is_valid_version_pattern(pattern),
-            "Invalid version pattern: {}",
-            pattern
+            "Invalid version pattern: {pattern}"
         );
 
         let parts = parse_version_components(pattern);
-        assert!(parts.is_some(), "Failed to parse version: {}", pattern);
+        assert!(parts.is_some(), "Failed to parse version: {pattern}");
 
         if let Some((major, minor, patch, build, is_dirty)) = parts {
             // u64 types are always >= 0, these checks are for documentation
@@ -81,14 +80,7 @@ async fn test_version_comparison_logic(_ctx: TestContext) -> color_eyre::eyre::R
         assert_eq!(
             v1.cmp(&v2),
             expected,
-            "Comparing {}.{}.{} with {}.{}.{} should be {:?}",
-            maj1,
-            min1,
-            pat1,
-            maj2,
-            min2,
-            pat2,
-            expected
+            "Comparing {maj1}.{min1}.{pat1} with {maj2}.{min2}.{pat2} should be {expected:?}"
         );
     }
 
@@ -109,8 +101,7 @@ async fn test_dirty_build_detection(_ctx: TestContext) -> color_eyre::eyre::Resu
         let is_dirty = detect_dirty_build(version_str);
         assert_eq!(
             is_dirty, expected_dirty,
-            "Version '{}' dirty detection failed",
-            version_str
+            "Version '{version_str}' dirty detection failed"
         );
     }
 
@@ -142,16 +133,14 @@ async fn test_version_string_validation(_ctx: TestContext) -> color_eyre::eyre::
     for version in valid_versions {
         assert!(
             is_valid_version_pattern(version),
-            "Should accept valid version: {}",
-            version
+            "Should accept valid version: {version}"
         );
     }
 
     for version in invalid_versions {
         assert!(
             !is_valid_version_pattern(version),
-            "Should reject invalid version: {}",
-            version
+            "Should reject invalid version: {version}"
         );
     }
 
@@ -169,7 +158,7 @@ async fn test_build_timestamp_parsing(_ctx: TestContext) -> color_eyre::eyre::Re
 
     for timestamp in timestamp_examples {
         let parsed = chrono::DateTime::parse_from_rfc3339(timestamp);
-        assert!(parsed.is_ok(), "Failed to parse timestamp: {}", timestamp);
+        assert!(parsed.is_ok(), "Failed to parse timestamp: {timestamp}");
 
         if let Ok(dt) = parsed {
             let now = chrono::Utc::now();
@@ -206,23 +195,20 @@ async fn test_instance_identification_patterns(_ctx: TestContext) -> color_eyre:
         // Validate service name pattern
         assert!(
             is_valid_service_name(service_name),
-            "Invalid service name: {}",
-            service_name
+            "Invalid service name: {service_name}"
         );
 
         // Validate instance ID pattern
         assert!(
             is_valid_instance_id(instance_id),
-            "Invalid instance ID: {}",
-            instance_id
+            "Invalid instance ID: {instance_id}"
         );
 
         // Ensure uniqueness
-        let key = format!("{}/{}", service_name, instance_id);
+        let key = format!("{service_name}/{instance_id}");
         assert!(
             seen_ids.insert(key.clone()),
-            "Duplicate instance key: {}",
-            key
+            "Duplicate instance key: {key}"
         );
     }
 
@@ -286,13 +272,13 @@ async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::
     let newer_candidate = LeadershipCandidate {
         version: newer_version,
         start_time: now,
-        instance_id: "newer".to_string(),
+        _instance_id: "newer".to_string(),
     };
 
     let older_candidate = LeadershipCandidate {
         version: older_version,
         start_time: now,
-        instance_id: "older".to_string(),
+        _instance_id: "older".to_string(),
     };
 
     // Newer version should win
@@ -310,13 +296,13 @@ async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::
     let earlier_candidate = LeadershipCandidate {
         version: same_version,
         start_time: earlier_time,
-        instance_id: "earlier".to_string(),
+        _instance_id: "earlier".to_string(),
     };
 
     let later_candidate = LeadershipCandidate {
         version: same_version,
         start_time: now,
-        instance_id: "later".to_string(),
+        _instance_id: "later".to_string(),
     };
 
     // Earlier start time should win for same version
@@ -339,7 +325,7 @@ async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Resul
             patch: 100,
         },
         start_time: base_time - std::time::Duration::from_secs(60),
-        instance_id: "earlier".to_string(),
+        _instance_id: "earlier".to_string(),
     };
 
     let later = LeadershipCandidate {
@@ -349,7 +335,7 @@ async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Resul
             patch: 100,
         },
         start_time: base_time - std::time::Duration::from_secs(30),
-        instance_id: "later".to_string(),
+        _instance_id: "later".to_string(),
     };
 
     // Earlier start time should win (stability preference)
@@ -438,8 +424,7 @@ async fn test_production_build_detection_logic(_ctx: TestContext) -> color_eyre:
         let is_production = is_production_build(branch, is_dirty);
         assert_eq!(
             is_production, expected,
-            "Branch '{}' with dirty={} should be production={}",
-            branch, is_dirty, expected
+            "Branch '{branch}' with dirty={is_dirty} should be production={expected}"
         );
     }
 
@@ -487,7 +472,7 @@ struct InstanceMetadata {
 struct LeadershipCandidate {
     version: SimpleVersion,
     start_time: std::time::SystemTime,
-    instance_id: String,
+    _instance_id: String,
 }
 
 #[derive(Debug)]
@@ -525,8 +510,29 @@ fn is_valid_version_pattern(version_str: &str) -> bool {
         }
     }
 
-    // Check build part (not empty)
-    if build_part.is_empty() {
+    // Check build part (allow optional ".dirty" suffix)
+    let (build_base, dirty_suffix) = if let Some(stripped) = build_part.strip_suffix(".dirty") {
+        (stripped, true)
+    } else {
+        (build_part, false)
+    };
+
+    if build_base.is_empty() {
+        return false;
+    }
+
+    if build_base.contains('.') {
+        return false;
+    }
+
+    if !build_base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return false;
+    }
+
+    if dirty_suffix && build_base.ends_with('-') {
         return false;
     }
 

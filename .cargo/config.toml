@@ -84,4 +84,3 @@ overflow-checks = false
 
 # Coverage exclusions are handled via command line flags in justfile
 # to keep them visible and maintainable
-

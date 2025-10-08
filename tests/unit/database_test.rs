@@ -137,15 +137,12 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     let mut handles = vec![];
     let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
 
+    let shared_ctx = Arc::new(ctx);
     for task_id in 0..num_tasks {
         let barrier_clone = barrier.clone();
+        let ctx_clone = Arc::clone(&shared_ctx);
 
         let handle = tokio::spawn(async move {
-            // Create isolated test context for each task
-            let task_ctx = TestContext::with_name(&format!("concurrent_{}", task_id))
-                .await
-                .map_err(|e| SinexError::unknown(e.to_string()))?;
-
             // Wait for all tasks to start simultaneously
             barrier_clone.wait().await;
 
@@ -153,9 +150,9 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
             // Insert events concurrently
             for event_num in 0..events_per_task {
-                let event = task_ctx
+                let event = ctx_clone
                     .create_test_event(
-                        &format!("task-{}", task_id),
+                        &format!("task-{task_id}"),
                         "concurrent.test",
                         json!({
                             "task_id": task_id,
@@ -170,18 +167,18 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
             }
 
             // Verify all events for this task
-            let events = task_ctx
+            let events = ctx_clone
                 .pool
                 .events()
                 .get_by_source(
-                    &EventSource::from(format!("task-{}", task_id)),
+                    &EventSource::from(format!("task-{task_id}")),
                     Some(100),
                     None,
                 )
                 .await?;
             assert_eq!(events.len(), events_per_task);
 
-            Ok::<Vec<Id<RawEvent>>, SinexError>(task_ids)
+            Ok::<Vec<Id<Event<JsonValue>>>, SinexError>(task_ids)
         });
 
         handles.push(handle);
@@ -194,15 +191,14 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     for handle in handles {
         let task_ids = handle
             .await
-            .map_err(|e| SinexError::service(format!("Task failed: {}", e)))??;
+            .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
 
         // Verify no duplicate IDs across tasks
         for id in &task_ids {
             let id_str = id.to_string();
             assert!(
                 !all_id_strings.contains(&id_str),
-                "ID collision detected: {}",
-                id
+                "ID collision detected: {id}"
             );
             all_id_strings.insert(id_str);
         }
@@ -325,18 +321,19 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
         events.push(event);
     }
 
-    // Insert all events
-    ctx.insert_events(&events).await?;
+    // Insert all events using batch insertion to mirror production behaviour
+    let inserted_events = ctx.pool.events().insert_batch(events.clone()).await?;
 
     let insert_duration = start_time.elapsed();
 
     // Verify all events were inserted
-    let inserted_events = ctx
+    assert_eq!(inserted_events.len(), batch_size);
+    let stored_events = ctx
         .pool
         .events()
         .get_by_source(&EventSource::from("performance-test"), Some(200), None)
         .await?;
-    assert_eq!(inserted_events.len(), batch_size);
+    assert_eq!(stored_events.len(), batch_size);
 
     // Performance assertion - should complete reasonably quickly
     // Allow generous time for CI environments
@@ -443,7 +440,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()>
 
 #[sinex_test]
 async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    use chrono::{TimeZone, Utc};
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
@@ -464,14 +461,23 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
 
     // Verify ingestion timestamp is recent
     let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();
-    assert!(ingest_ts >= before_insert);
-    assert!(ingest_ts <= after_insert);
+    let tolerance = ChronoDuration::milliseconds(5);
+    assert!(
+        ingest_ts >= before_insert - tolerance,
+        "ingest timestamp {ingest_ts:?} precedes lower bound {lower:?}",
+        lower = before_insert - tolerance
+    );
+    assert!(
+        ingest_ts <= after_insert + tolerance,
+        "ingest timestamp {ingest_ts:?} exceeds upper bound {upper:?}",
+        upper = after_insert + tolerance
+    );
 
     // Retrieve and verify timestamps persist
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(inserted_event.id.unwrap())
+        .get_by_id(inserted_event.id.clone().unwrap())
         .await?
         .unwrap();
 

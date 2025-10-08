@@ -43,7 +43,6 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let start = start_time.unwrap_or(EPOCH_START);
-        let end = end_time.unwrap_or_else(Utc::now);
         let rows = self.pool.events().get_source_activity(start, None).await?;
 
         // Apply client-side end time filtering

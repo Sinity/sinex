@@ -26,7 +26,9 @@ tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
-hyper = "1.0"
+hyper = { version = "1.0", features = ["server"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server", "service"] }
+tokio-stream = { workspace = true }
 
 # JSON-RPC
 serde = { workspace = true }

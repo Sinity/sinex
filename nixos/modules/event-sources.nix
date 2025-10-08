@@ -48,7 +48,7 @@ let
 
 in
 {
-  options.services.sinex.unifiedCollector.sources = {
+  options.services.sinex.eventSources = {
     # Shell history sources
     atuin = mkEventSource {
       name = "Atuin shell history";
@@ -206,8 +206,8 @@ in
           internal = true;
           readOnly = true;
           default =
-            if cfg.unifiedCollector.sources.filesystem.overrideDefaultExcludes then
-              cfg.unifiedCollector.sources.filesystem.excludePatterns
+            if cfg.eventSources.filesystem.overrideDefaultExcludes then
+              cfg.eventSources.filesystem.excludePatterns
             else
               [
                 # Sensible defaults that are always applied
@@ -279,7 +279,7 @@ in
                 "*.so"
                 "*.dylib"
               ]
-              ++ cfg.unifiedCollector.sources.filesystem.excludePatterns;
+              ++ cfg.eventSources.filesystem.excludePatterns;
         };
       };
     };
@@ -431,4 +431,3 @@ in
     };
   };
 }
-

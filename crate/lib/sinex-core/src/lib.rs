@@ -1,3 +1,4 @@
+#![allow(async_fn_in_trait)]
 //! # Sinex Core
 //!
 //! Unified core types and database layer for the Sinex event-driven data capture system.

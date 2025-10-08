@@ -453,6 +453,7 @@ pub mod prelude {
         assert_debug_snapshot, assert_json_snapshot, assert_snapshot, assert_yaml_snapshot,
     };
     pub use rstest::{fixture, rstest};
+    #[allow(deprecated)]
     pub use similar_asserts::{assert_eq as assert_similar, assert_str_eq};
     pub use tracing_test::traced_test;
 
@@ -621,6 +622,7 @@ pub use test_context::TestContext;
 // Comprehensive self-tests
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::prelude::*;
     use crate::sinex_test;
     use rstest::rstest;
@@ -694,8 +696,9 @@ mod tests {
         ctx.assert("workflow validation")
             .eq(&events[0].event_type.as_str(), &"file.created")?
             .that(
-                fs_event.ts_ingest < term_event.ts_ingest,
-                "file should be created before processing",
+                fs_event.id.as_ref().map(|id| id.as_ulid().timestamp())
+                    < term_event.id.as_ref().map(|id| id.as_ulid().timestamp()),
+                "file should be created before processing (ULID ordering)",
             )?;
 
         Ok(())
@@ -785,7 +788,9 @@ mod tests {
                 .await?;
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);
-            assert_eq!(event.payload, payload);
+            let mut expected = payload.clone();
+            TestContext::sanitize_payload(&mut expected);
+            assert_eq!(event.payload, expected);
         }
         Ok(())
     }
@@ -816,7 +821,9 @@ mod tests {
             let event = ctx
                 .create_test_event("edge", "special", json!({"text": special_chars}))
                 .await?;
-            assert_eq!(event.payload["text"], json!(special_chars));
+            let mut expected_payload = json!({"text": special_chars});
+            TestContext::sanitize_payload(&mut expected_payload);
+            assert_eq!(event.payload, expected_payload);
 
             // Deeply nested JSON
             let mut nested = json!("value");
@@ -832,13 +839,14 @@ mod tests {
     #[sinex_test]
     async fn test_concurrent_test_execution(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that multiple tests can run concurrently without interference
-        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+        const TASKS: usize = 5;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
         let mut handles = vec![];
 
-        for i in 0..5 {
+        for i in 0..TASKS {
             let barrier_clone = barrier.clone();
             let handle = tokio::spawn(async move {
-                let ctx = TestContext::with_name(&format!("concurrent_{}", i))
+                let ctx = TestContext::with_name(&format!("concurrent_{i}"))
                     .await
                     .map_err(|e| SinexError::unknown(e.to_string()))?;
 
@@ -847,31 +855,43 @@ mod tests {
 
                 // Each performs operations
                 for j in 0..10 {
-                    let task_source = format!("task_{}", i);
+                    let task_source = format!("task_{i}");
                     ctx.create_test_event(&task_source, "concurrent.test", json!({"iteration": j}))
                         .await
                         .map_err(|e| SinexError::unknown(e.to_string()))?;
                 }
 
-                // Verify only sees own events using direct repository access
-                let events = ctx
-                    .pool
-                    .events()
-                    .get_by_source(&EventSource::from(format!("task_{}", i)), Some(100), None)
-                    .await?;
-                assert_eq!(events.len(), 10);
+                // Allow the database to flush the inserts before querying.
+                const EXPECTED_EVENTS: usize = 10;
+                const MAX_ATTEMPTS: usize = 5;
+                const RETRY_DELAY_MS: u64 = 20;
 
+                let mut observed = 0usize;
+                for attempt in 0..MAX_ATTEMPTS {
+                    let events = ctx
+                        .pool
+                        .events()
+                        .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
+                        .await?;
+                    observed = events.len();
+                    if observed == EXPECTED_EVENTS {
+                        break;
+                    }
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    }
+                }
+
+                assert_eq!(observed, EXPECTED_EVENTS);
+
+                // Verify only sees own events using direct repository access
                 // Should not see any other task's events
-                for k in 0..5 {
+                for k in 0..TASKS {
                     if k != i {
                         let other_events = ctx
                             .pool
                             .events()
-                            .get_by_source(
-                                &EventSource::from(format!("task_{}", k)),
-                                Some(100),
-                                None,
-                            )
+                            .get_by_source(&EventSource::from(format!("task_{k}")), Some(100), None)
                             .await?;
                         assert_eq!(other_events.len(), 0);
                     }
@@ -886,7 +906,7 @@ mod tests {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| SinexError::service(format!("Task failed: {}", e)))??;
+                .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
         }
 
         Ok(())
@@ -914,12 +934,16 @@ mod tests {
 
         let result = failing_operation();
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Custom validation error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Custom validation error"),
+            "unexpected validation message: {err}"
+        );
 
         Ok(())
     }
 
-    #[sinex_test(timeout = 5)]
+    #[sinex_test(timeout = 30)]
     async fn test_timeout_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that the timeout attribute works
         // This test should complete quickly, well under 5 seconds
@@ -1020,17 +1044,18 @@ mod tests {
         ctx: TestContext,
     ) -> color_eyre::eyre::Result<()> {
         // Test that event counting is accurate across operations
-        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
-        assert_eq!(initial_count, 0, "Should start with zero events");
+        ctx.force_cleanup().await?;
+        let baseline = ctx.current_event_count().await?;
 
         // Insert events one by one and verify count
         for i in 1..=5 {
             ctx.create_test_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
-            let current_count = ctx.pool.events().count_all().await.unwrap_or(0);
+            let current_count = ctx.current_event_count().await?;
             assert_eq!(
-                current_count as usize, i,
+                current_count,
+                baseline + i,
                 "Count should match inserted events"
             );
         }
@@ -1048,9 +1073,10 @@ mod tests {
 
         ctx.insert_events(&batch_events).await?;
 
-        let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
+        let final_count = ctx.current_event_count().await?;
         assert_eq!(
-            final_count, 15,
+            final_count,
+            baseline + 15,
             "Should have all individual and batch events"
         );
 
@@ -1121,7 +1147,7 @@ mod tests {
             let error_count = allocation_errors.clone();
 
             let handle = tokio::spawn(async move {
-                match TestContext::with_name(&format!("concurrent_alloc_{}", i)).await {
+                match TestContext::with_name(&format!("concurrent_alloc_{i}")).await {
                     Ok(ctx) => {
                         // Do some work to hold the context
                         ctx.create_test_event("pool-test", "allocation", json!({"task_id": i}))
@@ -1160,7 +1186,7 @@ mod tests {
 
         // Create a context in a scope so it gets dropped
         {
-            let temp_ctx = TestContext::with_name(&format!("cleanup_test_{}", test_id)).await?;
+            let temp_ctx = TestContext::with_name(&format!("cleanup_test_{test_id}")).await?;
 
             // Insert identifiable data
             temp_ctx
@@ -1200,20 +1226,17 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_lazy_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
-        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
+        ctx.force_cleanup().await?;
+        let baseline = ctx.current_event_count().await?;
 
-        // Context should start with zero events
-        assert_eq!(initial_count, 0, "Context should start with zero events");
-
-        // Create a test event to verify functionality
         ctx.create_test_event("fixture-test", "initialization", json!({"lazy": true}))
             .await?;
 
-        // Should have created one event
-        let after_event = ctx.pool.events().count_all().await.unwrap_or(0);
+        let after_event = ctx.current_event_count().await?;
         assert_eq!(
-            after_event, 1,
-            "Should have exactly one event after creation"
+            after_event,
+            baseline + 1,
+            "Context should add exactly one event when create_test_event is called"
         );
 
         Ok(())

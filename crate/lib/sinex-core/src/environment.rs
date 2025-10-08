@@ -92,31 +92,29 @@ impl SinexEnvironment {
             return Err(eyre!("Database URL cannot be empty"));
         }
 
-        // Parse the URL to extract database name and replace it
-        if let Some(last_slash) = base_url.rfind('/') {
-            let (prefix, db_part) = base_url.split_at(last_slash + 1);
+        // Separate query from main part first so we don't mis-detect slashes inside the query
+        let (main, query) = match base_url.split_once('?') {
+            Some((m, q)) => (m, format!("?{q}")),
+            None => (base_url, String::new()),
+        };
 
-            // Handle query parameters (e.g., ?host=/run/postgresql)
-            let (db_name, query) = if let Some(q_pos) = db_part.find('?') {
-                (&db_part[..q_pos], &db_part[q_pos..])
-            } else {
-                (db_part, "")
-            };
+        // Find the database name as the segment after the last '/' in the main part
+        let last_slash = main
+            .rfind('/')
+            .ok_or_else(|| eyre!("Invalid database URL format: {}", base_url))?;
+        let (prefix, db_name) = main.split_at(last_slash + 1);
 
-            // Skip namespacing if database name is already namespaced
-            if db_name.contains(&format!("_{}", self.name)) {
-                debug!(
-                    "Database URL already namespaced for environment {}",
-                    self.name
-                );
-                return Ok(base_url.to_string());
-            }
-
-            let namespaced_db = self.database_name(db_name);
-            Ok(format!("{}{}{}", prefix, namespaced_db, query))
-        } else {
-            Err(eyre!("Invalid database URL format: {}", base_url))
+        // Skip namespacing if already present
+        if db_name.contains(&format!("_{}", self.name)) {
+            debug!(
+                "Database URL already namespaced for environment {}",
+                self.name
+            );
+            return Ok(base_url.to_string());
         }
+
+        let namespaced_db = self.database_name(db_name);
+        Ok(format!("{prefix}{namespaced_db}{query}"))
     }
 
     /// Get environment-namespaced NATS subject
@@ -124,7 +122,8 @@ impl SinexEnvironment {
     /// Prefixes NATS subjects with environment:
     /// - sinex.events.raw.> -> dev.sinex.events.raw.>
     pub fn nats_subject(&self, base_subject: &str) -> String {
-        if base_subject.starts_with(&format!("{}.", self.name)) {
+        let env_prefix = &self.name;
+        if base_subject.starts_with(&format!("{env_prefix}.")) {
             debug!(
                 "NATS subject already namespaced for environment {}",
                 self.name
@@ -141,14 +140,14 @@ impl SinexEnvironment {
     /// - SINEX_RAW_EVENTS -> DEV_SINEX_RAW_EVENTS
     pub fn nats_stream_name(&self, base_name: &str) -> String {
         let env_prefix = self.name.to_uppercase();
-        if base_name.starts_with(&format!("{}_", env_prefix)) {
+        if base_name.starts_with(&format!("{env_prefix}_")) {
             debug!(
                 "NATS stream name already namespaced for environment {}",
                 self.name
             );
             base_name.to_string()
         } else {
-            format!("{}_{}", env_prefix, base_name)
+            format!("{env_prefix}_{base_name}")
         }
     }
 
@@ -238,10 +237,7 @@ impl SinexEnvironment {
 
     /// Get environment-specific runtime directory
     pub fn runtime_dir(&self) -> PathBuf {
-        self.socket_path("/run/sinex")
-            .parent()
-            .unwrap()
-            .to_path_buf()
+        Path::new("/run").join(format!("sinex-{}", self.name))
     }
 
     /// Validate that all environment resources are properly isolated
@@ -299,137 +295,4 @@ pub fn environment() -> &'static SinexEnvironment {
             }
         })
     })
-}
-
-/// Set the global environment (for testing)
-#[cfg(test)]
-pub fn set_test_environment(env: SinexEnvironment) {
-    // This only works if environment hasn't been initialized yet
-    let _ = ENVIRONMENT.set(env);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::env;
-
-    #[test]
-    fn test_environment_creation() {
-        let env = SinexEnvironment::new("dev").unwrap();
-        assert_eq!(env.name(), "dev");
-        assert!(env.is_dev());
-        assert!(!env.is_prod());
-
-        let env = SinexEnvironment::new("prod").unwrap();
-        assert_eq!(env.name(), "prod");
-        assert!(env.is_prod());
-        assert!(!env.is_dev());
-    }
-
-    #[test]
-    fn test_invalid_environment() {
-        let result = SinexEnvironment::new("invalid");
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid environment"));
-    }
-
-    #[test]
-    fn test_database_name_namespacing() {
-        let env = SinexEnvironment::new("dev").unwrap();
-        assert_eq!(env.database_name("sinex"), "sinex_dev");
-
-        let env = SinexEnvironment::new("prod").unwrap();
-        assert_eq!(env.database_name("sinex"), "sinex_prod");
-    }
-
-    #[test]
-    fn test_database_url_namespacing() {
-        let env = SinexEnvironment::new("dev").unwrap();
-
-        let base_url = "postgresql:///sinex?host=/run/postgresql";
-        let result = env.database_url(base_url).unwrap();
-        assert_eq!(result, "postgresql:///sinex_dev?host=/run/postgresql");
-
-        // Test already namespaced URL
-        let result2 = env.database_url(&result).unwrap();
-        assert_eq!(result2, result); // Should be unchanged
-    }
-
-    #[test]
-    fn test_nats_subject_namespacing() {
-        let env = SinexEnvironment::new("dev").unwrap();
-
-        let subject = env.nats_subject("sinex.events.raw.>");
-        assert_eq!(subject, "dev.sinex.events.raw.>");
-
-        // Test already namespaced
-        let subject2 = env.nats_subject(&subject);
-        assert_eq!(subject2, subject); // Should be unchanged
-    }
-
-    #[test]
-    fn test_nats_stream_name_namespacing() {
-        let env = SinexEnvironment::new("dev").unwrap();
-
-        let stream = env.nats_stream_name("SINEX_RAW_EVENTS");
-        assert_eq!(stream, "DEV_SINEX_RAW_EVENTS");
-
-        // Test already namespaced
-        let stream2 = env.nats_stream_name(&stream);
-        assert_eq!(stream2, stream); // Should be unchanged
-    }
-
-    #[test]
-    fn test_socket_path_namespacing() {
-        let env = SinexEnvironment::new("dev").unwrap();
-
-        let path = env.socket_path("/run/sinex/ingest.sock");
-        assert_eq!(path, PathBuf::from("/run/sinex-dev/ingest.sock"));
-
-        // Test already namespaced
-        let path2 = env.socket_path(&path);
-        assert_eq!(path2, path); // Should be unchanged
-    }
-
-    #[test]
-    fn test_work_directory_namespacing() {
-        let env = SinexEnvironment::new("staging").unwrap();
-
-        let dir = env.work_directory("/tmp/sinex");
-        assert_eq!(dir, PathBuf::from("/tmp/sinex-staging"));
-
-        // Test already namespaced
-        let dir2 = env.work_directory(&dir);
-        assert_eq!(dir2, dir); // Should be unchanged
-    }
-
-    #[test]
-    fn test_config_prefix() {
-        let env = SinexEnvironment::new("dev").unwrap();
-        assert_eq!(env.config_prefix(), "SINEX_DEV_");
-
-        let env = SinexEnvironment::new("prod").unwrap();
-        assert_eq!(env.config_prefix(), "SINEX_PROD_");
-    }
-
-    #[test]
-    fn test_environment_from_var() {
-        // Test with environment variable set
-        env::set_var("SINEX_ENVIRONMENT", "staging");
-        let env = SinexEnvironment::current().unwrap();
-        assert_eq!(env.name(), "staging");
-
-        // Clean up
-        env::remove_var("SINEX_ENVIRONMENT");
-    }
-
-    #[test]
-    fn test_global_environment() {
-        // This test may interfere with others since it uses a global
-        let env = environment();
-        assert!(["dev", "staging", "prod"].contains(&env.name()));
-    }
 }

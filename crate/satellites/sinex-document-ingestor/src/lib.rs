@@ -4,17 +4,13 @@
 //! from sensd and creating events with proper provenance traceability.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
-use sinex_core::{
-    db::models::Event,
-    types::{events::DocumentIngestedPayload, ulid::Ulid},
-    JsonValue,
-};
+use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -26,7 +22,7 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use sqlx::PgPool;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -139,7 +135,9 @@ impl DocumentProcessor {
         info!("Processing material: {}", material_id);
 
         // Create stream for material slices
-        let stream = self.create_material_stream(material_id, db_pool).await?;
+        let stream = self
+            .create_material_stream(material_id, db_pool.clone())
+            .await?;
         pin_mut!(stream);
 
         let mut events_generated = 0u64;
@@ -205,11 +203,12 @@ impl DocumentProcessor {
     async fn create_material_stream(
         &self,
         material_id: Ulid,
-        db_pool: &PgPool,
+        db_pool: PgPool,
     ) -> Result<impl tokio_stream::Stream<Item = Result<MaterialSlice>> + '_> {
         let batch_size = self.config.batch_size;
 
         // Query temporal ledger for slices
+        let pool = db_pool;
         let stream = async_stream::stream! {
             let mut offset = 0i64;
 
@@ -217,17 +216,17 @@ impl DocumentProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        tl.material_id as "material_id: Ulid",
+                        tl.source_material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        tl.note,
+                        NULL::text as note,
                         sm.optional_blob_id as "optional_blob_id?: Ulid",
-                        sm.data as "inline_data?: Vec<u8>"
+                        NULL::bytea as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
                         ON sm.id = tl.source_material_id
-                    WHERE tl.material_id = $1::ulid
+                    WHERE tl.source_material_id = $1::ulid
                     AND tl.offset_start >= $2
                     ORDER BY tl.offset_start
                     LIMIT $3
@@ -236,7 +235,7 @@ impl DocumentProcessor {
                     offset,
                     batch_size as i64,
                 )
-                .fetch_all(db_pool)
+                .fetch_all(&pool)
                 .await;
 
                 match slices {
@@ -258,7 +257,7 @@ impl DocumentProcessor {
                                 }
                             } else if let Some(blob_id) = record.optional_blob_id {
                                 // Load from blob storage
-                                match self.load_blob_data(blob_id, db_pool).await {
+                                match self.load_blob_data(blob_id, &pool).await {
                                     Ok(blob_data) => {
                                         // Extract slice from blob based on offsets
                                         let start = record.offset_start as usize;
@@ -318,7 +317,7 @@ impl DocumentProcessor {
                 content_hash,
                 size_bytes
             FROM core.blobs
-            WHERE id = $1::uuid
+            WHERE id::uuid = $1::uuid
             "#,
             ulid_to_uuid(blob_id),
         )
@@ -415,7 +414,7 @@ impl DocumentProcessor {
         }
 
         // Create document.ingested event with proper material provenance
-        let mut event = Event::<JsonValue>::from_material(
+        let mut event = Event::<JsonValue>::dynamic(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),
             serde_json::json!({
@@ -425,18 +424,14 @@ impl DocumentProcessor {
                 "mime_type": mime_type,
                 "encoding": encoding,
             }),
-            material_id,
-            0, // Start offset - document processed as complete unit
-        );
-
-        // Set proper provenance with material information
-        event.provenance = sinex_core::db::models::event::Provenance::Material {
-            id: sinex_core::types::Id::from(material_id),
-            anchor_byte: 0,
-            offset_kind: sinex_core::db::models::event::OffsetKind::Byte,
-            offset_start: Some(0),
-            offset_end: Some(document_data.len() as i64),
-        };
+        )
+        .with_provenance(sinex_core::db::models::event::Provenance::from_material(
+            sinex_core::types::Id::from(material_id),
+            0,
+            Some(0),
+            Some(document_data.len() as i64),
+        ))
+        .build();
 
         events.push(event);
 

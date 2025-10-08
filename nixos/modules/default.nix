@@ -38,15 +38,15 @@ in
 
     package = mkOption {
       type = types.package;
-      default = pkgs.sinex or (import ../. { }).packages.${pkgs.system}.default;
+      default = if pkgs ? sinex then pkgs.sinex else (import ../. { }).packages.${pkgs.system}.sinex;
       defaultText = literalExpression "pkgs.sinex";
       description = "Sinex package to use";
     };
 
     cliPackage = mkOption {
       type = types.package;
-      default = pkgs.python3;  # Temporary default to fix VM tests
-      defaultText = literalExpression "pkgs.sinex-cli";
+      default = if pkgs ? sinexCli then pkgs.sinexCli else pkgs.python3;
+      defaultText = literalExpression "pkgs.sinexCli";
       description = "Sinex CLI package to use";
     };
 

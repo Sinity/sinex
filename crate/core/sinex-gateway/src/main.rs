@@ -4,7 +4,6 @@
 //! - RPC Server: JSON-RPC over Unix socket for CLI
 //! - Native Messaging: stdin/stdout protocol for browser extensions
 
-use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use sinex_core::SanitizedPath;

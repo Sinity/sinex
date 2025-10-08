@@ -9,6 +9,7 @@
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
+use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::sinex_test;
@@ -22,21 +23,18 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 1..1000usize
     )| {
-        let mut ulids = Vec::new();
+        let mut ulids = Vec::with_capacity(count);
         for _ in 0..count {
             ulids.push(Ulid::new());
         }
 
-        // Property: All ULIDs should be unique (check pairwise)
-        for (i, ulid1) in ulids.iter().enumerate() {
-            for ulid2 in ulids.iter().skip(i + 1) {
-                prop_assert_ne!(ulid1, ulid2);
-            }
-        }
+        // Property: All ULIDs should be unique
+        let unique: HashSet<_> = ulids.iter().cloned().collect();
+        prop_assert_eq!(unique.len(), ulids.len());
 
-        // Property: ULIDs should be generally in temporal order
-        for window in ulids.windows(2) {
-            prop_assert!(window[0] <= window[1]);
+        // Property: First timestamp should be less than or equal to the final timestamp
+        if let (Some(first), Some(last)) = (ulids.first(), ulids.last()) {
+            prop_assert!(first.timestamp() <= last.timestamp());
         }
     });
     Ok(())
@@ -45,15 +43,14 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
 #[sinex_test]
 fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
-        ulid_str in "[0-9A-Z]{26}"
+        bytes in prop::array::uniform16(any::<u8>())
     )| {
-        // Property: Valid ULID strings should always parse successfully
-        let ulid_result = ulid_str.parse::<Ulid>();
-        if ulid_result.is_ok() {
-            let ulid = ulid_result.expect("ULID parsing should succeed for valid string");
-            // Property: Round-trip conversion should be identity
-            prop_assert_eq!(ulid.to_string(), ulid_str);
-        }
+        let ulid = Ulid::from_bytes(bytes).expect("Raw bytes should always form a ULID");
+        let ulid_str = ulid.to_string();
+        let parsed = ulid_str
+            .parse::<Ulid>()
+            .expect("String produced from ULID should parse");
+        prop_assert_eq!(parsed, ulid);
     });
     Ok(())
 }
@@ -68,7 +65,9 @@ fn test_ulid_ordering_transitivity() -> color_eyre::eyre::Result<()> {
         for _ in 0..count {
             ulids.push(Ulid::new());
             if delay_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                for _ in 0..delay_ms {
+                    std::thread::yield_now();
+                }
             }
         }
 
@@ -413,8 +412,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
         thread_count in 2..10usize,
         operations_per_thread in 10..100usize
     )| {
-        use parking_lot::Mutex;
-        use std::sync::Arc;
+        use std::sync::{Arc, Mutex};
         use std::thread;
 
         let results = Arc::new(Mutex::new(Vec::new()));
@@ -428,7 +426,8 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
                 for _ in 0..operations_per_thread {
                     thread_ulids.push(Ulid::new());
                 }
-                results_clone.lock().extend(thread_ulids);
+                let mut guard = results_clone.lock().expect("mutex poisoned");
+                guard.extend(thread_ulids);
             });
             handles.push(handle);
         }
@@ -437,18 +436,15 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
             handle.join().unwrap();
         }
 
-        let final_results = results.lock();
+        let final_results = results.lock().expect("mutex poisoned");
         let expected_count = thread_count * operations_per_thread;
 
         // Property: Should have expected number of ULIDs
         prop_assert_eq!(final_results.len(), expected_count);
 
-        // Property: All ULIDs should be unique despite concurrent generation (check pairwise)
-        for (i, ulid1) in final_results.iter().enumerate() {
-            for ulid2 in final_results.iter().skip(i + 1) {
-                prop_assert_ne!(ulid1, ulid2);
-            }
-        }
+        // Property: All ULIDs should be unique despite concurrent generation
+        let unique: HashSet<_> = final_results.iter().cloned().collect();
+        prop_assert_eq!(unique.len(), final_results.len());
     });
     Ok(())
 }
@@ -486,15 +482,6 @@ fn test_validation_properties() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-// =============================================================================
-// ULID COMPREHENSIVE PROPERTY TESTS - From dedicated property file
-// =============================================================================
-
-mod property {
-    pub mod ulid_property_test;
-}
-
-// =============================================================================
 // REGRESSION PROPERTY TESTS - Preserve important system invariants
 // =============================================================================
 

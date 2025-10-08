@@ -61,8 +61,8 @@ fn test_ulid_ordering_consistency() -> color_eyre::eyre::Result<()> {
     let mut ulids = Vec::new();
     for _ in 0..10 {
         ulids.push(Ulid::new());
-        // Small delay to ensure different timestamps
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // Yield to allow clock to advance without blocking the async runtime
+        std::thread::yield_now();
     }
 
     // ULIDs should be in ascending order (generally)
@@ -108,8 +108,7 @@ fn test_ulid_invalid_strings() -> color_eyre::eyre::Result<()> {
     for invalid_ulid in invalid_cases {
         assert!(
             Ulid::from_str(invalid_ulid).is_err(),
-            "Should reject invalid ULID: {}",
-            invalid_ulid
+            "Should reject invalid ULID: {invalid_ulid}"
         );
     }
     Ok(())
@@ -288,8 +287,6 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 // EVENT CREATION TESTS - Event::<JsonValue>::test_event()
 // =============================================================================
 
-use sinex_core::{Event, JsonValue};
-
 #[sinex_test]
 fn test_event_builder_basic() -> color_eyre::eyre::Result<()> {
     let source = EventSource::from_static("test-source");
@@ -428,10 +425,10 @@ fn test_edge_case_strings() -> color_eyre::eyre::Result<()> {
 
     for (test_name, test_value) in edge_cases {
         let source = EventSource::new(test_value);
-        let event_type = EventType::new(&format!("edge.{}", test_name));
+        let event_type = EventType::new(format!("edge.{test_name}"));
 
         assert_eq!(source.as_str(), test_value);
-        assert_eq!(event_type.as_str(), &format!("edge.{}", test_name));
+        assert_eq!(event_type.as_str(), format!("edge.{test_name}"));
 
         // Should work in event creation
         let event =
@@ -686,7 +683,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
 
     assert_eq!(retrieved_events.len(), 5);
 
-    // Events should be in insertion order; compare ULID (time-ordered)
+    // Results are returned newest-first; successive entries should have non-increasing ULIDs
     for i in 0..4 {
         let a = retrieved_events[i]
             .id
@@ -698,7 +695,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
             .as_ref()
             .expect("persisted event has id")
             .as_ulid();
-        assert!(a <= b, "Events should be ordered by insertion time");
+        assert!(a >= b, "Events should be in reverse insertion order");
     }
 
     Ok(())

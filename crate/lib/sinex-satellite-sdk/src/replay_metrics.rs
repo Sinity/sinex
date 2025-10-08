@@ -240,7 +240,7 @@ impl MetricsSnapshot {
             report.push_str(&format!("Elapsed time: {:.2?}\n", elapsed));
         }
 
-        report.push_str(&format!("\nProcessing:\n"));
+        report.push_str("\nProcessing:\n");
         report.push_str(&format!("  Events processed: {}\n", self.events_processed));
         report.push_str(&format!("  Events failed: {}\n", self.events_failed));
         report.push_str(&format!(
@@ -253,7 +253,7 @@ impl MetricsSnapshot {
         ));
 
         if let Some(avg_batch_time) = self.avg_batch_time {
-            report.push_str(&format!("\nPerformance:\n"));
+            report.push_str("\nPerformance:\n");
             report.push_str(&format!("  Avg batch time: {:.2?}\n", avg_batch_time));
         }
 
@@ -271,7 +271,7 @@ impl MetricsSnapshot {
         }
 
         if self.pause_count > 0 {
-            report.push_str(&format!("\nPauses:\n"));
+            report.push_str("\nPauses:\n");
             report.push_str(&format!("  Pause count: {}\n", self.pause_count));
             report.push_str(&format!(
                 "  Total pause time: {:.2?}\n",
@@ -280,7 +280,7 @@ impl MetricsSnapshot {
         }
 
         if !self.error_counts.is_empty() {
-            report.push_str(&format!("\nErrors:\n"));
+            report.push_str("\nErrors:\n");
             for (error_type, count) in &self.error_counts {
                 report.push_str(&format!("  {}: {}\n", error_type, count));
             }

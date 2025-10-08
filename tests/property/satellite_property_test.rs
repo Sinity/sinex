@@ -3,13 +3,35 @@
 //! Tests that verify satellite communication, lifecycle, and coordination properties
 //! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
 
+#![allow(dead_code)]
+
+use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
 use sinex_test_utils::prelude::*;
+use std::future::Future;
+use std::sync::Mutex;
 use std::time::Duration;
+
+static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+    Mutex::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio runtime for satellite property tests"),
+    )
+});
+
+fn run_async<F, T>(future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let runtime = TEST_RUNTIME.lock().expect("tokio runtime mutex poisoned");
+    runtime.block_on(future)
+}
 
 /// Property test strategies for event data
 mod strategies {
@@ -82,19 +104,18 @@ mod strategies {
 
 use strategies::*;
 
-/// Test event processing preserves order
+// Test event processing preserves order
 proptest! {
     fn satellite_event_processing_preserves_order(
         events in event_sequences(),
         batch_size in 1usize..100usize,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Skip if no events to test
             if events.is_empty() {
-                return;
+                return Ok::<(), proptest::test_runner::TestCaseError>(());
             }
 
             // Process events in batches
@@ -125,11 +146,12 @@ proptest! {
                     assert!(prev_id.timestamp() <= curr_id.timestamp());
                 }
             }
-        });
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }
 
-/// Test satellite fault tolerance with intermittent failures
+// Test satellite fault tolerance with intermittent failures
 proptest! {
     fn satellite_handles_intermittent_failures(
         failure_rate in 0.0..0.3f64, // Up to 30% failure rate
@@ -139,17 +161,16 @@ proptest! {
         ),
         recovery_delay in 1u64..100u64,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Skip if no events to test
             if events.is_empty() {
-                return;
+                return Ok::<(), proptest::test_runner::TestCaseError>(());
             }
 
             let mut successful_events = 0;
-            let mut failed_events = 0;
+            let mut _failed_events = 0;
 
             for (i, (source, event_type, payload)) in events.iter().enumerate() {
                 // Simulate intermittent failures
@@ -165,7 +186,7 @@ proptest! {
 
                     let result = ctx.pool.events().insert(invalid_event).await;
                     if result.is_err() {
-                        failed_events += 1;
+                    _failed_events += 1;
                     }
                 } else {
                     // Process normal event
@@ -191,19 +212,19 @@ proptest! {
 
             // Verify system recovered from failures
             assert!(successful_events > 0, "At least some events should succeed");
-        });
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }
 
-/// Test satellite resource management with concurrent processing
+// Test satellite resource management with concurrent processing
 proptest! {
     fn satellite_manages_resources_efficiently(
         concurrent_operations in 1usize..5usize,
         events_per_operation in 1usize..50usize,
         processing_delay in 1u64..50u64,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Generate events for concurrent processing
@@ -212,7 +233,7 @@ proptest! {
 
             for i in 0..concurrent_operations {
                 let ctx_clone = TestContext::new().await.unwrap();
-                let source = format!("concurrent-{}", i);
+                let source = format!("concurrent-{i}");
 
                 let handle = tokio::spawn(async move {
                     let mut operation_events = 0;
@@ -220,7 +241,7 @@ proptest! {
                     for j in 0..events_per_operation {
                         let event = Event::test_event(
                             EventSource::new(&source),
-                            EventType::new(&format!("test.event.{}", j)),
+                    EventType::new(format!("test.event.{j}")),
                             json!({"operation": i, "event": j}),
                         );
 
@@ -252,11 +273,13 @@ proptest! {
 
             let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(final_count, total_events as i64);
-        });
+
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }
 
-/// Test satellite configuration validation properties
+// Test satellite configuration validation properties
 proptest! {
     fn satellite_config_validation_is_robust(
         service_name in "[a-zA-Z0-9_-]+",
@@ -282,23 +305,22 @@ proptest! {
     }
 }
 
-/// Test event processing with varying batch configurations
+// Test event processing with varying batch configurations
 proptest! {
     fn satellite_batch_processing_is_consistent(
-        initial_batch_size in 1usize..100usize,
-        updated_batch_size in 1usize..100usize,
+        _initial_batch_size in 1usize..100usize,
+        _updated_batch_size in 1usize..100usize,
         events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
             1..=50
         ),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Skip if no events to test
             if events.is_empty() {
-                return;
+                return Ok::<(), proptest::test_runner::TestCaseError>(());
             }
 
             // Process events in first batch configuration
@@ -333,11 +355,13 @@ proptest! {
             // Verify no events were lost during configuration changes
             let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(final_count, events.len() as i64);
-        });
+
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }
 
-/// Test satellite resilience to processing interruptions
+// Test satellite resilience to processing interruptions
 proptest! {
     fn satellite_survives_processing_interruptions(
         interruption_duration in 1u64..100u64,
@@ -345,15 +369,14 @@ proptest! {
         events_during_interruption in 1usize..20usize,
         events_after_interruption in 1usize..20usize,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Phase 1: Normal operation
             for i in 0..events_before_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("before.{}", i)),
+                    EventType::new(format!("before.{i}")),
                     json!({"phase": "before", "index": i}),
                 );
 
@@ -368,7 +391,7 @@ proptest! {
             for i in 0..events_during_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("during.{}", i)),
+                    EventType::new(format!("during.{i}")),
                     json!({"phase": "during", "index": i}),
                 );
 
@@ -386,7 +409,7 @@ proptest! {
             for i in 0..events_after_interruption {
                 let event = Event::test_event(
                     EventSource::new("interruption_test"),
-                    EventType::new(&format!("after.{}", i)),
+                    EventType::new(format!("after.{i}")),
                     json!({"phase": "after", "index": i}),
                 );
 
@@ -399,19 +422,20 @@ proptest! {
 
             let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert!(final_count >= expected_minimum as i64);
-        });
+
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }
 
-/// Test event ordering properties under concurrent load
+// Test event ordering properties under concurrent load
 proptest! {
     fn satellite_maintains_event_ordering_under_load(
         concurrent_sources in 1usize..5usize,
         events_per_source in 1usize..20usize,
         processing_jitter in 1u64..20u64,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
 
             let mut handles = Vec::new();
@@ -419,12 +443,12 @@ proptest! {
             // Create concurrent event producers
             for source_id in 0..concurrent_sources {
                 let ctx_clone = TestContext::new().await.unwrap();
-                let source_name = format!("ordering-test-{}", source_id);
+                let source_name = format!("ordering-test-{source_id}");
 
                 let handle = tokio::spawn(async move {
                     for event_id in 0..events_per_source {
                         let event = Event::test_event(
-                            EventSource::new(&source_name),
+                            EventSource::new(source_name.clone()),
                             EventType::new("ordering.test"),
                             json!({
                                 "source_id": source_id,
@@ -478,17 +502,17 @@ proptest! {
 
                 // Verify sequential event_ids within payload
                 for window in source_events.windows(2) {
-                    if let (payload1, payload2) = (&window[0].payload, &window[1].payload) {
-                        if let (Some(id1), Some(id2)) = (
-                            payload1.get("event_id").and_then(|v| v.as_u64()),
-                            payload2.get("event_id").and_then(|v| v.as_u64())
-                        ) {
-                            // Within a source, event_ids should be sequential
-                            assert!(id1 < id2 || id1 == 0, "Events within source should maintain ordering");
-                        }
+                    let (payload1, payload2) = (&window[0].payload, &window[1].payload);
+                    if let (Some(id1), Some(id2)) = (
+                        payload1.get("event_id").and_then(|v| v.as_u64()),
+                        payload2.get("event_id").and_then(|v| v.as_u64())
+                    ) {
+                        // Within a source, event_ids should be sequential
+                        assert!(id1 < id2 || id1 == 0, "Events within source should maintain ordering");
                     }
                 }
             }
-        });
+            Ok::<(), proptest::test_runner::TestCaseError>(())
+        })?;
     }
 }

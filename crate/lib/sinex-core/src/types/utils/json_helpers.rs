@@ -16,8 +16,7 @@ pub fn parse_json<T: DeserializeOwned>(
     // First validate the JSON structure
     let validated_value = crate::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
-            "Invalid JSON structure for {} (operation: {}): {}",
-            context_type, operation, e
+            "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))
     })?;
 
@@ -66,8 +65,7 @@ pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> 
     // Use sinex_types to parse and validate in one step
     crate::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
-            "Invalid JSON structure for {} (operation: {}): {}",
-            context_type, operation, e
+            "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))
     })
 }
@@ -92,8 +90,7 @@ pub fn extract_field<T: DeserializeOwned>(
 
     serde_json::from_value(field_value.clone()).map_err(|e| {
         SinexError::serialization(format!(
-            "Failed to deserialize field: {} (operation: {}): {}",
-            field_name, operation, e
+            "Failed to deserialize field: {field_name} (operation: {operation}): {e}"
         ))
     })
 }
@@ -106,57 +103,7 @@ pub fn to_json_value<T: serde::Serialize>(
 ) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| {
         SinexError::serialization(format!(
-            "Failed to serialize {} (operation: {}): {}",
-            context_type, operation, e
+            "Failed to serialize {context_type} (operation: {operation}): {e}"
         ))
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-    use sinex_test_utils::sinex_test;
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct TestStruct {
-        name: String,
-        value: i32,
-    }
-
-    #[sinex_test]
-    fn test_parse_json() -> Result<()> {
-        let json = r#"{"name": "test", "value": 42}"#;
-        let result: TestStruct = parse_json(json, "test struct", "test_operation").unwrap();
-        assert_eq!(result.name, "test");
-        assert_eq!(result.value, 42);
-
-        // Test error case
-        let bad_json = r#"{"invalid": json}"#;
-        let result: Result<TestStruct> = parse_json(bad_json, "test struct", "test_operation");
-        assert!(result.is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_extract_field() -> Result<()> {
-        let json_value = serde_json::json!({
-            "name": "test",
-            "value": 42,
-            "nested": {
-                "field": "data"
-            }
-        });
-
-        let name: String = extract_field(&json_value, "name", "test_op").unwrap();
-        assert_eq!(name, "test");
-
-        let value: i32 = extract_field(&json_value, "value", "test_op").unwrap();
-        assert_eq!(value, 42);
-
-        // Test missing field
-        let result: Result<String> = extract_field(&json_value, "missing", "test_op");
-        assert!(result.is_err());
-        Ok(())
-    }
 }

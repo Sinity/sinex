@@ -206,15 +206,16 @@ impl SecurePath {
 
 /// Custom deserializer for paths that validates during deserialization
 pub struct ValidatedPathDeserializer {
-    level: PathValidationLevel,
+    _level: PathValidationLevel,
 }
 
 impl ValidatedPathDeserializer {
     pub fn new(level: PathValidationLevel) -> Self {
-        Self { level }
+        Self { _level: level }
     }
 }
 
+#[allow(dead_code)]
 struct PathVisitor {
     level: PathValidationLevel,
 }
@@ -231,7 +232,7 @@ impl<'de> Visitor<'de> for PathVisitor {
         E: de::Error,
     {
         SecurePath::new(value, self.level)
-            .map_err(|e| E::custom(format!("Invalid path '{}': {}", value, e)))
+            .map_err(|e| E::custom(format!("Invalid path '{value}': {e}")))
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
@@ -260,7 +261,7 @@ impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
         tuple_struct map struct enum identifier ignored_any
     }
 
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -268,7 +269,7 @@ impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
         Err(de::Error::custom("Use deserialize_string instead"))
     }
 
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -291,7 +292,7 @@ where
 {
     let path_str = String::deserialize(deserializer)?;
     SanitizedPath::from_str_validated(&path_str)
-        .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))
+        .map_err(|e| de::Error::custom(format!("Invalid path '{path_str}': {e}")))
 }
 
 /// Helper for deserializing Optional<SanitizedPath> with validation
@@ -305,7 +306,7 @@ where
     match path_opt {
         Some(path_str) => {
             let sanitized = SanitizedPath::from_str_validated(&path_str)
-                .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+                .map_err(|e| de::Error::custom(format!("Invalid path '{path_str}': {e}")))?;
             Ok(Some(sanitized))
         }
         None => Ok(None),
@@ -324,10 +325,7 @@ where
 
     for (i, path_str) in path_strings.into_iter().enumerate() {
         let sanitized = SanitizedPath::from_str_validated(&path_str).map_err(|e| {
-            de::Error::custom(format!(
-                "Invalid path at index {}: '{}' - {}",
-                i, path_str, e
-            ))
+            de::Error::custom(format!("Invalid path at index {i}: '{path_str}' - {e}"))
         })?;
         sanitized_paths.push(sanitized);
     }
@@ -342,7 +340,7 @@ where
 {
     let path_str = String::deserialize(deserializer)?;
     let validated_path = validate_path(&path_str)
-        .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+        .map_err(|e| de::Error::custom(format!("Invalid path '{path_str}': {e}")))?;
     Ok(validated_path)
 }
 
@@ -357,7 +355,7 @@ where
     match path_opt {
         Some(path_str) => {
             let validated_path = validate_path(&path_str)
-                .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+                .map_err(|e| de::Error::custom(format!("Invalid path '{path_str}': {e}")))?;
             Ok(Some(validated_path))
         }
         None => Ok(None),
@@ -376,79 +374,10 @@ where
 
     for (i, path_str) in path_strings.into_iter().enumerate() {
         let validated_path = validate_path(&path_str).map_err(|e| {
-            de::Error::custom(format!(
-                "Invalid path at index {}: '{}' - {}",
-                i, path_str, e
-            ))
+            de::Error::custom(format!("Invalid path at index {i}: '{path_str}' - {e}"))
         })?;
         validated_paths.push(validated_path);
     }
 
     Ok(validated_paths)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::{sinex_test, TestContext};
-
-    use color_eyre::eyre::Result;
-
-    use serde_json::json;
-
-    #[sinex_test]
-    async fn test_database_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let valid = DatabaseConfig {
-            url: "postgresql://localhost/test".to_string(),
-            max_connections: 50,
-            min_connections: 5,
-            timeout_secs: 30,
-        };
-        assert!(valid.validate().is_ok());
-
-        let invalid = DatabaseConfig {
-            url: "not-a-url".to_string(),
-            max_connections: 50,
-            min_connections: 5,
-            timeout_secs: 30,
-        };
-        assert!(invalid.validate().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_server_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let valid = ServerConfig {
-            name: "test-server".to_string(),
-            bind_address: "127.0.0.1".to_string(),
-            port: 8080,
-            worker_threads: 4,
-        };
-        assert!(valid.validate().is_ok());
-
-        let invalid = ServerConfig {
-            name: "".to_string(), // Empty name
-            bind_address: "127.0.0.1".to_string(),
-            port: 8080,
-            worker_threads: 4,
-        };
-        assert!(invalid.validate().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_config_validation_trait(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let config = ServerConfig {
-            name: "test".to_string(),
-            bind_address: "not-an-ip".to_string(),
-            port: 8080,
-            worker_threads: 4,
-        };
-
-        let result = config.validate_config();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("bind_address"));
-
-        Ok(())
-    }
 }

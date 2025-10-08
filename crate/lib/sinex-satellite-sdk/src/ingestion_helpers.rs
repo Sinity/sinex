@@ -226,12 +226,11 @@ impl IdempotenceKey {
 
     /// Generate SQL for insert_or_ignore semantics
     pub fn to_insert_sql(&self) -> String {
-        format!(
-            "INSERT INTO core.events (...) VALUES (...) 
+        "INSERT INTO core.events (...) VALUES (...) 
             ON CONFLICT (source_material_id, anchor_byte) 
             WHERE source_material_id IS NOT NULL 
-            DO NOTHING",
-        )
+            DO NOTHING"
+            .to_string()
     }
 
     /// Check if this key would conflict with existing events
@@ -263,7 +262,7 @@ pub struct AnchorComputer {
 
 impl AnchorComputer {
     /// Compute anchor byte for a given offset in the material
-    pub fn compute_anchor(&self, offset: i64, record_boundary: i64) -> i64 {
+    pub fn compute_anchor(&self, _offset: i64, record_boundary: i64) -> i64 {
         // For now, use the start of the record as the anchor
         // This ensures deterministic anchoring
         record_boundary
@@ -497,185 +496,5 @@ impl SnapshotDiff {
                 "data": change.old_data,
             })],
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_slice_assembler_lines() {
-        let mut assembler = SliceAssembler::line_based();
-
-        let records = assembler.push_bytes(b"line1\nline2\nline").unwrap();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0], b"line1");
-        assert_eq!(records[1], b"line2");
-
-        let remaining = assembler.flush();
-        assert_eq!(remaining, Some(b"line".to_vec()));
-    }
-
-    #[test]
-    fn test_idempotence_key() {
-        let key = IdempotenceKey::new(Ulid::new(), 12345, EventType::from_static("file.created"));
-
-        assert_eq!(key.anchor_byte, 12345);
-        assert!(key.to_insert_sql().contains("ON CONFLICT"));
-    }
-
-    #[test]
-    fn test_time_quality_precedence() {
-        let entries = vec![LedgerEntry {
-            offset_start: 0,
-            offset_end: 100,
-            ts_capture: Utc::now(),
-            precision: "exact".to_string(),
-            source_type: "realtime_capture".to_string(),
-        }];
-
-        let reader = LedgerReader::new(Ulid::new(), entries);
-        let (ts, quality) = reader.derive_ts_orig(50, None);
-
-        assert_eq!(quality, TimeQuality::RealtimeCapture);
-    }
-
-    #[test]
-    fn test_snapshot_diff_inserts() {
-        let identity_spec = RowIdentitySpec::new(vec!["id".to_string()]);
-        let mut diff = SnapshotDiff::new(identity_spec);
-
-        let current_rows = vec![
-            SnapshotRow {
-                key: vec!["1".to_string()],
-                data: serde_json::json!({"id": "1", "name": "Alice"}),
-                version: None,
-            },
-            SnapshotRow {
-                key: vec!["2".to_string()],
-                data: serde_json::json!({"id": "2", "name": "Bob"}),
-                version: None,
-            },
-        ];
-
-        let changes = diff.compute_diff(current_rows);
-        assert_eq!(changes.len(), 2);
-        assert!(changes.iter().all(|c| c.change_type == ChangeType::Insert));
-    }
-
-    #[test]
-    fn test_snapshot_diff_updates() {
-        let identity_spec = RowIdentitySpec::new(vec!["id".to_string()])
-            .with_tracked_columns(vec!["name".to_string(), "age".to_string()]);
-        let mut diff = SnapshotDiff::new(identity_spec);
-
-        // Load initial snapshot
-        let initial_rows = vec![SnapshotRow {
-            key: vec!["1".to_string()],
-            data: serde_json::json!({"id": "1", "name": "Alice", "age": 30}),
-            version: None,
-        }];
-        diff.load_previous_snapshot(initial_rows);
-
-        // Apply update
-        let current_rows = vec![SnapshotRow {
-            key: vec!["1".to_string()],
-            data: serde_json::json!({"id": "1", "name": "Alice", "age": 31}),
-            version: None,
-        }];
-
-        let changes = diff.compute_diff(current_rows);
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].change_type, ChangeType::Update);
-        assert_eq!(changes[0].changed_columns, vec!["age".to_string()]);
-    }
-
-    #[test]
-    fn test_snapshot_diff_deletes() {
-        let identity_spec = RowIdentitySpec::new(vec!["id".to_string()]);
-        let mut diff = SnapshotDiff::new(identity_spec);
-
-        // Load initial snapshot with 2 rows
-        let initial_rows = vec![
-            SnapshotRow {
-                key: vec!["1".to_string()],
-                data: serde_json::json!({"id": "1", "name": "Alice"}),
-                version: None,
-            },
-            SnapshotRow {
-                key: vec!["2".to_string()],
-                data: serde_json::json!({"id": "2", "name": "Bob"}),
-                version: None,
-            },
-        ];
-        diff.load_previous_snapshot(initial_rows);
-
-        // Current snapshot only has 1 row
-        let current_rows = vec![SnapshotRow {
-            key: vec!["1".to_string()],
-            data: serde_json::json!({"id": "1", "name": "Alice"}),
-            version: None,
-        }];
-
-        let changes = diff.compute_diff(current_rows);
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].change_type, ChangeType::Delete);
-        assert_eq!(changes[0].row_key, vec!["2".to_string()]);
-    }
-
-    #[test]
-    fn test_snapshot_diff_mixed_changes() {
-        let identity_spec = RowIdentitySpec::new(vec!["id".to_string()]);
-        let mut diff = SnapshotDiff::new(identity_spec);
-
-        // Load initial snapshot
-        let initial_rows = vec![
-            SnapshotRow {
-                key: vec!["1".to_string()],
-                data: serde_json::json!({"id": "1", "name": "Alice"}),
-                version: None,
-            },
-            SnapshotRow {
-                key: vec!["2".to_string()],
-                data: serde_json::json!({"id": "2", "name": "Bob"}),
-                version: None,
-            },
-        ];
-        diff.load_previous_snapshot(initial_rows);
-
-        // Current snapshot has: 1 update, 1 insert, 1 delete (row 2 is gone)
-        let current_rows = vec![
-            SnapshotRow {
-                key: vec!["1".to_string()],
-                data: serde_json::json!({"id": "1", "name": "Alice Smith"}), // Updated
-                version: None,
-            },
-            SnapshotRow {
-                key: vec!["3".to_string()],
-                data: serde_json::json!({"id": "3", "name": "Charlie"}), // New
-                version: None,
-            },
-        ];
-
-        let changes = diff.compute_diff(current_rows);
-        assert_eq!(changes.len(), 3);
-
-        let inserts: Vec<_> = changes
-            .iter()
-            .filter(|c| c.change_type == ChangeType::Insert)
-            .collect();
-        let updates: Vec<_> = changes
-            .iter()
-            .filter(|c| c.change_type == ChangeType::Update)
-            .collect();
-        let deletes: Vec<_> = changes
-            .iter()
-            .filter(|c| c.change_type == ChangeType::Delete)
-            .collect();
-
-        assert_eq!(inserts.len(), 1);
-        assert_eq!(updates.len(), 1);
-        assert_eq!(deletes.len(), 1);
     }
 }

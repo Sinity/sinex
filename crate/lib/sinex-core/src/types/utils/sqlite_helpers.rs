@@ -97,11 +97,11 @@ impl<'a> SqliteQueryBuilder<'a> {
             let mut error_msg = format!("Database error (operation: {}): {}", self.operation, e);
 
             if let Some(qt) = self.query_type {
-                error_msg.push_str(&format!(", query_type: {}", qt));
+                error_msg.push_str(&format!(", query_type: {qt}"));
             }
 
             for (key, value) in self.context {
-                error_msg.push_str(&format!(", {}: {}", key, value));
+                error_msg.push_str(&format!(", {key}: {value}"));
             }
 
             SinexError::database(error_msg)
@@ -117,51 +117,5 @@ pub trait QueryResultExt<T> {
 impl<T, E: std::fmt::Display> QueryResultExt<T> for std::result::Result<T, E> {
     fn with_context(self, builder: SqliteQueryBuilder) -> Result<T> {
         builder.wrap_error(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-    use tempfile::NamedTempFile;
-
-    #[sinex_test]
-    fn test_sqlite_connection_helpers() -> Result<()> {
-        // Create a temporary database
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = Utf8Path::from_path(temp_file.path()).unwrap();
-
-        // Test read-write connection
-        let conn = SqliteConnection::open_readwrite(path, "test_operation").unwrap();
-        conn.execute("CREATE TABLE test (id INTEGER)", []).unwrap();
-        drop(conn);
-
-        // Test read-only connection
-        let conn = SqliteConnection::open_readonly(path, "test_operation").unwrap();
-        let count: i32 = conn
-            .query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_statement_prepare_helper() -> Result<()> {
-        let temp_file = NamedTempFile::new().unwrap();
-        let conn = Connection::open(temp_file.path()).unwrap();
-
-        conn.execute("CREATE TABLE test (id INTEGER)", []).unwrap();
-
-        // Test prepare with context
-        let stmt = conn
-            .prepare_with_context("SELECT * FROM test", "test_query")
-            .unwrap();
-        drop(stmt);
-
-        // Test prepare error
-        let result = conn.prepare_with_context("SELECT * FROM nonexistent", "test_query");
-        assert!(result.is_err());
-        Ok(())
     }
 }

@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs, unused_imports, unused_variables, dead_code)]
 //! sensd - Universal acquisition daemon library
 //!
 //! Core modules for source material acquisition and temporal ledger management

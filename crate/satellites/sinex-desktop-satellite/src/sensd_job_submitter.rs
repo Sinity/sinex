@@ -3,7 +3,7 @@
 //! This module handles submitting acquisition jobs to sensd for desktop data sources
 //! (clipboard, window manager) instead of direct capture.
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_satellite_sdk::sensd_client::{
     AcquisitionMode, JobStatus, ResourceLimits, SensdClient, SensdJobConfig, SensorType,

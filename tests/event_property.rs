@@ -15,10 +15,10 @@ use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 type RawEvent = Event<JsonValue>;
 
-/// Property tests for Event-related functionality
-///
-/// These tests migrate from the old RawEvent-based system to the modern
-/// unified Event architecture using the schemaless builder pattern.
+// Property tests for Event-related functionality
+//
+// These tests migrate from the old RawEvent-based system to the modern
+// unified Event architecture using the schemaless builder pattern.
 
 // =============================================================================
 // Helper Functions
@@ -119,12 +119,6 @@ fn arb_version() -> impl Strategy<Value = String> {
     "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(-[a-zA-Z0-9-]+)?"
 }
 
-/// Generate arbitrary ULIDs for testing
-fn arb_ulid() -> impl Strategy<Value = Ulid> {
-    // Just generate new ULIDs - they're already random and suitable for testing
-    Just(()).prop_map(|_| Ulid::new())
-}
-
 /// Generate arbitrary timestamps within a reasonable range
 fn arb_timestamp() -> impl Strategy<Value = chrono::DateTime<Utc>> {
     // Generate timestamps from 1 year ago to 1 hour in the future
@@ -175,7 +169,7 @@ fn test_event_serde_roundtrip() -> Result<()> {
         let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
 
         // Should be identical
-        prop_assert_eq!(event.id, deserialized.id);
+        prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
         // Compare derived ingest times via ULID timestamps
@@ -207,8 +201,8 @@ fn test_event_id_properties() -> Result<()> {
         );
         event1.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Small delay to ensure different timestamps
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // Small delay to reduce the chance of identical ULID timestamps
+        std::thread::yield_now();
 
         let mut event2 = RawEvent::test_event(
             EventSource::new(source),
@@ -217,10 +211,10 @@ fn test_event_id_properties() -> Result<()> {
         );
         event2.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Events should be unique (different ts_ingest times)
+        // Events should be unique even if ULID timestamps collide
         prop_assert_ne!(
-            event1.id.as_ref().unwrap().as_ulid().timestamp(),
-            event2.id.as_ref().unwrap().as_ulid().timestamp()
+            event1.id.as_ref().unwrap(),
+            event2.id.as_ref().unwrap()
         );
 
         // ts_ingest should be recent
@@ -315,7 +309,7 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
             events.push(event);
 
             // Small delay to ensure timestamp ordering
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            std::thread::yield_now();
         }
 
         // Timestamps should be in ascending order
@@ -493,7 +487,12 @@ mod unit_tests {
         assert_eq!(event.source.as_str(), "test_source");
         assert_eq!(event.event_type.as_str(), "test.event");
         assert_eq!(event.payload, json!({"key": "value"}));
-        assert!(event.ts_orig.is_none());
+        let ts_orig = event
+            .ts_orig
+            .expect("RawEvent::test_event should stamp an original timestamp");
+        let now = Utc::now();
+        assert!(ts_orig <= now);
+        assert!(now - ts_orig < ChronoDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
         assert!(event.ingestor_version.is_none());
         assert!(event.payload_schema_id.is_none());

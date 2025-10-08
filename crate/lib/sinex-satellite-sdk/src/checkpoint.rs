@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use sinex_core::db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
 use sinex_core::types::ulid::Ulid;
 use sinex_core::{ConsumerGroup, ConsumerName, ProcessorName};
+use std::convert::TryInto;
 use tracing::{debug, info, warn};
 
 // Database record structures for query results
@@ -279,7 +280,6 @@ impl CheckpointManager {
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
-    #[must_use]
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
@@ -292,6 +292,12 @@ impl CheckpointManager {
             .await?;
 
         let checkpoint = if let Some(row) = checkpoint_result {
+            let processed_count = u64::try_from(row.processed_count).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "Stored checkpoint has negative processed_count, refusing to load".to_string(),
+                )
+            })?;
+
             debug!(
                 processor = %self.processor_name,
                 consumer_group = %self.consumer_group,
@@ -316,7 +322,7 @@ impl CheckpointManager {
 
                 CheckpointState {
                     checkpoint,
-                    processed_count: row.processed_count as u64,
+                    processed_count,
                     last_activity: row.last_activity,
                     data: None, // state field doesn't exist
                     version,
@@ -329,7 +335,7 @@ impl CheckpointManager {
 
                 let legacy = LegacyCheckpointState {
                     last_processed_id: row.last_processed_id.map(|id| id.as_ulid().to_string()),
-                    processed_count: row.processed_count as u64,
+                    processed_count,
                     last_activity: row.last_activity,
                     data: None, // state field doesn't exist
                     version,
@@ -371,7 +377,6 @@ impl CheckpointManager {
     /// # Atomicity
     /// - Uses `ON CONFLICT` upsert for atomic updates
     /// - Updates `updated_at` timestamp on each save
-    #[must_use]
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
         let _checkpoint_id = Ulid::new();
 
@@ -388,15 +393,24 @@ impl CheckpointManager {
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
+        let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
+            SatelliteError::Checkpoint(
+                "processed_count exceeds supported range for storage".to_string(),
+            )
+        })?;
+
         self.pool
             .checkpoints()
             .upsert(
-                &processor_name,
-                &consumer_group,
-                &consumer_name,
+                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                    processor: &processor_name,
+                    consumer_group: &consumer_group,
+                    consumer_name: &consumer_name,
+                },
                 last_processed_id.map(|id| {
                     sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
                 }),
+                processed_count,
                 Some(checkpoint_data),
             )
             .await?;
@@ -414,7 +428,6 @@ impl CheckpointManager {
     }
 
     /// Get checkpoint history for debugging
-    #[must_use]
     pub async fn get_checkpoint_history(
         &self,
         _limit: i64,
@@ -435,7 +448,6 @@ impl CheckpointManager {
     }
 
     /// Reset checkpoint (for testing or manual intervention)
-    #[must_use]
     pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
         // CheckpointQueries doesn't have delete_checkpoint method in the new API
         // For now, just log a warning
@@ -455,7 +467,6 @@ impl CheckpointManager {
     }
 
     /// Get checkpoint statistics
-    #[must_use]
     pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
         // CheckpointQueries doesn't have get_checkpoint_stats method in the new API
         // For now, return default stats

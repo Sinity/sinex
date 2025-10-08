@@ -3,7 +3,6 @@
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
-use std::time::Duration;
 use validator::Validate;
 
 /// sensd daemon configuration

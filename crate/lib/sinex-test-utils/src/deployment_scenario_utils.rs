@@ -1027,8 +1027,7 @@ impl ConfigCompatibilityTester {
                     severity: IssueSeverity::Warning,
                     component: "environment".to_string(),
                     description: format!(
-                        "Low memory limit ({} MB) may affect performance",
-                        max_memory
+                        "Low memory limit ({max_memory} MB) may affect performance"
                     ),
                     suggested_fix:
                         "Increase memory allocation or optimize component configurations"
@@ -1119,11 +1118,8 @@ pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String 
     let successful_scenarios = results.iter().filter(|r| r.overall_success).count();
 
     report.push_str("## Summary\n\n");
-    report.push_str(&format!("- Total scenarios tested: {}\n", total_scenarios));
-    report.push_str(&format!(
-        "- Successful scenarios: {}\n",
-        successful_scenarios
-    ));
+    report.push_str(&format!("- Total scenarios tested: {total_scenarios}\n"));
+    report.push_str(&format!("- Successful scenarios: {successful_scenarios}\n"));
     report.push_str(&format!(
         "- Failed scenarios: {}\n",
         total_scenarios - successful_scenarios
@@ -1162,15 +1158,15 @@ pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String 
                     issue.severity, issue.description, issue.component
                 ));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
 
         if !result.recommendations.is_empty() {
             report.push_str("**Recommendations:**\n");
             for recommendation in &result.recommendations {
-                report.push_str(&format!("- {}\n", recommendation));
+                report.push_str(&format!("- {recommendation}\n"));
             }
-            report.push_str("\n");
+            report.push('\n');
         }
     }
 
@@ -1228,9 +1224,9 @@ mod comprehensive_tests {
         for env_type in env_types {
             match env_type {
                 EnvironmentType::Development => {
-                    assert_eq!(format!("{:?}", env_type), "Development")
+                    assert_eq!(format!("{env_type:?}"), "Development")
                 }
-                EnvironmentType::Production => assert_eq!(format!("{:?}", env_type), "Production"),
+                EnvironmentType::Production => assert_eq!(format!("{env_type:?}"), "Production"),
                 _ => {} // Other types exist
             }
         }
@@ -1437,7 +1433,7 @@ mod comprehensive_tests {
 
         // Execute it
         let scenario = tester.get_scenario("development_environment").unwrap();
-        let result = tester.run_scenario(&scenario).await?;
+        let result = tester.run_scenario(scenario).await?;
 
         // Check result structure
         assert!(!result.scenario_name.is_empty());

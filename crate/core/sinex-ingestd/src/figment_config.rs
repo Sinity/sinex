@@ -145,11 +145,10 @@ impl Default for IngestdFigmentConfig {
 
 impl IngestdFigmentConfig {
     /// Build a figment with common configuration layers
-    fn build_figment_base() -> Result<Figment, figment::Error> {
+    fn build_figment_base() -> Result<Figment, Box<figment::Error>> {
         let default_toml = toml::to_string(&Self::default()).map_err(|e| {
-            figment::Error::from(figment::error::Kind::Message(format!(
-                "Failed to serialize default config: {}",
-                e
+            Box::new(figment::Error::from(figment::error::Kind::Message(
+                format!("Failed to serialize default config: {e}",),
             )))
         })?;
 
@@ -166,22 +165,22 @@ impl IngestdFigmentConfig {
     }
 
     /// Load configuration from multiple sources
-    pub fn load() -> Result<Self, figment::Error> {
+    pub fn load() -> Result<Self, Box<figment::Error>> {
         let figment = Self::build_figment_base()?
             // Load from config file if exists
             .merge(Toml::file("ingestd.toml").nested())
             .merge(Toml::file("/etc/sinex/ingestd.toml").nested());
 
-        Self::add_env_layers(figment).extract()
+        Self::add_env_layers(figment).extract().map_err(Box::new)
     }
 
     /// Load configuration with custom config file
-    pub fn load_from(config_file: &str) -> Result<Self, figment::Error> {
+    pub fn load_from(config_file: &str) -> Result<Self, Box<figment::Error>> {
         let figment = Self::build_figment_base()?
             // Load from specified config file
             .merge(Toml::file(config_file).nested());
 
-        Self::add_env_layers(figment).extract()
+        Self::add_env_layers(figment).extract().map_err(Box::new)
     }
 
     /// Validate the configuration
@@ -254,9 +253,9 @@ mod tests {
     #[sinex_test]
     fn test_default_config() -> color_eyre::eyre::Result<()> {
         let config = IngestdFigmentConfig::default();
-        assert_eq!(config.database_pool_size, 25);
-        assert_eq!(config.batch_size, 100);
-        assert_eq!(config.batch_timeout_secs, 5);
+        assert_eq!(config.database_pool_size, DEFAULT_POOL_SIZE);
+        assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
+        assert_eq!(config.batch_timeout_secs, DEFAULT_BATCH_TIMEOUT);
         assert!(!config.dry_run);
         assert!(config.validate_schemas);
         Ok(())

@@ -3,13 +3,13 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use sinex_core::{
-    db::{create_pool, query_helpers::db_error},
+    db::create_pool,
     types::{domain::SanitizedPath, error::SinexError},
 };
 use sinex_satellite_sdk::{annex::BlobManager, IngestClient};
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+// (no mpsc channel needed here)
 
 /// Container holding all service instances
 #[derive(Clone)]

@@ -1,5 +1,12 @@
 # Basic E2E flow test for Sinex - Optimized version
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 let
   inherit (pkgs) lib;
@@ -13,29 +20,28 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [ 
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli; 
       })
     ];
 
     # Override base config for this test
     services.sinex = {
-      unifiedCollector = {
-        # Enable additional sources for comprehensive testing
-        sources.shellHistory.enable = true;
-        sources.atuin = {
+      eventSources = {
+        shellHistory.enable = true;
+        atuin = {
           enable = true;
           databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
         };
-        sources.asciinema = {
+        asciinema = {
           enable = true;
           path = "/home/test/.local/share/asciinema";
           autoRecord = false;
         };
-        sources.dbus.enable = true;
-        
+        dbus.enable = true;
+
         # Optional sources - will be tested only if available
-        sources.clipboard.enable = true;
-        sources.kittyScrollback = {
+        clipboard.enable = true;
+        kittyScrollback = {
           enable = true;
           socketPath = "/tmp/kitty";
         };
@@ -367,4 +373,3 @@ EOF
         print("✓ All basic flow tests completed successfully")
   '';
 }
-

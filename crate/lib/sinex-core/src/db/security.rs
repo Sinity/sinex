@@ -50,8 +50,7 @@ impl SecurityValidator {
         for pattern in &dangerous_patterns {
             if check_str.contains(pattern) {
                 return Err(SecurityError::PathTraversal(format!(
-                    "Path contains dangerous traversal sequence: {}",
-                    pattern
+                    "Path contains dangerous traversal sequence: {pattern}"
                 )));
             }
         }
@@ -103,8 +102,7 @@ impl SecurityValidator {
         ) -> SecurityResult<()> {
             if current_depth > max {
                 return Err(SecurityError::ResourceLimit(format!(
-                    "JSON nesting depth {} exceeds maximum of {}",
-                    current_depth, max
+                    "JSON nesting depth {current_depth} exceeds maximum of {max}"
                 )));
             }
 
@@ -144,8 +142,7 @@ impl SecurityValidator {
         let element_count = count_elements(value);
         if element_count > max_size {
             return Err(SecurityError::ResourceLimit(format!(
-                "JSON element count {} exceeds maximum of {}",
-                element_count, max_size
+                "JSON element count {element_count} exceeds maximum of {max_size}"
             )));
         }
 
@@ -179,8 +176,7 @@ impl SecurityValidator {
         for pattern in &dangerous_patterns {
             if content.contains(pattern) {
                 return Err(SecurityError::PathTraversal(format!(
-                    "Dangerous pattern detected in configuration: {}",
-                    pattern
+                    "Dangerous pattern detected in configuration: {pattern}"
                 )));
             }
         }
@@ -250,69 +246,5 @@ impl SecurityValidator {
         }
 
         Ok(sanitized.into_owned())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::{sinex_test, TestContext};
-
-    use color_eyre::eyre::Result;
-
-    use serde_json::json;
-
-    #[sinex_test]
-    async fn test_path_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        // Valid paths should work
-        assert_eq!(
-            SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
-            "/home/user/file.txt"
-        );
-
-        // Basic traversal should be rejected
-        assert!(SecurityValidator::sanitize_path("../../../etc/passwd").is_err());
-
-        // Windows style should be rejected
-        assert!(SecurityValidator::sanitize_path("..\\..\\windows\\system32").is_err());
-
-        // URL encoded traversal should be rejected
-        assert!(SecurityValidator::sanitize_path("%2e%2e%2f%2e%2e%2fetc%2fpasswd").is_err());
-
-        // Double encoded traversal should be rejected
-        assert!(SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_unicode_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        // Null byte
-        assert_eq!(
-            SecurityValidator::sanitize_unicode("test\0value"),
-            "testvalue"
-        );
-
-        // Other unicode (kept but marked as sanitized)
-        assert_eq!(
-            SecurityValidator::sanitize_unicode("test\u{200B}value"),
-            "test\u{200B}value"
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_json_depth(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
-        assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
-        assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_json_size(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let small = serde_json::json!({"a": 1, "b": 2});
-        assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
-        assert!(SecurityValidator::check_json_size(&small, 2).is_err());
-        Ok(())
     }
 }

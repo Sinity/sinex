@@ -318,9 +318,8 @@ impl SensdClient {
         .await?
         .and_then(|row| row.last_successful_acquisition);
         */
-        let last_acquisition: Option<DateTime<Utc>> = None;
-
-        let since = last_acquisition.unwrap_or_else(|| Utc::now() - chrono::Duration::days(7));
+        // Until we persist last acquisition, default to 7 days ago
+        let since = Utc::now() - chrono::Duration::days(7);
 
         self.query_new_material(source_identifier, Some(since))
             .await
@@ -362,22 +361,20 @@ impl SensdClient {
         let materials = sqlx::query!(
             r#"
             SELECT 
-                id as "material_id: Ulid",
-                staged_at as acquired_at,
-                COALESCE((metadata->>'size_bytes')::bigint, 0) as "size_bytes!",
-                material_kind as mime_type,
-                metadata
-            FROM raw.source_material_registry
-            WHERE source_identifier = $1
-            AND staged_at > $2
-            -- TODO: Need to fix provenance check
-            -- For now, just check if any events exist
-            AND NOT EXISTS (
-                SELECT 1 FROM core.events 
-                WHERE source_event_ids IS NOT NULL
-                LIMIT 1
-            )
-            ORDER BY staged_at DESC
+                sm.id as "material_id: Ulid",
+                sm.staged_at as acquired_at,
+                COALESCE((sm.metadata->>'file_size_bytes')::bigint, 0) as "size_bytes!",
+                sm.metadata->>'mime_type' as mime_type,
+                sm.metadata
+            FROM raw.source_material_registry sm
+            WHERE sm.source_identifier = $1
+              AND sm.staged_at > $2
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM core.events e
+                  WHERE e.source_material_id = sm.id
+              )
+            ORDER BY sm.staged_at DESC
             LIMIT 100
             "#,
             source_identifier,
@@ -392,14 +389,14 @@ impl SensdClient {
                 material_id: m.material_id,
                 acquired_at: m.acquired_at,
                 size_bytes: m.size_bytes,
-                mime_type: Some(m.mime_type),
+                mime_type: m.mime_type,
                 metadata: m.metadata,
             })
             .collect())
     }
 
     /// List all jobs for a specific owner
-    pub async fn list_jobs_for_owner(&self, owner: &str) -> Result<Vec<JobStatus>> {
+    pub async fn list_jobs_for_owner(&self, _owner: &str) -> Result<Vec<JobStatus>> {
         // TODO: Fix query to match actual schema
         /*
         let jobs = sqlx::query!(
@@ -437,54 +434,52 @@ impl SensdClient {
     }
 
     /// Wait for job completion
-    pub async fn wait_for_job(&self, job_id: Ulid, timeout: Duration) -> Result<JobResult> {
-        let start = std::time::Instant::now();
+    pub async fn wait_for_job(&self, _job_id: Ulid, _timeout: Duration) -> Result<JobResult> {
+        // TODO: Query needs to be updated to match actual schema
+        /*
+        let job_status = sqlx::query!(
+            r#"
+            SELECT status, NULL as "material_id?: Ulid", NULL as error_message
+            FROM raw.sensor_jobs
+            WHERE id = $1
+            "#,
+            job_id as Ulid,
+        )
+        .fetch_one(&self.db_pool)
+        .await?;
+        */
+        // Placeholder until schema is fixed
+        Err(eyre!("sensor_jobs schema mismatch - needs updating"))
 
-        loop {
-            // TODO: Query needs to be updated to match actual schema
-            /*
-            let job_status = sqlx::query!(
-                r#"
-                SELECT status, NULL as "material_id?: Ulid", NULL as error_message
-                FROM raw.sensor_jobs
-                WHERE id = $1
-                "#,
-                job_id as Ulid,
-            )
-            .fetch_one(&self.db_pool)
-            .await?;
-            */
-            // Placeholder until schema is fixed
-            return Err(eyre!("sensor_jobs schema mismatch - needs updating"));
-
-            /*
-            #[allow(unreachable_code)]
-            match job_status.status.as_str() {
-                "completed" => {
-                    return Ok(JobResult::Completed {
-                        material_id: job_status.material_id,
-                    });
-                }
-                "failed" => {
-                    return Ok(JobResult::Failed {
-                        error: job_status
-                            .error_message
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                    });
-                }
-                "cancelled" => {
-                    return Ok(JobResult::Cancelled);
-                }
-                _ => {
-                    // Still pending or running
-                    if start.elapsed() > timeout {
-                        return Err(eyre!("Job {} timed out", job_id));
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
+        /*
+        #[allow(unreachable_code)]
+        match job_status.status.as_str() {
+            "completed" => {
+                return Ok(JobResult::Completed {
+                    material_id: job_status.material_id,
+                });
             }
-            */
+            "failed" => {
+                return Ok(JobResult::Failed {
+                    error: job_status
+                        .error_message
+                        .unwrap_or_else(|| "Unknown error".to_string()),
+                });
+            }
+            "cancelled" => {
+                return Ok(JobResult::Cancelled);
+            }
+            _ => {
+                // Still pending or running
+                if start.elapsed() > timeout {
+                    return Err(eyre!("Job {} timed out", job_id));
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
         }
+        */
+        // unreachable: placeholder early return above
+        // Err(eyre!("wait_for_job not implemented"))
     }
 }
 

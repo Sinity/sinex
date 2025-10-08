@@ -107,9 +107,8 @@ pub fn stream_processor(attr: TokenStream, item: TokenStream) -> TokenStream {
         && !args.suppress_warnings
     {
         eprintln!(
-            "warning: stream_processor '{}' has external checkpoint type but no #[state] fields. \
-             Consider adding #[state] attributes to fields that should be persisted.",
-            struct_name
+            "warning: stream_processor '{struct_name}' has external checkpoint type but no #[state] fields. \
+             Consider adding #[state] attributes to fields that should be persisted."
         );
     }
 
@@ -396,11 +395,10 @@ impl syn::parse::Parse for StreamProcessorArgs {
                     return Err(SynError::new(
                         key.span(),
                         format!(
-                            "Unknown argument '{}'. Valid arguments: processor_type, checkpoint_type, source, \
+                            "Unknown argument '{key}'. Valid arguments: processor_type, checkpoint_type, source, \
                              timeout_secs, max_retries, enable_metrics, enable_circuit_breaker, \
                              circuit_breaker_threshold, recovery_enabled, health_check_interval_secs, \
-                             suppress_warnings, batch_size, memory_limit_mb",
-                            key
+                             suppress_warnings, batch_size, memory_limit_mb"
                         )
                     ));
                 }
@@ -448,7 +446,7 @@ fn extract_state_fields(fields: &FieldsNamed) -> Result<Vec<StateField>, SynErro
                 if !seen_names.insert(field_name.to_string()) {
                     return Err(SynError::new(
                         field_name.span(),
-                        format!("Duplicate state field name: {}", field_name),
+                        format!("Duplicate state field name: {field_name}"),
                     ));
                 }
 
@@ -663,7 +661,7 @@ fn generate_checkpoint_serialization(
                     // Basic validation - can be extended per processor
                     match serde_json::to_value(self) {
                         Ok(_) => Ok(()),
-                        Err(e) => Err(format!("State validation failed: {}", e))
+                        Err(e) => Err(format!("State validation failed: {e}"))
                     }
                 }
             }
@@ -1016,7 +1014,7 @@ fn generate_error_handling_helpers(
                 // Check state validity
                 if let Err(e) = self.validate_state() {
                     status.healthy = false;
-                    status.issues.push(format!("State validation failed: {}", e));
+                    status.issues.push(format!("State validation failed: {e}"));
                 }
 
                 Ok(status)

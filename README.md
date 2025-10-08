@@ -157,18 +157,16 @@ Sinex has comprehensive test coverage across multiple categories:
 ### Running Tests
 
 ```bash
-# Run all tests
-just test
+# Run fast loop (Nextest)
+just test                    # wraps `cargo nextest run --workspace --lib`
 
-# Run specific test categories  
-just test-unit                # Unit tests only
-just test-integration         # Integration tests only
-just test-system             # System tests only
-just test-adversarial        # Adversarial tests only
+# Run full suite (Nextest)
+just test-all                # primes DB, then `cargo nextest run --workspace`
+cargo nextest run --workspace --test <target>   # Manual filtering via Nextest
 
 # Run satellite-specific tests
-cargo test --test satellite_architecture_test
-cargo test --test satellite_comprehensive_test
+cargo nextest run --workspace --test satellite_architecture_test
+cargo nextest run --workspace --test satellite_comprehensive_test
 
 # Run with coverage
 just coverage                # Generate coverage report
