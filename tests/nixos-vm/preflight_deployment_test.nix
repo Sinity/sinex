@@ -71,38 +71,30 @@ let
       # Use lite preset for faster testing
       preset = "lite";
       
-      # Unified collector configuration
-      unifiedCollector = {
-        enable = true;
-        logLevel = "info";
-        dryRun = false; # Test real operation
-        
-        # Minimal event sources for testing
-        sources = {
-          filesystem = {
-            enable = true;
-            watchPaths = [ "/tmp/sinex-test" ];
-          };
-          
-          # Disable complex sources for VM testing
-          clipboard.enable = false;
-          kittyScrollback.enable = false;
-          asciinema.enable = false;
-          hyprland.enable = false;
-          atuin.enable = false;
+      # Event source configuration for testing
+      eventSources = {
+        filesystem = {
+          enable = true;
+          watchPaths = [ "/tmp/sinex-test" ];
         };
         
-        # DLQ configuration for testing
-        dlq = {
+        # Disable complex sources for VM testing
+        clipboard.enable = false;
+        kittyScrollback.enable = false;
+        asciinema.enable = false;
+        hyprland.enable = false;
+        atuin.enable = false;
+      };
+
+      dlq = {
+        enable = true;
+        failureStoragePath = "/var/lib/sinex/failures";
+        maxRetries = 2;
+        retryDelaySecs = 10;
+        cleanup = {
           enable = true;
-          failureStoragePath = "/var/lib/sinex/failures";
-          maxRetries = 2;
-          retryDelaySecs = 10;
-          cleanup = {
-            enable = true;
-            maxAge = "1d";
-            maxFiles = 100;
-          };
+          maxAge = "1d";
+          maxFiles = 100;
         };
       };
       

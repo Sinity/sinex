@@ -373,13 +373,12 @@ impl EntityRelations {
 
     /// Generates the trigger to automatically update the `updated_at` timestamp.
     pub fn create_updated_at_trigger_sql() -> String {
-        format!(
-            r#"
+        r#"
             DROP TRIGGER IF EXISTS trg_entity_relations_updated_at ON core.entity_relations;
             CREATE TRIGGER trg_entity_relations_updated_at
             BEFORE UPDATE ON core.entity_relations
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
             "#
-        )
+        .to_string()
     }
 }

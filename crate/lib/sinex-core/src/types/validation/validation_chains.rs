@@ -144,19 +144,19 @@ pub fn format_validation_errors(errors: &ValidationErrors) -> String {
     for (field, field_errors) in errors.field_errors() {
         for error in field_errors {
             let msg = match &error.code {
-                std::borrow::Cow::Borrowed("email") => format!("{}: invalid email format", field),
-                std::borrow::Cow::Borrowed("url") => format!("{}: invalid URL format", field),
-                std::borrow::Cow::Borrowed("required") => format!("{}: field is required", field),
+                std::borrow::Cow::Borrowed("email") => format!("{field}: invalid email format"),
+                std::borrow::Cow::Borrowed("url") => format!("{field}: invalid URL format"),
+                std::borrow::Cow::Borrowed("required") => format!("{field}: field is required"),
                 std::borrow::Cow::Borrowed("range") => {
                     let min = error.params.get("min");
                     let max = error.params.get("max");
                     match (min, max) {
                         (Some(min), Some(max)) => {
-                            format!("{}: must be between {} and {}", field, min, max)
+                            format!("{field}: must be between {min} and {max}")
                         }
-                        (Some(min), None) => format!("{}: must be at least {}", field, min),
-                        (None, Some(max)) => format!("{}: must be at most {}", field, max),
-                        _ => format!("{}: out of range", field),
+                        (Some(min), None) => format!("{field}: must be at least {min}"),
+                        (None, Some(max)) => format!("{field}: must be at most {max}"),
+                        _ => format!("{field}: out of range"),
                     }
                 }
                 std::borrow::Cow::Borrowed("length") => {
@@ -164,14 +164,14 @@ pub fn format_validation_errors(errors: &ValidationErrors) -> String {
                     let max = error.params.get("max");
                     match (min, max) {
                         (Some(min), Some(max)) => {
-                            format!("{}: length must be between {} and {}", field, min, max)
+                            format!("{field}: length must be between {min} and {max}")
                         }
-                        (Some(min), None) => format!("{}: length must be at least {}", field, min),
-                        (None, Some(max)) => format!("{}: length must be at most {}", field, max),
-                        _ => format!("{}: invalid length", field),
+                        (Some(min), None) => format!("{field}: length must be at least {min}"),
+                        (None, Some(max)) => format!("{field}: length must be at most {max}"),
+                        _ => format!("{field}: invalid length"),
                     }
                 }
-                code => format!("{}: {}", field, code),
+                code => format!("{field}: {code}"),
             };
             messages.push(msg);
         }
@@ -183,78 +183,5 @@ pub fn format_validation_errors(errors: &ValidationErrors) -> String {
 /// Format validation errors with additional context
 pub fn format_validation_errors_with_context(errors: &ValidationErrors, context: &str) -> String {
     let base_message = format_validation_errors(errors);
-    format!("{}: {}", context, base_message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use color_eyre::eyre::Result;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_database_config_validation() -> Result<()> {
-        let valid_config = DatabaseConfig {
-            connection_url: "postgresql://user:pass@localhost/db".to_string(),
-            max_connections: 100,
-            connection_timeout_ms: 5000,
-            database_name: "test_db".to_string(),
-        };
-
-        assert!(valid_config.validate().is_ok());
-
-        let invalid_config = DatabaseConfig {
-            connection_url: "not-a-url".to_string(),
-            max_connections: 2000, // Too high
-            connection_timeout_ms: 0,
-            database_name: "".to_string(), // Empty
-        };
-
-        let result = invalid_config.validate();
-        assert!(result.is_err());
-
-        let errors = result.unwrap_err();
-        assert!(errors.field_errors().contains_key("connection_url"));
-        assert!(errors.field_errors().contains_key("max_connections"));
-        assert!(errors.field_errors().contains_key("database_name"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_event_validation() -> Result<()> {
-        let valid_event = EventValidation {
-            event_type: "user.created".to_string(),
-            source: "api".to_string(),
-            host: "api-server-01".to_string(),
-            contact_email: Some("admin@example.com".to_string()),
-        };
-
-        assert!(valid_event.validate().is_ok());
-
-        let invalid_event = EventValidation {
-            event_type: "a".repeat(101), // Too long
-            source: "".to_string(),      // Empty
-            host: "..".to_string(),      // Invalid
-            contact_email: Some("not-an-email".to_string()),
-        };
-
-        assert!(invalid_event.validate().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_friendly_error_formatting() -> Result<()> {
-        let config = DatabaseConfig {
-            connection_url: "invalid".to_string(),
-            max_connections: 0,
-            connection_timeout_ms: 0,
-            database_name: "".to_string(),
-        };
-
-        let error = config.validate_friendly().unwrap_err();
-        assert!(error.contains("connection_url"));
-        assert!(error.contains("max_connections"));
-        assert!(error.contains("database_name"));
-        Ok(())
-    }
+    format!("{context}: {base_message}")
 }

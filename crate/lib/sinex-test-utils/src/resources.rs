@@ -4,6 +4,8 @@
 //! in test environments. All functions use validated paths and safe temporary directory
 //! practices.
 
+#![allow(clippy::result_large_err)]
+
 use crate::path_validation::{create_test_temp_dir, validate_test_path};
 use camino::{Utf8Path, Utf8PathBuf};
 use sinex_core::types::error::SinexError;
@@ -16,7 +18,7 @@ use tempfile::TempDir;
 /// directory with proper validation and cleanup.
 pub fn temp_dir() -> Result<TempDir, SinexError> {
     tempfile::tempdir()
-        .map_err(|e| SinexError::io(format!("Failed to create temporary directory: {}", e)))
+        .map_err(|e| SinexError::io(format!("Failed to create temporary directory: {e}")))
 }
 
 /// Create a test file with validated path and content
@@ -43,7 +45,7 @@ pub fn create_test_file(
 
     // Write the content to the file
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write test file: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to write test file: {e}")))?;
 
     Ok(file_path)
 }
@@ -62,12 +64,12 @@ pub fn create_secure_test_dir(test_name: &str) -> Result<Utf8PathBuf, SinexError
 /// sanitized and placed in a secure temporary directory.
 pub fn create_temp_test_file(test_name: &str, content: &str) -> Result<Utf8PathBuf, SinexError> {
     let temp_dir = create_test_temp_dir(test_name)?;
-    let filename = format!("{}.txt", test_name);
+    let filename = format!("{test_name}.txt");
     let file_path = temp_dir.join(filename);
 
     // Write the content
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write temporary test file: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to write temporary test file: {e}")))?;
 
     Ok(file_path)
 }
@@ -95,7 +97,7 @@ pub fn create_test_binary_file(
 
     // Write the binary content to the file
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write test binary file: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to write test binary file: {e}")))?;
 
     Ok(file_path)
 }
@@ -126,7 +128,7 @@ mod tests {
         assert!(temp_dir.path().starts_with(&system_temp));
 
         // Directory should be automatically cleaned up when dropped
-        let temp_path = temp_dir.path().to_path_buf();
+        let _temp_path = temp_dir.path().to_path_buf();
         drop(temp_dir);
 
         // Note: Cleanup happens when temp_dir is dropped
@@ -215,7 +217,7 @@ mod tests {
 
         for path in &dangerous_paths {
             let result = verify_test_path_safety(path);
-            assert!(result.is_err(), "Should reject dangerous path: {}", path);
+            assert!(result.is_err(), "Should reject dangerous path: {path}");
         }
 
         Ok(())

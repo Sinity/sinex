@@ -362,13 +362,13 @@ The crate includes comprehensive tests for all macros:
 
 ```bash
 # Run all tests
-cargo test
+cargo nextest run --package sinex-macros
 
 # Run satellite macro tests specifically
-cargo test satellite_macros_test
+cargo nextest run --package sinex-macros --test satellite_macros_test
 
 # Run with verbose output
-cargo test -- --nocapture
+cargo nextest run --package sinex-macros -- --nocapture
 ```
 
 ## Examples

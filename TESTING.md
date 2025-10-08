@@ -1,6 +1,6 @@
 # Testing Guide for Sinex
 
-> **FOR AI ASSISTANTS**: When adding tests to Sinex crates, always use `#[sinex_test]` macro and access all functionality through `TestContext`. Tests go inline at the bottom of source files in a `#[cfg(test)]` module.
+> **FOR AI ASSISTANTS**: When adding tests to Sinex crates, always use the `#[sinex_test]` macro and operate through `TestContext`. Place new suites under each crate’s `tests/` directory rather than inline `#[cfg(test)]` modules; reserve inline tests for unavoidable cases only.
 
 ## Quick Start
 
@@ -46,17 +46,18 @@ For comprehensive testing documentation, see:
 ## Common Commands
 
 ```bash
-# Run all tests
-cargo test
+# Run fast loop (Nextest)
+just test                     # wraps `cargo nextest run --workspace --lib`
 
-# Run tests for specific crate
-cargo test -p sinex-db
+# Run full workspace suite (Nextest)
+just test-all                 # primes DB, then `cargo nextest run --workspace`
+cargo nextest run --workspace --test <binary>   # Manual filtering when needed
 
 # Run single test with output
-cargo test test_name -- --nocapture
+cargo nextest run --workspace --test <binary> -- <test_name> --nocapture
 
 # Run with debug logging
-RUST_LOG=sinex_test_utils=debug cargo test
+RUST_LOG=sinex_test_utils=debug cargo nextest run --workspace
 
 # Run benchmarks
 cargo bench --features bench

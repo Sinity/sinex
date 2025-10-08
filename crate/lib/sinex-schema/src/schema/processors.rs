@@ -294,6 +294,13 @@ impl SatelliteInstances {
             )
             .to_owned()
     }
+
+    pub fn create_indexes_sql() -> &'static str {
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_satellite_instances_service_version
+            ON core.satellite_instances(service_name, version DESC, start_time ASC);
+        "#
+    }
 }
 
 /// **Table: `core.service_leadership`**
@@ -360,5 +367,90 @@ impl ServiceLeadership {
                     .on_delete(ForeignKeyAction::Cascade),
             )
             .to_owned()
+    }
+
+    pub fn create_indexes_sql() -> &'static str {
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_service_leadership_heartbeat
+            ON core.service_leadership(last_heartbeat);
+        "#
+    }
+}
+
+/// **Table: `core.satellite_signals`**
+///
+/// Transient signalling bus used for graceful leadership handoff and failure
+/// coordination between satellite instances. Each record represents a signal
+/// addressed to a specific instance (or broadcast via `ALL`).
+#[derive(Iden, Copy, Clone)]
+pub enum SatelliteSignals {
+    Table,
+    Id,
+    TargetInstance,
+    SignalType,
+    Message,
+    Payload,
+    CreatedAt,
+    ProcessedAt,
+    ProcessedBy,
+}
+
+impl TableDef for SatelliteSignals {
+    fn table_name() -> &'static str {
+        "satellite_signals"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl SatelliteSignals {
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(SatelliteSignals::Id)
+                    .integer()
+                    .not_null()
+                    .primary_key()
+                    .extra("GENERATED ALWAYS AS IDENTITY"),
+            )
+            .col(
+                ColumnDef::new(SatelliteSignals::TargetInstance)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SatelliteSignals::SignalType)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(SatelliteSignals::Message).text())
+            .col(
+                ColumnDef::new(SatelliteSignals::Payload)
+                    .json_binary()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(SatelliteSignals::CreatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .col(ColumnDef::new(SatelliteSignals::ProcessedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SatelliteSignals::ProcessedBy).uuid())
+            .to_owned()
+    }
+
+    pub fn create_indexes_sql() -> &'static str {
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_satellite_signals_target_unprocessed
+            ON core.satellite_signals(target_instance, created_at)
+            WHERE processed_at IS NULL;
+        "#
     }
 }

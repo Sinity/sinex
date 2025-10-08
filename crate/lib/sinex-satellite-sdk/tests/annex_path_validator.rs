@@ -1,0 +1,23 @@
+use sinex_satellite_sdk::annex::path_validator::{
+    create_secure_temp_path, validate_and_convert_path,
+};
+use sinex_test_utils::sinex_test;
+
+#[sinex_test]
+fn validate_and_convert_path_enforces_security() -> color_eyre::eyre::Result<()> {
+    let valid_path = validate_and_convert_path("/tmp/test.txt")?;
+    assert!(valid_path.to_string().contains("test.txt"));
+
+    assert!(validate_and_convert_path("../../../etc/passwd").is_err());
+    assert!(validate_and_convert_path("/path/../../../etc/passwd").is_err());
+    Ok(())
+}
+
+#[sinex_test]
+fn create_secure_temp_path_generates_unique_location() -> color_eyre::eyre::Result<()> {
+    let temp_path = create_secure_temp_path("sinex_blob", "tmp")?;
+    assert!(temp_path.to_string().contains("sinex_blob"));
+    assert_eq!(temp_path.extension().unwrap_or(""), "tmp");
+    assert!(!temp_path.exists());
+    Ok(())
+}

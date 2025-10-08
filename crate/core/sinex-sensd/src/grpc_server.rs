@@ -231,9 +231,10 @@ impl ProtoService for SensdGrpcService {
         };
 
         // Parse JSON fields
-        let acquisition_mode = serde_json::from_str(&req.acquisition_mode_json).map_err(|e| {
-            Status::invalid_argument(format!("Invalid acquisition_mode JSON: {}", e))
-        })?;
+        let acquisition_mode: serde_json::Value = serde_json::from_str(&req.acquisition_mode_json)
+            .map_err(|e| {
+                Status::invalid_argument(format!("Invalid acquisition_mode JSON: {}", e))
+            })?;
 
         let parameters: Option<serde_json::Value> = serde_json::from_str(&req.parameters_json)
             .map_err(|e| Status::invalid_argument(format!("Invalid parameters JSON: {}", e)))?;

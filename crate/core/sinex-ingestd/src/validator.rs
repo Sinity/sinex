@@ -6,7 +6,7 @@ use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
 
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::{Event, Provenance};
+use sinex_core::db::models::event::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sqlx::FromRow;
 use std::sync::Arc;
@@ -25,12 +25,11 @@ struct SchemaRecord {
 
 /// Schema cache entry
 #[derive(Debug, Clone)]
-struct SchemaCacheEntry {
+pub struct SchemaCacheEntry {
     compiled_schema: Arc<jsonschema::JSONSchema>,
     source: Arc<String>,
     event_type: Arc<String>,
     version: Arc<String>,
-    content_hash: Arc<String>,
 }
 
 /// Newtype wrapper for schema cache to provide cleaner interface
@@ -61,6 +60,10 @@ impl SchemaCache {
         cache.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn bulk_update(&self, new_cache: AHashMap<Arc<String>, SchemaCacheEntry>) {
         let mut cache = self.cache.write();
         *cache = new_cache;
@@ -83,8 +86,10 @@ impl SchemaCache {
 /// Newtype wrapper for schema lookup to provide cleaner interface
 #[derive(Clone, Debug, Default)]
 pub struct SchemaLookup {
-    lookup: Arc<parking_lot::RwLock<AHashMap<(Arc<String>, Arc<String>), Arc<String>>>>,
+    lookup: Arc<parking_lot::RwLock<LookupMap>>,
 }
+
+type LookupMap = AHashMap<(Arc<String>, Arc<String>), Arc<String>>;
 
 impl SchemaLookup {
     pub fn new() -> Self {
@@ -108,12 +113,16 @@ impl SchemaLookup {
         lookup.len()
     }
 
-    pub fn bulk_update(&self, new_lookup: AHashMap<(Arc<String>, Arc<String>), Arc<String>>) {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn bulk_update(&self, new_lookup: LookupMap) {
         let mut lookup = self.lookup.write();
         *lookup = new_lookup;
     }
 
-    pub fn clone_data(&self) -> AHashMap<(Arc<String>, Arc<String>), Arc<String>> {
+    pub fn clone_data(&self) -> LookupMap {
         let lookup = self.lookup.read();
         lookup.clone()
     }
@@ -171,7 +180,7 @@ impl EventValidator {
         .fetch_all(pool)
         .await
         .map_err(|e| {
-            SinexError::database(format!("Failed to load event schemas: {}", e))
+            SinexError::database(format!("Failed to load event schemas: {e}"))
                 .with_operation("validator.load_schemas")
         })?;
 
@@ -195,7 +204,6 @@ impl EventValidator {
                         source: source.clone(),
                         event_type: event_type.clone(),
                         version: version.clone(),
-                        content_hash: content_hash.clone(),
                     };
 
                     // Note: This is still using the local HashMap variables
@@ -209,6 +217,7 @@ impl EventValidator {
                         source = %source,
                         event_type = %event_type,
                         version = %version,
+                        content_hash = %content_hash,
                         "Compiled and cached schema"
                     );
                 }
@@ -238,7 +247,10 @@ impl EventValidator {
     }
 
     /// Validate an event
-    pub fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<ValidationResult> {
+    pub fn validate_event(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> Result<ValidationResult, Box<SinexError>> {
         if !self.validation_enabled {
             return Ok(ValidationResult::Skipped);
         }
@@ -301,7 +313,7 @@ impl EventValidator {
     pub fn validate_batch(
         &self,
         events: &[Event<JsonValue>],
-    ) -> IngestdResult<Vec<ValidationResult>> {
+    ) -> Result<Vec<ValidationResult>, Box<SinexError>> {
         events
             .iter()
             .map(|event| self.validate_event(event))
@@ -366,7 +378,7 @@ impl EventValidator {
         .fetch_all(pool)
         .await
         .map_err(|e| {
-            SinexError::database(format!("Failed to load event schemas: {}", e))
+            SinexError::database(format!("Failed to load event schemas: {e}"))
                 .with_operation("validator.load_schemas")
         })?;
 
@@ -388,7 +400,6 @@ impl EventValidator {
                         source: source.clone(),
                         event_type: event_type.clone(),
                         version: version.clone(),
-                        content_hash: content_hash.clone(),
                     };
 
                     cache.insert(schema_id.clone(), cache_entry);
@@ -399,6 +410,7 @@ impl EventValidator {
                         source = %source,
                         event_type = %event_type,
                         version = %version,
+                        content_hash = %content_hash,
                         "Compiled and cached schema version"
                     );
                 }
@@ -496,7 +508,7 @@ impl ValidationResult {
                 Some(format!("Validation errors: {}", errors.join(", ")))
             }
             ValidationResult::SchemaNotFound { schema_id } => {
-                Some(format!("Schema not found: {}", schema_id))
+                Some(format!("Schema not found: {schema_id}"))
             }
             _ => None,
         }

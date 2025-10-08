@@ -678,10 +678,10 @@ let child = ctx.create_test_event()
 
 ```bash
 # Run single test with full output
-cargo test test_name -- --nocapture
+cargo nextest run --workspace --test test_name -- --nocapture
 
 # Enable debug logging
-RUST_LOG=sinex_test_utils=debug cargo test
+RUST_LOG=sinex_test_utils=debug cargo nextest run --workspace
 ```
 
 #### Inspect Database State

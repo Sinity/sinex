@@ -4,56 +4,49 @@
 //! including CHECK constraints, foreign keys, and custom validation logic.
 
 use chrono::Utc;
-use rstest::*;
+use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::test_context::TestContext;
+use sinex_test_utils::{sinex_test, TestContext};
 use sqlx::PgPool;
-
 #[cfg(test)]
 mod constraint_validation_tests {
     use super::*;
+    #[allow(dead_code)]
+    type Result<T> = color_eyre::eyre::Result<T>;
 
     async fn setup_test_tables(pool: &PgPool) {
         // Create all necessary tables for constraint testing
         sqlx::query(
-            &SourceMaterialRegistry::create_table_statement()
-                .to_string(sea_orm_migration::PostgresQueryBuilder),
+            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
         )
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            &EventPayloadSchemas::create_table_statement()
-                .to_string(sea_orm_migration::PostgresQueryBuilder),
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            &Blobs::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
-        )
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query(&EventPayloadSchemas::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_events_provenance_xor_constraint() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_events_provenance_xor_constraint() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         // Insert required dependencies
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -64,7 +57,7 @@ mod constraint_validation_tests {
         // Test Case 1: Valid - source_material_id only
         let event_id1 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id1.as_uuid(),
             "test-source",
             "test-event",
@@ -81,7 +74,7 @@ mod constraint_validation_tests {
         // Test Case 2: Valid - source_event_ids only
         let event_id2 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
             event_id2.as_uuid(),
             "test-source",
             "derived-event",
@@ -98,7 +91,7 @@ mod constraint_validation_tests {
         // Test Case 3: Invalid - both source_material_id AND source_event_ids
         let event_id3 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8::uuid[]::ulid[])",
             event_id3.as_uuid(),
             "test-source",
             "invalid-event",
@@ -116,7 +109,7 @@ mod constraint_validation_tests {
         // Test Case 4: Invalid - neither source_material_id NOR source_event_ids
         let event_id4 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
             event_id4.as_uuid(),
             "test-source",
             "orphan-event",
@@ -125,17 +118,18 @@ mod constraint_validation_tests {
             Utc::now()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject event with no provenance");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_events_string_length_constraints() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_events_string_length_constraints() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -146,7 +140,7 @@ mod constraint_validation_tests {
         // Test Case 1: Empty source should fail
         let event_id1 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id1.as_uuid(),
             "",
             "test-event",
@@ -160,7 +154,7 @@ mod constraint_validation_tests {
         // Test Case 2: Whitespace-only source should fail
         let event_id2 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id2.as_uuid(),
             "   \t\n   ",
             "test-event",
@@ -174,7 +168,7 @@ mod constraint_validation_tests {
         // Test Case 3: Empty event_type should fail
         let event_id3 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id3.as_uuid(),
             "valid-source",
             "",
@@ -188,7 +182,7 @@ mod constraint_validation_tests {
         // Test Case 4: Whitespace-only event_type should fail
         let event_id4 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id4.as_uuid(),
             "valid-source",
             "  \t  ",
@@ -202,7 +196,7 @@ mod constraint_validation_tests {
         // Test Case 5: Valid strings should pass
         let event_id5 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id5.as_uuid(),
             "valid-source",
             "valid-event-type",
@@ -212,17 +206,18 @@ mod constraint_validation_tests {
             material_id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid strings");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_offset_kind_constraint() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_offset_kind_constraint() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -236,7 +231,7 @@ mod constraint_validation_tests {
         for (i, kind) in valid_kinds.iter().enumerate() {
             let event_id = Ulid::new();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
                 event_id.as_uuid(),
                 "test-source",
                 format!("test-event-{}", i),
@@ -262,7 +257,7 @@ mod constraint_validation_tests {
         for kind in invalid_kinds.iter() {
             let event_id = Ulid::new();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
                 event_id.as_uuid(),
                 "test-source",
                 "test-event",
@@ -278,18 +273,19 @@ mod constraint_validation_tests {
                 kind
             );
         }
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_foreign_key_constraints() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_foreign_key_constraints() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         // Test Case 1: Valid foreign key reference
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -299,7 +295,7 @@ mod constraint_validation_tests {
 
         let event_id = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id.as_uuid(),
             "test-source",
             "test-event",
@@ -314,7 +310,7 @@ mod constraint_validation_tests {
         let nonexistent_material = Ulid::new();
         let event_id2 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             event_id2.as_uuid(),
             "test-source",
             "test-event",
@@ -332,7 +328,7 @@ mod constraint_validation_tests {
         // This would test what happens when a referenced record is deleted
         // Currently our schema doesn't define CASCADE behavior, so we test the default RESTRICT
         let delete_result = sqlx::query!(
-            "DELETE FROM raw.source_material_registry WHERE id = $1",
+            "DELETE FROM raw.source_material_registry WHERE id = $1::uuid::ulid",
             material_id.as_uuid()
         )
         .execute(pool)
@@ -341,18 +337,19 @@ mod constraint_validation_tests {
             delete_result.is_err(),
             "Should prevent deletion of referenced material"
         );
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unique_constraints() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_unique_constraints() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         // Create a source material and initial event
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -362,7 +359,7 @@ mod constraint_validation_tests {
 
         // Create indexes that enforce unique constraints
         for index_stmt in Events::create_indexes() {
-            let sql = index_stmt.to_string(sea_orm_migration::PostgresQueryBuilder);
+            let sql = index_stmt.to_string(PostgresQueryBuilder);
             let _ = sqlx::query(&sql).execute(pool).await; // May fail if index exists
         }
 
@@ -371,7 +368,7 @@ mod constraint_validation_tests {
 
         // Insert first event with specific anchor_byte
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
             event_id1.as_uuid(),
             "test-source",
             "test-event",
@@ -385,7 +382,7 @@ mod constraint_validation_tests {
         // Try to insert another event with same material_id and anchor_byte
         let event_id2 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
             event_id2.as_uuid(),
             "test-source",
             "test-event-2",
@@ -405,7 +402,7 @@ mod constraint_validation_tests {
         // But different anchor_byte should work
         let event_id3 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
             event_id3.as_uuid(),
             "test-source",
             "test-event-3",
@@ -416,17 +413,18 @@ mod constraint_validation_tests {
             anchor_byte + 1
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept different anchor_byte");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_not_null_constraints() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_not_null_constraints() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -439,7 +437,7 @@ mod constraint_validation_tests {
 
         // Missing source
         let result = sqlx::query(
-            "INSERT INTO core.events (id, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)"
         )
         .bind(event_id.as_uuid())
         .bind("test-event")
@@ -452,7 +450,7 @@ mod constraint_validation_tests {
 
         // Missing event_type
         let result = sqlx::query(
-            "INSERT INTO core.events (id, source, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, source, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)"
         )
         .bind(event_id.as_uuid())
         .bind("test-source")
@@ -465,7 +463,7 @@ mod constraint_validation_tests {
 
         // Missing payload
         let result = sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO core.events (id, source, event_type, host, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)"
         )
         .bind(event_id.as_uuid())
         .bind("test-source")
@@ -475,23 +473,27 @@ mod constraint_validation_tests {
         .bind(material_id.as_uuid())
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing payload");
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_json_payload_validation() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_json_payload_validation() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
             "completed",
             "realtime"
-        ).execute(pool).await.unwrap();
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         // Test valid JSON payloads
         let valid_payloads = vec![
@@ -505,7 +507,7 @@ mod constraint_validation_tests {
         for (i, payload) in valid_payloads.iter().enumerate() {
             let event_id = Ulid::new();
             let result = sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
                 event_id.as_uuid(),
                 "test-source",
                 format!("test-event-{}", i),
@@ -513,7 +515,9 @@ mod constraint_validation_tests {
                 payload,
                 Utc::now(),
                 material_id.as_uuid()
-            ).execute(pool).await;
+            )
+            .execute(pool)
+            .await;
             assert!(
                 result.is_ok(),
                 "Should accept valid JSON payload: {:?}",
@@ -521,20 +525,19 @@ mod constraint_validation_tests {
             );
         }
 
-        // Note: Invalid JSON would be caught at the SQLx level before reaching the database,
-        // so we don't need to test malformed JSON strings here.
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_array_constraints() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_array_constraints() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
         // Create initial event for referencing
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -544,7 +547,7 @@ mod constraint_validation_tests {
 
         let source_event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             source_event_id.as_uuid(),
             "source-event",
             "original",
@@ -557,7 +560,7 @@ mod constraint_validation_tests {
         // Test valid ULID arrays
         let event_id1 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
             event_id1.as_uuid(),
             "derived-source",
             "derived-event",
@@ -572,7 +575,7 @@ mod constraint_validation_tests {
         let event_id2 = Ulid::new();
         let source_event_id2 = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
             source_event_id2.as_uuid(),
             "source-event-2",
             "original-2",
@@ -583,7 +586,7 @@ mod constraint_validation_tests {
         ).execute(pool).await.unwrap();
 
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
             event_id2.as_uuid(),
             "multi-derived",
             "multi-event",
@@ -598,7 +601,7 @@ mod constraint_validation_tests {
         let event_id3 = Ulid::new();
         let empty_array: Vec<uuid::Uuid> = vec![];
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
             event_id3.as_uuid(),
             "empty-array",
             "empty-event",
@@ -608,6 +611,7 @@ mod constraint_validation_tests {
             &empty_array[..]
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept empty ULID array");
+        Ok(())
     }
 }
 
@@ -615,29 +619,26 @@ mod constraint_validation_tests {
 mod performance_constraint_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_constraint_check_performance() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_constraint_check_performance() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
 
         // Setup tables
         sqlx::query(
-            &SourceMaterialRegistry::create_table_statement()
-                .to_string(sea_orm_migration::PostgresQueryBuilder),
+            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
         )
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
-        )
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(pool)
+            .await
+            .unwrap();
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -651,7 +652,7 @@ mod performance_constraint_tests {
         for i in 0..100 {
             let event_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
                 event_id.as_uuid(),
                 "bulk-source",
                 "bulk-event",
@@ -671,30 +672,28 @@ mod performance_constraint_tests {
             duration.as_millis() < 5000,
             "Constraint checking should be fast"
         );
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_index_constraint_interaction() {
-        let ctx = TestContext::new().await;
-        let pool = ctx.db().pool();
+    #[sinex_test]
+    async fn test_index_constraint_interaction() -> Result<()> {
+        let ctx = TestContext::new().await.unwrap();
+        let pool = &ctx.pool;
 
         // Setup tables with indexes
-        sqlx::query(
-            &Events::create_table_statement().to_string(sea_orm_migration::PostgresQueryBuilder),
-        )
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(pool)
+            .await
+            .unwrap();
 
         for index_stmt in Events::create_indexes() {
-            let sql = index_stmt.to_string(sea_orm_migration::PostgresQueryBuilder);
+            let sql = index_stmt.to_string(PostgresQueryBuilder);
             let _ = sqlx::query(&sql).execute(pool).await; // May fail if already exists
         }
 
         // Create source material
         sqlx::query(
-            &SourceMaterialRegistry::create_table_statement()
-                .to_string(sea_orm_migration::PostgresQueryBuilder),
+            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
         )
         .execute(pool)
         .await
@@ -702,7 +701,7 @@ mod performance_constraint_tests {
 
         let material_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
             material_id.as_uuid(),
             "annex",
             "/test/path",
@@ -713,7 +712,7 @@ mod performance_constraint_tests {
         // Test that constraints work correctly with indexes present
         let event_id1 = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
             event_id1.as_uuid(),
             "indexed-source",
             "indexed-event",
@@ -727,7 +726,7 @@ mod performance_constraint_tests {
         // Duplicate should still be rejected even with indexes
         let event_id2 = Ulid::new();
         let result = sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
             event_id2.as_uuid(),
             "indexed-source",
             "indexed-event-2",
@@ -742,5 +741,6 @@ mod performance_constraint_tests {
             result.is_err(),
             "Unique constraint should work with indexes"
         );
+        Ok(())
     }
 }

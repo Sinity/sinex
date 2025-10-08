@@ -4,7 +4,6 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -13,7 +12,7 @@ use sinex_satellite_sdk::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteError,
     SatelliteResult, SourceState,
 };
-use validator::{Validate, ValidationError};
+use validator::Validate;
 
 // Standard library
 use std::collections::HashMap;

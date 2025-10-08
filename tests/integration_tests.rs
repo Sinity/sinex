@@ -16,6 +16,7 @@ mod integration {
 
 // Import test utilities with proper prelude for consistent testing
 use serde_json::json;
+use std::sync::Arc;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue};
 use sinex_test_utils::prelude::*;
@@ -297,14 +298,14 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
 async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
     // Test concurrent insertions don't interfere with each other
 
-    // Create events concurrently using separate contexts
+    // Share a single test context across concurrent tasks
+    let ctx = Arc::new(ctx);
     let mut handles = Vec::new();
 
-    // Create events in parallel using separate contexts
     for i in 0..10 {
+        let ctx_clone = Arc::clone(&ctx);
         let handle = tokio::spawn(async move {
-            let ctx = TestContext::new().await?;
-            let event = ctx
+            let event = ctx_clone
                 .create_test_event(
                     "concurrent-test",
                     "concurrent.event",
@@ -329,7 +330,6 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
 
     // Verify all insertions succeeded and IDs are unique
     assert_eq!(event_ids.len(), 10);
-    // Verify uniqueness by checking each ID against all others
     for (i, id1) in event_ids.iter().enumerate() {
         for id2 in event_ids.iter().skip(i + 1) {
             assert_ne!(id1, id2, "All event IDs should be unique");
@@ -414,17 +414,14 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
     });
 
     // Register schema - using repository directly
-    use sinex_core::db::repositories::events::NewSchema;
-    let new_schema = NewSchema {
-        schema_name: sinex_core::types::domain::SchemaName::new("filesystem"),
-        schema_version: sinex_core::types::domain::SchemaVersion::new("1.0.0"),
+    use sinex_core::db::repositories::schema_management::NewEventSchema;
+    let new_schema = NewEventSchema {
+        source: "filesystem".to_string(),
+        event_type: "file.created".to_string(),
+        schema_version: "1.0.0".to_string(),
         schema_content: schema,
-        is_active: true,
-        event_types: vec!["file.created".to_string()],
-        description: Some("Test schema for filesystem events".to_string()),
-        examples: None,
     };
-    let _schema = ctx.pool.events().register_schema(new_schema).await?;
+    let _schema = ctx.pool.schemas().register_schema(new_schema).await?;
 
     // Test valid event
     let valid_event = ctx
@@ -523,14 +520,9 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> color_eyre::eyre::R
         handles.push(handle);
     }
 
-    // Wait for all to complete
-    let results = futures::future::join_all(handles).await;
-    let mut successful_inserts = 0;
-    for result in results {
-        if result.is_ok() {
-            successful_inserts += 1;
-        }
-    }
+    // Wait for all to complete and propagate failures immediately
+    let results = futures::future::try_join_all(handles).await?;
+    let successful_inserts = results.len();
 
     let duration = start.elapsed();
 
@@ -774,18 +766,18 @@ async fn test_insta_snapshots(ctx: TestContext) -> color_eyre::eyre::Result<()> 
       "event_count": 2,
       "events": [
         {
-          "event_type": "snapshot.a",
-          "payload": {
-            "name": "first",
-            "value": 1
-          },
-          "source": "snapshot-test"
-        },
-        {
           "event_type": "snapshot.b",
           "payload": {
             "name": "second",
             "value": 2
+          },
+          "source": "snapshot-test"
+        },
+        {
+          "event_type": "snapshot.a",
+          "payload": {
+            "name": "first",
+            "value": 1
           },
           "source": "snapshot-test"
         }
@@ -862,7 +854,7 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
 
     assert_eq!(workflow_events.len(), 4);
 
-    // Verify events are in temporal (ingest/ULID) order
+    // Results are returned newest-first; ensure ordering is monotonically non-increasing
     for i in 1..workflow_events.len() {
         let prev_ts = workflow_events[i - 1]
             .id
@@ -876,7 +868,10 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
             .expect("event id present")
             .as_ulid()
             .timestamp();
-        assert!(curr_ts >= prev_ts, "Events should be in temporal order");
+        assert!(
+            curr_ts <= prev_ts,
+            "Events should be in reverse-chronological order"
+        );
     }
 
     // Verify workflow stages

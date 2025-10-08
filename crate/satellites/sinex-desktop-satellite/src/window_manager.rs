@@ -21,16 +21,9 @@
 use crate::common::*;
 
 // Window manager specific imports
-use serde_json::Value;
-use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;
 use sinex_core::types::Ulid;
 use sqlx::PgPool;
-use std::{
-    fmt,
-    str::FromStr,
-    sync::Arc,
-    time::{Instant, SystemTime},
-};
+use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;

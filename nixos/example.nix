@@ -167,173 +167,6 @@
       };
     };
 
-    # Unified Collector configuration (LEGACY - consider migrating to satellite architecture)
-    unifiedCollector = {
-      enable = false;  # Disabled in favor of satellite architecture
-      logLevel = "info";  # Options: "trace", "debug", "info", "warn", "error"
-      dryRun = false;     # If true, events are logged but not stored
-
-      # Health check configuration (EXPANDED - was incomplete)
-      healthCheck = {
-        enable = true;
-        port = 8080;
-        interval = 30;
-        timeout = 5;
-        retryAttempts = 3;
-        enableProbes = true;
-
-        # Advanced probe configurations (missing from original)
-        path = "/health";
-        readinessPath = "/ready";
-        livenessPath = "/alive";
-
-        startupProbe = {
-          enable = true;
-          initialDelay = 30;
-          periodSeconds = 5;
-          timeoutSeconds = 3;
-          failureThreshold = 12;
-        };
-
-        readinessProbe = {
-          enable = true;
-          initialDelay = 5;
-          periodSeconds = 10;
-          timeoutSeconds = 3;
-          failureThreshold = 3;
-        };
-
-        livenessProbe = {
-          enable = true;
-          initialDelay = 60;
-          periodSeconds = 30;
-          timeoutSeconds = 5;
-          failureThreshold = 3;
-        };
-      };
-
-      # Restart policy
-      restart = {
-        policy = "on-failure";
-        baseDelay = 5;
-        maxDelay = 300;
-        maxRetries = 5;
-      };
-
-      # Dead Letter Queue (DLQ) configuration
-      dlq = {
-        enable = true;
-        failureStoragePath = "/var/lib/sinex/failures";
-        maxRetries = 3;
-        retryDelaySecs = 60;
-
-        cleanup = {
-          enable = true;
-          maxAge = "7d";
-          maxFiles = 10000;
-        };
-      };
-
-      # Event Sources - Individual configuration
-      sources = {
-        # Shell history sources
-        atuin = {
-          enable = true;
-          databasePath = "~/.local/share/atuin/history.db";
-          pollInterval = 3;  # Module default (not 5)
-        };
-
-        shellHistory = {
-          enable = true;
-          zshPath = "~/.zsh_history";
-          bashPath = "~/.bash_history";
-        };
-
-        # Terminal sources
-        asciinema = {
-          enable = false;  # Disabled by default
-          path = "~/.local/share/asciinema";
-          autoRecord = false;
-          autoAnnex = true;
-        };
-
-        kitty = {
-          enable = true;
-          pollInterval = 2;
-          socketPath = "/tmp/kitty";
-          autoConfigureShellIntegration = true;
-          enableCommandCompletion = true;
-          scrollbackSafetyNetInterval = 60;
-          maxScrollbackLines = 10000;
-          
-          shellIntegrationConfig = {
-            "shell_integration" = "enabled";
-            "allow_remote_control" = "socket-only";
-            "listen_on" = "unix:/tmp/kitty-\${USER}";
-          };
-          
-          autoModifyUserConfig = true;
-          userConfigPath = "~/.config/kitty/kitty.conf";
-        };
-
-        # Legacy alias for backward compatibility
-        kittyScrollback = {
-          enable = false;  # Use 'kitty' source instead
-          pollInterval = 60;
-          socketPath = "/tmp/kitty";
-          maxScrollbackLines = 10000;
-          captureInterval = 60;
-        };
-
-        # Filesystem monitoring (with correct exclude patterns structure)
-        filesystem = {
-          enable = true;
-          watchPaths = [ "~/Documents" "~/Projects" "~/Downloads" ];
-          excludePatterns = [];  # Additional patterns (sensible defaults always applied)
-          overrideDefaultExcludes = false;  # Advanced: ignore default excludes
-          
-          # Filesystem-specific options (missing from original)
-          debounceMs = 100;
-          maxDepth = null;
-        };
-
-        # D-Bus event monitoring (FIXED - extractAll default is true)
-        dbus = {
-          enable = true;
-          monitorSession = true;
-          monitorSystem = true;
-          logAllSignals = false;
-          extractAll = true;  # CORRECTED: Module default is true, not false
-          
-          # Individual extraction options (when extractAll = false)
-          extractNotifications = true;
-          extractMedia = true;
-          extractPower = true;
-          extractHardware = true;
-          extractSession = true;
-          extractPolicykit = true;
-          extractBluetooth = true;
-          extractNetwork = true;
-          extractScreensaver = true;
-          extractMounts = true;
-        };
-
-        # Clipboard monitoring
-        clipboard = {
-          enable = true;
-          pollInterval = 500;  # Module default is 500ms, not 1000
-          monitorClipboard = true;
-          monitorPrimary = true;
-          monitorSecondary = false;
-          maxPreviewLength = 100;
-          enableHistory = true;
-          maxHistoryEntries = 1000;
-          hashFileContent = true;
-          maxContentSize = 10485760;  # 10MB
-        };
-      };
-    };
-
     # Promotion Worker configuration
     promoWorker = {
       enable = true;
@@ -382,18 +215,19 @@
 
     # Resource limits
     resources = {
-      unifiedCollector = {
+      ingestd = {
         memoryMax = "1G";
         cpuQuota = "200%";
-        tasksMax = 1000;
-        ioWeight = 100;
       };
 
-      promoWorker = {
+      gateway = {
         memoryMax = "512M";
         cpuQuota = "100%";
-        tasksMax = 500;
-        ioWeight = 100;
+      };
+
+      defaultSatellite = {
+        memoryMax = "256M";
+        cpuQuota = "50%";
       };
     };
 

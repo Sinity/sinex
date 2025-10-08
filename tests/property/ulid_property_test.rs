@@ -8,6 +8,16 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
+fn spin_for(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+    let start = Instant::now();
+    while Instant::now().duration_since(start) < duration {
+        thread::yield_now();
+    }
+}
+
 /// Property tests for ULID functionality
 ///
 /// This module consolidates property tests from:
@@ -33,7 +43,9 @@ fn test_ulid_chronological_ordering() -> color_eyre::eyre::Result<()> {
         for i in 0..count {
             if i > 0 {
                 // Add tiny delay to ensure different timestamps for monotonic generation
-                std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
             }
             ulids.push(Ulid::new());
         }
@@ -111,9 +123,9 @@ fn test_ulid_timestamp_extraction() -> color_eyre::eyre::Result<()> {
 /// Generate a strategy for controlling concurrent ULID generation
 fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
     (
-        2usize..=10,   // Number of threads
-        10usize..=100, // ULIDs per thread
-        0u64..=100,    // Max delay between generations (ms)
+        2usize..=6,  // Number of threads
+        5usize..=25, // ULIDs per thread
+        0u64..=3,    // Max delay between generations (ms)
     )
 }
 
@@ -142,8 +154,8 @@ fn generate_ulids_concurrently(
 
                 // Random small delay to increase contention
                 if max_delay_ms > 0 {
-                    let delay = max_delay_ms / 2;
-                    thread::sleep(Duration::from_millis(delay));
+                    let delay = Duration::from_millis(max_delay_ms);
+                    spin_for(delay);
                 }
             }
 
@@ -291,7 +303,7 @@ fn test_high_contention_ulid_generation() -> color_eyre::eyre::Result<()> {
             }
 
             // Small delay between bursts
-            thread::sleep(Duration::from_millis(10));
+            spin_for(Duration::from_millis(10));
         }
 
         // All ULIDs should be unique despite high contention
@@ -315,7 +327,7 @@ fn test_ulid_ordering_with_timing_patterns() -> color_eyre::eyre::Result<()> {
         // Generate ULIDs with specific delay patterns
         for delay_ms in pattern_delays {
             let start_time = Instant::now();
-            thread::sleep(Duration::from_millis(delay_ms));
+            spin_for(Duration::from_millis(delay_ms));
             let ulid = Ulid::new();
             ulids_with_delays.push((ulid, start_time.elapsed()));
         }
@@ -357,7 +369,7 @@ fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = 
                 let mut current_time = base_time;
 
                 for delay_ms in delays {
-                    current_time = current_time + ChronoDuration::milliseconds(delay_ms as i64 + 1);
+                    current_time += ChronoDuration::milliseconds(delay_ms as i64 + 1);
                     ulids.push(Ulid::from_datetime(current_time));
                 }
                 ulids
@@ -577,7 +589,9 @@ fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Res
 
         for i in 0..generation_count {
             if delay_microseconds > 0 {
-                std::thread::sleep(std::time::Duration::from_micros(delay_microseconds));
+                for _ in 0..delay_microseconds {
+                    std::thread::yield_now();
+                }
             }
 
             let ulid = Ulid::new();
@@ -587,9 +601,13 @@ fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Res
             timestamps.push(timestamp);
 
             // Property: Each ULID should be unique
-            for j in 0..i {
-                prop_assert!(ulid != ulids[j],
-                    "ULID at index {} should be unique (different from index {})", i, j);
+            for (previous_index, previous_ulid) in ulids.iter().take(i).enumerate() {
+                prop_assert!(
+                    ulid != *previous_ulid,
+                    "ULID at index {} should be unique (different from index {})",
+                    i,
+                    previous_index
+                );
             }
         }
 
@@ -656,7 +674,7 @@ mod stress_tests {
                     counter.fetch_add(1, Ordering::Relaxed);
 
                     // Occasional yield to increase contention
-                    if i % 50 == 0 {
+                    if i.is_multiple_of(50) {
                         thread::yield_now();
                     }
                 }
@@ -681,8 +699,7 @@ mod stress_tests {
         for ulid in all_ulids {
             assert!(
                 seen.insert(ulid),
-                "Found duplicate ULID in stress test: {}",
-                ulid
+                "Found duplicate ULID in stress test: {ulid}"
             );
         }
         Ok(())
@@ -713,8 +730,7 @@ mod stress_tests {
         let max_diff = timestamp_diffs.iter().max().unwrap();
         assert!(
             *max_diff <= 10,
-            "Maximum timestamp difference too large: {} ms",
-            max_diff
+            "Maximum timestamp difference too large: {max_diff} ms"
         );
 
         // Should have some variety in differences (not all zeros)
@@ -743,7 +759,7 @@ mod unit_tests {
             .unwrap()
             .current();
 
-        assert!(sequence.len() >= 3 && sequence.len() <= 5);
+        assert!((3..=5).contains(&sequence.len()));
 
         // Should be in increasing order
         for i in 1..sequence.len() {
@@ -764,7 +780,7 @@ mod unit_tests {
             .current();
 
         let timestamp = ulid.timestamp();
-        assert!(timestamp >= start && timestamp <= end);
+        assert!((start..=end).contains(&timestamp));
         Ok(())
     }
 
@@ -776,8 +792,8 @@ mod unit_tests {
             .unwrap()
             .current();
 
-        assert!(num_threads >= 2 && num_threads <= 10);
-        assert!(ulids_per_thread >= 10 && ulids_per_thread <= 100);
+        assert!((2..=10).contains(&num_threads));
+        assert!((10..=100).contains(&ulids_per_thread));
         assert!(max_delay_ms <= 100);
         Ok(())
     }

@@ -169,10 +169,9 @@ pub fn uuid_to_ulid_safe(uuid: SqlxUuid) -> Result<Ulid, String> {
     const MIN_TIMESTAMP_MS: u64 = 1262304000000; // 2010-01-01
     const MAX_TIMESTAMP_MS: u64 = 4102444800000; // 2100-01-01
 
-    if timestamp_ms < MIN_TIMESTAMP_MS || timestamp_ms > MAX_TIMESTAMP_MS {
+    if !(MIN_TIMESTAMP_MS..=MAX_TIMESTAMP_MS).contains(&timestamp_ms) {
         return Err(format!(
-            "UUID timestamp {} is outside valid ULID range ({}-{})",
-            timestamp_ms, MIN_TIMESTAMP_MS, MAX_TIMESTAMP_MS
+            "UUID timestamp {timestamp_ms} is outside valid ULID range ({MIN_TIMESTAMP_MS}-{MAX_TIMESTAMP_MS})"
         ));
     }
 
@@ -318,17 +317,19 @@ pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_ulid_conversion() {
+    #[sinex_test]
+    fn test_ulid_conversion() -> color_eyre::eyre::Result<()> {
         let ulid = Ulid::new();
         let uuid = ulid_to_uuid(ulid);
         let converted_back = uuid_to_ulid(uuid);
         assert_eq!(ulid, converted_back);
+        Ok(())
     }
 
-    #[test]
-    fn test_ulid_array_conversion() {
+    #[sinex_test]
+    fn test_ulid_array_conversion() -> color_eyre::eyre::Result<()> {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let uuids = ulids.to_uuid_vec();
         assert_eq!(ulids.len(), uuids.len());
@@ -336,5 +337,6 @@ mod tests {
         for (ulid, uuid) in ulids.iter().zip(uuids.iter()) {
             assert_eq!(*ulid, uuid_to_ulid(*uuid));
         }
+        Ok(())
     }
 }

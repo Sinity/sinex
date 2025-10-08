@@ -49,14 +49,14 @@ impl DirectoryManager {
 
         if self.config.create_parents {
             fs::create_dir_all(&full_path).await.map_err(|e| {
-                SinexError::io(format!("Failed to create directory: {}", e))
+                SinexError::io(format!("Failed to create directory: {e}"))
                     .with_path(&full_path)
                     .with_operation("create_directory_all")
                     .with_context("create_parents", true)
             })?;
         } else {
             fs::create_dir(&full_path).await.map_err(|e| {
-                SinexError::io(format!("Failed to create directory: {}", e))
+                SinexError::io(format!("Failed to create directory: {e}"))
                     .with_path(&full_path)
                     .with_operation("create_directory")
                     .with_context("create_parents", false)
@@ -73,7 +73,7 @@ impl DirectoryManager {
         let full_path = self.config.base_path.join(path);
 
         fs::remove_dir_all(&full_path).await.map_err(|e| {
-            SinexError::io(format!("Failed to remove directory: {}", e))
+            SinexError::io(format!("Failed to remove directory: {e}"))
                 .with_path(&full_path)
                 .with_operation("remove_directory")
         })?;
@@ -148,84 +148,5 @@ impl DirectoryManager {
     /// Get the configuration
     pub fn config(&self) -> &DirectoryConfig {
         &self.config
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-    use tempfile::TempDir;
-
-    #[sinex_test]
-    async fn test_directory_manager_create() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let config = DirectoryConfig {
-            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
-            ..Default::default()
-        };
-
-        let manager = DirectoryManager::new(config);
-
-        // Test directory creation
-        assert!(manager.create_directory("test_dir").await.is_ok());
-        assert!(manager.directory_exists("test_dir").await.unwrap());
-
-        // Test ensure directory (already exists)
-        assert!(manager.ensure_directory("test_dir").await.is_ok());
-
-        // Test ensure directory (doesn't exist)
-        assert!(manager.ensure_directory("new_dir").await.is_ok());
-        assert!(manager.directory_exists("new_dir").await.unwrap());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_directory_manager_list() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let config = DirectoryConfig {
-            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
-            ..Default::default()
-        };
-
-        let manager = DirectoryManager::new(config);
-
-        // Create some test directories
-        manager.create_directory("dir1").await.unwrap();
-        manager.create_directory("dir2").await.unwrap();
-
-        // List directory contents
-        let entries = manager.list_directory(".").await.unwrap();
-        assert_eq!(entries.len(), 2);
-
-        // Check that both directories are present
-        let dir_names: Vec<String> = entries
-            .iter()
-            .filter_map(|p| p.file_name())
-            .map(|s| s.to_string())
-            .collect();
-
-        assert!(dir_names.contains(&"dir1".to_string()));
-        assert!(dir_names.contains(&"dir2".to_string()));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_directory_manager_remove() -> color_eyre::eyre::Result<()> {
-        let temp_dir = TempDir::new().unwrap();
-        let config = DirectoryConfig {
-            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
-            ..Default::default()
-        };
-
-        let manager = DirectoryManager::new(config);
-
-        // Create and then remove a directory
-        manager.create_directory("temp_dir").await.unwrap();
-        assert!(manager.directory_exists("temp_dir").await.unwrap());
-
-        manager.remove_directory("temp_dir").await.unwrap();
-        assert!(!manager.directory_exists("temp_dir").await.unwrap());
-        Ok(())
     }
 }

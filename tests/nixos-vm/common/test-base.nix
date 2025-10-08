@@ -1,5 +1,18 @@
 # Minimal base configuration for VM tests
-{ config, pkgs, lib, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ config
+, pkgs
+, lib
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
+let
+  sinexPackage = sinex or sinex-ingestd;
+  sinexCliPackage = sinexCli or pkgs.python3;
+in
 {
   imports = [
     ./test-helpers.nix
@@ -10,16 +23,15 @@
   # Basic Sinex configuration
   services.sinex = {
     enable = true;
-    package = sinex-ingestd;
+    package = sinexPackage;
+    cliPackage = sinexCliPackage;
     targetUser = "test";
     
     # Disable promo worker by default (tests can enable if needed)
     promoWorker.enable = lib.mkDefault false;
     
-    unifiedCollector = {
-      enable = true;
-      # Minimal default sources
-      sources.filesystem = {
+    eventSources = {
+      filesystem = {
         enable = true;
         watchPaths = [ "/home/test/watched" ];
       };
@@ -108,6 +120,8 @@
   nixpkgs.overlays = [(final: prev: {
     sinex-ingestd = sinex-ingestd;
     sinex-gateway = sinex-gateway;
+    sinex = sinexPackage;
+    sinexCli = sinexCliPackage;
     postgresql16Packages = prev.postgresql16Packages // {
       pg_jsonschema = pg_jsonschema;
     };

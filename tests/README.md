@@ -11,7 +11,7 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Dependencies**: Minimal external dependencies
 - **Purpose**: Verify correctness of individual components
 - **Features**: Generic ID system, ULID properties, domain types, event builders
-- **Run**: `cargo test unit_tests`
+- **Run**: `cargo nextest run --test unit_tests`
 
 ### 🔗 Integration Tests (`integration_tests.rs`)
 - **Scope**: Component interactions within the system
@@ -19,7 +19,7 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Dependencies**: Database, some external services
 - **Purpose**: Verify components work together correctly
 - **Features**: Database operations, repository pattern, schema validation, concurrent operations
-- **Run**: `cargo test integration_tests`
+- **Run**: `cargo nextest run --test integration_tests`
 
 ### 🎯 Property Tests (`property_tests.rs`)
 - **Scope**: Behavior validation across input ranges
@@ -27,14 +27,14 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Dependencies**: Proptest framework
 - **Purpose**: Verify properties hold across many inputs
 - **Features**: Randomized testing, edge case discovery, invariant validation
-- **Run**: `cargo test property_tests`
+- **Run**: `cargo nextest run --test property_tests`
 
 ### ⚡ Simple Tests (`simple_tests.rs`)
 - **Scope**: Basic functionality verification
 - **Speed**: Very fast (< 100ms per test)
 - **Dependencies**: Minimal
 - **Purpose**: Smoke tests and basic validation
-- **Run**: `cargo test simple_tests`
+- **Run**: `cargo nextest run --test simple_tests`
 
 ## Specialized Test Categories
 
@@ -43,35 +43,35 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Speed**: Slow (10s+ per test)
 - **Dependencies**: Full system, external services
 - **Purpose**: End-to-end system behavior validation
-- **Run**: `cargo test --test system`
+- **Run**: `cargo nextest run --test system`
 
 ### ⚔️ Adversarial Tests (`adversarial/`)
 - **Scope**: Edge cases, attacks, stress scenarios
 - **Speed**: Variable (often slow due to stress testing)
 - **Dependencies**: Full system setup
 - **Purpose**: System robustness under hostile conditions
-- **Run**: `cargo test --test adversarial`
+- **Run**: `cargo nextest run --test adversarial`
 
 ### 🚀 Performance Tests (`performance/`)
 - **Scope**: Performance characteristics and benchmarks
 - **Speed**: Variable (can be slow for stress tests)
 - **Dependencies**: Full system, performance monitoring
 - **Purpose**: Performance regression detection and optimization
-- **Run**: `cargo test --test performance`
+- **Run**: `cargo nextest run --test performance`
 
 ### 🔒 Security Tests (`security/`)
 - **Scope**: Security-focused test scenarios
 - **Speed**: Medium to slow
 - **Dependencies**: Full system setup
 - **Purpose**: Security validation and vulnerability testing
-- **Run**: `cargo test --test security`
+- **Run**: `cargo nextest run --test security`
 
 ### 🔄 Concurrency Tests (`concurrency/`)
 - **Scope**: Multi-threaded and async behavior validation
 - **Speed**: Medium to slow
 - **Dependencies**: Full system, thread management
 - **Purpose**: Race condition and synchronization testing
-- **Run**: `cargo test --test concurrency`
+- **Run**: `cargo nextest run --test concurrency`
 
 ### 📚 Examples (`examples/`)
 - **Scope**: Code examples and usage demonstrations
@@ -113,26 +113,26 @@ async fn my_test(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 ## Running Tests
 
 ```bash
-# All tests
-cargo test
+# All tests (workspace)
+cargo nextest run --workspace
 
 # Specific test files
-cargo test unit_tests
-cargo test integration_tests
-cargo test property_tests
-cargo test simple_tests
+cargo nextest run --test unit_tests
+cargo nextest run --test integration_tests
+cargo nextest run --test property_tests
+cargo nextest run --test simple_tests
 
 # Specific test categories
-cargo test --test performance
-cargo test --test adversarial
-cargo test --test security
-cargo test --test system
-cargo test --test concurrency
+cargo nextest run --test performance
+cargo nextest run --test adversarial
+cargo nextest run --test security
+cargo nextest run --test system
+cargo nextest run --test concurrency
 
 # Using just commands
-just test              # Unit + property tests (~30s)
-just test-all         # Complete test suite
-just test-integration # Integration tests only
+just test              # Unit + property tests (~30s, Nextest)
+just test-all         # Complete test suite (Nextest)
+just test-integration # Integration tests only (Nextest filter)
 just test-performance # Performance tests only
 ```
 

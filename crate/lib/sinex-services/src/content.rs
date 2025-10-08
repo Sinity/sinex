@@ -14,7 +14,7 @@ impl ContentService {
         Self { blob_manager }
     }
 
-    /// Store content as blob and return source material reference
+    /// Store content as blob and return annex key
     ///
     /// All content is stored via the blob manager regardless of size, providing
     /// consistent storage, deduplication, and source material tracking.
@@ -25,7 +25,6 @@ impl ContentService {
         content_type: &str,
         _source: &str,
     ) -> ServiceResult<String> {
-        // Store in git-annex (blob manager handles source material registration automatically)
         let blob_metadata = self
             .blob_manager
             .ingest_from_bytes(content, filename, content_type)
@@ -37,14 +36,11 @@ impl ContentService {
                     .with_context("content_type", content_type)
             })?;
 
-        // The blob manager has already created the source material record
-        // Return the annex key for referencing the stored content
-        Ok(blob_metadata.annex_backend)
+        Ok(blob_metadata.annex_key())
     }
 
     /// Retrieve content by annex key
     pub async fn retrieve_content(&self, annex_key: &str) -> ServiceResult<Vec<u8>> {
-        // Retrieve from blob storage directly
         self.blob_manager
             .retrieve_content(annex_key)
             .await
@@ -60,7 +56,6 @@ impl ContentService {
         &self,
         annex_key: &str,
     ) -> ServiceResult<sinex_satellite_sdk::annex::BlobMetadata> {
-        // Get blob metadata from blob manager
         let blob_metadata = self
             .blob_manager
             .get_blob_metadata(annex_key)
@@ -76,7 +71,6 @@ impl ContentService {
 
     /// Verify content integrity by annex key
     pub async fn verify_content(&self, annex_key: &str) -> ServiceResult<bool> {
-        // Use blob manager verification
         self.blob_manager.verify_blob(annex_key).await.map_err(|e| {
             SinexError::service(format!("Content verification failed: {}", e))
                 .with_operation("blob_manager.verify_blob")

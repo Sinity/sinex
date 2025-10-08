@@ -279,16 +279,16 @@ in
     ];
 
     # User account for Sinex services
-    users.users.${cfg.database.user} = mkIf (cfg.database.user != "root") {
+    users.users.${cfg.satelliteUser} = mkIf (cfg.satelliteUser != "root") {
       isSystemUser = true;
-      group = cfg.database.user;
+      group = cfg.satelliteUser;
       home = cfg.directories.state;
       createHome = true;
       # Add to systemd-journal group for journal access
       extraGroups = [ "systemd-journal" ];
     };
 
-    users.groups.${cfg.database.user} = mkIf (cfg.database.user != "root") {};
+    users.groups.${cfg.satelliteUser} = mkIf (cfg.satelliteUser != "root") {};
 
     # PostgreSQL configuration
     # Technical Implementation Module: PostgreSQL Extension Configuration
@@ -483,8 +483,8 @@ in
 
     # Directory creation
     systemd.tmpfiles.rules = [
-      "d ${cfg.directories.state} 0755 ${cfg.database.user} ${cfg.database.user}"
-      "d ${cfg.directories.logs} 0755 ${cfg.database.user} ${cfg.database.user}"
+      "d ${cfg.directories.state} 0755 ${cfg.satelliteUser} ${cfg.satelliteUser}"
+      "d ${cfg.directories.logs} 0755 ${cfg.satelliteUser} ${cfg.satelliteUser}"
       "d ${cfg.directories.config} 0755 root root"
     ];
 
@@ -499,9 +499,18 @@ in
         echo ""
         
         echo "🏥 Services:"
-        systemctl is-active sinex-ingestd && echo "✅ Ingestion Daemon" || echo "❌ Ingestion Daemon"
-        systemctl is-active sinex-gateway && echo "✅ API Gateway" || echo "❌ API Gateway"
-        systemctl is-active sinex-fs-watcher && echo "✅ Filesystem Watcher" || echo "❌ Filesystem Watcher"
+        sinex_services=$(systemctl list-units --type=service 'sinex-*.service' --no-legend | awk '{print $1}')
+        if [ -z "$sinex_services" ]; then
+          echo "ℹ️ No Sinex systemd services found"
+        else
+          for service in $sinex_services; do
+            if systemctl is-active "$service" >/dev/null 2>&1; then
+              echo "✅ $service"
+            else
+              echo "❌ $service"
+            fi
+          done
+        fi
         
         ${optionalString cfg.observability.enable ''
           echo ""

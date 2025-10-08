@@ -1,5 +1,13 @@
 # Basic E2E flow test using unified test abstractions
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, sinex-test-bridge, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex-test-bridge
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 let
   inherit (pkgs) lib;
@@ -59,9 +67,9 @@ pkgs.nixosTest {
   skipLint = true;
 
   nodes.machine = { config, pkgs, lib, ... }: {
-    imports = [ 
-      (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
+    imports = [
+      (import ../common/test-base.nix {
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
       })
     ];
 

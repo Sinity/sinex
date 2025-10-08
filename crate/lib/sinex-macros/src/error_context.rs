@@ -1,3 +1,4 @@
+#![allow(clippy::question_mark)]
 use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
@@ -8,6 +9,7 @@ use syn::{
 
 /// Configuration parsed from macro attributes
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct MacroConfig {
     operation_name: Option<String>,
     context_pairs: Vec<(String, String)>,
@@ -19,6 +21,7 @@ struct MacroConfig {
 }
 
 /// Parse macro configuration from attributes
+#[allow(dead_code)]
 fn parse_macro_config(args: Punctuated<Meta, Comma>) -> Result<MacroConfig, TokenStream> {
     let mut config = MacroConfig::default();
     let mut seen_keys = HashSet::new();
@@ -102,6 +105,7 @@ fn parse_macro_config(args: Punctuated<Meta, Comma>) -> Result<MacroConfig, Toke
 }
 
 /// Parse operation attribute
+#[allow(dead_code)]
 fn parse_operation_attribute(
     nv: &syn::MetaNameValue,
     seen_keys: &mut HashSet<&'static str>,
@@ -138,6 +142,7 @@ fn parse_operation_attribute(
 }
 
 /// Validate operation name
+#[allow(dead_code)]
 fn validate_operation_name(op_name: &str, span: proc_macro2::Span) -> Result<(), TokenStream> {
     if op_name.is_empty() {
         return Err(SynError::new(span, "Operation name cannot be empty")
@@ -163,6 +168,7 @@ fn validate_operation_name(op_name: &str, span: proc_macro2::Span) -> Result<(),
 }
 
 /// Parse context attribute
+#[allow(dead_code)]
 fn parse_context_attribute(
     nv: &syn::MetaNameValue,
     config: &mut MacroConfig,
@@ -190,6 +196,7 @@ fn parse_context_attribute(
 }
 
 /// Validate context key-value pair
+#[allow(dead_code)]
 fn validate_context_pair(
     key: &str,
     value: &str,
@@ -218,6 +225,7 @@ fn validate_context_pair(
 }
 
 /// Parse flag attribute
+#[allow(dead_code)]
 fn parse_flag_attribute(
     path: &syn::Path,
     name: &'static str,
@@ -226,7 +234,7 @@ fn parse_flag_attribute(
 ) -> Result<(), TokenStream> {
     if !seen_keys.insert(name) {
         return Err(
-            SynError::new(path.span(), &format!("Duplicate '{}' parameter", name))
+            SynError::new(path.span(), format!("Duplicate '{name}' parameter"))
                 .to_compile_error()
                 .into(),
         );
@@ -236,6 +244,7 @@ fn parse_flag_attribute(
 }
 
 /// Parse retry count attribute
+#[allow(dead_code)]
 fn parse_retry_count_attribute(
     nv: &syn::MetaNameValue,
     seen_keys: &mut HashSet<&'static str>,
@@ -280,6 +289,7 @@ fn parse_retry_count_attribute(
 }
 
 /// Parse timeout attribute
+#[allow(dead_code)]
 fn parse_timeout_attribute(
     nv: &syn::MetaNameValue,
     seen_keys: &mut HashSet<&'static str>,
@@ -324,8 +334,9 @@ fn parse_timeout_attribute(
 }
 
 /// Emit warning using eprintln! since proc macro diagnostics are unstable
+#[allow(dead_code)]
 fn emit_warning(message: &str) {
-    eprintln!("warning: {}", message);
+    eprintln!("warning: {message}");
 }
 
 /// Procedural macro for automatic error context enrichment
@@ -780,3 +791,4 @@ mod tests {
         Ok(())
     }
 }
+// moved to file header

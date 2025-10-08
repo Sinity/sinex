@@ -28,7 +28,7 @@
 //! - Batch processing prevents memory spikes for large dependency graphs
 //! - Early termination on depth or memory limits
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
@@ -125,6 +125,7 @@ pub struct StreamingCascadeAnalyzer {
     config: CascadeAnalyzerConfig,
 }
 
+#[allow(dead_code)]
 impl StreamingCascadeAnalyzer {
     /// Create new analyzer with default configuration
     pub fn new(pool: PgPool) -> Self {
@@ -165,10 +166,7 @@ impl StreamingCascadeAnalyzer {
         info!("Analyzing cascades for {} events", event_ids.len());
 
         // Generate unique session ID for this analysis
-        let session_id = format!(
-            "{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
+        let session_id = format!("{}", Utc::now().timestamp_nanos_opt().unwrap_or_default());
 
         // Start a transaction for the entire analysis
         let mut tx = self

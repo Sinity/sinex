@@ -39,36 +39,3 @@ pub fn create_secure_temp_path(prefix: &str, extension: &str) -> Result<Utf8Path
 
     Ok(temp_path)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_validate_and_convert_path() -> color_eyre::eyre::Result<()> {
-        // Valid paths should work
-        let valid_path = validate_and_convert_path("/tmp/test.txt")?;
-        assert!(valid_path.to_string().contains("test.txt"));
-
-        // Directory traversal should be rejected
-        assert!(validate_and_convert_path("../../../etc/passwd").is_err());
-        assert!(validate_and_convert_path("/path/../../../etc/passwd").is_err());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_create_secure_temp_path() -> color_eyre::eyre::Result<()> {
-        let temp_path = create_secure_temp_path("sinex_blob", "tmp")?;
-
-        // Should be in temp directory
-        assert!(temp_path.to_string().contains("sinex_blob"));
-        assert!(temp_path.extension().unwrap_or("") == "tmp");
-
-        // Should not exist yet
-        assert!(!temp_path.exists());
-
-        Ok(())
-    }
-}

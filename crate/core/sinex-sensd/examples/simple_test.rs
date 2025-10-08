@@ -3,30 +3,16 @@
 //! This example demonstrates the sensd functionality without depending on
 //! the full sinex ecosystem that may have compilation issues.
 
-use chrono::Utc;
-use sinex_sensd::{
-    material_stream::{MaterialSlice, MaterialSliceStream},
-    temporal_ledger::TemporalLedger,
-};
 use sqlx::PgPool;
 use std::env;
 use tracing::{info, warn};
 
-#[derive(Debug)]
-struct SimpleMaterial {
-    id: String, // Using String instead of Ulid to avoid sinex-core dependency
-    data: Vec<u8>,
-    created_at: chrono::DateTime<Utc>,
-}
-
 /// Simple test that creates materials and streams them
-async fn test_material_streaming(db_pool: PgPool) -> color_eyre::eyre::Result<()> {
+async fn test_material_streaming(_db_pool: PgPool) -> color_eyre::eyre::Result<()> {
     info!("Testing material streaming...");
 
     // Create some test data
     let test_data = b"Hello from sensd! This is test data for streaming.";
-    let material_id_str = "01HV3W8C0FTEST123456789ABC"; // Mock ULID format
-
     info!("Created test material with {} bytes", test_data.len());
 
     // Note: In a real implementation, we would:
@@ -44,7 +30,7 @@ async fn test_sensor_simulation() -> color_eyre::eyre::Result<()> {
 
     // Simulate append stream sensor
     let mut total_bytes = 0;
-    let chunks = vec![
+    let chunks: Vec<&[u8]> = vec![
         b"chunk1: initial data\n",
         b"chunk2: more data follows\n",
         b"chunk3: final data block\n",

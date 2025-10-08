@@ -43,7 +43,7 @@ impl FromStr for ServiceStatus {
             "active" => Ok(ServiceStatus::Active),
             "inactive" => Ok(ServiceStatus::Inactive),
             "failed" => Ok(ServiceStatus::Failed),
-            "unknown" | _ => Ok(ServiceStatus::Unknown),
+            _ => Ok(ServiceStatus::Unknown),
         }
     }
 }
@@ -151,8 +151,8 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> Result<Value>
 
     // Required binaries for Sinex operation
     let required_binaries = vec![
-        ("sinex-collector", "Main event collection service", true),
-        ("sinex-router", "Event routing service", true),
+        ("sinex-ingestd", "Ingestion daemon", true),
+        ("sinex-gateway", "API gateway", true),
         ("sinex-preflight", "Pre-flight verification service", true),
         ("psql", "PostgreSQL client", true),
         ("systemctl", "SystemD control", true),
@@ -306,8 +306,12 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
 
     // Sinex-related services that should be manageable
     let sinex_services = vec![
-        "sinex-unified-collector.service",
-        "sinex-promo-worker.service",
+        "sinex-ingestd.service",
+        "sinex-gateway.service",
+        "sinex-fs-watcher-1.service",
+        "sinex-terminal-satellite-1.service",
+        "sinex-desktop-satellite-1.service",
+        "sinex-system-satellite-1.service",
         "sinex-health-aggregator.service",
     ];
 

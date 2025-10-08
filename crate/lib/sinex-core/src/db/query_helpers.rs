@@ -88,14 +88,14 @@ pub fn db_error(err: SqlxError, context: &str) -> SinexError {
         SqlxError::RowNotFound => SinexError::not_found(context.to_string()),
         SqlxError::Database(db_err) => {
             if db_err.is_unique_violation() {
-                SinexError::database(format!("{}: unique constraint violation", context))
+                SinexError::database(format!("{context}: unique constraint violation"))
             } else if db_err.is_foreign_key_violation() {
-                SinexError::database(format!("{}: foreign key violation", context))
+                SinexError::database(format!("{context}: foreign key violation"))
             } else {
-                SinexError::database(format!("{}: {}", context, db_err))
+                SinexError::database(format!("{context}: {db_err}"))
             }
         }
-        _ => SinexError::database(format!("{}: {}", context, err)),
+        _ => SinexError::database(format!("{context}: {err}")),
     }
 }
 
@@ -249,49 +249,3 @@ pub async fn count(
 
 // ULID/UUID conversion utilities are now provided by sinex-schema::ulid_conversions
 // and re-exported above for convenience
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::{sinex_test, TestContext};
-
-    use color_eyre::eyre::Result;
-
-    use serde_json::json;
-
-    #[sinex_test]
-    async fn test_retry_config_default(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let config = RetryConfig::default();
-        assert_eq!(config.max_attempts, retry::MAX_RETRY_ATTEMPTS);
-        assert_eq!(
-            config.initial_delay,
-            timeouts::DEFAULT_TERMINAL_POLL_INTERVAL
-        );
-        assert_eq!(config.max_delay, timeouts::RETRY_MAX_DELAY);
-        assert_eq!(config.exponential_base, retry::BACKOFF_MULTIPLIER as f64);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_is_retryable_db_error_function_exists(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
-        // Test that timeout errors are not retryable
-        let timeout_err = SinexError::timeout("test timeout");
-        assert!(!is_retryable_db_error(&timeout_err));
-
-        // Test that general database errors are not retryable by default
-        let db_err = SinexError::database("test database error");
-        assert!(!is_retryable_db_error(&db_err));
-
-        // Note: To properly test retryable errors, we'd need to create a SinexError
-        // with a message containing the specific strings we check for
-        Ok(())
-    }
-
-    // =============================================================================
-    // ULID Parsing Error Tests
-    // =============================================================================
-
-    // ULID parsing and conversion tests have been moved to sinex-schema::ulid_conversions
-}

@@ -107,7 +107,7 @@ impl StageAsYouGoContext {
             "Registered in-flight source material"
         );
 
-        Ok(result.id.into())
+        Ok(result.id)
     }
 
     /// Create and send an event with attached source material reference
@@ -339,11 +339,4 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             duration: start_time.elapsed(),
         })
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // use super::*;
-
-    // Tests would go here
 }

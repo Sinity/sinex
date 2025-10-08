@@ -86,10 +86,7 @@ impl ViolationType {
                 event_id,
                 missing_parent_id,
             } => {
-                format!(
-                    "Event {} references non-existent parent {}",
-                    event_id, missing_parent_id
-                )
+                format!("Event {event_id} references non-existent parent {missing_parent_id}")
             }
             ViolationType::CircularDependency { event_ids } => {
                 format!(
@@ -98,52 +95,34 @@ impl ViolationType {
                 )
             }
             ViolationType::OutOfOrderTimestamp { event_id, .. } => {
-                format!(
-                    "Event {} has timestamp out of order with its dependencies",
-                    event_id
-                )
+                format!("Event {event_id} has timestamp out of order with its dependencies")
             }
             ViolationType::TamperedEvent { event_id, .. } => {
-                format!(
-                    "Event {} has been tampered with (checksum mismatch)",
-                    event_id
-                )
+                format!("Event {event_id} has been tampered with (checksum mismatch)")
             }
             ViolationType::OrphanedAnchor {
                 event_id,
                 anchor_byte,
                 ..
             } => {
-                format!(
-                    "Event {} references non-existent anchor at byte {}",
-                    event_id, anchor_byte
-                )
+                format!("Event {event_id} references non-existent anchor at byte {anchor_byte}")
             }
             ViolationType::SchemaMismatch {
                 event_id,
                 validation_error,
                 ..
             } => {
-                format!(
-                    "Event {} payload validation failed: {}",
-                    event_id, validation_error
-                )
+                format!("Event {event_id} payload validation failed: {validation_error}")
             }
             ViolationType::TemporalParadox { event_id, .. } => {
-                format!(
-                    "Event {} claims to have occurred before its dependencies",
-                    event_id
-                )
+                format!("Event {event_id} claims to have occurred before its dependencies")
             }
             ViolationType::MaterialGap {
                 material_id,
                 gap_start,
                 gap_end,
             } => {
-                format!(
-                    "Gap detected in material {} from byte {} to {}",
-                    material_id, gap_start, gap_end
-                )
+                format!("Gap detected in material {material_id} from byte {gap_start} to {gap_end}")
             }
             ViolationType::MaterialOverlap {
                 material_id,
@@ -152,8 +131,7 @@ impl ViolationType {
                 ..
             } => {
                 format!(
-                    "Overlapping slices in material {} from byte {} to {}",
-                    material_id, overlap_start, overlap_end
+                    "Overlapping slices in material {material_id} from byte {overlap_start} to {overlap_end}"
                 )
             }
         }

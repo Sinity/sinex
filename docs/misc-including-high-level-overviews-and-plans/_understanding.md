@@ -18,7 +18,9 @@ Sinex is a revolutionary personal exocortex system that transcends traditional d
 ~~Stage-as-You-Go Pattern implementation~~
 
 ### 2. Three-Phase Startup Sequence
+
 Ensures complete data capture across restarts:
+
 1. **Snapshot**: Capture current state (if supported)
 2. **Gap-fill**: Process events from last checkpoint to now
 3. **Continuous**: Enter real-time streaming mode
@@ -27,7 +29,9 @@ Ensures complete data capture across restarts:
 ~~Anchor Byte Principle documentation~~
 
 ### 4. Event Symmetry (Active Inference)
+
 Same event types serve as both observations and instructions:
+
 ```json
 // Observation (what happened)
 {
@@ -45,7 +49,9 @@ Same event types serve as both observations and instructions:
 ```
 
 ### 5. Archive and Replace Pattern
+
 Never lose data; evolve interpretations:
+
 - Original interpretations archived with full audit trail
 - New interpretations created with updated logic
 - Complete provenance chain maintained
@@ -56,6 +62,7 @@ Never lose data; evolve interpretations:
 ## Implementation Status vs Vision
 
 ### What's Operational (✅)
+
 - **Satellite Architecture**: Independent services with unified interface
 - **Event Ingestion Pipeline**: gRPC → ingestd → PostgreSQL + Redis
 - **Source Material Registry**: Git-annex backed immutable storage
@@ -66,12 +73,14 @@ Never lose data; evolve interpretations:
 - **Basic Automata**: Health aggregator, command canonicalizer
 
 ### What's Incomplete (🚧)
+
 - **HotlogAutomaton Legacy**: Automata still use separate trait instead of `StatefulStreamProcessor`
 - **PKM Integration**: Documents treated specially rather than as source material
 - **Schema Evolution**: Migration paths between versions unclear
 - **Metrics Integration**: Infrastructure exists but underutilized
 
 ### What's Missing (❌)
+
 - **Active Inference**: Actuation patterns designed but unimplemented
 - **Browser Integration**: Major gap in web activity capture (~40% of digital life)
 - **Declarative Processing**: SQL/Prompt-as-Automaton vision unrealized
@@ -82,12 +91,13 @@ Never lose data; evolve interpretations:
 ## Operational Excellence
 
 ### Environment-Only Configuration
+
 ```nix
 services.sinex = {
     enable = true;
     targetUser = "sinity";
     logLevel = "info";
-    
+
     satellite = {
         enable = true;
         eventSources = {
@@ -97,7 +107,7 @@ services.sinex = {
             system.enable = true;
         };
     };
-    
+
     security.level = "strict";
     preflightVerification.enable = true;
     monitoring.observabilityStack.enable = true;
@@ -105,7 +115,9 @@ services.sinex = {
 ```
 
 ### Pre-flight Verification
+
 Zero-downtime deployments through comprehensive checks:
+
 1. Database connectivity and extensions
 2. Migration status validation
 3. Resource availability
@@ -113,6 +125,7 @@ Zero-downtime deployments through comprehensive checks:
 5. Service dependencies
 
 ### Security Model
+
 - **Process Isolation**: Each satellite with minimal privileges
 - **Systemd Hardening**: NoNewPrivileges, ProtectSystem, SystemCallFilter
 - **Resource Limits**: Memory and CPU quotas per service
@@ -124,12 +137,13 @@ Zero-downtime deployments through comprehensive checks:
 ## Architectural Tensions and Trade-offs
 
 ### Acknowledged Tensions
+
 1. **Immutability vs Storage**: Append-only increases storage but ensures integrity
    - Mitigation: TimescaleDB compression (planned)
-   
+
 2. **Type Safety vs Flexibility**: Static types vs extensible schemas
    - Solution: Dual systems (RawEvent + TypedEvent)
-   
+
 3. **Local-First vs Distributed**: Single-node focus with distributed patterns
    - Current: Optimized for single user
    - Future: Multi-device sync possible
@@ -138,6 +152,7 @@ Zero-downtime deployments through comprehensive checks:
    - Approach: Powerful defaults with escape hatches
 
 ### Design Decisions
+
 - **No Config Files**: Environment-only for absolute reproducibility
 - **Unified Event Stream**: Simplicity over topic-specific optimization
 - **ULID Everywhere**: Time-ordering over traditional UUIDs
@@ -167,13 +182,16 @@ Zero-downtime deployments through comprehensive checks:
 4. **Circuit Breaker Patterns**: Prevent cascade failures in distributed components
 
 ### Data Consistency Guarantees
+
 - **Write-Ahead Logging**: PostgreSQL ensures durability
 - **Idempotent Operations**: Safe to retry without data corruption
 - **Eventual Consistency**: Synthesis events may lag but converge
 - **Immutability**: No updates means no consistency conflicts
 
 ### Failure Boundaries
+
 Each component fails independently:
+
 - Satellite crash doesn't affect others
 - Redis failure degrades real-time but not storage
 - Database unavailable blocks writes but not reads from cache
@@ -181,12 +199,14 @@ Each component fails independently:
 ## System Communication Architecture
 
 ### gRPC Service Design
+
 - **Streaming RPCs**: Efficient for high-volume event submission
 - **Health Checks**: Standard gRPC health protocol
 - **Backpressure**: Three strategies (Reject, SlowDown, Buffer)
 - **Message Framing**: Protobuf for efficiency and schema evolution
 
 ### Inter-Service Patterns
+
 ```
 Satellites --[gRPC]--> Ingestd --[Batch Insert]--> PostgreSQL
                           |
@@ -196,7 +216,9 @@ Satellites --[gRPC]--> Ingestd --[Batch Insert]--> PostgreSQL
 ```
 
 ### Service Discovery
+
 Currently static configuration via environment variables. Future potential for:
+
 - Consul/etcd integration
 - Kubernetes service discovery
 - mDNS for local networks
@@ -204,12 +226,14 @@ Currently static configuration via environment variables. Future potential for:
 ## Development Experience Excellence
 
 ### Build System Integration
+
 - **Nix + Cargo**: Reproducible builds with caching
 - **SQLX Offline Mode**: Compile-time SQL validation
 - **Protobuf Generation**: Automatic from `.proto` files
 - **Cross-compilation**: Support for multiple targets
 
 ### Debug Workflows
+
 ```rust
 // Rich debug context capture
 pub struct DebugContext {
@@ -220,6 +244,7 @@ pub struct DebugContext {
 ```
 
 ### Profiling Infrastructure
+
 - **CPU Profiling**: `perf` integration via debug symbols
 - **Memory Profiling**: `heaptrack` and `valgrind` support
 - **Tracing**: `tokio-console` for async runtime inspection
@@ -228,25 +253,30 @@ pub struct DebugContext {
 ## Observability Architecture
 
 ### Structured Logging
+
 ```rust
 #[instrument(skip(pool), fields(event_count = events.len()))]
 async fn process_event_batch(pool: &PgPool, events: Vec<Event>)
 ```
 
 Every operation emits structured logs with:
+
 - Trace IDs for request correlation
 - Event counts and types
 - Timing information
 - Error details with context
 
 ### Metrics Collection
+
 - **Prometheus Format**: Standard exposition format
 - **Event-Based Metrics**: Metrics as events in the stream
 - **Automatic Instrumentation**: Via procedural macros
 - **Custom Dashboards**: Grafana configurations included
 
 ### Distributed Tracing Readiness
+
 While not implemented, the architecture supports:
+
 - OpenTelemetry integration points
 - Trace context propagation
 - Span relationships across services
@@ -257,6 +287,7 @@ While not implemented, the architecture supports:
 ## Integration and Extensibility
 
 ### Extension Mechanisms
+
 ```rust
 #[async_trait]
 pub trait EventProcessor: Send + Sync {
@@ -267,18 +298,21 @@ pub trait EventProcessor: Send + Sync {
 ```
 
 ### Shell Integration
+
 - **Universal Hooks**: Support bash, zsh, fish, nushell
 - **Non-invasive**: Preserves existing configurations
 - **Reversible**: Clean uninstall procedures
 - **Performance**: Minimal overhead (<1ms per command)
 
 ### API Versioning
+
 - **URL Versioning**: `/api/v1/`, `/api/v2/`
 - **Backward Compatibility**: Old versions maintained
 - **Deprecation Notices**: In headers and docs
 - **Migration Guides**: For breaking changes
 
 ### Third-Party Integration Points
+
 - **Webhook Support**: Emit events to external systems
 - **Import Adapters**: Bring in external data
 - **Export Formats**: JSON, CSV, Parquet
@@ -287,18 +321,21 @@ pub trait EventProcessor: Send + Sync {
 ## System Boundaries and Limitations
 
 ### Current Limitations
+
 1. **Single-Node Design**: No built-in clustering
 2. **Memory Constraints**: Event size limited by RAM
 3. **Query Complexity**: No graph traversal queries yet
 4. **Real-time Constraints**: ~100ms latency for synthesis
 
 ### Theoretical Limits
+
 - **Event Rate**: ~1M events/day sustainable
 - **Storage Growth**: ~1GB/day typical usage
 - **Query Performance**: Degrades beyond 1B events
 - **Concurrent Users**: Designed for single user
 
 ### Scaling Strategies
+
 1. **Vertical**: More CPU/RAM/SSD for single node
 2. **Horizontal**: Consumer groups for automata
 3. **Partitioning**: Time-based table partitioning
@@ -307,21 +344,27 @@ pub trait EventProcessor: Send + Sync {
 ## Philosophical Implications
 
 ### Cognitive Augmentation
+
 Sinex doesn't just store data—it creates a substrate for extended cognition:
+
 - **External Memory**: Reliable, searchable, permanent
 - **Pattern Recognition**: Surfacing insights humans miss
 - **Time Navigation**: Revisit any moment perfectly
 - **Context Preservation**: Full environment reconstruction
 
 ### Privacy Paradox
+
 Total capture creates tension:
+
 - **Perfect Memory**: Nothing forgotten, everything accessible
 - **Selective Amnesia**: Need for purposeful forgetting
 - **Identity Construction**: We are our digital traces
 - **Sovereign Data**: User owns and controls everything
 
 ### Emergent Behaviors
+
 The architecture enables unexpected capabilities:
+
 - **Serendipitous Discovery**: Connections across time
 - **Behavioral Analytics**: Understanding personal patterns
 - **Predictive Assistance**: Anticipating user needs
@@ -330,6 +373,7 @@ The architecture enables unexpected capabilities:
 ## Conclusion
 
 Sinex represents a sophisticated synthesis of philosophical vision and pragmatic engineering. The architecture successfully balances:
+
 - **Immediate utility** with future extensibility
 - **Conceptual purity** with pragmatic engineering
 - **Local performance** with distributed readiness
@@ -338,6 +382,7 @@ Sinex represents a sophisticated synthesis of philosophical vision and pragmatic
 - **Simplicity** with sophisticated capabilities
 
 The codebase demonstrates exceptional engineering quality through:
+
 - **Consistent patterns** across all components
 - **Rich error handling** with recovery strategies
 - **Performance consciousness** without premature optimization

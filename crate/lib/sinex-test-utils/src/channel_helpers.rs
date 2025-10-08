@@ -123,8 +123,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
             Err(e) => {
                 tracing::error!("Failed to send on channel ({}): {}", context, e);
                 Err(SinexError::unknown(format!(
-                    "Channel send failed ({}): {}",
-                    context, e
+                    "Channel send failed ({context}): {e}",
                 )))
             }
         }
@@ -133,7 +132,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
     async fn send_timeout(&self, value: T, timeout_duration: Duration) -> Result<()> {
         match timeout(timeout_duration, self.send(value)).await {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(SinexError::unknown(format!("Channel send failed: {}", e))),
+            Ok(Err(e)) => Err(SinexError::unknown(format!("Channel send failed: {e}"))),
             Err(_) => Err(SinexError::unknown("Channel send timed out".to_string())),
         }
     }

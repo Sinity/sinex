@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
         args.batch_size,
         args.batch_timeout_secs,
         args.dry_run,
-    )?;
+    );
 
     if args.validate_config {
         config.validate_and_exit().await;

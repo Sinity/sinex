@@ -2,7 +2,6 @@ use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::Ulid;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, PostgresQueryBuilder, Query};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -24,14 +23,14 @@ pub fn db_error(e: sqlx::Error, context: &str) -> SinexError {
         sqlx::Error::RowNotFound => SinexError::not_found(context.to_string()),
         sqlx::Error::Database(db_err) => {
             if db_err.is_unique_violation() {
-                SinexError::database(format!("{}: unique constraint violation", context))
+                SinexError::database(format!("{context}: unique constraint violation"))
             } else if db_err.is_foreign_key_violation() {
-                SinexError::database(format!("{}: foreign key violation", context))
+                SinexError::database(format!("{context}: foreign key violation"))
             } else {
-                SinexError::database(format!("{}: {}", context, db_err))
+                SinexError::database(format!("{context}: {db_err}"))
             }
         }
-        _ => SinexError::database(format!("{}: {}", context, e)),
+        _ => SinexError::database(format!("{context}: {e}")),
     }
 }
 
@@ -72,7 +71,7 @@ pub trait TransactionSupport {
     type Item;
 
     /// Execute the operation within a transaction
-    fn with_tx<'a>(self, tx: &'a mut Transaction<'_, Postgres>) -> Self::Item;
+    fn with_tx(self, tx: &mut Transaction<'_, Postgres>) -> Self::Item;
 }
 
 // Re-export TableDef from schema crate

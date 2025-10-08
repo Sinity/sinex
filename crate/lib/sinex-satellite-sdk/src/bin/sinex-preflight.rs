@@ -202,6 +202,7 @@ async fn run_complete_verification(
     ];
 
     let mut overall_status = VerificationStatus::Pass;
+    let deadline = start_time + timeout;
 
     for phase in phases {
         if skip_phases.contains(&phase) {
@@ -209,7 +210,8 @@ async fn run_complete_verification(
             continue;
         }
 
-        if start_time.elapsed() > timeout {
+        let now = Instant::now();
+        if now >= deadline {
             report
                 .errors
                 .push("Verification timeout exceeded".to_string());
@@ -219,17 +221,32 @@ async fn run_complete_verification(
 
         let phase_start = Instant::now();
         info!("Running verification phase: {:?}", phase);
-
-        let phase_result = match run_verification_phase(&phase).await {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Phase {:?} failed: {}", phase, e);
-                report.errors.push(format!("Phase {:?}: {}", phase, e));
+        let remaining = deadline.saturating_duration_since(now);
+        let phase_result = match tokio::time::timeout(remaining, run_verification_phase(&phase))
+            .await
+        {
+            Ok(outcome) => match outcome {
+                Ok(result) => result,
+                Err(e) => {
+                    error!("Phase {:?} failed: {}", phase, e);
+                    report.errors.push(format!("Phase {:?}: {}", phase, e));
+                    PhaseResult {
+                        status: VerificationStatus::Fail,
+                        duration_ms: phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                        details: serde_json::json!({"error": e.to_string()}),
+                        messages: vec![e.to_string()],
+                    }
+                }
+            },
+            Err(_) => {
+                let timeout_message = format!("Phase {:?} timed out after {:?}", phase, remaining);
+                error!(timeout_message);
+                report.errors.push(timeout_message.clone());
                 PhaseResult {
                     status: VerificationStatus::Fail,
                     duration_ms: phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                    details: serde_json::json!({"error": e.to_string()}),
-                    messages: vec![e.to_string()],
+                    details: serde_json::json!({"error": "timeout"}),
+                    messages: vec!["Phase exceeded allotted time".to_string(), timeout_message],
                 }
             }
         };

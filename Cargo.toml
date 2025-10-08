@@ -12,25 +12,20 @@ members = [
   # Core runtime crates
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
-  # Exclude dispatcher and sensd until stabilized
-  # "crate/core/sinex-rpc-dispatcher",
-  # "crate/core/sinex-sensd",
+  "crate/core/sinex-rpc-dispatcher",
+  "crate/core/sinex-sensd",
   
   # Satellite crates
-  # Re-enable satellites incrementally for compilation
-  # "crate/satellites/sinex-fs-watcher",
-  # "crate/satellites/sinex-terminal-satellite",
   "crate/satellites/sinex-terminal-satellite",
-  # Enable satellites incrementally while refactoring
   "crate/satellites/sinex-desktop-satellite",
   "crate/satellites/sinex-system-satellite",
   "crate/satellites/sinex-fs-watcher",
   "crate/satellites/sinex-terminal-command-canonicalizer",
-  # "crate/satellites/sinex-health-aggregator",
-  # "crate/satellites/sinex-document-ingestor",
+  "crate/satellites/sinex-health-aggregator",
+  "crate/satellites/sinex-document-ingestor",
   
   # Automaton crates
-  # Enable automata incrementally
+  # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",
   # "crate/satellites/sinex-analytics-automaton",
   # "crate/satellites/sinex-pkm-automaton",
@@ -152,6 +147,7 @@ sd-notify = "0.4"
 tokio-stream = "0.1"
 futures = "0.3"
 dirs = "5.0"
+lazy_static = "1.5"
 
 # File system watching
 notify = "6.1"
@@ -197,27 +193,29 @@ edition = "2021"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT OR Apache-2.0"
-publish = false
-
-[dependencies]
-# Test utilities and dependencies for workspace-level integration tests
-# Temporarily disable workspace-level integration deps to restore compilation
 
 [dev-dependencies]
-# Root-level test deps used by files under `tests/`
-sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
-sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
+lazy_static = { workspace = true }
+regex = { workspace = true }
+jsonschema = { workspace = true }
+rstest = { workspace = true }
+proptest = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
-proptest = { workspace = true }
-rstest = { workspace = true }
+futures = { workspace = true }
 tracing-test = { workspace = true }
 uuid = { workspace = true }
-# sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
-# sinex-core = { path = "crate/lib/sinex-core" }
-# sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Needed for checkpoint property tests
+color-eyre = { workspace = true }
+sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
+sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
+blake3 = { workspace = true }
+once_cell = { workspace = true }
+
+[dependencies]
+# Test utilities and dependencies for workspace-level integration tests
+sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" }
 
 # (Removed duplicate optional test deps; consolidated under dev-dependencies above)
 

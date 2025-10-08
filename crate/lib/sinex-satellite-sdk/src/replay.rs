@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 /// Get epoch timestamp as a safe fallback
 fn epoch_timestamp() -> DateTime<Utc> {
-    DateTime::from_timestamp(0, 0).unwrap_or_else(|| DateTime::<Utc>::MIN_UTC)
+    DateTime::from_timestamp(0, 0).unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
 
 /// Replay mode configuration
@@ -231,7 +231,7 @@ impl ReplayManager {
         tracker.set_phase(ReplayPhase::Initializing).await;
 
         let mut total_processed = 0;
-        let mut total_batches = 0;
+        let mut total_batches: usize = 0;
         let mut errors = Vec::new();
         let mut offset = 0;
 
@@ -330,11 +330,11 @@ impl ReplayManager {
                             .filter(|event: &Event<JsonValue>| {
                                 let type_matches =
                                     event_types.iter().any(|t| t == event.event_type.as_str());
-                                let start_matches = start_time.map_or(true, |start| {
-                                    event.ts_orig.as_ref().map_or(false, |ts| *ts >= start)
+                                let start_matches = start_time.is_none_or(|start| {
+                                    event.ts_orig.as_ref().is_some_and(|ts| *ts >= start)
                                 });
-                                let end_matches = end_time.map_or(true, |end| {
-                                    event.ts_orig.as_ref().map_or(false, |ts| *ts <= end)
+                                let end_matches = end_time.is_none_or(|end| {
+                                    event.ts_orig.as_ref().is_some_and(|ts| *ts <= end)
                                 });
                                 type_matches && start_matches && end_matches
                             })
@@ -428,7 +428,7 @@ impl ReplayManager {
             tracker.complete_batch().await;
 
             // Save checkpoint periodically (every 10 batches)
-            if total_batches % 10 == 0 {
+            if total_batches.is_multiple_of(10) {
                 let last_event_id = None; // Would need to extract from events
                 tracker
                     .save_checkpoint(
@@ -495,11 +495,9 @@ impl ReplayManager {
                     if pattern.starts_with('*') && pattern.ends_with('*') {
                         let middle = &pattern[1..pattern.len() - 1];
                         event.source.contains(middle)
-                    } else if pattern.starts_with('*') {
-                        let suffix = &pattern[1..];
+                    } else if let Some(suffix) = pattern.strip_prefix('*') {
                         event.source.ends_with(suffix)
-                    } else if pattern.ends_with('*') {
-                        let prefix = &pattern[..pattern.len() - 1];
+                    } else if let Some(prefix) = pattern.strip_suffix('*') {
                         event.source.starts_with(prefix)
                     } else {
                         event.source.as_str() == pattern
@@ -521,11 +519,9 @@ impl ReplayManager {
                     if pattern.starts_with('*') && pattern.ends_with('*') {
                         let middle = &pattern[1..pattern.len() - 1];
                         event.event_type.contains(middle)
-                    } else if pattern.starts_with('*') {
-                        let suffix = &pattern[1..];
+                    } else if let Some(suffix) = pattern.strip_prefix('*') {
                         event.event_type.ends_with(suffix)
-                    } else if pattern.ends_with('*') {
-                        let prefix = &pattern[..pattern.len() - 1];
+                    } else if let Some(prefix) = pattern.strip_suffix('*') {
                         event.event_type.starts_with(prefix)
                     } else {
                         event.event_type.as_str() == pattern
@@ -547,11 +543,9 @@ impl ReplayManager {
                     if pattern.starts_with('*') && pattern.ends_with('*') {
                         let middle = &pattern[1..pattern.len() - 1];
                         event.host.contains(middle)
-                    } else if pattern.starts_with('*') {
-                        let suffix = &pattern[1..];
+                    } else if let Some(suffix) = pattern.strip_prefix('*') {
                         event.host.ends_with(suffix)
-                    } else if pattern.ends_with('*') {
-                        let prefix = &pattern[..pattern.len() - 1];
+                    } else if let Some(prefix) = pattern.strip_suffix('*') {
                         event.host.starts_with(prefix)
                     } else {
                         event.host.as_str() == pattern
@@ -567,13 +561,13 @@ impl ReplayManager {
 
         // Check time range
         if let Some(start_time) = filters.start_time {
-            if event.ts_orig.as_ref().map_or(false, |ts| *ts < start_time) {
+            if event.ts_orig.as_ref().is_some_and(|ts| *ts < start_time) {
                 return false;
             }
         }
 
         if let Some(end_time) = filters.end_time {
-            if event.ts_orig.as_ref().map_or(false, |ts| *ts > end_time) {
+            if event.ts_orig.as_ref().is_some_and(|ts| *ts > end_time) {
                 return false;
             }
         }

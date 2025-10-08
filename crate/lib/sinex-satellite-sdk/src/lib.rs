@@ -1,3 +1,11 @@
+#![allow(
+    unexpected_cfgs,
+    clippy::large_enum_variant,
+    clippy::needless_borrow,
+    clippy::mem_replace_option_with_none,
+    clippy::manual_flatten,
+    clippy::uninlined_format_args
+)]
 //! Sinex Satellite SDK
 //!
 //! Shared library for building Sinex satellite services (event sources and automata).
@@ -124,8 +132,7 @@ pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod lifecycle;
-#[cfg(feature = "nats-bypass")]
-pub mod nats;
+#[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
 pub mod processor_runner;
@@ -162,6 +169,7 @@ pub use version::{SatelliteInstance, SatelliteVersion};
 
 // Re-export preflight utilities
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+#[cfg(feature = "preflight")]
 pub use preflight::{run_preflight_checks, verify_service_dependencies, VerificationStatus};
 
 /// Version information for satellite components
@@ -331,10 +339,10 @@ pub enum SatelliteError {
     Configuration(String),
 
     #[error("gRPC communication error: {0}")]
-    Grpc(#[from] tonic::Status),
+    Grpc(Box<tonic::Status>),
 
     #[error("gRPC transport error: {0}")]
-    GrpcTransport(#[from] tonic::transport::Error),
+    GrpcTransport(Box<tonic::transport::Error>),
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -365,6 +373,18 @@ pub enum SatelliteError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+}
+
+impl From<tonic::Status> for SatelliteError {
+    fn from(e: tonic::Status) -> Self {
+        SatelliteError::Grpc(Box::new(e))
+    }
+}
+
+impl From<tonic::transport::Error> for SatelliteError {
+    fn from(e: tonic::transport::Error) -> Self {
+        SatelliteError::GrpcTransport(Box::new(e))
+    }
 }
 
 impl From<SatelliteError> for sinex_core::error::SinexError {

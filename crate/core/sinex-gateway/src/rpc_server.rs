@@ -33,7 +33,11 @@ use crate::{handlers::*, service_container::ServiceContainer};
 // External crates
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
+use futures::StreamExt;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HyperBuilder;
+use hyper_util::service::TowerToHyperService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower::ServiceBuilder;
@@ -41,7 +45,6 @@ use tower_http::cors::CorsLayer;
 
 // Standard library
 use sinex_core::environment::environment;
-use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,7 +150,7 @@ async fn handle_rpc(
         request.method, request.params
     );
 
-    let start = std::time::Instant::now();
+    let _start = std::time::Instant::now();
     let method = request.method.clone();
 
     // Use shared dispatch function
@@ -227,15 +230,53 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             info!("RPC server listening on TCP {}", addr);
             axum::serve(listener, app).await?;
         }
-        BindAddress::UnixSocket { .. } => {
-            // Simplify: fallback to TCP bind for compilation clarity
-            let addr = "127.0.0.1:9999";
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            info!(
-                "RPC server listening on TCP {} (Unix socket handling disabled)",
-                addr
-            );
-            axum::serve(listener, app).await?;
+        BindAddress::UnixSocket { path } => {
+            let path_str = path.as_str();
+            let socket_path = std::path::Path::new(path_str);
+
+            if let Some(parent) = socket_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .wrap_err("Failed to create Unix socket directory")?;
+            }
+
+            if socket_path.exists() {
+                if let Err(e) = tokio::fs::remove_file(socket_path).await {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(color_eyre::eyre::eyre!(
+                            "Failed to remove existing Unix socket {}: {}",
+                            path_str,
+                            e
+                        ));
+                    }
+                }
+            }
+
+            let listener = tokio::net::UnixListener::bind(socket_path)
+                .wrap_err("Failed to bind Unix socket")?;
+            info!("RPC server listening on Unix socket {}", path_str);
+
+            let mut incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
+            let app = app;
+
+            while let Some(stream) = incoming.next().await {
+                match stream {
+                    Ok(stream) => {
+                        let service_app = app.clone();
+                        tokio::spawn(async move {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(service_app);
+                            let io = TokioIo::new(stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(?err, "Unix RPC connection closed with error");
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to accept Unix socket connection");
+                    }
+                }
+            }
         }
     }
 

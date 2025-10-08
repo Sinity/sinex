@@ -97,8 +97,10 @@ validate_infrastructure() {
             log "✅ Checking syntax of $(basename "$file")..."
             if ! nix-instantiate "$file" \
                 --arg pkgs 'import <nixpkgs> {}' \
-                --arg sinex-collector 'null' \
-                --arg sinex-promo-worker 'null' \
+                --arg sinex-ingestd 'null' \
+                --arg sinex-gateway 'null' \
+                --arg sinex 'null' \
+                --arg sinexCli 'null' \
                 --arg pg_jsonschema 'null' >/dev/null 2>&1; then
                 error "❌ Syntax error in $file"
                 return 1

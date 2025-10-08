@@ -9,24 +9,19 @@ mod common {
     // Core types facade
     pub use sinex_core::{
         db::models::{EventId, Provenance},
-        types::{
-            domain::{EventSource, EventType},
-            events::payloads::*,
-            Id, Ulid,
-        },
+        types::{Id, Ulid},
         Event, JsonValue,
     };
 
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
         cli::{
-            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
-            IngestionHistoryEntry, MissingItem, SourceState,
+            CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
         },
         grpc_client::IngestClient,
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
         SatelliteResult,
     };
@@ -39,8 +34,7 @@ mod common {
         serde_json,
         sqlx::PgPool,
         std::{collections::HashMap, time::Duration},
-        tokio::sync::mpsc,
-        tracing::{debug, error, info, instrument, warn},
+        tracing::{info, warn},
     };
 }
 

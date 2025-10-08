@@ -81,10 +81,8 @@ fn extract_schema_type(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
     for attr in attrs {
         if attr.path().is_ident("validate_against") {
             // Parse the attribute tokens directly
-            if let Ok(expr) = attr.parse_args::<syn::Expr>() {
-                if let syn::Expr::Path(path) = expr {
-                    return quote! { #path };
-                }
+            if let Ok(syn::Expr::Path(path)) = attr.parse_args::<syn::Expr>() {
+                return quote! { #path };
             }
         }
     }

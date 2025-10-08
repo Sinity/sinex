@@ -59,7 +59,8 @@ pub use schema_management::{
     SchemaStatistics, ValidationError, ValidationResult,
 };
 pub use source_materials::{
-    material_types, SourceMaterial, SourceMaterialExt, SourceMaterialRepository,
+    legacy_material_types, material_kinds, status as material_status, timing_info_types,
+    SourceMaterial, SourceMaterialExt, SourceMaterialRepository,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,

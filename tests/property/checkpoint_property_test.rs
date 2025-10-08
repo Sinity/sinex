@@ -3,12 +3,33 @@
 //! Tests that verify checkpoint consistency, recovery, and concurrency properties
 //! using modern test infrastructure.
 
+#![allow(dead_code)]
+
+use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_satellite_sdk::Checkpoint;
 use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+
+static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+    Mutex::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build tokio test runtime"),
+    )
+});
+
+fn run_async<F, T>(future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let runtime = TEST_RUNTIME.lock().expect("tokio runtime mutex poisoned");
+    runtime.block_on(future)
+}
 
 // =============================================================================
 // Property Test Strategies
@@ -41,7 +62,7 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 // Property Tests
 // =============================================================================
 
-/// Test that checkpoint updates are idempotent
+// Test that checkpoint updates are idempotent
 proptest! {
     fn checkpoint_updates_are_idempotent(
         processor_name in processor_names(),
@@ -49,16 +70,15 @@ proptest! {
         last_processed_id in prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"),
         checkpoint_data in checkpoint_data(),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
                 processor_name.clone(),
-                format!("{}-group", processor_name),
-                format!("{}-consumer", processor_name),
+                format!("{processor_name}-group"),
+                format!("{processor_name}-consumer"),
             );
 
             // Create initial checkpoint state
@@ -89,11 +109,11 @@ proptest! {
             prop_assert!(state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint recovery under various failure scenarios
+// Test checkpoint recovery under various failure scenarios
 proptest! {
     fn checkpoint_recovery_is_robust(
         processor_name in processor_names(),
@@ -102,16 +122,15 @@ proptest! {
             1..=10
         ),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
                 processor_name.clone(),
-                format!("{}-group", processor_name),
-                format!("{}-consumer", processor_name),
+                format!("{processor_name}-group"),
+                format!("{processor_name}-consumer"),
             );
 
             // Save multiple checkpoints with increasing counts
@@ -121,7 +140,7 @@ proptest! {
 
                 let state = CheckpointState {
                     checkpoint: Checkpoint::Stream {
-                        message_id: format!("message-{}", i),
+                        message_id: format!("message-{i}"),
                         event_id: None,
                     },
                     processed_count: *processed_count,
@@ -138,26 +157,25 @@ proptest! {
             prop_assert_eq!(state.max_processed, expected_final_count);
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test concurrent checkpoint access
+// Test concurrent checkpoint access
 proptest! {
     fn concurrent_checkpoint_access_is_safe(
         processor_name in processor_names(),
         concurrent_updates in proptest::collection::vec(0u64..1000u64, 1..=20),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
                 pool.clone(),
                 processor_name.clone(),
-                format!("{}-group", processor_name),
-                format!("{}-consumer", processor_name),
+                format!("{processor_name}-group"),
+                format!("{processor_name}-consumer"),
             ));
 
             // Launch concurrent update tasks
@@ -165,10 +183,10 @@ proptest! {
             for (i, processed_count) in concurrent_updates.iter().enumerate() {
                 let manager = checkpoint_manager.clone();
                 let count = *processed_count;
-                let handle: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let state = CheckpointState {
                         checkpoint: Checkpoint::Stream {
-                            message_id: format!("concurrent-{}", i),
+                            message_id: format!("concurrent-{i}"),
                             event_id: None,
                         },
                         processed_count: count,
@@ -197,27 +215,26 @@ proptest! {
             prop_assert!(final_state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint state transitions
+// Test checkpoint state transitions
 proptest! {
     fn checkpoint_state_transitions_are_valid(
         processor_name in processor_names(),
         initial_count in 0u64..100u64,
         increments in proptest::collection::vec(1u64..100u64, 1..=10),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
                 processor_name.clone(),
-                format!("{}-group", processor_name),
-                format!("{}-consumer", processor_name),
+                format!("{processor_name}-group"),
+                format!("{processor_name}-consumer"),
             );
 
             // Initialize with starting count
@@ -239,7 +256,7 @@ proptest! {
             for (i, increment) in increments.iter().enumerate() {
                 current_count += increment;
                 state.processed_count = current_count;
-                state.set_last_processed_id(Some(format!("step-{}", i)));
+                state.set_last_processed_id(Some(format!("step-{i}")));
                 state.version += 1;
                 state.data = Some(serde_json::json!({"sequence": i + 1}));
 
@@ -252,11 +269,11 @@ proptest! {
             }
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint data integrity
+// Test checkpoint data integrity
 proptest! {
     fn checkpoint_data_integrity_is_preserved(
         processor_name in processor_names(),
@@ -270,16 +287,15 @@ proptest! {
             1..=50
         ),
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
                 processor_name.clone(),
-                format!("{}-group", processor_name),
-                format!("{}-consumer", processor_name),
+                format!("{processor_name}-group"),
+                format!("{processor_name}-consumer"),
             );
 
             let mut expected_data = test_data.clone();
@@ -291,7 +307,7 @@ proptest! {
                     "save" => {
                         let state = CheckpointState {
                             checkpoint: Checkpoint::Stream {
-                                message_id: format!("op-{}", i),
+                                message_id: format!("op-{i}"),
                                 event_id: None,
                             },
                             processed_count,
@@ -313,7 +329,7 @@ proptest! {
 
                         let state = CheckpointState {
                             checkpoint: Checkpoint::Stream {
-                                message_id: format!("update-{}", i),
+                                message_id: format!("update-{i}"),
                                 event_id: None,
                             },
                             processed_count,
@@ -334,18 +350,17 @@ proptest! {
             prop_assert!(final_state.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
-/// Test checkpoint cleanup behavior
+// Test checkpoint cleanup behavior
 proptest! {
     fn checkpoint_cleanup_maintains_consistency(
         processor_names in proptest::collection::vec(processor_names(), 1..=10),
         cleanup_threshold in 1u64..100u64,
     ) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
+        run_async(async {
             let ctx = TestContext::new().await.unwrap();
             let pool = ctx.pool.clone();
 
@@ -355,14 +370,14 @@ proptest! {
                 let manager = CheckpointManager::new(
                     pool.clone(),
                     processor_name.clone(),
-                    format!("{}-group", processor_name),
-                    format!("{}-consumer", processor_name),
+                    format!("{processor_name}-group"),
+                    format!("{processor_name}-consumer"),
                 );
 
                 // Create checkpoint
                 let state = CheckpointState {
                     checkpoint: Checkpoint::Stream {
-                        message_id: format!("checkpoint-{}", processor_name),
+                        message_id: format!("checkpoint-{processor_name}"),
                         event_id: None,
                     },
                     processed_count: cleanup_threshold,
@@ -387,8 +402,8 @@ proptest! {
             let cleaned_manager = CheckpointManager::new(
                 pool.clone(),
                 first_automaton.clone(),
-                format!("{}-group", first_automaton),
-                format!("{}-consumer", first_automaton),
+                format!("{first_automaton}-group"),
+                format!("{first_automaton}-consumer"),
             );
 
             // Verify cleanup maintains isolation
@@ -396,7 +411,7 @@ proptest! {
             prop_assert!(remaining_checkpoint.last_update.is_some());
 
             Ok::<(), proptest::test_runner::TestCaseError>(())
-        });
+        })?;
     }
 }
 
@@ -423,20 +438,20 @@ mod stress_tests {
         for thread_id in 0..NUM_THREADS {
             let pool = pool.clone();
             let counter = Arc::clone(&counter);
-            let processor_name = format!("stress-processor-{}", thread_id);
+            let processor_name = format!("stress-processor-{thread_id}");
 
             let handle = tokio::spawn(async move {
                 let checkpoint_manager = CheckpointManager::new(
                     pool,
                     processor_name.clone(),
-                    format!("{}-group", processor_name),
-                    format!("{}-consumer", processor_name),
+                    format!("{processor_name}-group"),
+                    format!("{processor_name}-consumer"),
                 );
 
                 for i in 0..UPDATES_PER_THREAD {
                     let state = CheckpointState {
                         checkpoint: Checkpoint::Stream {
-                            message_id: format!("stress-{}-{}", thread_id, i),
+                            message_id: format!("stress-{thread_id}-{i}"),
                             event_id: None,
                         },
                         processed_count: i as u64,
@@ -450,7 +465,7 @@ mod stress_tests {
                     }
 
                     // Occasional yield to increase contention
-                    if i % 10 == 0 {
+                    if i.rem_euclid(10) == 0 {
                         tokio::task::yield_now().await;
                     }
                 }
@@ -467,9 +482,7 @@ mod stress_tests {
         let successful_updates = counter.load(Ordering::Relaxed);
         assert!(
             successful_updates >= EXPECTED_TOTAL / 2,
-            "Should have at least half successful updates: {}/{}",
-            successful_updates,
-            EXPECTED_TOTAL
+            "Should have at least half successful updates: {successful_updates}/{EXPECTED_TOTAL}"
         );
 
         Ok(())

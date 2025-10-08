@@ -8,6 +8,7 @@ use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use sinex_schema::ulid_conversions::uuid_to_ulid;
+// no Row import needed when using SQLx macros
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -165,7 +166,7 @@ pub async fn initialize_schema_cache(
     pool: &sqlx::PgPool,
 ) -> Result<usize, crate::error::SinexError> {
     preload_schemas(pool).await.map_err(|e| {
-        crate::error::SinexError::database(format!("Failed to initialize schema cache: {}", e))
+        crate::error::SinexError::database(format!("Failed to initialize schema cache: {e}"))
     })
 }
 

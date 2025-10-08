@@ -5,7 +5,7 @@ with lib;
 
 let
   cfg = config.services.sinex;
-  kittySource = cfg.unifiedCollector.sources.kitty;
+  kittySource = cfg.eventSources.kitty;
   
   # Script to auto-configure kitty shell integration
   configureKittyScript = pkgs.writeShellScript "configure-kitty-integration" ''
@@ -113,8 +113,8 @@ in
     # Systemd service to configure kitty on service startup
     systemd.services.sinex-kitty-setup = {
       description = "Configure Kitty shell integration for Sinex";
-      wantedBy = [ "sinex-unified-collector.service" ];
-      before = [ "sinex-unified-collector.service" ];
+      wantedBy = [ "sinex-terminal-satellite-1.service" ];
+      before = [ "sinex-terminal-satellite-1.service" ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.targetUser;

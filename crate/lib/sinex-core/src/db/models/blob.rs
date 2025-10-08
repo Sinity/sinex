@@ -24,29 +24,35 @@ pub struct Blob {
 
 impl Blob {
     /// Construct the git-annex key from components
-    /// Format: BACKEND-sSize--filename (e.g., SHA256E-s12345--filename.ext)
+    /// Format: BACKEND-sSize--hash_fragment (e.g., SHA256E-s12345--abcdef123)
     pub fn annex_key(&self) -> String {
-        let filename = self.original_filename.as_deref().unwrap_or("file");
-        format!("{}-s{}--{}", self.annex_backend, self.size_bytes, filename)
+        let hash_fragment = if self.content_hash.is_empty() {
+            self.original_filename
+                .as_deref()
+                .unwrap_or("content")
+                .to_string()
+        } else {
+            self.content_hash.clone()
+        };
+
+        format!(
+            "{}-s{}--{}",
+            self.annex_backend, self.size_bytes, hash_fragment
+        )
     }
 
     /// Parse an annex key into its components
     pub fn parse_annex_key(key: &str) -> Option<(String, i64, String)> {
-        let parts: Vec<&str> = key.split("--").collect();
-        if parts.len() != 2 {
-            return None;
-        }
+        let mut segments = key.splitn(2, "--");
+        let prefix = segments.next()?;
+        let hash_fragment = segments.next()?.to_string();
 
-        let prefix_parts: Vec<&str> = parts[0].split("-s").collect();
-        if prefix_parts.len() != 2 {
-            return None;
-        }
+        let mut prefix_parts = prefix.splitn(2, "-s");
+        let backend = prefix_parts.next()?.to_string();
+        let size_str = prefix_parts.next()?;
+        let size = size_str.parse::<i64>().ok()?;
 
-        let backend = prefix_parts[0].to_string();
-        let size = prefix_parts[1].parse::<i64>().ok()?;
-        let filename = parts[1].to_string();
-
-        Some((backend, size, filename))
+        Some((backend, size, hash_fragment))
     }
 }
 

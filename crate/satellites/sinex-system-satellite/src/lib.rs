@@ -23,18 +23,6 @@ pub mod unified_processor;
 // Local facade module to reduce import verbosity
 mod common {
     // Core types facade
-    pub use sinex_core::{
-        db::models::{Event, EventId, Provenance},
-        types::{
-            domain::{
-                ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName,
-                SanitizedPath,
-            },
-            error::SinexError,
-            Id, Ulid,
-        },
-        JsonValue,
-    };
 
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
@@ -43,23 +31,20 @@ mod common {
             ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
             IngestionHistoryEntry, MissingItem, SourceState,
         },
-        error_helpers::{parse_config_value, parse_typed_config},
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
             StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
         },
-        SatelliteError, SatelliteResult,
+        SatelliteResult,
     };
 
     // External dependencies
     pub use {
         async_trait::async_trait,
-        camino::Utf8PathBuf,
-        chrono::{DateTime, Duration as ChronoDuration, Utc},
-        indexmap::IndexMap,
+        chrono::{DateTime, Utc},
         serde::{Deserialize, Serialize},
         std::{collections::HashMap, time::Duration},
-        tracing::{debug, error, info, instrument, warn},
+        tracing::{info, instrument, warn},
     };
 }
 

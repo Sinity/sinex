@@ -77,11 +77,11 @@ mod serde_tests {
         let checkpoint = CheckpointRecord {
             id: Ulid::new(),
             processor_name: "test-processor".to_string(),
-            consumer_group: Some("test-group".to_string()),
-            consumer_name: Some("test-consumer".to_string()),
+            consumer_group: "test-group".to_string(),
+            consumer_name: "test-consumer".to_string(),
             last_processed_id: Some(Ulid::new()),
             processed_count: 42,
-            checkpoint_data: serde_json::json!({"offset": 100}),
+            checkpoint_data: Some(serde_json::json!({"offset": 100})),
             last_activity: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -101,8 +101,13 @@ mod serde_tests {
             id: Ulid::new(),
             entity_type: "person".to_string(),
             name: "John Doe".to_string(),
-            description: Some("Test entity".to_string()),
-            attributes: serde_json::json!({"age": 30}),
+            canonical_name: "john.doe".to_string(),
+            aliases: vec!["J. Doe".to_string()],
+            properties: serde_json::json!({"age": 30}),
+            source_event_ids: vec![Ulid::new()],
+            confidence_score: 0.95,
+            is_merged: false,
+            merged_into_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -120,14 +125,17 @@ mod serde_tests {
     fn test_source_material_record_serialization() {
         let material = SourceMaterialRecord {
             id: Ulid::new(),
-            file_path: "/path/to/file.txt".to_string(),
-            file_size: 1024,
-            file_hash: "sha256-hash".to_string(),
-            mime_type: Some("text/plain".to_string()),
-            encoding: Some("utf-8".to_string()),
+            material_kind: "annex".to_string(),
+            source_identifier: "test://material/1".to_string(),
+            status: "sensing".to_string(),
+            timing_info_type: "realtime".to_string(),
             metadata: serde_json::json!({"description": "test file"}),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            staged_at: Utc::now(),
+            start_time: None,
+            end_time: None,
+            staged_by: Some("tester".to_string()),
+            staged_on_host: Some("localhost".to_string()),
+            optional_blob_id: None,
         };
 
         let json = serde_json::to_string(&material).expect("Should serialize to JSON");
@@ -135,8 +143,8 @@ mod serde_tests {
             serde_json::from_str(&json).expect("Should deserialize from JSON");
 
         assert_eq!(material.id, deserialized.id);
-        assert_eq!(material.file_path, deserialized.file_path);
-        assert_eq!(material.file_size, deserialized.file_size);
+        assert_eq!(material.material_kind, deserialized.material_kind);
+        assert_eq!(material.source_identifier, deserialized.source_identifier);
     }
 
     #[test]

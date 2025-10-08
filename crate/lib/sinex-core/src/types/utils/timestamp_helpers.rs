@@ -128,53 +128,11 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
             _ => {
                 let secs = timestamp.checked_div(1_000_000_000).unwrap_or(0);
                 let nanos_remainder = timestamp.checked_rem(1_000_000_000).unwrap_or(0);
-                let nanos = nanos_remainder.abs() as u32; // Handle negative remainders correctly
+                let nanos = nanos_remainder.unsigned_abs() as u32; // Handle negative remainders correctly
                 DateTime::from_timestamp(secs, nanos)
             }
         }
     } else {
         None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use color_eyre::eyre::Result;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_timestamp_conversions() -> Result<()> {
-        // Test seconds conversion
-        let dt = timestamp_to_datetime(1700000000);
-        assert_eq!(dt.timestamp(), 1700000000);
-
-        // Test with nanoseconds
-        let dt = timestamp_with_nanos_to_datetime(1700000000, 123456789);
-        assert_eq!(dt.timestamp(), 1700000000);
-        assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
-
-        // Test nanosecond conversion
-        let timestamp_ns = 1_700_000_000_123_456_789_i64;
-        let dt = timestamp_nanos_to_datetime(timestamp_ns);
-        assert_eq!(dt.timestamp(), 1700000000);
-        assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_flexible_parsing() -> Result<()> {
-        // Test RFC3339
-        let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();
-        assert_eq!(dt.to_rfc3339(), "2023-11-14T12:00:00+00:00");
-
-        // Test seconds
-        let dt = parse_flexible_timestamp("1700000000").unwrap();
-        assert_eq!(dt.timestamp(), 1700000000);
-
-        // Test milliseconds (a timestamp from 2023)
-        let dt = parse_flexible_timestamp("1700000000000").unwrap();
-        assert_eq!(dt.timestamp_millis(), 1700000000000);
-        Ok(())
     }
 }

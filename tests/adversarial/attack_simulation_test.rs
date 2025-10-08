@@ -134,7 +134,7 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::
                 local_ulids.push(ulid);
 
                 // Small delay to simulate realistic timing
-                std::thread::sleep(StdDuration::from_nanos(1000));
+                std::thread::yield_now();
             }
 
             // Collect all ULIDs

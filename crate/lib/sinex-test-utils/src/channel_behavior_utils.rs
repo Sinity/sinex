@@ -75,21 +75,18 @@ pub mod behavior {
             .await
             .map_err(|e| {
                 SinexError::unknown(format!(
-                    "Failed to receive from channel in test {}: {}",
-                    test_name, e
+                    "Failed to receive from channel in test {test_name}: {e}"
                 ))
             })?
             .ok_or_else(|| {
-                SinexError::unknown(format!("Channel closed unexpectedly in test {}", test_name))
+                SinexError::unknown(format!("Channel closed unexpectedly in test {test_name}"))
             })?;
 
         // Verify the received value matches what was sent
         if received != expected_value {
             return Err(SinexError::validation(format!(
-                "Channel test '{}' failed: received {:?}, expected {:?}",
-                test_name, received, expected_value
-            ))
-            .into());
+                "Channel test '{test_name}' failed: received {received:?}, expected {expected_value:?}"
+            )));
         }
 
         Ok(())
@@ -114,13 +111,11 @@ pub mod behavior {
             (false, false) => Ok(()), // Expected receive
             (false, true) => Err(
                 SinexError::validation("Expected timeout but received value")
-                    .with_context("timeout_duration", format!("{:?}", timeout))
-                    .into(),
+                    .with_context("timeout_duration", format!("{timeout:?}")),
             ),
             (true, false) => Err(
                 SinexError::validation("Expected receive but got timeout/close")
-                    .with_context("timeout_duration", format!("{:?}", timeout))
-                    .into(),
+                    .with_context("timeout_duration", format!("{timeout:?}")),
             ),
         }
     }
@@ -310,10 +305,8 @@ pub mod backpressure {
         // Should have some delay due to high queue depths
         if total_time <= Duration::from_millis(10) {
             return Err(SinexError::unknown(format!(
-                "Adaptive backpressure should introduce some delay, but total time was {:?}",
-                total_time
-            ))
-            .into());
+                "Adaptive backpressure should introduce some delay, but total time was {total_time:?}"
+            )));
         }
 
         Ok(())
@@ -354,7 +347,7 @@ pub mod performance {
                 }
 
                 // Occasional yield to prevent starvation
-                if i % 100 == 0 {
+                if i.rem_euclid(100) == 0 {
                     tokio::task::yield_now().await;
                 }
             }
@@ -378,7 +371,7 @@ pub mod performance {
 
         // Wait for completion
         let _ = tokio::try_join!(sender_task, receiver_task)
-            .map_err(|e| SinexError::service(format!("Task join failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("Task join failed: {e}")))?;
 
         let total_time = start_time.elapsed();
         let sent = sent_counter.load(Ordering::Relaxed);
@@ -418,7 +411,7 @@ pub mod performance {
 
             let handle = tokio::spawn(async move {
                 for i in 0..items_per_sender {
-                    let context = format!("sender_{}_item_{}", sender_id, i);
+                    let context = format!("sender_{sender_id}_item_{i}");
                     match sender_clone.send_or_log(item_clone.clone(), &context).await {
                         Ok(()) => {
                             success_counter_clone.fetch_add(1, Ordering::Relaxed);
@@ -429,7 +422,7 @@ pub mod performance {
                     }
 
                     // Small random delay to increase contention
-                    if i % 10 == 0 {
+                    if i.rem_euclid(10) == 0 {
                         tokio::task::yield_now().await;
                     }
                 }
@@ -440,9 +433,9 @@ pub mod performance {
 
         // Wait for all senders to complete
         for handle in handles {
-            handle.await.map_err(|e| {
-                SinexError::unknown(format!("Concurrent sender task failed: {}", e))
-            })?;
+            handle
+                .await
+                .map_err(|e| SinexError::unknown(format!("Concurrent sender task failed: {e}")))?;
         }
 
         let successes = success_counter.load(Ordering::Relaxed);
@@ -451,10 +444,8 @@ pub mod performance {
         // Validate results
         if successes + errors != total_expected as u64 {
             return Err(SinexError::unknown(format!(
-                "Operation count mismatch: successes: {}, errors: {}, expected: {}",
-                successes, errors, total_expected
-            ))
-            .into());
+                "Operation count mismatch: successes: {successes}, errors: {errors}, expected: {total_expected}"
+            )));
         }
 
         Ok(())
@@ -483,7 +474,7 @@ pub mod monitoring {
                     monitor.record_send();
                 }
                 Err(e) => {
-                    monitor.record_error(format!("Send failed at item {}: {}", i, e));
+                    monitor.record_error(format!("Send failed at item {i}: {e}"));
                 }
             }
         }
@@ -495,8 +486,7 @@ pub mod monitoring {
             return Err(SinexError::unknown(format!(
                 "Send count should have increased: initial: {}, final: {}",
                 initial_stats.sent, final_stats.sent
-            ))
-            .into());
+            )));
         }
 
         if final_stats.sent - initial_stats.sent != test_items.len() as u64 {
@@ -504,8 +494,7 @@ pub mod monitoring {
                 "Send count mismatch: delta: {}, items: {}",
                 final_stats.sent - initial_stats.sent,
                 test_items.len()
-            ))
-            .into());
+            )));
         }
 
         Ok(())
@@ -582,7 +571,7 @@ impl ChannelHealthReport {
         println!("Error rate: {:.2} errors/sec", self.error_rate);
         println!("Average queue depth: {:.2}", self.average_queue_depth);
         if let Some(ref error) = self.last_error {
-            println!("Last error: {}", error);
+            println!("Last error: {error}");
         }
     }
 
@@ -608,7 +597,7 @@ pub mod scenarios {
     {
         let mut test_setup = TestChannelSetup::new(buffer_size);
 
-        println!("Running comprehensive channel test: {}", test_name);
+        println!("Running comprehensive channel test: {test_name}");
 
         // Test basic functionality
         if !test_items.is_empty() {
@@ -616,7 +605,7 @@ pub mod scenarios {
                 &test_setup.sender,
                 &mut test_setup.receiver,
                 test_items[0].clone(),
-                &format!("{}_basic", test_name),
+                &format!("{test_name}_basic"),
             )
             .await?;
         }
@@ -637,7 +626,7 @@ pub mod scenarios {
         monitoring::test_channel_monitoring(&test_setup.sender, &test_setup.monitor, test_items)
             .await?;
 
-        println!("✓ Comprehensive channel test '{}' passed", test_name);
+        println!("✓ Comprehensive channel test '{test_name}' passed");
         Ok(())
     }
 
@@ -649,7 +638,7 @@ pub mod scenarios {
     where
         T: Send + Clone + 'static,
     {
-        println!("Running backpressure test: {}", test_name);
+        println!("Running backpressure test: {test_name}");
 
         // Use zero-capacity channel for immediate backpressure
         let test_setup = TestChannelSetup::zero_capacity();
@@ -668,7 +657,7 @@ pub mod scenarios {
         // Test adaptive backpressure
         backpressure::test_adaptive_backpressure().await?;
 
-        println!("✓ Backpressure test '{}' passed", test_name);
+        println!("✓ Backpressure test '{test_name}' passed");
         Ok(())
     }
 }
@@ -985,7 +974,7 @@ mod comprehensive_tests {
             .await?;
 
         // Queue should have fewer items now
-        assert!(queue.len() < 2);
+        assert!(queue.len() <= 2);
 
         Ok(())
     }

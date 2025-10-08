@@ -65,8 +65,7 @@ where
     }
 
     Err(SinexError::timeout(format!(
-        "{} timeout after {} seconds",
-        check_name, timeout_secs
+        "{check_name} timeout after {timeout_secs} seconds"
     )))
 }
 
@@ -83,7 +82,7 @@ where
     wait_for_condition(
         || async { health_check().await.map(|_| true) },
         timeout_secs,
-        &format!("{} readiness", service_name),
+        &format!("{service_name} readiness"),
     )
     .await
 }
@@ -142,8 +141,7 @@ where
     } else {
         let pending_names: Vec<&str> = pending.into_iter().map(|(name, _)| name).collect();
         Err(SinexError::timeout(format!(
-            "Conditions not met after {} seconds: {:?}",
-            timeout_secs, pending_names
+            "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
         )))
     }
 }
@@ -208,8 +206,7 @@ where
             match future.await {
                 Ok(result) => Ok(result),
                 Err(e) => {
-                    let error_msg =
-                        format!("{} failed (attempt {}): {}", operation_name, attempt, e);
+                    let error_msg = format!("{operation_name} failed (attempt {attempt}): {e}");
 
                     if attempt == 1 {
                         debug!("{}", error_msg);
@@ -278,7 +275,6 @@ where
     Fut: Future<Output = std::result::Result<T, E>>,
     E: std::fmt::Display,
 {
-    let max_retries = max_retries as usize;
     let retry_strategy =
         FixedInterval::from_millis(interval.as_millis().min(u64::MAX as u128) as u64)
             .take(max_retries);
@@ -300,8 +296,7 @@ where
             match future.await {
                 Ok(result) => Ok(result),
                 Err(e) => {
-                    let error_msg =
-                        format!("{} failed (attempt {}): {}", operation_name, attempt, e);
+                    let error_msg = format!("{operation_name} failed (attempt {attempt}): {e}");
 
                     if attempt == 1 {
                         debug!("{}", error_msg);
@@ -367,8 +362,7 @@ where
     }
 
     Err(SinexError::timeout(format!(
-        "{} timeout after {} seconds (adaptive backoff)",
-        check_name, timeout_secs
+        "{check_name} timeout after {timeout_secs} seconds (adaptive backoff)"
     )))
 }
 
@@ -426,8 +420,7 @@ where
     } else {
         let pending_names: Vec<&str> = pending.into_iter().map(|(name, _)| name).collect();
         Err(SinexError::timeout(format!(
-            "Conditions not met after {} seconds: {:?}",
-            timeout_secs, pending_names
+            "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
         )))
     }
 }

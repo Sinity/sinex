@@ -106,13 +106,23 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 ### Basic Test Template
 
 ```nix
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ... }:
 
 pkgs.nixosTest {
   name = "sinex-my-test";
   
   nodes.machine = { config, pkgs, lib, ... }: {
-    imports = [ ../common/test-base.nix ];
+    imports = [
+      (import ../common/test-base.nix {
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+      })
+    ];
     
     # Override VM profile if needed
     virtualisation.vmProfile = "performance";

@@ -4,7 +4,6 @@
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
 use sinex_core::db::models::{EventId, Provenance};
-use sinex_core::types::utils::wait_helpers::{retry_with_exponential_backoff, RetryConfig};
 use sinex_core::types::Ulid;
 use sinex_core::{Event, JsonValue};
 
@@ -15,7 +14,6 @@ use sinex_core::types::events::{
 };
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;

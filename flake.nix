@@ -155,35 +155,80 @@
             '';
           };
         in
-        {
-          packages = {
-            # Core satellite services
-            sinexIngestd = buildRustPackage "sinex-ingestd";
-            sinexGateway = buildRustPackage "sinex-gateway";
+        let
+          # Core satellite services
+          sinexIngestd = buildRustPackage "sinex-ingestd";
+          sinexGateway = buildRustPackage "sinex-gateway";
 
-            # Event source satellites
-            sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
-            sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
-            sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
-            sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
-            sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
+          # Event source satellites
+          sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
+          sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
+          sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
+          sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
+          sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
 
-            # Automaton satellites
-            sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
+          # Automaton satellites
+          sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
 
-            # Support services
-            healthAggregator = buildRustPackage "sinex-health-aggregator";
-            sinexHealthAggregator = buildRustPackage "sinex-health-aggregator";
-            sinexPreflight = buildRustPackage "sinex-preflight";
-            sinexCli = sinex-cli;
+          # Support services
+          healthAggregator = buildRustPackage "sinex-health-aggregator";
+          sinexHealthAggregator = healthAggregator;
+          sinexPreflight = buildRustPackage "sinex-preflight";
+          sinexCli = sinex-cli;
 
-            # Database migration tool
-            sinexDbMigration = buildRustPackage "sinex-db-migration";
+          sinexSuite = pkgs.symlinkJoin {
+            name = "sinex-suite";
+            paths = [
+              sinexIngestd
+              sinexGateway
+              sinexFsWatcher
+              sinexTerminalSatellite
+              sinexDesktopSatellite
+              sinexSystemSatellite
+              sinexDocumentIngestor
+              sinexTerminalCommandCanonicalizer
+              healthAggregator
+              sinexPreflight
+              sinexCli
+            ];
+          };
+
+          sinexPackages = {
+            inherit
+              sinexIngestd
+              sinexGateway
+              sinexFsWatcher
+              sinexTerminalSatellite
+              sinexDesktopSatellite
+              sinexSystemSatellite
+              sinexDocumentIngestor
+              sinexTerminalCommandCanonicalizer
+              healthAggregator
+              sinexHealthAggregator
+              sinexPreflight
+              sinexCli;
+            sinex = sinexSuite;
 
             # Default package is now the ingestion daemon
-            default = buildRustPackage "sinex-ingestd";
+            default = sinexIngestd;
             inherit pg_jsonschema;
           };
+
+          vmTests = import ./tests/nixos-vm/default.nix {
+            inherit pkgs;
+            sinex-ingestd = sinexPackages.sinexIngestd;
+            sinex-gateway = sinexPackages.sinexGateway;
+            sinex = sinexPackages.sinex;
+            sinexCli = sinexPackages.sinexCli;
+            inherit pg_jsonschema;
+          };
+        in
+        {
+          packages = sinexPackages;
+
+          checks = pkgs.lib.mapAttrs' (name: value:
+            pkgs.lib.nameValuePair "sinex-vm-${name}" value
+          ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
@@ -254,7 +299,7 @@
                 
                 # Run migrations using sea-orm system
                 if [ "$DB_STATUS" = "🟢" ] && command -v cargo >/dev/null 2>&1; then
-                  if cd crate/sinex-db/migration && cargo run -- status >/dev/null 2>&1; then
+                  if cd crate/lib/sinex-schema && cargo run -- status >/dev/null 2>&1; then
                     MIGRATION_INFO="migrations ready"
                   else
                     DB_STATUS="🟡"
@@ -296,18 +341,6 @@
             '';
           };
 
-          # NixOS VM tests
-          checks = {
-            # VM tests need to be updated for the new satellite architecture
-            # Temporarily disabled until test scenarios are rewritten
-
-            # sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix {
-            #   sinex-ingestd = self.packages.${system}.sinexIngestd;
-            #   sinex-gateway = self.packages.${system}.sinexGateway;
-            #   sinex-fs-watcher = self.packages.${system}.sinexFsWatcher;
-            #   pg_jsonschema = self.packages.${system}.pg_jsonschema;
-            # };
-          };
         }
       );
     in
@@ -324,6 +357,9 @@
         postgresql16Packages = prev.postgresql16Packages // {
           pg_jsonschema = self.packages.${final.system}.pg_jsonschema;
         };
+
+        sinex = self.packages.${final.system}.sinex;
+        sinexCli = self.packages.${final.system}.sinexCli;
       };
     };
 }

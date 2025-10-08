@@ -1,3 +1,4 @@
+#![allow(unused_imports, unused_variables, unreachable_patterns)]
 //! Terminal Command Canonicalizer - Event-driven command standardization
 //!
 //! This automaton consumes terminal command events and produces canonicalized

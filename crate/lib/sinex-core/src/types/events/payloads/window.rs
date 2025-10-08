@@ -90,8 +90,6 @@ pub struct WindowGeometry {
 }
 
 impl WindowGeometry {
-    /// Create a test geometry with sensible defaults
-
     /// Builder-style method for position
     pub fn with_position(mut self, x: i32, y: i32) -> Self {
         self.x = x;

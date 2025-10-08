@@ -21,11 +21,6 @@ tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# NATS support - DEPRECATED: Use gRPC to ingestd instead
-async-nats = { version = "0.37", optional = true }
-bytes = { version = "1.9", optional = true }
-time = { version = "0.3", optional = true }
-
 # Database
 sqlx.workspace = true
 
@@ -76,9 +71,6 @@ event-source = []
 automaton = []
 macros = ["dep:sinex-macros"]
 preflight = []
-# DEPRECATED: Direct NATS publishing bypasses ingestd single-writer principle
-# Use gRPC to ingestd instead (default behavior)
-nats-bypass = ["async-nats", "bytes", "time"]
 
 [dev-dependencies]
 tempfile = "3.13"

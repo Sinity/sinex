@@ -205,7 +205,7 @@ impl DesktopProcessor {
     ) -> SatelliteResult<()> {
         info!("Starting continuous desktop monitoring via sensd jobs");
 
-        if let Some(ref context) = self.context {
+        if self.context.is_some() {
             if let Some(ref db_pool) = self.db_pool {
                 // Create sensd job submitter
                 let submitter = crate::sensd_job_submitter::DesktopSensdSubmitter::new(
@@ -279,7 +279,7 @@ impl DesktopProcessor {
         // Desktop sources typically don't have extensive historical data
         // This would implement any available historical scanning
 
-        if let Some(ref context) = self.context {
+        if self.context.is_some() {
             // Store historical scan attempts as source material
             if emit_events {
                 if let Some(ref db_pool) = self.db_pool {
@@ -339,7 +339,6 @@ impl DesktopProcessor {
         metadata: serde_json::Value,
     ) -> SatelliteResult<Option<Ulid>> {
         let material_id = Ulid::new();
-        let data_hash = blake3::hash(data);
         let acquired_at = Utc::now();
 
         // Store in source material registry
@@ -420,7 +419,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
-        config: Self::Config,
+        _config: Self::Config,
     ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),

@@ -197,22 +197,3 @@ impl SensorDeactivatedPayload {
         self
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::events::event_payload::EventPayload;
-    use color_eyre::eyre::Result;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_event_payload_constants() -> Result<()> {
-        // Verify that the EventPayload trait is implemented
-        assert_eq!(ProcessHeartbeatPayload::SOURCE.as_str(), "sinex");
-        assert_eq!(
-            ProcessHeartbeatPayload::EVENT_TYPE.as_str(),
-            "process.heartbeat"
-        );
-        Ok(())
-    }
-}

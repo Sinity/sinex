@@ -425,24 +425,3 @@ pub mod json_utils {
         }
     }
 }
-
-/// Test utilities
-#[cfg(test)]
-pub mod test_utils {
-    use super::*;
-
-    /// Create a test database pool
-    pub async fn create_test_pool() -> Result<DbPool> {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql:///sinex_test".to_string());
-
-        sqlx::PgPool::connect(&database_url)
-            .await
-            .map_err(|e| SinexError::database(e.to_string()))
-    }
-
-    /// Generate a unique test identifier
-    pub fn test_id(prefix: &str) -> String {
-        format!("{}_{}", prefix, Ulid::new())
-    }
-}

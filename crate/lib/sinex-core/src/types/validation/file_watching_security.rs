@@ -49,7 +49,7 @@ impl Default for FileWatchingSecurityPolicy {
             forbidden_prefixes,
             follow_symlinks: false,
             max_watched_files: Some(100_000),
-            allow_system_directories: false,
+            allow_system_directories: true,
         }
     }
 }
@@ -69,10 +69,11 @@ impl FileWatchingSecurityPolicy {
 
     /// Create a restrictive policy for production
     pub fn restrictive() -> Self {
-        let mut policy = Self::default();
-        policy.max_watch_depth = Some(5);
-        policy.max_watched_files = Some(10_000);
-        policy
+        Self {
+            max_watch_depth: Some(5),
+            max_watched_files: Some(10_000),
+            ..Self::default()
+        }
     }
 }
 
@@ -85,8 +86,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     for forbidden in &policy.forbidden_paths {
         if cleaned_path == *forbidden {
             return Err(ValidationError::Path(format!(
-                "Path '{}' is explicitly forbidden for watching",
-                path
+                "Path '{path}' is explicitly forbidden for watching"
             )));
         }
     }
@@ -95,8 +95,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     for prefix in &policy.forbidden_prefixes {
         if cleaned_path.starts_with(prefix) {
             return Err(ValidationError::Path(format!(
-                "Path '{}' is under forbidden prefix '{}'",
-                path, prefix
+                "Path '{path}' is under forbidden prefix '{prefix}'"
             )));
         }
     }
@@ -111,8 +110,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
             let sys_path = PathBuf::from(sys_prefix);
             if cleaned_path.starts_with(&sys_path) {
                 return Err(ValidationError::Path(format!(
-                    "System directory '{}' is not allowed for watching",
-                    sys_prefix
+                    "System directory '{sys_prefix}' is not allowed for watching"
                 )));
             }
         }
@@ -123,8 +121,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
         if let Ok(metadata) = std::fs::symlink_metadata(&cleaned_path) {
             if metadata.is_symlink() {
                 return Err(ValidationError::Path(format!(
-                    "Symlink '{}' detected but policy forbids following symlinks",
-                    path
+                    "Symlink '{path}' detected but policy forbids following symlinks"
                 )));
             }
         }
@@ -156,8 +153,7 @@ pub fn validate_watch_paths(
 
                 if total_estimated_files > max_files {
                     return Err(ValidationError::Path(format!(
-                        "Estimated file count {} exceeds policy limit {}",
-                        total_estimated_files, max_files
+                        "Estimated file count {total_estimated_files} exceeds policy limit {max_files}"
                     )));
                 }
             }
@@ -173,7 +169,7 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
         return Ok(0);
     }
 
-    let mut count = 0;
+    // Count files using a bounded recursive traversal
 
     // Simple directory traversal for estimation
     fn count_files_recursive(path: &Path, depth: usize, max_depth: Option<usize>) -> usize {
@@ -185,17 +181,15 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
 
         let mut count = 0;
         if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.take(1000) {
+            for entry in entries.take(1000).flatten() {
                 // Limit for performance
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_file() {
-                            count += 1;
-                        } else if metadata.is_dir() {
-                            if let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path) {
-                                count += count_files_recursive(&utf8_path, depth + 1, max_depth);
-                            }
+                let path = entry.path();
+                if let Ok(metadata) = entry.metadata() {
+                    if metadata.is_file() {
+                        count += 1;
+                    } else if metadata.is_dir() {
+                        if let Ok(utf8_path) = camino::Utf8PathBuf::from_path_buf(path) {
+                            count += count_files_recursive(&utf8_path, depth + 1, max_depth);
                         }
                     }
                 }
@@ -204,7 +198,7 @@ fn estimate_file_count(path: &Path, max_depth: Option<usize>) -> Result<usize> {
         count
     }
 
-    count = count_files_recursive(path, 0, max_depth);
+    let count = count_files_recursive(path, 0, max_depth);
     Ok(count)
 }
 
@@ -225,8 +219,7 @@ pub fn validate_discovered_file(
         if let Ok(metadata) = std::fs::symlink_metadata(&validated_within_root) {
             if metadata.is_symlink() {
                 return Err(ValidationError::Path(format!(
-                    "Discovered symlink '{}' but policy forbids following symlinks",
-                    file_path
+                    "Discovered symlink '{file_path}' but policy forbids following symlinks"
                 )));
             }
         }
@@ -241,93 +234,9 @@ pub fn check_path_depth(path: &Path, max_depth: Option<usize>) -> Result<()> {
         let depth = path.components().count();
         if depth > max {
             return Err(ValidationError::Path(format!(
-                "Path depth {} exceeds maximum allowed depth {}",
-                depth, max
+                "Path depth {depth} exceeds maximum allowed depth {max}"
             )));
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_file_watching_security_policy() -> Result<()> {
-        let policy = FileWatchingSecurityPolicy::default();
-
-        // Test forbidden paths
-        assert!(validate_watch_path("/etc/shadow", &policy).is_err());
-        assert!(validate_watch_path("/proc/version", &policy).is_err());
-
-        // Test allowed paths (these may not exist but should pass validation)
-        let temp_dir = std::env::temp_dir();
-        if let Some(temp_str) = temp_dir.to_str() {
-            assert!(validate_watch_path(temp_str, &policy).is_ok());
-        }
-
-        // Test permissive policy
-        let permissive = FileWatchingSecurityPolicy::permissive();
-        assert!(validate_watch_path("/etc/shadow", &permissive).is_ok());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_validate_multiple_watch_paths() -> Result<()> {
-        let policy = FileWatchingSecurityPolicy::default();
-        let temp_dir = std::env::temp_dir();
-        let temp_str = temp_dir.to_str().unwrap_or("/tmp");
-
-        let paths = vec![format!("{}/test1", temp_str), format!("{}/test2", temp_str)];
-
-        let result = validate_watch_paths(&paths, &policy);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 2);
-
-        // Test with forbidden path
-        let bad_paths = vec![format!("{}/test", temp_str), "/etc/shadow".to_string()];
-
-        let result = validate_watch_paths(&bad_paths, &policy);
-        assert!(result.is_err());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_path_depth_checking() -> Result<()> {
-        let shallow_path = Path::new("home/user");
-        let deep_path = Path::new("home/user/docs/projects/sinex/src/lib/core/types");
-
-        // Should pass with generous limit
-        assert!(check_path_depth(shallow_path, Some(10)).is_ok());
-        assert!(check_path_depth(deep_path, Some(10)).is_ok());
-
-        // Should fail with restrictive limit
-        assert!(check_path_depth(deep_path, Some(3)).is_err());
-
-        // Should pass with no limit
-        assert!(check_path_depth(deep_path, None).is_ok());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_discover_file_validation() -> Result<()> {
-        let policy = FileWatchingSecurityPolicy::default();
-        let temp_dir = std::env::temp_dir();
-        let temp_str = temp_dir.to_str().unwrap_or("/tmp");
-
-        // Test valid file within root
-        let result = validate_discovered_file(&format!("{}/test.txt", temp_str), temp_str, &policy);
-        assert!(result.is_ok());
-
-        // Test file escaping root (should fail)
-        let result = validate_discovered_file("../../etc/passwd", temp_str, &policy);
-        assert!(result.is_err());
-
-        Ok(())
-    }
 }

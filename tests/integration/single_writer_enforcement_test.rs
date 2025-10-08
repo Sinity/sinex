@@ -36,7 +36,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
     
     // For now, we can at least verify the pattern by checking that
     // all events have proper provenance
-    let events = sqlx::query!(
+    let events = sqlx::query(
         r#"
         SELECT COUNT(*) as count
         FROM core.events
@@ -48,7 +48,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
     .await?;
     
     assert_eq!(
-        events.count.unwrap_or(0), 
+        events.get::<Option<i64>, _>("count").unwrap_or(0), 
         0, 
         "Found events without proper provenance - violates single-writer pattern"
     );
@@ -67,7 +67,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
     // 5. Verify it succeeds
     
     // For now, we can check that all events follow the expected pattern
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
         SELECT DISTINCT source
         FROM core.events
@@ -79,7 +79,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
     
     // All non-test events should come from known satellites
     for row in result {
-        let source = row.source;
+        let source: String = row.get("source");
         assert!(
             source == "fs-watcher" || 
             source == "terminal" || 
@@ -105,36 +105,53 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
     // Start a transaction
     let mut tx = pool.begin().await?;
     
-    // Insert an event in the transaction
-    let event_id = sinex_core::types::ulid::Ulid::new();
-    sqlx::query!(
+    // Insert a source material and a valid event with proper provenance
+    use sinex_core::types::ulid::Ulid;
+    let event_id = Ulid::new();
+    let material_id = Ulid::new();
+    // minimal source_material_registry row
+    sqlx::query(
         r#"
-        INSERT INTO core.events (id, event_type, source, host, payload)
-        VALUES ($1, $2, $3, $4, $5)
-        "#,
-        event_id as _,
-        "test.transaction",
-        "test",
-        "testhost",
-        serde_json::json!({"test": "data"})
+        INSERT INTO raw.source_material_registry 
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#
     )
+    .bind(material_id.to_uuid())
+    .bind(format!("test://material/{}", material_id))
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO core.events (id, event_type, source, host, payload, ts_orig, source_material_id)
+        VALUES ($1::uuid::ulid, $2, $3, $4, $5::jsonb, NOW(), $6::uuid::ulid)
+        "#
+    )
+    .bind(event_id.to_uuid())
+    .bind("test.transaction")
+    .bind("test")
+    .bind("testhost")
+    .bind(serde_json::json!({"test": "data"}))
+    .bind(material_id.to_uuid())
     .execute(&mut *tx)
     .await?;
     
     // Before commit, event should not be visible from another connection
-    let count_before = sqlx::query!(
+    let count_before = sqlx::query(
         r#"
         SELECT COUNT(*) as count
         FROM core.events
-        WHERE id = $1
-        "#,
-        event_id as _
+        WHERE id = $1::uuid::ulid
+        "#
     )
+    .bind(event_id.to_uuid())
     .fetch_one(pool.as_ref())
     .await?;
     
     assert_eq!(
-        count_before.count.unwrap_or(0), 
+        count_before.get::<Option<i64>, _>("count").unwrap_or(0), 
         0, 
         "Event visible before commit - violates post-commit publish"
     );
@@ -143,30 +160,30 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
     tx.commit().await?;
     
     // After commit, event should be visible
-    let count_after = sqlx::query!(
+    let count_after = sqlx::query(
         r#"
         SELECT COUNT(*) as count
         FROM core.events
-        WHERE id = $1
-        "#,
-        event_id as _
+        WHERE id = $1::uuid::ulid
+        "#
     )
+    .bind(event_id.to_uuid())
     .fetch_one(pool.as_ref())
     .await?;
     
     assert_eq!(
-        count_after.count.unwrap_or(0), 
+        count_after.get::<Option<i64>, _>("count").unwrap_or(0), 
         1, 
         "Event not visible after commit"
     );
     
     // Clean up
-    sqlx::query!(
+    sqlx::query(
         r#"
-        DELETE FROM core.events WHERE id = $1
-        "#,
-        event_id as _
+        DELETE FROM core.events WHERE id = $1::uuid::ulid
+        "#
     )
+    .bind(event_id.to_uuid())
     .execute(pool.as_ref())
     .await?;
     
@@ -177,7 +194,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
-    let violations = sqlx::query!(
+    let violations = sqlx::query(
         r#"
         WITH archived AS (SELECT id FROM audit.archived_events)
         SELECT COUNT(*) AS live_refs_archived
@@ -189,7 +206,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
     .await?;
     
     assert_eq!(
-        violations.live_refs_archived.unwrap_or(0),
+        violations.get::<Option<i64>, _>("live_refs_archived").unwrap_or(0),
         0,
         "Found live events referencing archived events - violates cascade invariant"
     );
@@ -201,7 +218,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
-    let violations = sqlx::query!(
+    let violations = sqlx::query(
         r#"
         SELECT COUNT(*) AS xor_violations
         FROM core.events
@@ -213,7 +230,7 @@ async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
     .await?;
     
     assert_eq!(
-        violations.xor_violations.unwrap_or(0),
+        violations.get::<Option<i64>, _>("xor_violations").unwrap_or(0),
         0,
         "Found events violating XOR provenance constraint"
     );
@@ -225,12 +242,12 @@ async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_anchor_uniqueness(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
-    let duplicates = sqlx::query!(
+    let duplicates = sqlx::query(
         r#"
-        SELECT source_material_id, anchor_byte, COUNT(*) as count
+        SELECT source_material_id::uuid as material_id, anchor_byte, COUNT(*) as count
         FROM core.events
         WHERE source_material_id IS NOT NULL
-        GROUP BY source_material_id, anchor_byte
+        GROUP BY source_material_id::uuid, anchor_byte
         HAVING COUNT(*) > 1
         "#
     )
@@ -240,10 +257,12 @@ async fn test_anchor_uniqueness(ctx: TestContext) -> Result<()> {
     assert!(
         duplicates.is_empty(),
         "Found duplicate anchors for first-order events: {:?}",
-        duplicates.iter().map(|d| 
-            format!("material={:?}, anchor={:?}, count={}", 
-                d.source_material_id, d.anchor_byte, d.count.unwrap_or(0))
-        ).collect::<Vec<_>>()
+        duplicates.iter().map(|row| {
+            let mid: sqlx::types::Uuid = row.get("material_id");
+            let anchor: Option<i64> = row.get("anchor_byte");
+            let cnt: Option<i64> = row.get("count");
+            format!("material={}, anchor={:?}, count={}", mid, anchor, cnt.unwrap_or(0))
+        }).collect::<Vec<_>>()
     );
     
     Ok(())

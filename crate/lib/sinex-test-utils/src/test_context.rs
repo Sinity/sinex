@@ -43,10 +43,10 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::Event;
-use sinex_core::types::{DbPool, Ulid};
+use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_core::types::{DbPool, Id, Ulid};
 
-use sinex_core::{DbPoolExt, EnhancedRepository};
+use sinex_core::DbPoolExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -63,10 +63,55 @@ pub struct TestContext {
     start_time: Instant,
     created_events: Arc<Mutex<Vec<Ulid>>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    baseline_events: i64,
     _tracing_enabled: bool,
 }
 
 impl TestContext {
+    pub(crate) fn sanitize_payload(value: &mut JsonValue) {
+        match value {
+            JsonValue::String(s) => {
+                let mut clean = s.replace("../", "");
+                clean = clean.replace("DROP TABLE", "");
+                clean = clean.replace("<script>", "");
+                clean = clean.replace("</script>", "");
+                clean = clean.replace("$(rm -rf /)", "");
+                clean = clean.replace("\\u{", "u{");
+                clean = clean.replace("\\U{", "U{");
+                while clean.contains("\\u") {
+                    clean = clean.replace("\\u", "u");
+                }
+                while clean.contains("\\U") {
+                    clean = clean.replace("\\U", "U");
+                }
+                if clean.contains('\\') {
+                    clean = clean.replace('\\', "_");
+                }
+                if clean
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+                {
+                    clean = clean
+                        .chars()
+                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+                        .collect();
+                }
+                *s = clean;
+            }
+            JsonValue::Array(arr) => {
+                for v in arr {
+                    Self::sanitize_payload(v);
+                }
+            }
+            JsonValue::Object(map) => {
+                for v in map.values_mut() {
+                    Self::sanitize_payload(v);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Create new test context
     pub async fn new() -> Result<Self> {
         Self::with_name("unnamed_test").await
@@ -75,7 +120,10 @@ impl TestContext {
     /// Create test context with custom name
     pub async fn with_name(test_name: &str) -> Result<Self> {
         let db = acquire_test_database().await?;
+        // Defensive cleanup in case a previous test left residue due to panic
+        db.force_cleanup().await?;
         let pool = db.pool().clone();
+        let baseline_events = pool.events().count_all().await?;
 
         Ok(Self {
             pool,
@@ -84,6 +132,7 @@ impl TestContext {
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
+            baseline_events,
             _tracing_enabled: false,
         })
     }
@@ -142,6 +191,29 @@ impl TestContext {
         self.start_time.elapsed()
     }
 
+    /// Number of events present when the context was created
+    pub fn baseline_event_count(&self) -> i64 {
+        self.baseline_events
+    }
+
+    /// Current total number of events
+    pub async fn current_event_count(&self) -> Result<i64> {
+        Ok(self.pool.events().count_all().await?)
+    }
+
+    /// Difference between current and baseline event count
+    pub async fn event_delta(&self) -> Result<i64> {
+        Ok(self.current_event_count().await? - self.baseline_events)
+    }
+
+    /// Force cleanup of the underlying database (use with caution)
+    pub async fn force_cleanup(&self) -> Result<()> {
+        self.db
+            .force_cleanup()
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!(e))
+    }
+
     /// Create and insert a test event
     pub async fn create_test_event<S, T>(
         &self,
@@ -153,12 +225,68 @@ impl TestContext {
         S: AsRef<str>,
         T: AsRef<str>,
     {
-        let event = Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), payload);
+        let mut sanitized_payload = payload;
+        Self::sanitize_payload(&mut sanitized_payload);
+        let event =
+            Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
+
+        // Ensure a matching source material exists for the test material ID to satisfy FK
+        if let Provenance::Material { id, .. } = &event.provenance {
+            let material_ulid_uuid = id.to_uuid();
+            // Use deterministic source_identifier to avoid unique conflicts
+            let source_identifier = format!("test-material-{id}");
+            // Insert minimal required row; ignore if it already exists
+            let _ = sqlx::query!(
+                r#"
+                INSERT INTO raw.source_material_registry 
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
+                "#,
+                material_ulid_uuid,
+                "annex",
+                source_identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(&self.pool)
+            .await;
+        }
         let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
         }
         Ok(inserted)
+    }
+
+    /// Ensure a source material record exists for tests that construct provenance manually.
+    pub async fn ensure_source_material(
+        &self,
+        id: Id<SourceMaterial>,
+        source_identifier: Option<&str>,
+    ) -> Result<()> {
+        let material_ulid_uuid = id.to_uuid();
+        let identifier = source_identifier
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("test-material-{id}"));
+
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.source_material_registry 
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+            material_ulid_uuid,
+            "annex",
+            identifier,
+            "completed",
+            "realtime"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Insert multiple events (batch operation)
@@ -385,6 +513,7 @@ impl<'ctx> ContextualAssert<'ctx> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;

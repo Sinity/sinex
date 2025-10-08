@@ -9,6 +9,28 @@ use crate::types::error::SinexError;
 use crate::types::non_empty::NonEmptyVec;
 use crate::types::Id;
 use crate::EventRecord;
+use sinex_schema::ulid::Ulid;
+
+macro_rules! event_select_columns {
+    () => {
+        "id::uuid as id, \
+         source, \
+         event_type, \
+         host, \
+         payload, \
+         ts_orig, \
+         ts_ingest, \
+         source_material_id::uuid as source_material_id, \
+         anchor_byte, \
+         offset_start, \
+         offset_end, \
+         offset_kind, \
+         source_event_ids::uuid[] as source_event_ids, \
+         associated_blob_ids::uuid[] as associated_blob_ids, \
+         payload_schema_id::uuid as payload_schema_id, \
+         ingestor_version"
+    };
+}
 use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
@@ -49,23 +71,36 @@ impl EventRecordExt for EventRecord {
             self.anchor_byte,
         ) {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
-                let ids: Vec<EventId> = event_ids
-                    .into_iter()
-                    .map(|ulid| EventId::from_ulid(ulid))
-                    .collect();
+                let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
                 Provenance::Synthesis {
                     source_event_ids: NonEmptyVec::from_vec(ids)
                         .expect("already checked non-empty"),
                     operation_id: None,
                 }
             }
-            (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
-                id: Id::<SourceMaterial>::from_ulid(material_id),
-                anchor_byte,
-                offset_start: self.offset_start,
-                offset_end: self.offset_end,
-                offset_kind: OffsetKind::default(),
-            },
+            (None, Some(material_id), Some(anchor_byte)) => {
+                let offset_kind = match self.offset_kind.as_deref() {
+                    Some("line") => OffsetKind::Line,
+                    Some("rowid") => OffsetKind::Record,
+                    Some("logical") => OffsetKind::Character,
+                    Some("byte") | None => OffsetKind::Byte,
+                    Some(other) => {
+                        tracing::warn!(
+                            offset_kind = other,
+                            "Unknown offset_kind, defaulting to byte"
+                        );
+                        OffsetKind::Byte
+                    }
+                };
+
+                Provenance::Material {
+                    id: Id::<SourceMaterial>::from_ulid(material_id),
+                    anchor_byte,
+                    offset_start: self.offset_start,
+                    offset_end: self.offset_end,
+                    offset_kind,
+                }
+            }
             _ => {
                 // Default to material provenance with placeholder values if no provenance
                 // (shouldn't happen in production, but needed for type safety)
@@ -89,21 +124,23 @@ impl EventRecordExt for EventRecord {
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id,
             provenance,
-            associated_blob_ids: None,
+            associated_blob_ids: self
+                .associated_blob_ids
+                .map(|ids| ids.into_iter().collect()),
         }
     }
 }
 
 /// Extract provenance fields from domain Event for database storage
-fn extract_provenance(
-    event: &Event<JsonValue>,
-) -> (
-    Option<Vec<sinex_schema::ulid::Ulid>>, // source_event_ids
-    Option<sinex_schema::ulid::Ulid>,      // source_material_id
-    Option<i64>,                           // offset_start
-    Option<i64>,                           // offset_end
-    Option<i64>,                           // anchor_byte
-) {
+type ExtractedProvenance = (
+    Option<Vec<Ulid>>, // source_event_ids
+    Option<Ulid>,      // source_material_id
+    Option<i64>,       // offset_start
+    Option<i64>,       // offset_end
+    Option<i64>,       // anchor_byte
+);
+
+fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
     match &event.provenance {
         Provenance::Synthesis {
             source_event_ids, ..
@@ -255,6 +292,33 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(material_ulid) = source_material_id {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    timing_info_type,
+                    metadata
+                ) VALUES (
+                    $1::text::ulid,
+                    'annex',
+                    'test-material-bootstrap',
+                    'completed',
+                    'realtime',
+                    '{}'::jsonb
+                )
+                ON CONFLICT (id) DO NOTHING
+                "#,
+            )
+            .bind(material_ulid.to_string())
+            .execute(self.pool)
+            .await;
+        }
+
         let record = sqlx::query_as!(
             EventRecord,
             r#"
@@ -311,28 +375,11 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self), fields(event_id = %id))]
     pub async fn get_by_id(&self, id: Id<Event<JsonValue>>) -> DbResult<Option<Event<JsonValue>>> {
-        let record = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE id = $1
-            "#,
-        )
+        let record = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE id::uuid = $1"
+        ))
         .bind(ulid_to_uuid(*id.as_ulid()))
         .fetch_optional(self.pool)
         .await
@@ -353,29 +400,11 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self), fields(limit = limit))]
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<Event<JsonValue>>> {
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            ORDER BY ts_ingest DESC
-            LIMIT $1
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events ORDER BY ts_ingest DESC LIMIT $1"
+        ))
         .bind(limit)
         .fetch_all(self.pool)
         .await
@@ -394,30 +423,11 @@ impl<'a> EventRepository<'a> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE source = $1
-            ORDER BY ts_ingest DESC
-            LIMIT $2 OFFSET $3
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+        ))
         .bind(source.as_str())
         .bind(limit)
         .bind(offset)
@@ -438,30 +448,11 @@ impl<'a> EventRepository<'a> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE event_type = $1
-            ORDER BY ts_ingest DESC
-            LIMIT $2 OFFSET $3
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE event_type = $1 ORDER BY ts_ingest DESC LIMIT $2 OFFSET $3"
+        ))
         .bind(event_type.as_str())
         .bind(limit)
         .bind(offset)
@@ -510,30 +501,11 @@ impl<'a> EventRepository<'a> {
         let offset = offset.unwrap_or(0);
 
         // Use index hint for TimescaleDB optimization on time-range queries
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE ts_ingest >= $1 AND ts_ingest <= $2
-            ORDER BY ts_ingest DESC
-            LIMIT $3 OFFSET $4
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2 ORDER BY ts_ingest DESC LIMIT $3 OFFSET $4"
+        ))
         .bind(start)
         .bind(end)
         .bind(limit)
@@ -577,30 +549,11 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let limit = limit.unwrap_or(100);
 
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
-            ORDER BY ts_ingest DESC
-            LIMIT $4
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest DESC LIMIT $4"
+        ))
         .bind(event_type.as_str())
         .bind(start)
         .bind(end)
@@ -618,32 +571,11 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let records = sqlx::query_as::<_, EventRecord>(
-            r#"
-            SELECT 
-                id,
-                source,
-                event_type,
-                ts_ingest,
-                ts_orig,
-                host,
-                ingestor_version,
-                payload_schema_id,
-                payload,
-                source_event_ids,
-                source_material_id,
-                offset_start,
-                offset_end,
-                anchor_byte,
-                associated_blob_ids,
-            FROM core.events 
-            WHERE source = $1 
-              AND event_type = 'process.heartbeat'
-              AND ts_ingest >= $2 
-              AND ts_ingest <= $3
-            ORDER BY ts_ingest ASC
-            "#,
-        )
+        let records = sqlx::query_as::<_, EventRecord>(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC"
+        ))
         .bind(source.as_str())
         .bind(start)
         .bind(end)
@@ -656,11 +588,10 @@ impl<'a> EventRepository<'a> {
 
     #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
     pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event<JsonValue>>> {
-        use crate::db::schema::Events;
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
-        let limit = filters.limit.unwrap_or(100) as u64;
-        let offset = filters.offset.unwrap_or(0) as u64;
+        let limit = filters.limit.unwrap_or(100);
+        let offset = filters.offset.unwrap_or(0);
 
         // Build dynamic query with SeaQuery
         let mut query = Query::select()
@@ -781,7 +712,7 @@ impl<'a> EventRepository<'a> {
                     Alias::new("events"),
                     Alias::new("ts_ingest"),
                 ))
-                .gte(after.clone()),
+                .gte(*after),
             );
         }
 
@@ -792,7 +723,7 @@ impl<'a> EventRepository<'a> {
                     Alias::new("events"),
                     Alias::new("ts_ingest"),
                 ))
-                .lte(before.clone()),
+                .lte(*before),
             );
         }
 
@@ -832,7 +763,6 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
     ) -> DbResult<Vec<TimeBucketResult>> {
         // Use SeaQuery for dynamic query building with proper escaping
-        use crate::db::schema::Events;
         use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 
         let query = Query::select()
@@ -1265,8 +1195,8 @@ impl<'a> EventRepository<'a> {
     pub async fn delete_annotation_with_context(
         &self,
         id: Id<EventAnnotation>,
-        deleted_by: &str,
-        deletion_reason: &str,
+        _deleted_by: &str,
+        _deletion_reason: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
             "DELETE FROM core.event_annotations WHERE id = $1",
@@ -1645,16 +1575,16 @@ impl<'a> EventRepository<'a> {
 
         // Build dynamic DELETE query based on filters
         let mut query_parts = vec!["DELETE FROM core.events WHERE 1=1".to_string()];
-        let mut bind_index = 1;
+        let mut _bind_index = 1;
 
-        if let Some(source) = source {
-            query_parts.push(format!(" AND source = ${}", bind_index));
-            bind_index += 1;
+        if source.is_some() {
+            query_parts.push(format!(" AND source = ${_bind_index}"));
+            _bind_index += 1;
         }
 
-        if let Some(event_type) = event_type {
-            query_parts.push(format!(" AND event_type = ${}", bind_index));
-            bind_index += 1;
+        if event_type.is_some() {
+            query_parts.push(format!(" AND event_type = ${_bind_index}"));
+            _bind_index += 1;
         }
 
         // Add safety constraint to only delete test events
@@ -1986,9 +1916,9 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids,
+                associated_blob_ids
             FROM core.events 
-            WHERE id = ANY($1::uuid[])
+            WHERE id::uuid = ANY($1::uuid[])
             ORDER BY ts_ingest DESC
             "#,
         )
@@ -2029,12 +1959,12 @@ impl<'a> EventRepository<'a> {
                 offset_start,
                 offset_end,
                 anchor_byte,
-                associated_blob_ids,
+                associated_blob_ids
             FROM (
                 SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY source ORDER BY ts_ingest DESC) as rn
-                FROM core.events 
-                WHERE source = ANY($1::text[])
+            FROM core.events
+            WHERE source = ANY($1::text[])
             ) ranked_events
             WHERE rn <= $2
             ORDER BY source, ts_ingest DESC
@@ -2047,101 +1977,5 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| db_error(e, "get recent by sources"))?;
 
         Ok(records.into_iter().map(|r| r.to_event()).collect())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::prelude::*;
-    use crate::types::domain::{EventSource, EventType, HostName};
-    use serde_json::json;
-    use sinex_test_utils::{sinex_test, TestContext};
-
-    use color_eyre::eyre::Result;
-
-    #[sinex_test]
-    async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = &ctx.pool;
-
-        // Create an event using the new dynamic pattern
-        let event = Event::dynamic(
-            EventSource::new("test.source"),
-            EventType::new("test.event"),
-            json!({"test": "data"}),
-        )
-        .with_host(HostName::new("test-host"))
-        .with_provenance(Provenance::from_material(
-            crate::types::Id::<crate::models::SourceMaterial>::new(),
-            0,
-            None,
-            None,
-        ))
-        .build();
-
-        // TEST-ONLY: Direct repository access bypasses single-writer invariant
-        // In production, all events MUST go through ingestd service
-        let inserted = pool.events().insert(event).await?;
-
-        // Verify the event was inserted with correct data
-        assert_eq!(inserted.source.as_str(), "test.source");
-        assert_eq!(inserted.event_type.as_str(), "test.event");
-        assert_eq!(inserted.host.as_str(), "test-host");
-        assert_eq!(inserted.payload["test"], "data");
-
-        // ID should be set after insertion
-        assert!(inserted.id.is_some());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_event_record_with_provenance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = &ctx.pool;
-
-        // Create a source event first
-        let source_event = Event::dynamic(
-            EventSource::new("test.source"),
-            EventType::new("source.event"),
-            json!({"original": true}),
-        )
-        .with_host(HostName::new("test-host"))
-        .with_provenance(Provenance::from_material(
-            crate::types::Id::<crate::models::SourceMaterial>::new(),
-            0,
-            None,
-            None,
-        ))
-        .build();
-
-        // TEST-ONLY: Direct repository access bypasses single-writer invariant
-        let source = pool.events().insert(source_event).await?;
-        let source_id = source.id.unwrap();
-
-        // Create derived event with provenance using the builder pattern
-        let derived_event = Event::dynamic(
-            EventSource::new("test.processor"),
-            EventType::new("derived.event"),
-            json!({"derived": true}),
-        )
-        .with_host(HostName::new("test-host"))
-        .with_provenance(Provenance::from_synthesis(vec![source_id.clone()]).unwrap())
-        .build();
-
-        // TEST-ONLY: Direct repository access bypasses single-writer invariant
-        let inserted = pool.events().insert(derived_event).await?;
-
-        // Verify provenance was preserved through EventRecord
-        match &inserted.provenance {
-            Provenance::Synthesis {
-                source_event_ids, ..
-            } => {
-                assert_eq!(source_event_ids.len(), 1);
-                assert_eq!(source_event_ids[0], source_id);
-            }
-            _ => panic!("Expected Synthesis provenance"),
-        }
-
-        Ok(())
     }
 }

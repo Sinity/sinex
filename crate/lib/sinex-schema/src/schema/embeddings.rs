@@ -24,7 +24,7 @@ const EMBEDDING_DIMENSIONS: u32 = 1536;
 ///
 /// A registry for all embedding and ML models used by the system. This allows the
 /// system to track which model generated which embedding, which is critical for
-
+///
 /// provenance, cost tracking, and future model-specific operations.
 #[derive(Iden, Copy, Clone)]
 pub enum EmbeddingModels {
@@ -152,7 +152,7 @@ impl EmbeddingCache {
             )
             .col(
                 ColumnDef::new(EmbeddingCache::Embedding)
-                    .custom(Alias::new(format!("vector({})", EMBEDDING_DIMENSIONS)))
+                    .custom(Alias::new(format!("vector({EMBEDDING_DIMENSIONS})")))
                     .not_null(),
             )
             .col(ColumnDef::new(EmbeddingCache::TextSample).text()) // First few chars of the text for debugging.
@@ -257,7 +257,7 @@ impl EventEmbeddings {
             ) // The actual text that was embedded.
             .col(
                 ColumnDef::new(EventEmbeddings::Embedding)
-                    .custom(Alias::new(format!("vector({})", EMBEDDING_DIMENSIONS)))
+                    .custom(Alias::new(format!("vector({EMBEDDING_DIMENSIONS})")))
                     .not_null(),
             )
             .foreign_key(

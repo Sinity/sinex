@@ -145,9 +145,6 @@ fn test_scan_args_properties() -> color_eyre::eyre::Result<()> {
             prop_assert!(deserialized.is_ok());
             // Note: We can't test equality because ScanArgs doesn't derive Eq/PartialEq
         }
-
-        // Property: Validation should be consistent
-        prop_assert!(args.max_events >= 0);
     });
     Ok(())
 }
@@ -164,8 +161,8 @@ fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
         assert_eq!(processor_type, deserialized);
 
         // Property: ProcessorType should have consistent debug representation
-        let debug1 = format!("{:?}", processor_type);
-        let debug2 = format!("{:?}", processor_type);
+        let debug1 = format!("{processor_type:?}");
+        let debug2 = format!("{processor_type:?}");
         assert_eq!(debug1, debug2);
     }
     Ok(())
@@ -337,7 +334,7 @@ fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> 
 
         // Property: Events should be batchable
         let batches: Vec<_> = events.chunks(batch_size).collect();
-        prop_assert!(batches.len() > 0);
+        prop_assert!(!batches.is_empty());
         prop_assert!(batches.iter().all(|batch| batch.len() <= batch_size));
 
         // Property: All events should be accounted for

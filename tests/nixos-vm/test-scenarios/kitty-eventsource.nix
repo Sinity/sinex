@@ -1,5 +1,12 @@
 # Dedicated Kitty EventSource test with proper configuration
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 let
   inherit (pkgs) lib;
@@ -12,20 +19,20 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [ 
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli; 
       })
     ];
 
     # Kitty-specific sinex configuration
     services.sinex = {
-      unifiedCollector = {
-        sources.kittyTerminal = {
+      eventSources = {
+        kittyTerminal = {
           enable = true;
           socketPath = "/tmp/kitty-test";
           pollIntervalSeconds = 2;
         };
         # Minimal other sources for this test
-        sources.filesystem.enable = true;
+        filesystem.enable = true;
       };
     };
 

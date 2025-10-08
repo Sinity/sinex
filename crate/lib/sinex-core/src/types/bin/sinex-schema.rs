@@ -225,14 +225,14 @@ async fn generate_schemas(pool: &PgPool, output_dir: &str, sync: bool) -> Result
     ];
 
     // Create output directory
-    std::fs::create_dir_all(output_dir)?;
+    tokio::fs::create_dir_all(output_dir).await?;
 
     // Write schemas to files
     for (schema_name, schema) in &schemas {
-        let file_path = format!("{}/{}.json", output_dir, schema_name);
+        let file_path = format!("{output_dir}/{schema_name}.json");
         let pretty_json = serde_json::to_string_pretty(&schema)?;
-        std::fs::write(&file_path, pretty_json)?;
-        info!("Generated schema: {}", file_path);
+        tokio::fs::write(&file_path, pretty_json).await?;
+        info!("Generated schema: {file_path}");
     }
 
     // Write registry file
@@ -242,8 +242,8 @@ async fn generate_schemas(pool: &PgPool, output_dir: &str, sync: bool) -> Result
         "generated_at": chrono::Utc::now().to_rfc3339(),
         "total_schemas": schemas.len(),
     });
-    let registry_path = format!("{}/registry.json", output_dir);
-    std::fs::write(registry_path, serde_json::to_string_pretty(&registry)?)?;
+    let registry_path = format!("{output_dir}/registry.json");
+    tokio::fs::write(registry_path, serde_json::to_string_pretty(&registry)?).await?;
 
     info!("Generated {} schemas", schemas.len());
 
@@ -259,7 +259,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
 
     for (schema_name, schema_content) in schemas {
         // Extract event types from schema name
-        let event_types = vec![schema_name.clone()];
+        let event_types = [schema_name.clone()];
 
         // Parse source and event_type from schema_name (format: "source.event_type")
         let (_source, _event_type) = if let Some(dot_pos) = schema_name.find('.') {
@@ -273,7 +273,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&schema_text);
-        let _content_hash = format!("{:x}", hasher.finalize());
+        let content_hash = format!("{:x}", hasher.finalize());
 
         // Insert or update schema - using correct column names from DDL
         // Note: For now, we'll use a placeholder source and concatenate event types
@@ -295,7 +295,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
             &event_type,
             "1.0.0", // Use proper semantic version
             &schema_content,
-            &_content_hash
+            &content_hash
         )
         .fetch_one(pool)
         .await?;
@@ -363,14 +363,14 @@ async fn list_schemas(pool: &PgPool, active_only: bool) -> Result<()> {
         let event_types: Vec<String> = row.get("event_types");
         let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
 
-        println!("ID: {}", id);
-        println!("Name: {} ({})", schema_name, schema_version);
+        println!("ID: {id}");
+        println!("Name: {schema_name} ({schema_version})");
         println!("Event Types: {}", event_types.join(", "));
         println!("Created: {}", created_at.format("%Y-%m-%d %H:%M:%S"));
 
         if !active_only {
             let is_active: bool = row.get("is_active");
-            println!("Active: {}", is_active);
+            println!("Active: {is_active}");
         }
 
         println!("{:-<80}", "");

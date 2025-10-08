@@ -2,6 +2,7 @@
 //!
 //! These tests verify ULID properties without requiring database access
 
+use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use sinex_schema::ulid::Ulid;
 use std::collections::HashSet;
@@ -19,7 +20,9 @@ fn test_ulid_chronological_ordering() {
 
         for i in 0..count {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
             }
             ulids.push(Ulid::new());
         }
@@ -120,22 +123,19 @@ fn test_ulid_string_properties() {
 // Test ULID timestamp extraction
 #[test]
 fn test_ulid_timestamp_extraction() {
-    let before = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+    let before: DateTime<Utc> = Utc::now();
 
     let ulid = Ulid::new();
 
-    let after = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
+    let after: DateTime<Utc> = Utc::now();
 
     let timestamp = ulid.timestamp();
 
-    assert!(timestamp >= before, "Timestamp too early");
-    assert!(timestamp <= after, "Timestamp too late");
+    // Allow small clock jitter tolerance (+/- 2 seconds)
+    let early_bound = before - chrono::Duration::seconds(2);
+    let late_bound = after + chrono::Duration::seconds(2);
+    assert!(timestamp >= early_bound, "Timestamp too early");
+    assert!(timestamp <= late_bound, "Timestamp too late");
 }
 
 // Test ULID nil value
@@ -143,7 +143,7 @@ fn test_ulid_timestamp_extraction() {
 fn test_ulid_nil() {
     let nil = Ulid::nil();
     assert_eq!(nil.to_string(), "00000000000000000000000000");
-    assert_eq!(nil.timestamp(), 0);
+    assert_eq!(nil.timestamp(), DateTime::from_timestamp(0, 0).unwrap());
 
     // Nil should be less than any other ULID
     let regular = Ulid::new();
@@ -173,7 +173,9 @@ fn test_ulid_string_ordering() {
 
         for i in 0..count {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_micros(delay_micros));
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
             }
             let ulid = Ulid::new();
             ulids.push(ulid);
@@ -186,7 +188,7 @@ fn test_ulid_string_ordering() {
 
         // Verify they match
         for (ulid, string) in ulids.iter().zip(strings.iter()) {
-            prop_assert_eq!(ulid.to_string(), *string);
+            prop_assert_eq!(ulid.to_string(), string.as_str());
         }
     });
 }

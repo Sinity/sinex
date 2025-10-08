@@ -24,7 +24,7 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> Result<()> {
     let sinex_config = &module_config["services"]["sinex"];
     assert!(sinex_config.get("enable").is_some(), "Should have enable flag");
     assert!(sinex_config.get("database").is_some(), "Should have database config");
-    assert!(sinex_config.get("unifiedCollector").is_some(), "Should have collector config");
+    assert!(sinex_config.get("eventSources").is_some(), "Should have collector config");
     
     // Validate database configuration
     let db_config = &sinex_config["database"];
@@ -32,10 +32,10 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> Result<()> {
     assert!(db_config.get("port").is_some(), "Should have database port");
     assert!(db_config.get("name").is_some(), "Should have database name");
     
-    // Validate unified collector configuration
-    let collector_config = &sinex_config["unifiedCollector"];
-    assert!(collector_config.get("enable").is_some(), "Should have collector enable flag");
-    assert!(collector_config.get("sources").is_some(), "Should have sources config");
+    // Validate event source configuration
+    let event_sources_config = &sinex_config["eventSources"];
+    assert!(event_sources_config.get("filesystem").is_some(), "Should expose filesystem source config");
+    assert!(event_sources_config.get("shellHistory").is_some(), "Should expose shellHistory source config");
     
     // Validate configuration can be serialized (basic structure test)
     let _config_json = serde_json::to_string(&module_config)
@@ -51,10 +51,12 @@ async fn test_nixos_service_definitions(_ctx: TestContext) -> Result<()> {
     
     // Validate core services are defined
     let expected_services = vec![
-        "sinex-unified-collector",
-        "sinex-ingestd", 
+        "sinex-ingestd",
         "sinex-gateway",
-        "sinex-canonicalizer",
+        "sinex-fs-watcher-1",
+        "sinex-terminal-satellite-1",
+        "sinex-desktop-satellite-1",
+        "sinex-system-satellite-1",
         "sinex-health-aggregator",
     ];
     
@@ -95,7 +97,7 @@ async fn test_nixos_module_options_schema(_ctx: TestContext) -> Result<()> {
     let expected_categories = vec![
         "enable",
         "database", 
-        "unifiedCollector",
+        "eventSources",
         "gateway",
         "security",
         "performance",
@@ -120,21 +122,15 @@ async fn test_nixos_module_options_schema(_ctx: TestContext) -> Result<()> {
     }
     
     // Validate source-specific options
-    let collector_options = &module_options["unifiedCollector"];
-    if let Some(sources) = collector_options.get("sources") {
-        let source_types = vec![
-            "filesystem", "shellHistory", "atuin", "asciinema", 
-            "clipboard", "kittyScrollback", "dbus"
-        ];
-        
-        for source_type in source_types {
-            if let Some(source_config) = sources.get(source_type) {
-                assert!(
-                    source_config.get("enable").is_some(),
-                    "{} source should have enable option", source_type
-                );
-            }
-        }
+    let event_source_options = &module_options["eventSources"]["options"];
+    let source_types = vec![
+        "filesystem", "shellHistory", "atuin", "clipboard"
+    ];
+
+    for source_type in source_types {
+        let source_config = &event_source_options[source_type];
+        let options = source_config["options"].as_object().expect("source options should be defined");
+        assert!(options.contains_key("enable"), "{} source should expose an enable option", source_type);
     }
     
     // Validate module options can be serialized
@@ -160,11 +156,24 @@ async fn test_service_dependency_chain(_ctx: TestContext) -> Result<()> {
     let ingestd_deps = &dependency_chain["sinex-ingestd"];
     assert!(ingestd_deps.contains(&"postgresql.service".to_string()), "ingestd should depend on postgres");
     
-    let collector_deps = &dependency_chain["sinex-unified-collector"];
-    assert!(collector_deps.contains(&"sinex-ingestd.service".to_string()), "collector should depend on ingestd");
-    
+    let watcher_services = [
+        "sinex-fs-watcher-1",
+        "sinex-terminal-satellite-1",
+        "sinex-desktop-satellite-1",
+        "sinex-system-satellite-1",
+    ];
+
+    for watcher in watcher_services {
+        let deps = &dependency_chain[watcher];
+        assert!(
+            deps.contains(&"sinex-ingestd.service".to_string()),
+            "{} should depend on ingestd",
+            watcher
+        );
+    }
+
     let gateway_deps = &dependency_chain["sinex-gateway"];
-    assert!(gateway_deps.contains(&"sinex-ingestd.service".to_string()), "gateway should depend on ingestd");
+    assert!(gateway_deps.contains(&"postgresql.service".to_string()), "gateway should depend on postgres");
     
     // Validate no circular dependencies
     assert_no_circular_dependencies(&dependency_chain)?;
@@ -496,7 +505,7 @@ async fn test_module_upgrade_compatibility(_ctx: TestContext) -> Result<()> {
         let sinex_config = &config["services"]["sinex"];
         
         // Core options should be present in all versions
-        let core_options = vec!["enable", "database", "unifiedCollector"];
+        let core_options = vec!["enable", "database", "eventSources"];
         for option in core_options {
             assert!(
                 sinex_config.get(option).is_some(),
@@ -549,14 +558,11 @@ fn create_test_module_config() -> serde_json::Value {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "unifiedCollector": {
-                    "enable": true,
-                    "sources": {
-                        "filesystem": {"enable": true},
-                        "shellHistory": {"enable": true},
-                        "atuin": {"enable": false},
-                        "clipboard": {"enable": false}
-                    }
+                "eventSources": {
+                    "filesystem": {"enable": true},
+                    "shellHistory": {"enable": true},
+                    "atuin": {"enable": false},
+                    "clipboard": {"enable": false}
                 },
                 "gateway": {
                     "enable": true,
@@ -573,24 +579,7 @@ fn create_test_module_config() -> serde_json::Value {
 
 fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
     let mut services = HashMap::new();
-    
-    services.insert("sinex-unified-collector".to_string(), json!({
-        "description": "Sinex Unified Event Collector",
-        "wantedBy": ["multi-user.target"],
-        "after": ["sinex-ingestd.service"],
-        "requires": ["sinex-ingestd.service"],
-        "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-unified-collector",
-            "Restart": "always",
-            "RestartSec": 5,
-            "User": "sinex",
-            "Group": "sinex",
-            "Environment": [
-                "DATABASE_URL=postgresql://sinex@localhost/sinex"
-            ]
-        }
-    }));
-    
+
     services.insert("sinex-ingestd".to_string(), json!({
         "description": "Sinex Event Ingestion Daemon",
         "wantedBy": ["multi-user.target"],
@@ -607,31 +596,68 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
             ]
         }
     }));
-    
+
     services.insert("sinex-gateway".to_string(), json!({
         "description": "Sinex API Gateway",
         "wantedBy": ["multi-user.target"],
-        "after": ["sinex-ingestd.service"],
+        "after": ["postgresql.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-gateway",
+            "ExecStart": "/nix/store/.../bin/sinex-gateway rpc-server",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
-    
-    services.insert("sinex-canonicalizer".to_string(), json!({
-        "description": "Sinex Command Canonicalizer",
+
+    services.insert("sinex-fs-watcher-1".to_string(), json!({
+        "description": "Sinex filesystem watcher (instance 1)",
+        "wantedBy": ["multi-user.target"],
+        "after": ["sinex-ingestd.service"],
+        "requires": ["sinex-ingestd.service"],
+        "serviceConfig": {
+            "ExecStart": "/nix/store/.../bin/sinex-fs-watcher --service-name sinex-fs-watcher",
+            "Restart": "on-failure",
+            "User": "sinex",
+            "Group": "sinex"
+        }
+    }));
+
+    services.insert("sinex-terminal-satellite-1".to_string(), json!({
+        "description": "Sinex terminal event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-canonicalizer",
+            "ExecStart": "/nix/store/.../bin/sinex-terminal-satellite --service-name sinex-terminal-satellite",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
-    
+
+    services.insert("sinex-desktop-satellite-1".to_string(), json!({
+        "description": "Sinex desktop event source (instance 1)",
+        "wantedBy": ["multi-user.target"],
+        "after": ["sinex-ingestd.service"],
+        "serviceConfig": {
+            "ExecStart": "/nix/store/.../bin/sinex-desktop-satellite --service-name sinex-desktop-satellite",
+            "Restart": "on-failure",
+            "User": "sinex",
+            "Group": "sinex"
+        }
+    }));
+
+    services.insert("sinex-system-satellite-1".to_string(), json!({
+        "description": "Sinex system event source (instance 1)",
+        "wantedBy": ["multi-user.target"],
+        "after": ["sinex-ingestd.service"],
+        "serviceConfig": {
+            "ExecStart": "/nix/store/.../bin/sinex-system-satellite --service-name sinex-system-satellite",
+            "Restart": "on-failure",
+            "User": "sinex",
+            "Group": "sinex"
+        }
+    }));
+
     services.insert("sinex-health-aggregator".to_string(), json!({
         "description": "Sinex Health Aggregator",
         "wantedBy": ["multi-user.target"],
@@ -643,7 +669,7 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
             "Group": "sinex"
         }
     }));
-    
+
     services
 }
 
@@ -675,21 +701,35 @@ fn create_test_module_options_schema() -> serde_json::Value {
                 }
             }
         },
-        "unifiedCollector": {
+        "eventSources": {
             "type": "submodule",
-            "description": "Unified collector configuration",
-            "sources": {
+            "description": "Event source configuration",
+            "options": {
                 "filesystem": {
-                    "enable": {"type": "bool", "default": true}
+                    "type": "submodule",
+                    "options": {
+                        "enable": {"type": "bool", "default": true},
+                        "watchPaths": {"type": "list", "default": []}
+                    }
                 },
                 "shellHistory": {
-                    "enable": {"type": "bool", "default": true}
+                    "type": "submodule",
+                    "options": {
+                        "enable": {"type": "bool", "default": true}
+                    }
                 },
                 "atuin": {
-                    "enable": {"type": "bool", "default": false}
+                    "type": "submodule",
+                    "options": {
+                        "enable": {"type": "bool", "default": false},
+                        "databasePath": {"type": "str", "default": "~/.local/share/atuin/history.db"}
+                    }
                 },
                 "clipboard": {
-                    "enable": {"type": "bool", "default": false}
+                    "type": "submodule",
+                    "options": {
+                        "enable": {"type": "bool", "default": false}
+                    }
                 }
             }
         },
@@ -714,14 +754,16 @@ fn create_test_module_options_schema() -> serde_json::Value {
 
 fn create_test_dependency_chain() -> HashMap<String, Vec<String>> {
     let mut deps = HashMap::new();
-    
+
     deps.insert("postgresql".to_string(), vec![]);
     deps.insert("sinex-ingestd".to_string(), vec!["postgresql.service".to_string()]);
-    deps.insert("sinex-unified-collector".to_string(), vec!["sinex-ingestd.service".to_string()]);
-    deps.insert("sinex-gateway".to_string(), vec!["sinex-ingestd.service".to_string()]);
-    deps.insert("sinex-canonicalizer".to_string(), vec!["sinex-ingestd.service".to_string()]);
+    deps.insert("sinex-gateway".to_string(), vec!["postgresql.service".to_string()]);
+    deps.insert("sinex-fs-watcher-1".to_string(), vec!["sinex-ingestd.service".to_string()]);
+    deps.insert("sinex-terminal-satellite-1".to_string(), vec!["sinex-ingestd.service".to_string()]);
+    deps.insert("sinex-desktop-satellite-1".to_string(), vec!["sinex-ingestd.service".to_string()]);
+    deps.insert("sinex-system-satellite-1".to_string(), vec!["sinex-ingestd.service".to_string()]);
     deps.insert("sinex-health-aggregator".to_string(), vec!["sinex-ingestd.service".to_string()]);
-    
+
     deps
 }
 
@@ -914,9 +956,9 @@ fn create_test_system_integration_config() -> serde_json::Value {
     json!({
         "systemd": {
             "services": {
-                "sinex-unified-collector": {"enable": true},
                 "sinex-ingestd": {"enable": true},
-                "sinex-gateway": {"enable": true}
+                "sinex-gateway": {"enable": true},
+                "sinex-fs-watcher-1": {"enable": true}
             }
         },
         "logging": {
@@ -962,7 +1004,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "port": 5432,
                     "name": "sinex"
                 },
-                "unifiedCollector": {
+                "eventSources": {
                     "enable": true
                 }
             }
@@ -979,7 +1021,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "unifiedCollector": {
+                "eventSources": {
                     "enable": true,
                     "sources": {
                         "filesystem": {"enable": true}
@@ -999,7 +1041,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "unifiedCollector": {
+                "eventSources": {
                     "enable": true,
                     "sources": {
                         "filesystem": {"enable": true},
@@ -1022,7 +1064,7 @@ fn create_test_migration_info(_versions: &HashMap<String, serde_json::Value>) ->
         "backward_compatible": true,
         "breaking_changes": [],
         "deprecated_options": [
-            {"version": "0.2.0", "option": "old_collector_config", "replacement": "unifiedCollector"}
+            {"version": "0.2.0", "option": "old_collector_config", "replacement": "eventSources"}
         ],
         "migration_path": {
             "0.1.0_to_0.2.0": "automatic",
