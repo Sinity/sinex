@@ -35,14 +35,13 @@ use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, WrapErr};
 use futures::StreamExt;
-use hyper::server::conn::http1;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HyperBuilder;
+use hyper_util::service::TowerToHyperService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-
-use std::sync::Arc;
 
 // Standard library
 use sinex_core::environment::environment;
@@ -258,18 +257,17 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             info!("RPC server listening on Unix socket {}", path_str);
 
             let mut incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
-            let app = std::sync::Arc::new(app);
+            let app = app;
 
             while let Some(stream) = incoming.next().await {
                 match stream {
                     Ok(stream) => {
-                        let app = app.clone();
+                        let service_app = app.clone();
                         tokio::spawn(async move {
-                            let io = hyper_util::rt::TokioIo::new(stream);
-                            if let Err(err) = hyper::server::conn::http1::Builder::new()
-                                .serve_connection(io, app.clone())
-                                .await
-                            {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(service_app);
+                            let io = TokioIo::new(stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
                                 error!(?err, "Unix RPC connection closed with error");
                             }
                         });
