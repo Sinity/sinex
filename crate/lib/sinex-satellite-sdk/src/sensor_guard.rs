@@ -120,5 +120,3 @@ pub trait MaterialConsumer {
         NotASensor
     }
 }
-
-#[cfg(test)]
