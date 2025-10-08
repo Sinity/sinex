@@ -44,8 +44,8 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ### ingestd (Universal Archiver)
 - Bootstraps required JetStream streams/consumers on startup (idempotent).
-- Materials consumer: assembles slices, verifies hashes, writes to annex/blob store, finalizes `raw.source_material_registry`, records ledger entries, publishes DLQ on unrecoverable errors.
-- Events consumer: validates payloads against schemas, batches inserts with `UNNEST`, emits `events.confirmations` only after commit.
+- Materials consumer: maintains an in-memory `MaterialAssembler` map keyed by material ULID, opens temp files on `source_material.begin`, appends slice payloads on `source_material.slices.*`, and on `source_material.end` moves the file into git-annex, verifies hashes, finalizes `raw.source_material_registry`, records ledger entries, and publishes DLQ entries on unrecoverable errors.
+- Events consumer: durable pull on `events.raw.*`, validates payloads against cached JSON Schema, batches inserts with `UNNEST`, publishes confirmations after commit, and NACKs/bounces to `events.dlq` on failure.
 - Transitional gRPC server/outbox are removed after JetStream E2E success.
 
 ### JetStream Streams & Message Specifications
@@ -67,9 +67,9 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
   - ingestd tracks per-material state (material_id, temp path, next offset, slice count, timestamps). Resubscribe on restart and rebuild state before resuming.
 
 ### SDK (`sinex-satellite-sdk`)
-- `AcquisitionManager` + `SourceMaterialHandle`: begin/append/finalize streams, compute hashes, call Stage-as-You-Go helpers.
-- `EventPublisher` / `NatsPublisher`: publish provisional events with dedupe headers, optionally attach Stage-as-You-Go provenance hints.
-- `StreamProcessorRunner`: confirm-first default, optional provisional handler; integrates JetStream lease/coordination (KV buckets `sinex_manifests`, `leadership_leases`).
+- `AcquisitionManager` + `SourceMaterialHandle`: begin/append/finalize streams, compute hashes, call Stage-as-You-Go helpers. Provide catalogued `Acquirer` helpers (`AppendStreamAcquirer`, `SnapshotAcquirer`, `RowOrientedAcquirer`) so satellites can adopt Stage-as-You-Go without bespoke plumbing.
+- `EventPublisher` / `NatsPublisher`: publish provisional events with dedupe headers, optionally attach Stage-as-You-Go provenance hints. Support typed envelopes (`TypedEvent<T>`) so payload-specific subjects and metadata flow through headers.
+- `StreamProcessorRunner`: confirm-first default, optional provisional handler; integrates JetStream lease/coordination (KV buckets `sinex_manifests`, `leadership_leases`). Surface `ProcessingModel` (leader/standby vs stateless workers) and the optional provisional processing trait, per the blueprint.
 - Stage-as-You-Go upgraded to finish materials (ledger entries, blobs) without touching sensd.
 
 ### Satellites & Automata
