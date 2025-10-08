@@ -306,8 +306,12 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
 
     // Sinex-related services that should be manageable
     let sinex_services = vec![
-        "sinex-unified-collector.service",
-        "sinex-promo-worker.service",
+        "sinex-ingestd.service",
+        "sinex-gateway.service",
+        "sinex-fs-watcher-1.service",
+        "sinex-terminal-satellite-1.service",
+        "sinex-desktop-satellite-1.service",
+        "sinex-system-satellite-1.service",
         "sinex-health-aggregator.service",
     ];
 

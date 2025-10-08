@@ -1,0 +1,126 @@
+use sinex_core::environment::{environment, SinexEnvironment};
+use sinex_test_utils::sinex_test;
+use std::env;
+use std::path::PathBuf;
+
+#[sinex_test]
+async fn environment_creation() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+    assert_eq!(env.name(), "dev");
+    assert!(env.is_dev());
+    assert!(!env.is_prod());
+
+    let env = SinexEnvironment::new("prod").unwrap();
+    assert_eq!(env.name(), "prod");
+    assert!(env.is_prod());
+    assert!(!env.is_dev());
+    Ok(())
+}
+
+#[sinex_test]
+async fn invalid_environment_is_rejected() -> color_eyre::eyre::Result<()> {
+    let result = SinexEnvironment::new("invalid");
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Invalid environment"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_names_are_namespaced() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+    assert_eq!(env.database_name("sinex"), "sinex_dev");
+
+    let env = SinexEnvironment::new("prod").unwrap();
+    assert_eq!(env.database_name("sinex"), "sinex_prod");
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_urls_are_namespaced_once() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+
+    let base_url = "postgresql:///sinex?host=/run/postgresql";
+    let namespaced = env.database_url(base_url).unwrap();
+    assert_eq!(namespaced, "postgresql:///sinex_dev?host=/run/postgresql");
+
+    let unchanged = env.database_url(&namespaced).unwrap();
+    assert_eq!(unchanged, namespaced);
+    Ok(())
+}
+
+#[sinex_test]
+async fn nats_subjects_are_namespaced_once() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+
+    let subject = env.nats_subject("sinex.events.raw.>");
+    assert_eq!(subject, "dev.sinex.events.raw.>");
+
+    let unchanged = env.nats_subject(&subject);
+    assert_eq!(unchanged, subject);
+    Ok(())
+}
+
+#[sinex_test]
+async fn nats_streams_are_namespaced_once() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+
+    let stream = env.nats_stream_name("SINEX_RAW_EVENTS");
+    assert_eq!(stream, "DEV_SINEX_RAW_EVENTS");
+
+    let unchanged = env.nats_stream_name(&stream);
+    assert_eq!(unchanged, stream);
+    Ok(())
+}
+
+#[sinex_test]
+async fn socket_paths_are_namespaced_once() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+
+    let path = env.socket_path("/run/sinex/ingest.sock");
+    assert_eq!(path, PathBuf::from("/run/sinex-dev/ingest.sock"));
+
+    let unchanged = env.socket_path(&path);
+    assert_eq!(unchanged, path);
+    Ok(())
+}
+
+#[sinex_test]
+async fn work_directories_are_namespaced_once() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("staging").unwrap();
+
+    let dir = env.work_directory("/tmp/sinex");
+    assert_eq!(dir, PathBuf::from("/tmp/sinex-staging"));
+
+    let unchanged = env.work_directory(&dir);
+    assert_eq!(unchanged, dir);
+    Ok(())
+}
+
+#[sinex_test]
+async fn config_prefix_matches_environment() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+    assert_eq!(env.config_prefix(), "SINEX_DEV_");
+
+    let env = SinexEnvironment::new("prod").unwrap();
+    assert_eq!(env.config_prefix(), "SINEX_PROD_");
+    Ok(())
+}
+
+#[sinex_test]
+async fn environment_variable_overrides_current() -> color_eyre::eyre::Result<()> {
+    env::set_var("SINEX_ENVIRONMENT", "staging");
+    let env = SinexEnvironment::current().unwrap();
+    assert_eq!(env.name(), "staging");
+    env::remove_var("SINEX_ENVIRONMENT");
+    Ok(())
+}
+
+#[sinex_test]
+async fn global_environment_exposes_a_supported_name() -> color_eyre::eyre::Result<()> {
+    let env = environment();
+    assert!(["dev", "staging", "prod"].contains(&env.name()));
+    Ok(())
+}

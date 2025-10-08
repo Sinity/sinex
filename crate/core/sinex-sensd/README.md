@@ -136,13 +136,13 @@ run_with_sensd(config).await?;
 
 ### Unit Tests
 ```bash
-cargo test --package sinex-sensd
+cargo nextest run -p sinex-sensd
 ```
 
 ### Integration Tests  
 ```bash
 # With DATABASE_URL set
-DATABASE_URL=postgresql:///sinex_dev cargo test integration_test
+DATABASE_URL=postgresql:///sinex_dev cargo nextest run -p sinex-sensd --test integration_test
 ```
 
 ### Simple Validation

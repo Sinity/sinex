@@ -33,11 +33,16 @@ use crate::{handlers::*, service_container::ServiceContainer};
 // External crates
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
+use futures::StreamExt;
+use hyper::server::conn::http1;
+use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+
+use std::sync::Arc;
 
 // Standard library
 use sinex_core::environment::environment;
@@ -233,7 +238,7 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             if let Some(parent) = socket_path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
-                    .context("Failed to create Unix socket directory")?;
+                    .wrap_err("Failed to create Unix socket directory")?;
             }
 
             if socket_path.exists() {
@@ -249,13 +254,31 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             }
 
             let listener = tokio::net::UnixListener::bind(socket_path)
-                .context("Failed to bind Unix socket")?;
+                .wrap_err("Failed to bind Unix socket")?;
             info!("RPC server listening on Unix socket {}", path_str);
 
-            let incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
-            axum::Server::builder(hyper::server::accept::from_stream(incoming))
-                .serve(app.into_make_service())
-                .await?;
+            let mut incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
+            let app = std::sync::Arc::new(app);
+
+            while let Some(stream) = incoming.next().await {
+                match stream {
+                    Ok(stream) => {
+                        let app = app.clone();
+                        tokio::spawn(async move {
+                            let io = hyper_util::rt::TokioIo::new(stream);
+                            if let Err(err) = hyper::server::conn::http1::Builder::new()
+                                .serve_connection(io, app.clone())
+                                .await
+                            {
+                                error!(?err, "Unix RPC connection closed with error");
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(?err, "Failed to accept Unix socket connection");
+                    }
+                }
+            }
         }
     }
 

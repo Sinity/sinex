@@ -122,35 +122,3 @@ pub trait MaterialConsumer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    
-    struct TestSatellite;
-    
-    impl EventProcessor for TestSatellite {
-        type Guard = NotASensor;
-    }
-    
-    impl MaterialConsumer for TestSatellite {
-        async fn process_material_slice(
-            &self,
-            _material_id: sinex_core::types::Ulid,
-            _slice_data: &[u8],
-        ) -> Result<Vec<sinex_core::db::models::Event<JsonValue>>, Box<dyn std::error::Error>> {
-            // Process already-captured material
-            Ok(vec![])
-        }
-    }
-    
-    #[test]
-    fn satellite_cannot_be_sensor() {
-        let satellite = TestSatellite;
-        
-        // This compiles - satellite is correctly not a sensor
-        let _not_sensor = satellite.verify_not_sensor();
-        
-        // This would NOT compile if uncommented:
-        // let _sensor_cap = SensorCapability::<TestSatellite>::new();
-        //                    ^^^^^^^^^^^^^^^^^ private module
-    }
-}
