@@ -156,28 +156,61 @@
           };
         in
         let
+          # Core satellite services
+          sinexIngestd = buildRustPackage "sinex-ingestd";
+          sinexGateway = buildRustPackage "sinex-gateway";
+
+          # Event source satellites
+          sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
+          sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
+          sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
+          sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
+          sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
+
+          # Automaton satellites
+          sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
+
+          # Support services
+          healthAggregator = buildRustPackage "sinex-health-aggregator";
+          sinexHealthAggregator = healthAggregator;
+          sinexPreflight = buildRustPackage "sinex-preflight";
+          sinexCli = sinex-cli;
+
+          sinexSuite = pkgs.symlinkJoin {
+            name = "sinex-suite";
+            paths = [
+              sinexIngestd
+              sinexGateway
+              sinexFsWatcher
+              sinexTerminalSatellite
+              sinexDesktopSatellite
+              sinexSystemSatellite
+              sinexDocumentIngestor
+              sinexTerminalCommandCanonicalizer
+              healthAggregator
+              sinexPreflight
+              sinexCli
+            ];
+          };
+
           sinexPackages = {
-            # Core satellite services
-            sinexIngestd = buildRustPackage "sinex-ingestd";
-            sinexGateway = buildRustPackage "sinex-gateway";
-
-            # Event source satellites
-            sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
-            sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
-            sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
-            sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
-            sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
-
-            # Automaton satellites
-            sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
-
-            # Support services
-            healthAggregator = buildRustPackage "sinex-health-aggregator";
-            sinexHealthAggregator = buildRustPackage "sinex-health-aggregator";
-            sinexCli = sinex-cli;
+            inherit
+              sinexIngestd
+              sinexGateway
+              sinexFsWatcher
+              sinexTerminalSatellite
+              sinexDesktopSatellite
+              sinexSystemSatellite
+              sinexDocumentIngestor
+              sinexTerminalCommandCanonicalizer
+              healthAggregator
+              sinexHealthAggregator
+              sinexPreflight
+              sinexCli;
+            sinex = sinexSuite;
 
             # Default package is now the ingestion daemon
-            default = buildRustPackage "sinex-ingestd";
+            default = sinexIngestd;
             inherit pg_jsonschema;
           };
 
@@ -185,6 +218,8 @@
             inherit pkgs;
             sinex-ingestd = sinexPackages.sinexIngestd;
             sinex-gateway = sinexPackages.sinexGateway;
+            sinex = sinexPackages.sinex;
+            sinexCli = sinexPackages.sinexCli;
             inherit pg_jsonschema;
           };
         in
@@ -322,6 +357,9 @@
         postgresql16Packages = prev.postgresql16Packages // {
           pg_jsonschema = self.packages.${final.system}.pg_jsonschema;
         };
+
+        sinex = self.packages.${final.system}.sinex;
+        sinexCli = self.packages.${final.system}.sinexCli;
       };
     };
 }

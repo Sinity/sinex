@@ -1,5 +1,12 @@
 # Performance validation test for Sinex - Optimized version
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 let
   inherit (pkgs) lib;
@@ -468,7 +475,7 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli; 
       })
     ];
 
@@ -477,15 +484,15 @@ pkgs.nixosTest {
       # Enable promo worker for performance tests
       promoWorker.enable = true;
       
-      unifiedCollector = {
+      eventSources = {
         # Additional sources for performance testing
-        sources.filesystem.watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
-        sources.shellHistory.enable = true;
-        sources.atuin = {
+        filesystem.watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
+        shellHistory.enable = true;
+        atuin = {
           enable = true;
           databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
         };
-        sources.dbus.enable = true;
+        dbus.enable = true;
       };
     };
     

@@ -1,7 +1,16 @@
 # Failure recovery test for Sinex
-{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
+{ pkgs
+, sinex-ingestd
+, sinex-gateway
+, pg_jsonschema
+, sinex ? null
+, sinexCli ? null
+, ...
+}:
 
 let
+  sinexPackage = sinex or sinex-ingestd;
+  sinexCliPackage = sinexCli or pkgs.python3;
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -265,24 +274,23 @@ pkgs.nixosTest {
 
       services.sinex = {
         enable = true;
-        package = sinex-ingestd;
+        package = sinexPackage;
+        cliPackage = sinexCliPackage;
         promoWorker.enable = true;
 
-        unifiedCollector = {
-          enable = true;
-          
+        eventSources = {
           # Enable multiple sources for recovery testing
-          sources.filesystem = {
+          filesystem = {
             enable = true;
             watchPaths = [ "/home/test/watched" ];
           };
-          sources.atuin = {
+          atuin = {
             enable = true;
             databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
           };
-          sources.shellHistory.enable = true;
-          sources.clipboard.enable = true;
-          sources.dbus.enable = true;
+          shellHistory.enable = true;
+          clipboard.enable = true;
+          dbus.enable = true;
         };
       };
 
@@ -330,6 +338,8 @@ pkgs.nixosTest {
       nixpkgs.overlays = [(final: prev: {
         sinex-ingestd = sinex-ingestd;
         sinex-gateway = sinex-gateway;
+        sinex = sinexPackage;
+        sinexCli = sinexCliPackage;
         postgresql16Packages = prev.postgresql16Packages // {
           pg_jsonschema = pg_jsonschema;
         };

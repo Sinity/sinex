@@ -208,10 +208,11 @@ just warnings
 ### Development Workflow
 
 ```bash
-# Standard development cycle
+# Standard development cycle (tests run through Nextest)
 just check                # Fast compilation check
-just test                 # Run unit + property tests
-just pre-commit          # Full pre-commit checks
+just test                 # Fast loop (cargo nextest run --workspace --lib)
+just test-all            # Full suite (cargo nextest run --workspace)
+just pre-commit          # Format + lint + check + nextest
 
 # Continuous development
 just watch               # Watch for changes with bacon
@@ -235,8 +236,8 @@ cargo run --bin sinex-fs-watcher -- scan /path/to/scan
 # Test satellite in sensor mode (runs continuously)
 cargo run --bin sinex-fs-watcher -- sensor
 
-# Integration testing
-cargo test --test satellite_architecture_test
+# Integration testing (Nextest)
+cargo nextest run --workspace --test satellite_architecture_test
 ```
 
 ### Performance Optimization

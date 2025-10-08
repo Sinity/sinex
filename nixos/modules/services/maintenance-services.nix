@@ -19,12 +19,13 @@ let
   # Common maintenance service configuration
   maintenanceServiceConfig = {
     Type = "oneshot";
-    User = cfg.database.user;
-    Group = cfg.database.user;
+    User = cfg.satelliteUser;
+    Group = cfg.satelliteUser;
     
     Environment = [
       "DATABASE_URL=postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
       "RUST_LOG=${cfg.logLevel}"
+      "SINEX_CLI=${cfg.cliPackage}/bin/sinex-cli"
     ];
     
     # Security hardening for maintenance tasks
@@ -49,14 +50,20 @@ in
             ExecStart = pkgs.writeShellScript "sinex-dlq-cleanup" ''
               set -euo pipefail
               echo "Starting DLQ cleanup..."
+
+              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+              if [ ! -x "$SINEX_CLI_BIN" ]; then
+                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
+                exit 1
+              fi
               
               # Clean up old DLQ entries (older than 30 days)
-              ${cfg.package}/bin/sinex-cli dlq cleanup --older-than 30d --confirm
+              "$SINEX_CLI_BIN" dlq cleanup --older-than 30d --confirm
               
               # Generate cleanup metrics
               ${optionalString enableMonitoring ''
-                dlq_count=$(${cfg.package}/bin/sinex-cli dlq count)
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.dlq.entries_remaining "$dlq_count"
+                dlq_count=$("$SINEX_CLI_BIN" dlq count)
+                "$SINEX_CLI_BIN" metrics gauge sinex.dlq.entries_remaining "$dlq_count"
               ''}
               
               echo "DLQ cleanup completed"
@@ -70,26 +77,32 @@ in
           serviceConfig = maintenanceServiceConfig // {
             ExecStart = pkgs.writeShellScript "sinex-resource-monitor" ''
               set -euo pipefail
-              
+
+              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+              if [ ! -x "$SINEX_CLI_BIN" ]; then
+                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
+                exit 1
+              fi
+
               # Collect system resource metrics
               cpu_usage=$(${pkgs.procps}/bin/top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
               memory_usage=$(${pkgs.procps}/bin/free | grep Mem | awk '{printf "%.1f", $3/$2 * 100.0}')
               disk_usage=$(${pkgs.coreutils}/bin/df /var/lib/sinex | tail -1 | awk '{print $5}' | sed 's/%//')
               
               # Report metrics
-              ${cfg.package}/bin/sinex-cli metrics gauge sinex.system.cpu_percent "$cpu_usage"
-              ${cfg.package}/bin/sinex-cli metrics gauge sinex.system.memory_percent "$memory_usage"
-              ${cfg.package}/bin/sinex-cli metrics gauge sinex.system.disk_percent "$disk_usage"
+              "$SINEX_CLI_BIN" metrics gauge sinex.system.cpu_percent "$cpu_usage"
+              "$SINEX_CLI_BIN" metrics gauge sinex.system.memory_percent "$memory_usage"
+              "$SINEX_CLI_BIN" metrics gauge sinex.system.disk_percent "$disk_usage"
               
               # Check for resource alerts
               if (( $(echo "$memory_usage > 90" | ${pkgs.bc}/bin/bc -l) )); then
                 echo "WARNING: High memory usage: $memory_usage%"
-                ${cfg.package}/bin/sinex-cli metrics increment sinex.alerts.memory_high
+                "$SINEX_CLI_BIN" metrics increment sinex.alerts.memory_high
               fi
               
               if (( disk_usage > 85 )); then
                 echo "WARNING: High disk usage: $disk_usage%"
-                ${cfg.package}/bin/sinex-cli metrics increment sinex.alerts.disk_high
+                "$SINEX_CLI_BIN" metrics increment sinex.alerts.disk_high
               fi
             '';
           };
@@ -102,49 +115,60 @@ in
             ExecStart = pkgs.writeShellScript "sinex-system-health" ''
               set -euo pipefail
               echo "Running system health check..."
-              
+
+              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+              if [ ! -x "$SINEX_CLI_BIN" ]; then
+                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
+                exit 1
+              fi
+
               # Check core services
               services_healthy=true
-              
-              for service in sinex-unified-collector sinex-promo-worker; do
+              service_list=$(systemctl list-units --type=service 'sinex-*.service' --no-legend | awk '{print $1}')
+
+              if [ -z "$service_list" ]; then
+                echo "No Sinex services are currently loaded"
+              fi
+
+              for service in $service_list; do
                 if systemctl is-active "$service" >/dev/null 2>&1; then
                   echo "✓ $service is active"
-                  ${cfg.package}/bin/sinex-cli metrics gauge "sinex.service.$service.active" 1
+                  "$SINEX_CLI_BIN" metrics gauge "sinex.service.$service.active" 1
                 else
                   echo "✗ $service is not active"
-                  ${cfg.package}/bin/sinex-cli metrics gauge "sinex.service.$service.active" 0
+                  "$SINEX_CLI_BIN" metrics gauge "sinex.service.$service.active" 0
                   services_healthy=false
                 fi
               done
               
               # Check database connectivity
-              if ${cfg.package}/bin/sinex-cli db ping --timeout 5; then
+              if "$SINEX_CLI_BIN" db ping --timeout 5; then
                 echo "✓ Database connectivity OK"
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.database.reachable 1
+                "$SINEX_CLI_BIN" metrics gauge sinex.database.reachable 1
               else
                 echo "✗ Database connectivity failed"
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.database.reachable 0
+                "$SINEX_CLI_BIN" metrics gauge sinex.database.reachable 0
                 services_healthy=false
               fi
               
               # Check work queue health
-              queue_depth=$(${cfg.package}/bin/sinex-cli worker queue-depth)
+              queue_depth=$("$SINEX_CLI_BIN" worker queue-depth)
               echo "Work queue depth: $queue_depth"
-              ${cfg.package}/bin/sinex-cli metrics gauge sinex.worker.queue_depth "$queue_depth"
+              "$SINEX_CLI_BIN" metrics gauge sinex.worker.queue_depth "$queue_depth"
               
               # Alert on high queue depth
               if (( queue_depth > 1000 )); then
                 echo "WARNING: High work queue depth: $queue_depth"
-                ${cfg.package}/bin/sinex-cli metrics increment sinex.alerts.queue_high
+                "$SINEX_CLI_BIN" metrics increment sinex.alerts.queue_high
               fi
               
               # Overall health status
               if $services_healthy; then
                 echo "✓ System health check passed"
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.system.healthy 1
+                "$SINEX_CLI_BIN" metrics gauge sinex.system.healthy 1
               else
                 echo "✗ System health check failed"
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.system.healthy 0
+                "$SINEX_CLI_BIN" metrics gauge sinex.system.healthy 0
               fi
             '';
           };
@@ -158,6 +182,12 @@ in
             ExecStart = pkgs.writeShellScript "sinex-git-annex-gc" ''
               set -euo pipefail
               echo "Starting git-annex garbage collection..."
+
+              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+              if [ ! -x "$SINEX_CLI_BIN" ]; then
+                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
+                exit 1
+              fi
               
               # Run git-annex unused to find unreferenced files
               ${pkgs.git-annex}/bin/git-annex unused
@@ -171,7 +201,7 @@ in
               # Emit storage metrics
               ${optionalString enableMonitoring ''
                 repo_size=$(${pkgs.coreutils}/bin/du -sb ${cfg.blobStorage.repositoryPath} | cut -f1)
-                ${cfg.package}/bin/sinex-cli metrics gauge sinex.storage.repository_bytes "$repo_size"
+                "$SINEX_CLI_BIN" metrics gauge sinex.storage.repository_bytes "$repo_size"
               ''}
               
               echo "Git-annex garbage collection completed"
@@ -187,18 +217,24 @@ in
             ExecStart = pkgs.writeShellScript "sinex-git-annex-fsck" ''
               set -euo pipefail
               echo "Starting git-annex filesystem check..."
+
+              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+              if [ ! -x "$SINEX_CLI_BIN" ]; then
+                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
+                exit 1
+              fi
               
               # Run incremental fsck (checks a portion each time)
               if ${pkgs.git-annex}/bin/git-annex fsck --incremental --time-limit=30m; then
                 echo "✓ Git-annex fsck completed successfully"
                 ${optionalString enableMonitoring ''
-                  ${cfg.package}/bin/sinex-cli metrics gauge sinex.storage.fsck_status 1
+                  "$SINEX_CLI_BIN" metrics gauge sinex.storage.fsck_status 1
                 ''}
               else
                 echo "✗ Git-annex fsck found issues"
                 ${optionalString enableMonitoring ''
-                  ${cfg.package}/bin/sinex-cli metrics gauge sinex.storage.fsck_status 0
-                  ${cfg.package}/bin/sinex-cli metrics increment sinex.alerts.storage_fsck_failed
+                  "$SINEX_CLI_BIN" metrics gauge sinex.storage.fsck_status 0
+                  "$SINEX_CLI_BIN" metrics increment sinex.alerts.storage_fsck_failed
                 ''}
               fi
             '';

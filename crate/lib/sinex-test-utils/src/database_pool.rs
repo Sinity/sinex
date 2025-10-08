@@ -1117,6 +1117,33 @@ async fn ensure_template_database(
     // Connect to admin database with timeout
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
 
+    // Capture the currently available TimescaleDB default version so we can
+    // invalidate cached templates when the packaged extension revs.
+    let timescaledb_default_version: Option<String> = sqlx::query_scalar(
+        "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb'",
+    )
+    .fetch_optional(&mut admin_conn)
+    .await?;
+
+    let mut extension_version_changed = false;
+    if let (Some(stamp), Some(ref default_version)) =
+        (cached_stamp.as_ref(), timescaledb_default_version.as_ref())
+    {
+        if stamp.extensions.get("timescaledb").map(|v| v.as_str()) != Some(default_version.as_str())
+        {
+            eprintln!(
+                "♻️  TimescaleDB default version changed ({} → {}); forcing template rebuild",
+                stamp
+                    .extensions
+                    .get("timescaledb")
+                    .map(|v| v.as_str())
+                    .unwrap_or("unknown"),
+                default_version
+            );
+            extension_version_changed = true;
+        }
+    }
+
     let lock_key = advisory_lock_key(template_name);
     tokio::time::timeout(
         Duration::from_secs(120),
@@ -1142,7 +1169,7 @@ async fn ensure_template_database(
 
     // Determine if we can reuse the existing template without rebuild
     let mut reuse_allowed = false;
-    if exists {
+    if exists && !extension_version_changed {
         if let (Some(fp), Some(stamp)) = (&desired_fingerprint, cached_stamp.as_ref()) {
             if stamp.template_name == template_name && stamp.fingerprint == *fp {
                 if let Ok(pool) = PgPoolOptions::new()
@@ -1154,28 +1181,48 @@ async fn ensure_template_database(
                     match collect_extension_versions(&pool).await {
                         Ok(current_exts) => {
                             if current_exts == stamp.extensions {
-                                match sqlx::query_scalar::<_, bool>(
-                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
-                                )
-                                .fetch_one(&pool)
-                                .await
-                                {
-                                    Ok(true) => {
-                                        eprintln!(
-                                            "✅ Template database {template_name} reused (migrations unchanged)"
-                                        );
-                                        reuse_allowed = true;
+                                let version_matches_default = match (
+                                    current_exts.get("timescaledb"),
+                                    timescaledb_default_version.as_ref(),
+                                ) {
+                                    (Some(current_ts), Some(default_version)) => {
+                                        if current_ts != default_version {
+                                            eprintln!(
+                                                "♻️  Template TimescaleDB version {} diverged from server default {}; recreating",
+                                                current_ts, default_version
+                                            );
+                                            false
+                                        } else {
+                                            true
+                                        }
                                     }
-                                    Ok(false) => {
-                                        eprintln!(
-                                            "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
-                                        );
-                                    }
-                                    Err(err) => {
-                                        eprintln!(
-                                            "⚠️  Failed to inspect template schema ({err}); forcing recreation"
-                                        );
+                                    _ => true,
+                                };
+
+                                if version_matches_default {
+                                    match sqlx::query_scalar::<_, bool>(
+                                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                         WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+                                    )
+                                    .fetch_one(&pool)
+                                    .await
+                                    {
+                                        Ok(true) => {
+                                            eprintln!(
+                                                "✅ Template database {template_name} reused (migrations unchanged)"
+                                            );
+                                            reuse_allowed = true;
+                                        }
+                                        Ok(false) => {
+                                            eprintln!(
+                                                "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
+                                            );
+                                        }
+                                        Err(err) => {
+                                            eprintln!(
+                                                "⚠️  Failed to inspect template schema ({err}); forcing recreation"
+                                            );
+                                        }
                                     }
                                 }
                             } else {
