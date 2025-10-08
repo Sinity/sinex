@@ -9,7 +9,7 @@ Start Here
 - Glossary: `docs/GLOSSARY.md`
 
 Core Topics
-- Ingestion Plan: `docs/plan_v3.txt` (NATS‑native ingest, materials + events)
+- Ingestion Plan: `docs/way.md` (JetStream-first ingestion and sensd retirement)
 - Satellites SDK: `crate/lib/sinex-satellite-sdk/` and `docs/architecture/satellite-implementation.md`
 - Event Taxonomy: `docs/architecture/event-taxonomy.md`
 - Operations & Monitoring: `nixos/README.md` and service logs (journald); `SystemOperations_And_Integrity_Architecture.md` for principles

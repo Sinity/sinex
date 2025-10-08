@@ -1,4 +1,4 @@
-Status: working document (consolidated, prescriptive)
+Status: superseded — see `docs/way.md` for the authoritative JetStream refactor playbook. This file remains for historical reference.
 
 # Sinex Refactor Plan — Consolidated Blueprint to End‑State
 
