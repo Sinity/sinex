@@ -42,6 +42,7 @@ notify = { workspace = true }
 # Streaming
 tokio-stream = { workspace = true }
 async-stream = "0.3"
+tempfile = { workspace = true }
 
 # gRPC
 tonic = { workspace = true }
@@ -57,4 +58,3 @@ tonic-build = { workspace = true }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
-tempfile = { workspace = true }

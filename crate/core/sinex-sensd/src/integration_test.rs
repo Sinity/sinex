@@ -52,12 +52,21 @@ impl SensdIntegrationTest {
     pub async fn test_complete_flow(&self) -> Result<()> {
         info!("Starting sensd integration test");
 
+        let test_data = b"Hello, this is test material data for sensd integration testing!";
+
+        // Prepare a temporary annex root so the blob reader can find the data
+        let annex_dir = tempfile::tempdir()?;
+        std::env::set_var("SINEX_ANNEX_PATH", annex_dir.path());
+
         // 1. Create a test material directly in the database
-        let material_id = self.create_test_material().await?;
+        let material_id = self
+            .create_test_material(annex_dir.path(), test_data)
+            .await?;
         info!("Created test material: {}", material_id);
 
         // 2. Create some temporal ledger entries for the material
-        self.create_test_ledger_entries(material_id).await?;
+        self.create_test_ledger_entries(material_id, test_data)
+            .await?;
         info!("Created temporal ledger entries");
 
         // 3. Test MaterialSliceStream
@@ -82,13 +91,25 @@ impl SensdIntegrationTest {
         info!("Created test job: {}", test_job_id);
 
         info!("Integration test completed successfully");
+
+        // Best effort cleanup of the temporary annex path env var
+        std::env::remove_var("SINEX_ANNEX_PATH");
         Ok(())
     }
 
     /// Create a test material in the database
-    async fn create_test_material(&self) -> Result<Ulid> {
+    async fn create_test_material(
+        &self,
+        annex_root: &std::path::Path,
+        test_data: &[u8],
+    ) -> Result<Ulid> {
         let material_id = Ulid::new();
-        let test_data = b"Hello, this is test material data for sensd integration testing!";
+        let blob_id = Ulid::new();
+        let annex_backend = "SHA256";
+        let content_hash = format!(
+            "integration-test-{}",
+            material_id.to_string().to_lowercase()
+        );
 
         sqlx::query!(
             r#"
@@ -112,12 +133,76 @@ impl SensdIntegrationTest {
         .execute(&self.db_pool)
         .await?;
 
+        sqlx::query!(
+            r#"
+            INSERT INTO core.blobs (
+                id,
+                annex_backend,
+                content_hash,
+                size_bytes,
+                checksum_blake3,
+                original_filename,
+                mime_type,
+                metadata
+            ) VALUES (
+                $1::uuid::ulid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8
+            )
+            "#,
+            blob_id.to_uuid(),
+            annex_backend,
+            &content_hash,
+            test_data.len() as i64,
+            Option::<String>::None,
+            "integration-test.bin",
+            Option::<String>::None,
+            serde_json::json!({ "test": true }),
+        )
+        .execute(&self.db_pool)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE raw.source_material_registry
+            SET optional_blob_id = $1::uuid::ulid
+            WHERE id = $2::uuid::ulid
+            "#,
+            blob_id.to_uuid(),
+            material_id.to_uuid()
+        )
+        .execute(&self.db_pool)
+        .await?;
+
+        // Create a fake annex object that matches the expected layout
+        let annex_key = format!("{}-s{}--{}", annex_backend, test_data.len(), content_hash);
+
+        let objects_root = annex_root.join(".git").join("annex").join("objects");
+        let annex_path = if content_hash.len() >= 4 {
+            objects_root
+                .join(&content_hash[0..2])
+                .join(&content_hash[2..4])
+                .join(&annex_key)
+                .join(&annex_key)
+        } else {
+            objects_root.join(&annex_key)
+        };
+
+        if let Some(parent) = annex_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&annex_path, test_data)?;
+
         Ok(material_id)
     }
 
     /// Create test temporal ledger entries
-    async fn create_test_ledger_entries(&self, material_id: Ulid) -> Result<()> {
-        let test_data = b"Hello, this is test material data for sensd integration testing!";
+    async fn create_test_ledger_entries(&self, material_id: Ulid, test_data: &[u8]) -> Result<()> {
         let chunk_size = 10;
 
         for (i, chunk) in test_data.chunks(chunk_size).enumerate() {

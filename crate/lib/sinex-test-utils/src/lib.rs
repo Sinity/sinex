@@ -839,10 +839,11 @@ mod tests {
     #[sinex_test]
     async fn test_concurrent_test_execution(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that multiple tests can run concurrently without interference
-        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+        const TASKS: usize = 5;
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
         let mut handles = vec![];
 
-        for i in 0..5 {
+        for i in 0..TASKS {
             let barrier_clone = barrier.clone();
             let handle = tokio::spawn(async move {
                 let ctx = TestContext::with_name(&format!("concurrent_{i}"))
@@ -860,16 +861,32 @@ mod tests {
                         .map_err(|e| SinexError::unknown(e.to_string()))?;
                 }
 
-                // Verify only sees own events using direct repository access
-                let events = ctx
-                    .pool
-                    .events()
-                    .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
-                    .await?;
-                assert_eq!(events.len(), 10);
+                // Allow the database to flush the inserts before querying.
+                const EXPECTED_EVENTS: usize = 10;
+                const MAX_ATTEMPTS: usize = 5;
+                const RETRY_DELAY_MS: u64 = 20;
 
+                let mut observed = 0usize;
+                for attempt in 0..MAX_ATTEMPTS {
+                    let events = ctx
+                        .pool
+                        .events()
+                        .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
+                        .await?;
+                    observed = events.len();
+                    if observed == EXPECTED_EVENTS {
+                        break;
+                    }
+                    if attempt + 1 < MAX_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    }
+                }
+
+                assert_eq!(observed, EXPECTED_EVENTS);
+
+                // Verify only sees own events using direct repository access
                 // Should not see any other task's events
-                for k in 0..5 {
+                for k in 0..TASKS {
                     if k != i {
                         let other_events = ctx
                             .pool
