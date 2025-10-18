@@ -7,6 +7,8 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 - **example.nix** - Minimal workstation deployment (filesystem + terminal satellites)
 - **example-monitoring.nix** - Staging configuration with maintenance + observability stack
 - **example-dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
+- **example-headless.nix** - Headless/server capture (filesystem + system satellites)
+- **example-remote-satellite.nix** - Edge satellite forwarding events to remote ingest
 - **example-coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
@@ -129,6 +131,7 @@ sudo nixos-rebuild test --flake .#exampleDevSandbox
 ```
 
 Switch permanently only after merging the example into your host configuration.
+> **Note**: The remote satellite example expects existing PostgreSQL/NATS endpoints and does not provision them locally.
 
 ## Architecture Overview
 

@@ -371,6 +371,16 @@
           modules = [ ./nixos/example-dev-sandbox.nix ];
         };
 
+        exampleHeadless = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example-headless.nix ];
+        };
+
+        exampleRemoteSatellite = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example-remote-satellite.nix ];
+        };
+
         exampleCoordination = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [ ./nixos/example-coordination.nix ];
