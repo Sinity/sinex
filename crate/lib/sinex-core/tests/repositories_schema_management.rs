@@ -1,6 +1,5 @@
 use serde_json::json;
 use sinex_core::db::repositories::schema_management::NewEventSchema;
-use sinex_core::repositories::schema_management::SchemaRepositoryExt;
 use sinex_core::repositories::DbPoolExt;
 use sinex_test_utils::{sinex_test, TestContext};
 

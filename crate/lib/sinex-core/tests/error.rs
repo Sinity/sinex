@@ -1,9 +1,7 @@
-use std::collections::HashMap;
-use std::time::Duration;
-
 use camino::Utf8Path;
 use sinex_core::types::error::{ErrorDetails, Result, ResultExt, SinexError};
 use sinex_test_utils::sinex_test;
+use std::collections::HashMap;
 
 #[sinex_test]
 fn error_display_matches_variants() -> color_eyre::eyre::Result<()> {

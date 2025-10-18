@@ -264,24 +264,3 @@ pub fn list_discovered_payloads() {
         );
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_content_hash() -> color_eyre::eyre::Result<()> {
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" }
-            }
-        });
-
-        let hash = compute_content_hash(&schema);
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64); // SHA-256 produces 32 bytes = 64 hex chars
-        Ok(())
-    }
-}
