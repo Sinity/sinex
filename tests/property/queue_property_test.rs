@@ -13,7 +13,10 @@ use futures::StreamExt;
 use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use sinex_core::types::{domain::{EventSource, EventType}, ulid::Ulid};
+use sinex_core::types::{
+    domain::{EventSource, EventType},
+    ulid::Ulid,
+};
 use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::{prelude::*, EphemeralNats};

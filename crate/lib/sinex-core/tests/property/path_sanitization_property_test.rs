@@ -1,9 +1,9 @@
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::{Event, Id, Ulid};
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::validation::{validate_path, ValidationError};
+use sinex_core::{Event, Id, Ulid};
 use sinex_test_utils::prelude::*;
 use std::path::Path;
 

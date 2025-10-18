@@ -16,7 +16,10 @@ fn arbitrary_error_message() -> impl Strategy<Value = String> {
 }
 
 fn arbitrary_context() -> impl Strategy<Value = String> {
-    prop_oneof![Just(String::new()), "[a-zA-Z0-9 _-]{0,50}".prop_map(|s| s.to_string())]
+    prop_oneof![
+        Just(String::new()),
+        "[a-zA-Z0-9 _-]{0,50}".prop_map(|s| s.to_string())
+    ]
 }
 
 fn arbitrary_error_kind() -> impl Strategy<Value = ErrorKind> {

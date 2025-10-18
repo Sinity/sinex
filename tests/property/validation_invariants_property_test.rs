@@ -37,7 +37,8 @@ fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
         Just(serde_json::json!({"nested": {"value": 42}})),
         Just(serde_json::json!({"list": [1, 2, 3, 4], "flag": true})),
         Just(serde_json::json!({"text": "Δ", "path": "../../etc/passwd"})),
-        proptest::collection::hash_map("[a-z0-9_]{1,6}", any::<i64>(), 0..4).prop_map(|map| serde_json::json!(map)),
+        proptest::collection::hash_map("[a-z0-9_]{1,6}", any::<i64>(), 0..4)
+            .prop_map(|map| serde_json::json!(map)),
     ]
 }
 

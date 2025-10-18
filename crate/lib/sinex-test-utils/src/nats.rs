@@ -69,7 +69,9 @@ impl EphemeralNats {
             if path.exists() {
                 return Ok(path.to_path_buf());
             }
-            return Err(eyre!("NATS_SERVER_BIN points to missing binary: {explicit}"));
+            return Err(eyre!(
+                "NATS_SERVER_BIN points to missing binary: {explicit}"
+            ));
         }
         which("nats-server").map_err(|_| eyre!("nats-server binary not found on PATH"))
     }
