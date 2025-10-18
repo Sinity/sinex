@@ -4,7 +4,9 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **example.nix** - Complete configuration example with all options and defaults
+- **example.nix** - Minimal workstation deployment (filesystem + terminal satellites)
+- **example-monitoring.nix** - Staging configuration with maintenance + observability stack
+- **example-coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
   - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring  
