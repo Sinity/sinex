@@ -226,7 +226,7 @@
         {
           packages = sinexPackages;
 
-          formatter = pkgs.alejandra;
+          formatter = pkgs.nixpkgs-fmt;
 
           checks = pkgs.lib.mapAttrs' (name: value:
             pkgs.lib.nameValuePair "sinex-vm-${name}" value
