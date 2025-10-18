@@ -226,6 +226,8 @@
         {
           packages = sinexPackages;
 
+          formatter = pkgs.alejandra;
+
           checks = pkgs.lib.mapAttrs' (name: value:
             pkgs.lib.nameValuePair "sinex-vm-${name}" value
           ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
@@ -384,5 +386,7 @@
         sinex = self.packages.${final.system}.sinex;
         sinexCli = self.packages.${final.system}.sinexCli;
       };
+
+      checks = builtins.mapAttrs (name: cfg: cfg.config.system.build.toplevel) self.nixosConfigurations;
     };
 }

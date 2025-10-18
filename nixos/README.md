@@ -115,6 +115,21 @@ cp nixos/example.nix /etc/nixos/sinex.nix
 sudo nixos-rebuild switch
 ```
 
+### Evaluating Examples
+
+Each example is exported through the flake. To explore them safely:
+
+```bash
+# Boot the minimal example in a disposable VM
+nix build .#nixosConfigurations.example.config.system.build.vm
+./result/bin/run-nixos-vm
+
+# Temporarily apply the developer sandbox on a host (rolls back on reboot)
+sudo nixos-rebuild test --flake .#exampleDevSandbox
+```
+
+Switch permanently only after merging the example into your host configuration.
+
 ## Architecture Overview
 
 Sinex uses a satellite architecture:
