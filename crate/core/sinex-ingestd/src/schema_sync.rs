@@ -249,6 +249,11 @@ fn compute_content_hash(content: &serde_json::Value) -> String {
     hex::encode(result)
 }
 
+#[cfg(test)]
+pub fn compute_content_hash_for_testing(content: &serde_json::Value) -> String {
+    compute_content_hash(content)
+}
+
 /// List all discovered payload information
 pub fn list_discovered_payloads() {
     info!("Listing all discovered EventPayload types:");
