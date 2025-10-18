@@ -1,5 +1,10 @@
 # Sinex Test Utilities
 
+> The workspace-wide testing handbook lives at [`TESTING.md`](../../TESTING.md).
+> Use it for quick-start commands, suite layout, and property-testing guidance.
+> This README focuses on the crate itself; API-level details are in
+> `doc/overview.md` and `doc/testing_quality_overview.md`.
+
 A comprehensive testing framework for the Sinex event-driven data capture system, providing database isolation, fixture management, and robust testing patterns.
 
 ## Quick Start
@@ -305,7 +310,7 @@ export SINEX_TEST_CLEANUP=true      # Auto-cleanup after tests
 
 ## Documentation
 
-- **[TESTING_GUIDE.md](./TESTING_GUIDE.md)** - Comprehensive testing guide with examples
+- **[doc/overview.md](./doc/overview.md)** - API reference, fixtures, timing utilities, assertions
 - **[API Documentation](https://docs.rs/sinex-test-utils)** - Generated API docs
 - **[Examples](./tests/)** - Test examples and integration tests
 
@@ -346,5 +351,3 @@ tokio-test = "0.4"
 See the main [Sinex documentation](../../README.md) for contribution guidelines.
 
 ## License
-
-This project is licensed under the same terms as the Sinex project.

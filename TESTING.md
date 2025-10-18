@@ -1,84 +1,114 @@
-# Testing Guide for Sinex
+# Sinex Testing Handbook
 
-> **FOR AI ASSISTANTS**: When adding tests to Sinex crates, always use the `#[sinex_test]` macro and operate through `TestContext`. Place new suites under each crate’s `tests/` directory rather than inline `#[cfg(test)]` modules; reserve inline tests for unavoidable cases only.
+This handbook is the single entry point for everything related to testing in the
+Sinex workspace. It links out to crate-level deep dives, explains how the test
+suites are organised, and captures the conventions that the CI gate enforces.
 
 ## Quick Start
 
-All Sinex tests use the unified `TestContext` API:
+```bash
+# Fast feedback (unit + library integration)
+just test
 
-```rust
-use sinex_test_utils::prelude::*;
+# Full workspace matrix (all crates, Nextest)
+just test-all
 
-#[sinex_test]
-async fn test_example(ctx: TestContext) -> TestResult<()> {
-    // Create an event
-    let event = ctx.create_test_event(
-        "my-component",
-        "action.performed",
-        json!({"user_id": "123"})
-    ).await?;
-    
-    // Query events
-    let source_ref = sinex_types::domain::EventSource::from("my-component");
-    let events = ctx.pool.events().get_by_source(&source_ref, Some(10), None).await?;
-    
-    // Assert
-    assert_eq!(events.len(), 1);
-    Ok(())
-}
+# Targeted runs
+cargo nextest run --workspace --test <binary>
+cargo nextest run --workspace --profile <profile-name>
+
+# Before opening a PR
+just pre-commit
 ```
 
-## Documentation
+**Prerequisites:** run `nix develop` (or source your local toolchain) so that
+TimescaleDB, NATS, and the Cargo toolchain are available. Test helpers rely on
+environment variables such as `DATABASE_URL` that the dev shell provides.
 
-For comprehensive testing documentation, see:
+## Test Layout at a Glance
 
-- **API Documentation**: `cargo doc --package sinex-test-utils --open`
-- **Testing Patterns**: `crate/sinex-test-utils/TESTING.md` 
-- **Benchmarking API**: `cargo doc --package sinex-test-utils --features bench --open`
+| Location | What lives here | Notes |
+| --- | --- | --- |
+| `crate/*/<crate>/tests/` | Crate-owned unit, integration, and property tests | Prefer putting new coverage beside the code it exercises |
+| `tests/unit/`, `tests/integration/`, … | Cross-crate or workspace-wide scenarios | Gradually shrinking as coverage migrates into crates |
+| `tests/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) | See `tests/nixos-vm/README.md` for runner details |
+| `tests/performance/` | Throughput/latency checks that touch multiple services | Optional in CI; document dataset sizes before enabling |
+| `tests/security/` | Multi-service hardening scenarios | Crate-specific security tests should sit with the crate |
 
-## Key Principles
+When in doubt, default to the crate’s own `tests/` directory—workspace-level
+tests are reserved for scenarios that truly span multiple crates or binaries.
 
-1. **Everything through TestContext** - Don't import test utilities directly
-2. **Automatic cleanup** - Database rollback happens automatically
-3. **Isolated tests** - Each test gets its own database
-4. **No manual setup** - The `#[sinex_test]` macro handles everything
+## Writing Tests
 
-## Common Commands
+- **Always use `#[sinex_test]`** (or helpers built on top of it). The macro
+  provisions a `TestContext`, injects an isolated database, wires tracing, and
+  enforces timeouts.
+- **TestContext first:** reach through `ctx` for repositories, fixtures, timing
+  utilities, and assertions. Avoid raw `sqlx::query` unless the query under test
+  is exactly what you are asserting.
+- **Async hygiene:** use bounded concurrency (`buffer_unordered`, semaphores),
+  propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
+- **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
+  rather than re-creating bespoke data builders.
+- **Property tests:** place proptest suites alongside the crate they fuzz (see
+  below). Capture any new failing seeds in the crate’s
+  `tests/property/.proptest-regressions/` directory.
 
-> See `docs/documentation-and-testing-playbook.md` §5.2 for a catalogue of
-> Nextest profiles and when to use each.
+## Property Testing Guidelines
+
+- **sinex-core:** property tests that focus on event modelling, schema
+  validation, ULID behaviour, sanitisation, or repository invariants live under
+  `crate/lib/sinex-core/tests/property/`.
+- **sinex-satellite-sdk:** cross-satellite properties require updated NATS
+  fixtures and are slated for their own crate-level suite—see the follow-up
+  note in `crate/lib/sinex-test-utils/test-analysis.md` before adding new
+  coverage.
+- **Cross-crate properties:** keep a workspace-level test only when the scenario
+  genuinely spans multiple crates (for example, database validation +
+  satellite checkpoints + CLI automation in the same property). Document the
+  cross-crate dependency at the top of the file so future migrations remain clear.
+
+Run property suites with Nextest like any other test:
 
 ```bash
-# Run fast loop (Nextest)
-just test                     # wraps `cargo nextest run --workspace --lib`
+cargo nextest run --workspace --test property_tests
+```
 
-# Run full workspace suite (Nextest)
-just test-all                 # primes DB, then `cargo nextest run --workspace`
-cargo nextest run --workspace --test <binary>   # Manual filtering when needed
+## Tooling & Profiles
 
-# Run single test with output
-cargo nextest run --workspace --test <binary> -- <test_name> --nocapture
+Nextest profiles are defined in `.config/nextest.toml`:
 
-# Run with debug logging
-RUST_LOG=sinex_test_utils=debug cargo nextest run --workspace
+| Profile | Use case |
+| --- | --- |
+| `default` | CI gate, everyday coverage |
+| `fast` | Workstation feedback loop (fewer threads, shorter slow timeout) |
+| `reliable` | Flake hunting (fewer threads, more retries, longer timeouts) |
+| `parallel` | Max throughput on large machines |
+| `debug` | Single-threaded with full stdout/stderr |
+| `ci-parallel` | High-parallel CI runners |
 
-# Run benchmarks
-cargo bench --features bench
+Invoke with `cargo nextest run --profile <name>` or use the matching `just`
+alias (`just test-fast`, `just test-reliable`, …).
 
-# Benchmark commands (via just)
-just bench-all              # Run all benchmarks
-just bench-quick            # Quick benchmarks with small dataset
-just bench-compare          # Compare with main branch
-just bench-crate <name>     # Benchmark specific crate
+Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
+`cargo bench --features bench` or `just bench-*` helpers for comparisons.
 
-## Async & Concurrency Hygiene
+## Authoritative References
 
-- Handle task results: never ignore `JoinHandle`; propagate errors (`Result`) or instrument/log them.
-- Use timeouts and cancellation: prefer `tokio::time::timeout` and `select!` with clear shutdown paths.
-- Avoid blocking in async: use `tokio::fs`/`spawn_blocking` for CPU‑bound or blocking I/O.
-- Bound concurrency: prefer `buffer_unordered(N)`/semaphores over unbounded `spawn` loops.
-- Stream, don’t batch: avoid building large `Vec`s before send; process in chunks for natural backpressure.
-- Deterministic tests: avoid sleep‑based timing; drive via events/channels; inject clocks when practical.
-- Isolation: use `sinex-test-utils::TestContext` for DB‑per‑test; never hardcode connection details.
-- Property tests: capture failing seeds into `tests/property/*.proptest-regressions` and commit.
-- Tracing: enable `RUST_LOG=sinex_test_utils=debug` during dev to surface ordering and race issues.
+- `crate/lib/sinex-test-utils/doc/overview.md` – API reference for
+  `TestContext`, fixtures, assertions, timing utilities, and the database pool.
+- `crate/lib/sinex-test-utils/doc/testing_quality_overview.md` – QA strategy,
+  Nextest configuration, and CI expectations.
+- `tests/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
+  commands.
+- `docs/documentation-guidelines.md` – documentation checklist (ensure `just
+  check` and `just test` pass after moving or adding tests).
+
+## If You Only Read One Section
+
+1. Put new tests in the crate that owns the behaviour.
+2. Reach for `TestContext` utilities before writing bespoke scaffolding.
+3. Keep the quick-start commands in muscle memory (`just test`, `just test-all`,
+   `just pre-commit`).
+4. Link back to this handbook (or the crate-level docs above) when opening PRs
+   so reviewers know which conventions you followed.
