@@ -1,21 +1,21 @@
 use camino::Utf8PathBuf;
 use sinex_satellite_sdk::figment_config::{
-    default_checkpoint_interval, default_log_level, default_redis_url, default_socket_path,
-    default_work_dir, AutomatonFigmentConfig, EventSourceFigmentConfig, SatelliteFigmentConfig,
+    AutomatonFigmentConfig, EventSourceFigmentConfig, SatelliteFigmentConfig,
 };
 use sinex_test_utils::sinex_test;
+use validator::Validate;
 
 #[sinex_test]
 fn satellite_config_defaults_validate() -> color_eyre::eyre::Result<()> {
     let config = SatelliteFigmentConfig {
         service_name: "test-satellite".to_string(),
-        log_level: default_log_level(),
-        socket_path: default_socket_path(),
-        redis_url: default_redis_url(),
+        log_level: "info".to_string(),
+        socket_path: "/tmp/sinex-ingestd.sock".to_string(),
+        redis_url: "redis://localhost:6379".to_string(),
         enable_replay: false,
-        work_dir: default_work_dir(),
+        work_dir: Utf8PathBuf::from("/tmp/sinex"),
         health_port: 0,
-        checkpoint_interval_secs: default_checkpoint_interval(),
+        checkpoint_interval_secs: 300,
         database_url: None,
     };
 

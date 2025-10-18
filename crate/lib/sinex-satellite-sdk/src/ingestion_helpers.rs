@@ -326,7 +326,7 @@ pub struct SnapshotRow {
 }
 
 /// Types of changes detected in snapshot diffs
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ChangeType {
     Insert,
     Update,

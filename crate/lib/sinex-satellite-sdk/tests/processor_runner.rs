@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sinex_satellite_sdk::prelude::*;
 use sinex_satellite_sdk::{
-    LifecycleManager, ProcessorMode, ProcessorRunner, ProcessorRunnerConfig,
+    MaterialConsumer, ProcessorMode, ProcessorRunner, ProcessorRunnerConfig,
 };
 use sinex_test_utils::TestContext;
 use std::collections::HashMap;
@@ -70,7 +70,7 @@ impl MaterialConsumer for MockProcessor {
         &self,
         _material_id: Ulid,
         _slice_data: &[u8],
-    ) -> Result<Vec<Event<JsonValue>>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Event<JsonValue>>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(vec![])
     }
 }

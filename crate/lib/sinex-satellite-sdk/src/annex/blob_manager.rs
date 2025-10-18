@@ -499,7 +499,7 @@ impl BlobManager {
     }
 
     /// Simple MIME type detection
-    fn detect_mime_type(file_path: &Utf8Path) -> Result<String> {
+    pub fn detect_mime_type(file_path: &Utf8Path) -> Result<String> {
         let extension = file_path.extension().unwrap_or("");
 
         let mime_type = match extension.to_lowercase().as_str() {
