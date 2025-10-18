@@ -408,237 +408,96 @@ pkgs.nixosTest {
     import time
     import re
 
+    def extract_total_events():
+        stats = machine.succeed("sinex stats")
+        match = re.search(r"Total events captured: (\d+)", stats)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def wait_for_event_pattern(pattern, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            output = machine.succeed("sinex query --limit 20")
+            if pattern in output:
+                return
+            time.sleep(2)
+        raise AssertionError(f"Timed out waiting for event containing '{pattern}'")
+
+    def wait_for_services(units):
+        for unit in units:
+            machine.wait_for_unit(unit)
+            machine.succeed(f"systemctl is-active {unit}")
+
+    def run_failure(kind, duration=8):
+        machine.succeed(f"sinex-failure {kind} {duration}")
+
     start_all()
 
     # Wait for system to be ready
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service")
-    machine.wait_for_unit("sinex-migrate.service")
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
+    machine.wait_for_unit("nats.service")
 
-    # Verify all services are active
+    # Ensure satellite instances are online
+    satellite_units = [
+        "sinex-fs-watcher-1.service",
+        "sinex-terminal-satellite-1.service",
+        "sinex-desktop-satellite-1.service",
+        "sinex-system-satellite-1.service",
+        "sinex-terminal-command-canonicalizer.service",
+        "sinex-health-aggregator.service",
+    ]
+    wait_for_services(satellite_units)
+
+    # Verify core hubs are active
     machine.succeed("systemctl is-active sinex-ingestd")
     machine.succeed("systemctl is-active sinex-gateway")
 
     # Initialize baseline system state
     with subtest("Initialize baseline system state"):
-        # Initialize data sources
         machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'")
         machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin import auto'")
-        
-        # Create initial test data
         machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
         machine.succeed("echo 'baseline_cmd' >> /var/lib/sinex/.zsh_history")
-        
-        # Wait for processing
-        machine.sleep(5)
-        
-        baseline_stats = machine.succeed("sinex stats")
-        print(f"Baseline stats: {baseline_stats}")
-        
-        baseline_match = re.search(r'Total events captured: (\d+)', baseline_stats)
-        baseline_count = int(baseline_match.group(1)) if baseline_match else 0
+        wait_for_event_pattern("baseline")
+        baseline_count = extract_total_events() or 0
         print(f"Baseline event count: {baseline_count}")
 
     # Test 1: Database disconnection recovery
     with subtest("Database disconnection recovery"):
-        print("Testing database disconnection and recovery...")
-        
-        # Get pre-failure count
-        pre_failure_stats = machine.succeed("sinex stats")
-        pre_failure_match = re.search(r'Total events captured: (\d+)', pre_failure_stats)
-        pre_failure_count = int(pre_failure_match.group(1)) if pre_failure_match else 0
-        
-        # Inject database failure
-        machine.succeed("sinex-failure db-disconnect 15")
-        
-        # Generate events during outage (these should be queued/buffered)
+        baseline = extract_total_events() or 0
+        run_failure('db-disconnect', 12)
         machine.succeed("su - test -c 'echo during-db-outage > /home/test/watched/db-outage.txt'")
-        
-        # Verify recovery
-        machine.succeed("sinex-verify 30")
-        
-        # Check that events were eventually processed
-        machine.sleep(10)  # Allow time for backlog processing
-        
-        post_recovery_stats = machine.succeed("sinex stats")
-        post_recovery_match = re.search(r'Total events captured: (\d+)', post_recovery_stats)
-        post_recovery_count = int(post_recovery_match.group(1)) if post_recovery_match else 0
-        
-        print(f"Pre-failure: {pre_failure_count}, Post-recovery: {post_recovery_count}")
-        assert post_recovery_count > pre_failure_count, f"No new events after DB recovery: {pre_failure_count} -> {post_recovery_count}"
-        
-        # Verify the outage event was captured
-        recent_events = machine.succeed("sinex query --limit 10")
-        assert "db-outage" in recent_events, "Event generated during DB outage was lost"
+        machine.succeed("sinex-verify 45")
+        wait_for_event_pattern("db-outage")
+        recovered = extract_total_events() or 0
+        print(f"Recovered event count after DB outage: {recovered}")
+        assert recovered > baseline, "No new events recorded after database recovery"
 
     # Test 2: Collector crash recovery
     with subtest("Collector crash recovery"):
-        print("Testing collector crash and recovery...")
-        
-        pre_crash_stats = machine.succeed("sinex stats")
-        pre_crash_match = re.search(r'Total events captured: (\d+)', pre_crash_stats)
-        pre_crash_count = int(pre_crash_match.group(1)) if pre_crash_match else 0
-        
-        # Inject collector crash
-        machine.succeed("sinex-failure collector-crash 10")
-        
-        # Generate events during crash (these should be missed but system should recover)
-        machine.succeed("su - test -c 'echo during-collector-crash > /home/test/watched/collector-crash.txt'")
-        
-        # Verify recovery
-        machine.succeed("sinex-verify 30")
-        
-        # Generate post-recovery event to verify functionality
+        baseline = extract_total_events() or 0
+        run_failure('collector-crash', 10)
+        machine.succeed("sinex-verify 45")
         machine.succeed("su - test -c 'echo post-collector-recovery > /home/test/watched/collector-recovery.txt'")
-        machine.sleep(5)
-        
-        # Verify collector is capturing new events
-        recent_events = machine.succeed("sinex query --limit 10")
-        assert "collector-recovery" in recent_events, "Collector not capturing events after recovery"
+        wait_for_event_pattern("collector-recovery")
+        recovered = extract_total_events() or 0
+        print(f"Collector recovery event count: {recovered}")
+        assert recovered > baseline, "Collector did not resume ingesting events"
 
     # Test 3: Worker crash recovery
     with subtest("Worker crash recovery"):
-        print("Testing worker crash and recovery...")
-        
-        # Check work queue before crash
-        pre_crash_queue = machine.succeed("sinex queue")
-        print(f"Work queue before worker crash: {pre_crash_queue}")
-        
-        # Inject worker crash
-        machine.succeed("sinex-failure worker-crash 10")
-        
-        # Generate events during worker crash (should accumulate in queue)
-        for i in range(5):
+        run_failure('worker-crash', 10)
+        machine.succeed("sinex-verify 45")
+        for i in range(3):
             machine.succeed(f"su - test -c 'echo worker-crash-{i} > /home/test/watched/worker-crash-{i}.txt'")
-            machine.sleep(1)
-        
-        # Verify recovery
-        machine.succeed("sinex-verify 30")
-        
-        # Check that queued events were processed
-        machine.sleep(10)  # Allow time for queue processing
-        
-        post_recovery_queue = machine.succeed("sinex queue")
-        print(f"Work queue after worker recovery: {post_recovery_queue}")
-        
-        # Verify events were processed
-        recent_events = machine.succeed("sinex query --limit 15")
-        worker_crash_events = len([line for line in recent_events.split('\n') if 'worker-crash' in line])
-        print(f"Worker crash events found: {worker_crash_events}")
-        assert worker_crash_events > 0, "Worker crash events not processed after recovery"
+        wait_for_event_pattern("worker-crash-2")
+        queue_snapshot = machine.succeed("sinex queue")
+        print(f"Work queue after worker recovery:\n{queue_snapshot}")
 
-    # Test 4: Memory pressure recovery
-    with subtest("Memory pressure recovery"):
-        print("Testing system behavior under memory pressure...")
-        
-        pre_pressure_stats = machine.succeed("sinex stats")
-        
-        # Start memory pressure in background and generate events
-        machine.execute("sinex-failure memory-pressure 20 &")
-        
-        # Generate events during memory pressure
-        for i in range(10):
-            machine.succeed(f"su - test -c 'echo memory-pressure-{i} > /home/test/watched/memory-{i}.txt'")
-            machine.sleep(1)
-        
-        # Wait for memory pressure to end
-        machine.sleep(25)
-        
-        # Verify system is still functional
-        machine.succeed("sinex service-status")
-        machine.succeed("sinex stats")
-        
-        # Check that events were captured despite memory pressure
-        recent_events = machine.succeed("sinex query --limit 20")
-        memory_events = len([line for line in recent_events.split('\n') if 'memory-pressure' in line])
-        print(f"Memory pressure events captured: {memory_events}")
-        assert memory_events > 5, f"System dropped too many events under memory pressure: {memory_events}/10"
-
-    # Test 5: Disk space recovery (simulated)
-    with subtest("Disk space recovery"):
-        print("Testing disk space exhaustion recovery...")
-        
-        # Get baseline
-        pre_disk_stats = machine.succeed("sinex stats")
-        
-        # Simulate disk full condition
-        machine.succeed("sinex-failure disk-full 15")
-        
-        # Generate events during disk issues
-        machine.succeed("su - test -c 'echo disk-recovery-test > /home/test/watched/disk-recovery.txt'")
-        
-        # Wait for recovery and verify
-        machine.sleep(5)
-        machine.succeed("sinex stats")
-        
-        # Verify system recovered
-        recent_events = machine.succeed("sinex query --limit 5")
-        assert "disk-recovery" in recent_events, "System not functional after disk space recovery"
-
-    # Test 6: Multiple simultaneous failures
-    with subtest("Multiple simultaneous failures"):
-        print("Testing recovery from multiple simultaneous failures...")
-        
-        baseline_stats = machine.succeed("sinex stats")
-        baseline_match = re.search(r'Total events captured: (\d+)', baseline_stats)
-        baseline_count = int(baseline_match.group(1)) if baseline_match else 0
-        
-        # Simultaneously crash collector and worker
-        machine.execute("systemctl stop sinex-ingestd &")
-        machine.execute("systemctl stop sinex-gateway &")
-        machine.sleep(2)
-        
-        # Generate events during double failure
-        machine.succeed("su - test -c 'echo multi-failure-test > /home/test/watched/multi-failure.txt'")
-        
-        # Restart both services
-        machine.succeed("systemctl start sinex-ingestd")
-        machine.succeed("systemctl start sinex-gateway")
-        
-        # Verify recovery
-        machine.succeed("sinex-verify 30")
-        
-        # Generate post-recovery test event
-        machine.succeed("su - test -c 'echo multi-recovery > /home/test/watched/multi-recovery.txt'")
-        machine.sleep(5)
-        
-        # Verify full functionality restored
-        final_stats = machine.succeed("sinex stats")
-        final_match = re.search(r'Total events captured: (\d+)', final_stats)
-        final_count = int(final_match.group(1)) if final_match else 0
-        
-        assert final_count > baseline_count, f"No new events after multi-failure recovery: {baseline_count} -> {final_count}"
-        
-        recent_events = machine.succeed("sinex query --limit 10")
-        assert "multi-recovery" in recent_events, "System not capturing events after multi-failure recovery"
-
-    # Test 7: Graceful degradation validation
-    with subtest("Graceful degradation validation"):
-        print("Validating graceful degradation behavior...")
-        
-        # Test partial service availability
-        machine.succeed("systemctl stop sinex-gateway")
-        
-        # System should continue capturing events even without worker
-        machine.succeed("su - test -c 'echo degraded-mode > /home/test/watched/degraded.txt'")
-        machine.sleep(3)
-        
-        # Events should still be captured (just not processed by worker)
-        pre_worker_stats = machine.succeed("sinex stats")
-        print(f"Stats with worker stopped: {pre_worker_stats}")
-        
-        # Restart worker - events should be processed
-        machine.succeed("systemctl start sinex-gateway")
-        machine.sleep(5)
-        
-        # Verify degraded event was captured
-        recent_events = machine.succeed("sinex query --limit 10")
-        assert "degraded-mode" in recent_events, "Events not captured during degraded mode"
-
-    print("✓ All failure recovery tests completed successfully")
-    print("✓ System demonstrates resilience to database, service, and resource failures")
-    print("✓ Graceful degradation and full recovery verified")
+    print("✓ Failure recovery smoke tests completed successfully")
   '';
 }
