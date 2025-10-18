@@ -12,30 +12,18 @@
   basic = import ./test-scenarios/basic-flow.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
+
+  preflight = import ./preflight_deployment_test.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+    lib = pkgs.lib;
+  };
   
-  # Comprehensive multi-source stress testing
-  multi-source = import ./test-scenarios/multi-source.nix {
+  maintenance = import ./test-scenarios/maintenance.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
   
-  # Failure recovery and resilience testing
-  failure-recovery = import ./test-scenarios/failure-recovery.nix {
+  satelliteMatrix = import ./test-scenarios/satellite-matrix.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
   
-  # Performance validation and load testing
-  performance = import ./test-scenarios/performance.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
-  };
-  
-  # Advanced testing capabilities
-  # Chaos engineering - tests system resilience under failure conditions
-  chaos-engineering = import ./chaos-engineering.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
-  };
-  
-  # Production scale - tests system performance at production workloads  
-  production-scale = import ./production-scale.nix {
-    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
-  };
 }

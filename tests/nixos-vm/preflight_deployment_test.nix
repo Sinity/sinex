@@ -67,10 +67,37 @@ let
         port = 5432;
         migration.enable = true;
       };
-      
-      # Use lite preset for faster testing
-      preset = "lite";
-      
+
+      serviceManagement.serviceGroups = {
+        core = true;
+        maintenance = true;
+        monitoring = false;
+      };
+
+      satellite = {
+        enable = true;
+        coordination.enable = false;
+        database.url = "postgresql:///sinex?host=/run/postgresql";
+
+        coreServices.enable = true;
+
+        eventSources = {
+          filesystem = {
+            enable = true;
+            instances = 1;
+            extraArgs = "";
+          };
+          terminal.enable = false;
+          desktop.enable = false;
+          system.enable = false;
+        };
+
+        automata = {
+          canonicalCommandSynthesizer.enable = false;
+          healthAggregator.enable = false;
+        };
+      };
+
       # Event source configuration for testing
       eventSources = {
         filesystem = {
@@ -98,13 +125,6 @@ let
         };
       };
       
-      # Promotion worker configuration
-      promoWorker = {
-        enable = true;
-        pollInterval = 2;
-        batchSize = 50;
-      };
-      
       # Update configuration for testing
       update = {
         enable = true;
@@ -116,7 +136,7 @@ let
       
       # Monitoring for testing
       monitoring = {
-        enable = true;
+        enable = false;
         logging.enable = true;
         alerting.enable = false; # Disable for testing
       };
@@ -197,7 +217,7 @@ in {
     sinex_machine.succeed("systemctl start sinex-ingestd.service")
     sinex_machine.wait_for_unit("sinex-ingestd.service")
     
-    # Start promotion worker
+    # Start API gateway
     sinex_machine.succeed("systemctl start sinex-gateway.service")
     sinex_machine.wait_for_unit("sinex-gateway.service")
     

@@ -62,8 +62,9 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 
 2. **Integration Tests** 
    - Comprehensive feature validation
-   - Multiple event source testing
-   - Service interaction verification
+   - Multiple event source testing (`test-scenarios/satellite-matrix.nix`)
+   - Maintenance timers and git-annex flow (`test-scenarios/maintenance.nix`)
+   - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
 
 3. **Performance Tests** (`test-scenarios/performance.nix`)
    - High-throughput event processing

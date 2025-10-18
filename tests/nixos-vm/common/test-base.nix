@@ -26,10 +26,37 @@ in
     package = sinexPackage;
     cliPackage = sinexCliPackage;
     targetUser = "test";
-    
-    # Disable promo worker by default (tests can enable if needed)
-    promoWorker.enable = lib.mkDefault false;
-    
+
+    serviceManagement.serviceGroups = {
+      core = lib.mkDefault true;
+      maintenance = lib.mkDefault false;
+      monitoring = lib.mkDefault false;
+    };
+
+    satellite = {
+      enable = lib.mkDefault true;
+      coordination.enable = lib.mkDefault false;
+      database.url = lib.mkDefault "postgresql:///sinex?host=/run/postgresql";
+
+      coreServices.enable = lib.mkDefault true;
+
+      eventSources = {
+        filesystem = {
+          enable = lib.mkDefault true;
+          instances = lib.mkDefault 1;
+          extraArgs = lib.mkDefault "";
+        };
+        terminal.enable = lib.mkDefault false;
+        desktop.enable = lib.mkDefault false;
+        system.enable = lib.mkDefault false;
+      };
+
+      automata = {
+        canonicalCommandSynthesizer.enable = lib.mkDefault false;
+        healthAggregator.enable = lib.mkDefault false;
+      };
+    };
+
     eventSources = {
       filesystem = {
         enable = true;
