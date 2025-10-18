@@ -7,12 +7,12 @@ use crate::{handlers::*, service_container::ServiceContainer};
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, WrapErr};
-use futures::StreamExt;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_stream::StreamExt;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 
