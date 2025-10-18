@@ -122,6 +122,8 @@ let
       # Event Source Satellites with Hot Standby Support
       eventSourceServices = 
         let
+          ingestDependencies = lib.optionals (cfg.satellite.coreServices.enable or false) [ "sinex-ingestd.service" ];
+
           mkEventSource = name: sourceConfig:
             let
               legacyExtraArgs =
@@ -154,8 +156,9 @@ let
               let instanceId = "${name}-${toString instanceNum}"; in
               lib.nameValuePair "sinex-${instanceId}" (mkSatelliteService "sinex-${name}" {
                 description = "${sourceConfig.description} Event Source";
-                after = [ "nats.service" ];
-                requires = [ "nats.service" ];
+                after = lib.unique ([ "nats.service" ] ++ ingestDependencies ++ (sourceConfig.after or []));
+                requires = lib.unique ([ "nats.service" ] ++ ingestDependencies ++ (sourceConfig.requires or []));
+                wants = (sourceConfig.wants or []) ++ ingestDependencies;
                 execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service" + 
                   (if combinedExtraArgs != "" then " ${combinedExtraArgs}" else "");
                 environment = [
