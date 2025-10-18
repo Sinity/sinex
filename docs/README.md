@@ -15,7 +15,8 @@ Core Topics
 - Operations & Monitoring: `nixos/README.md` and service logs (journald); `SystemOperations_And_Integrity_Architecture.md` for principles
 
 How-To Guides
-- Testing Guide: `TESTING.md` and `tests/README.md`
+- Documentation Guidelines: `docs/documentation-guidelines.md`
+- Testing Guide: See `crate/lib/sinex-test-utils/doc/testing_quality_overview.md`
 - Gateway/CLI: `./cli/exo.py --help`
 
 Navigation

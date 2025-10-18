@@ -103,3 +103,106 @@ The system never loses data but allows evolution of interpretations:
 - Original interpretations archived with full audit trail
 - New interpretations created with updated logic
 - Complete provenance chain maintained via `source_event_ids`
+
+## Checkpoint Management
+
+Satellites share a common checkpoint representation:
+
+```rust
+pub struct Checkpoint {
+    pub processor_name: String,
+    pub position: CheckpointPosition,
+    pub metadata: Option<JsonValue>,
+}
+```
+
+`CheckpointPosition` captures the resume handle (timestamp, cursor, offset, custom
+payload). Typical usage:
+
+- **Timestamp-based** – desktop, clipboard, health satellites.
+- **Cursor-based** – journald/system satellites.
+- **Custom** – filesystem (per-path state), bespoke automata.
+
+Checkpoints are persisted before processing begins, and satellites resume from the
+latest successful position after restarts.
+
+## Event Submission & Provenance
+
+Satellites never write directly to Postgres. They submit events or source material
+via the SDK, which publishes to NATS JetStream and is ultimately handled by
+`sinex-ingestd`:
+
+```rust
+let event = build_event(...);
+sdk.ingest().submit(event).await?;
+```
+
+Provenance is tracked via `source_event_ids` (internal chains) and
+`associated_blob_ids` (material attachments). This ensures the processing graph is
+recoverable end-to-end.
+
+## Sensor Rules & Enforcement
+
+- Only `sinex-sensd` captures source material. Satellites consume material slices
+  via `MaterialConsumer`.
+- Satellite crates expose `StatefulStreamProcessor` implementations, not capture
+  APIs.
+- Helper macros assert the processor role so sensor capabilities cannot leak into
+  satellites.
+
+## Implementation Examples
+
+- **Filesystem Satellite**
+  - Scanner mode walks directory trees.
+  - Sensor mode uses inotify/FSEvents for realtime monitoring.
+  - Custom JSON checkpoint per path.
+- **Terminal Satellite**
+  - Recording, scrollback, and Atuin import modes.
+  - Captures full sessions or command history.
+- **Desktop Satellite**
+  - Clipboard polling, window focus tracking, workspace changes.
+  - Timestamp checkpoints for deduplication.
+- **System Satellite**
+  - Journald cursor tracking, D-Bus monitoring, udev hardware events.
+
+## Configuration Management
+
+The SDK unifies configuration handling:
+
+```toml
+[satellite]
+name = "filesystem-watcher"
+checkpoint_interval_secs = 60
+
+[ingestd]
+endpoint = "http://localhost:50051"
+
+[nats]
+url = "nats://localhost:4222"
+
+[satellite.custom]
+scan_paths = ["/home/user/Documents"]
+```
+
+Environment overrides (`SINEX_SATELLITE_NAME`, `SINEX_INGESTD_ENDPOINT`,
+`SINEX_NATS_URL`) respect deployment differences.
+
+## Error Handling & Resilience
+
+- Automatic reconnection for NATS and gRPC clients.
+- Exponential backoff for transient failures.
+- Checkpoint-based recovery ensures replay from the last good position.
+- Graceful shutdown: handle SIGTERM/SIGINT, finish in-flight work, persist final
+  checkpoint.
+
+## Performance Considerations
+
+- Configurable batching balances latency and throughput for ingest.
+- Bounded buffers prevent unbounded memory growth.
+- Heartbeats and metrics are emitted periodically to track health.
+
+## Future Enhancements
+
+- Multi-stage processing pipelines and richer event correlation.
+- Distributed checkpoint coordination and compaction.
+- Runtime configuration updates and feature-flag integration.
