@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::{Event, JsonValue, Id, Ulid};
+use sinex_core::{Event, Id, Ulid};
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::validation::{validate_path, ValidationError};
 use sinex_test_utils::prelude::*;
@@ -180,8 +180,8 @@ fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
 
             let mut event2 = event1.clone();
 
-            let was_modified1 = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
-            let was_modified2 = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
+            let _was_modified1 = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
+            let _was_modified2 = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
 
             // After first sanitization, second should not modify further
             let mut event1_copy = event1.clone();
@@ -378,6 +378,7 @@ fn path_escapes_root(path: &camino::Utf8Path) -> bool {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+    use proptest::strategy::ValueTree;
 
     #[sinex_test]
     fn test_path_escape_detection() -> color_eyre::eyre::Result<()> {

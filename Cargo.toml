@@ -212,6 +212,7 @@ sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
 sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
 blake3 = { workspace = true }
 once_cell = { workspace = true }
+async-nats = { workspace = true }
 
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests

@@ -1,7 +1,7 @@
 #![doc = include_str!("../doc/README.md")]
 #![doc = include_str!("../doc/overview.md")]
 #![doc = include_str!("../doc/testing_quality_overview.md")]
-#![doc = include_str!("../../../../docs/documentation-and-testing-playbook.md")]
+#![doc = include_str!("../../../../TESTING.md")]
 
 //! Workspace testing utilities and fixtures.
 // Allow dead code in test utilities - many functions are provided for test use
@@ -31,6 +31,7 @@ mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
 mod fixtures;
+mod nats;
 mod path_validation;
 mod property_testing;
 pub mod resources;
@@ -244,6 +245,7 @@ pub use deployment_scenario_utils::{
     ExternalDependency, PerformanceExpectations, PerformanceMetrics, ResourceConstraints,
     ValidationExpectation, ValidationStep, ValidationType,
 };
+pub use nats::EphemeralNats;
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 
