@@ -353,6 +353,23 @@
         sinex = ./nixos;
       };
 
+      nixosConfigurations = {
+        example = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example.nix ];
+        };
+
+        exampleMonitoring = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example-monitoring.nix ];
+        };
+
+        exampleCoordination = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example-coordination.nix ];
+        };
+      };
+
       # Overlay providing pg_jsonschema
       overlays.default = final: prev: {
         postgresql16Packages = prev.postgresql16Packages // {
