@@ -286,6 +286,7 @@
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
               export SINEX_TEST_OPTIMIZATIONS="true"
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
               # Clear screen for clean start
               clear

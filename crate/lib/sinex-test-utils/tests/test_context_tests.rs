@@ -1,8 +1,8 @@
 use sinex_test_utils::prelude::DbPoolExt;
-use sinex_test_utils::{sinex_test, Result, TestContext};
+use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn test_context_basic_functionality(ctx: TestContext) -> Result<()> {
+async fn test_context_basic_functionality(ctx: TestContext) -> sinex_test_utils::Result<()> {
     assert!(!ctx.test_name().is_empty());
     assert!(ctx.elapsed().as_nanos() > 0);
 
@@ -13,7 +13,7 @@ async fn test_context_basic_functionality(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_contextual_assertions(ctx: TestContext) -> Result<()> {
+async fn test_contextual_assertions(ctx: TestContext) -> sinex_test_utils::Result<()> {
     ctx.assert("equality test").eq(&42, &42)?;
     ctx.assert("condition test").that(true, "should be true")?;
 
@@ -31,7 +31,7 @@ async fn test_contextual_assertions(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_assertion_failures(ctx: TestContext) -> Result<()> {
+async fn test_assertion_failures(ctx: TestContext) -> sinex_test_utils::Result<()> {
     let result = ctx.assert("fail test").eq(&1, &2);
     assert!(result.is_err());
 
@@ -46,7 +46,7 @@ async fn test_assertion_failures(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_log_capture(ctx: TestContext) -> Result<()> {
+async fn test_log_capture(ctx: TestContext) -> sinex_test_utils::Result<()> {
     ctx.capture_log("test log message".to_string());
     ctx.assert_logged("test log")?;
 

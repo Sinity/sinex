@@ -6,19 +6,16 @@ use std::time::Duration;
 use sinex_core::db::repositories::source_materials::legacy_material_types;
 use sinex_core::types::error::SinexError;
 use sinex_core::DbPoolExt;
-use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, EventSource,
-    EventType, HostName, Id, JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
-};
+use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
 use sinex_test_utils::db_common::verify_clean_state;
 use sinex_test_utils::{
-    acquire_test_database, check_pool_health, get_pool_stats, reset_pool, sinex_test, Result,
+    acquire_test_database, check_pool_health, get_pool_stats, reset_pool, sinex_test,
 };
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 
 #[sinex_test]
-async fn test_pool_handles_concurrent_acquisition() -> Result<()> {
+async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<()> {
     let handles: Vec<_> = (0..20)
         .map(|_| {
             tokio::spawn(async move {
@@ -53,7 +50,7 @@ async fn test_pool_handles_concurrent_acquisition() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_database_cleanup_on_drop() -> Result<()> {
+async fn test_database_cleanup_on_drop() -> sinex_test_utils::Result<()> {
     let db_name;
 
     {
@@ -88,7 +85,7 @@ async fn test_database_cleanup_on_drop() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_prevents_double_acquisition() -> Result<()> {
+async fn test_advisory_lock_prevents_double_acquisition() -> sinex_test_utils::Result<()> {
     let db1 = acquire_test_database().await?;
     let lock_id1 = db1.lock_id();
 
@@ -107,7 +104,7 @@ async fn test_advisory_lock_prevents_double_acquisition() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_database_health_check() -> Result<()> {
+async fn test_database_health_check() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
     let baseline = db.pool().events().count_all().await?;
 
@@ -120,7 +117,7 @@ async fn test_database_health_check() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_pool_statistics() -> Result<()> {
+async fn test_pool_statistics() -> sinex_test_utils::Result<()> {
     let initial_stats = get_pool_stats();
     let initial_acquisitions = initial_stats.total_acquisitions;
 
@@ -135,7 +132,7 @@ async fn test_pool_statistics() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_clean_database_handles_complex_data() -> Result<()> {
+async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
 
     let repo = db.pool().events();
@@ -170,7 +167,7 @@ async fn test_clean_database_handles_complex_data() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_pool_health_report() -> Result<()> {
+async fn test_pool_health_report() -> sinex_test_utils::Result<()> {
     let _db = acquire_test_database().await?;
 
     let health = check_pool_health().await?;
@@ -183,7 +180,7 @@ async fn test_pool_health_report() -> Result<()> {
 #[allow(clippy::result_large_err)]
 #[cfg_attr(not(feature = "slow-tests"), ignore = "slow fixture")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_stress_concurrent_operations() -> Result<()> {
+async fn test_stress_concurrent_operations() -> sinex_test_utils::Result<()> {
     let mut handles = Vec::new();
 
     for i in 0..50 {
@@ -234,7 +231,7 @@ async fn test_stress_concurrent_operations() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_template_database_exists() -> Result<()> {
+async fn test_template_database_exists() -> sinex_test_utils::Result<()> {
     let _db = acquire_test_database().await?;
 
     let admin_url = std::env::var("DATABASE_URL")
@@ -255,7 +252,7 @@ async fn test_template_database_exists() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_database_pool_provides_connection() -> Result<()> {
+async fn test_database_pool_provides_connection() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
 
     let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(db.pool()).await?;
@@ -265,7 +262,7 @@ async fn test_database_pool_provides_connection() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_concurrent_context_allocation() -> Result<()> {
+async fn test_concurrent_context_allocation() -> sinex_test_utils::Result<()> {
     let success_count = Arc::new(AtomicU32::new(0));
 
     let mut handles = vec![];
@@ -294,7 +291,7 @@ async fn test_concurrent_context_allocation() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_basic_pool_functionality() -> Result<()> {
+async fn test_basic_pool_functionality() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
     let pool = db.pool();
 
@@ -313,7 +310,7 @@ async fn test_basic_pool_functionality() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_pool_reset_clears_state() -> Result<()> {
+async fn test_pool_reset_clears_state() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
     let baseline = db.pool().events().count_all().await?;
     assert_eq!(baseline, 0);
