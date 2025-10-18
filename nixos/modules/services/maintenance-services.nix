@@ -175,7 +175,7 @@ in
         };
         
         # Git-annex Maintenance (from blob-storage.nix)
-        sinex-git-annex-gc = mkIf cfg.blobStorage.enable {
+        sinex-git-annex-gc = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoGc) {
           description = "Git-annex Garbage Collection";
           serviceConfig = maintenanceServiceConfig // {
             WorkingDirectory = cfg.blobStorage.repositoryPath;
@@ -209,7 +209,7 @@ in
           };
         };
         
-        sinex-git-annex-fsck = mkIf cfg.blobStorage.enable {
+        sinex-git-annex-fsck = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enablePeriodicFsck) {
           description = "Git-annex Filesystem Check";
           serviceConfig = maintenanceServiceConfig // {
             WorkingDirectory = cfg.blobStorage.repositoryPath;
@@ -278,20 +278,20 @@ in
         };
         
         # Git-annex maintenance timers
-        sinex-git-annex-gc = mkIf cfg.blobStorage.enable {
+        sinex-git-annex-gc = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoGc) {
           description = "Weekly Git-annex Garbage Collection";
           timerConfig = {
-            OnCalendar = "weekly";
+            OnCalendar = cfg.blobStorage.maintenance.gcSchedule;
             RandomizedDelaySec = "6h";
             Persistent = true;
           };
           wantedBy = [ "timers.target" ];
         };
         
-        sinex-git-annex-fsck = mkIf cfg.blobStorage.enable {
+        sinex-git-annex-fsck = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enablePeriodicFsck) {
           description = "Monthly Git-annex Filesystem Check";
           timerConfig = {
-            OnCalendar = "monthly";
+            OnCalendar = cfg.blobStorage.maintenance.fsckSchedule;
             RandomizedDelaySec = "1d";
             Persistent = true;
           };

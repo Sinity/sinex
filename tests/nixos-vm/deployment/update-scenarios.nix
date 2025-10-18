@@ -42,7 +42,7 @@
       
       # Helper script for configuration updates
       environment.systemPackages = [
-        (pkgs.writeScriptBin "update-sinex-config" ''
+        (pkgs.writeScriptBin "update-sinex-deployment" ''
           #!${pkgs.bash}/bin/bash
           set -euo pipefail
           

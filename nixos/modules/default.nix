@@ -377,6 +377,16 @@ in
         default = true;
         description = "Preserve DLQ and failure data during updates";
       };
+
+      units = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = ''
+          Systemd services to cycle during coordinated updates. When left
+          empty, the preflight module derives the list from the enabled
+          satellite services.
+        '';
+      };
     };
 
   };
@@ -443,7 +453,6 @@ in
       ];
     };
 
-    
     # Terminal auto-recording for all users
     programs.bash.promptInit = mkIf cfg.eventSources.asciinema.autoRecord ''
       # Automatic asciinema recording for Sinex

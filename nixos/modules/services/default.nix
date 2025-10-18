@@ -59,9 +59,9 @@ with lib;
       }
       
       {
-        assertion = config.services.sinex.serviceManagement.serviceGroups.maintenance -> 
-                   config.services.sinex.database.enable;
-        message = "Database must be enabled for maintenance services";
+        assertion = config.services.sinex.serviceManagement.serviceGroups.maintenance ->
+                   (config.services.sinex.database.autoSetup || config.services.postgresql.enable);
+        message = "Database must be managed or explicitly enabled for maintenance services";
       }
     ];
     

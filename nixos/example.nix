@@ -4,14 +4,13 @@
 # Most options can be omitted for sensible defaults.
 #
 # For implementation details, see:
-# - modules/sinex-config.nix      - Core configuration and PostgreSQL setup
-# - modules/database.nix          - Database connection pooling and health checks
+# - modules/database.nix          - PostgreSQL provisioning and health checks
 # - modules/satellite-services.nix - Individual satellite service configurations
 # - modules/monitoring.nix        - Monitoring and alerting setup
 # - modules/preflight-verification.nix - Pre-deployment checks
 #
 # Key architectural decisions are documented at implementation points:
-# - PostgreSQL extension setup: modules/sinex-config.nix (lines 285-305)
+# - PostgreSQL extension setup: modules/database.nix
 # - TimescaleDB configuration: migrations/00000000000002_create_core_tables.sql
 # - ULID implementation: crate/sinex-ulid/src/lib.rs
 
@@ -42,24 +41,34 @@
     database = {
       host = "localhost";
       port = 5432;
+      listenAddress = "127.0.0.1";
       name = "sinex";
       user = "sinex";  # Defaults to database name
       passwordFile = null;  # Path to password file (optional)
       autoSetup = true;     # Auto-create database and user
+      package = pkgs.postgresql_16;
+      extraExtensions = [];
+      extraSharedPreloadLibraries = [];
+      monotonicUlids = true;
+      additionalUsers = [];
+      additionalSettings = {};
+      authentication = ''
+        local   all             all                                     peer
+        host    all             all             0.0.0.0/0               reject
+        host    all             all             ::/0                    reject
+      '';
 
-      # Connection pool settings (correct defaults from module)
       connectionPool = {
-        maxConnections = 20;     # Module default
+        maxConnections = 20;
         minConnections = 5;
-        connectionTimeout = 30;  # Module default (not 10)
+        connectionTimeout = 30;
         idleTimeout = 600;
       };
 
-      # Health monitoring (correct defaults from module)
       healthCheck = {
         enable = true;
-        interval = 30;           # Module default (not 60)
-        timeout = 5;             # Module default (not 10)
+        interval = 30;
+        timeout = 5;
         retryAttempts = 3;
       };
 
@@ -79,7 +88,7 @@
       
       # Database configuration for satellites
       database = {
-        url = "postgresql:///sinex_dev?host=/run/postgresql";
+        url = "postgresql:///sinex?host=/run/postgresql";
       };
       
       # Redis configuration for event bus

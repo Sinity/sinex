@@ -6,8 +6,8 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 - **example.nix** - Complete configuration example with all options and defaults
 - **modules/** - Implementation modules:
-  - `sinex-config.nix` - Core configuration interface and PostgreSQL setup
-  - `database.nix` - Database connection pooling and health monitoring  
+  - `default.nix` - Main module entry point and base options
+  - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring  
   - `satellite-services.nix` - Individual satellite service configurations
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
@@ -17,7 +17,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 Key architectural decisions and implementation details are documented at their implementation points:
 
 ### Database Layer
-- **PostgreSQL Extensions Setup**: [`modules/sinex-config.nix:285-305`](modules/sinex-config.nix#L285-L305)
+- **PostgreSQL Extensions Setup**: [`modules/database.nix`](modules/database.nix)
   - pgx_ulid configuration for ULID primary keys
   - TimescaleDB setup for hypertable partitioning  
   - Optional monotonic ULID generation instructions
