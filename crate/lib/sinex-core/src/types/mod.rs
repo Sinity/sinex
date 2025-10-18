@@ -1,46 +1,4 @@
-//! Core types and constants for the Sinex system
-//!
-//! This crate provides the foundational types, error handling, and constants
-//! that are used throughout the Sinex ecosystem.
-//!
-//! # Core Philosophy: Deep Oneness and Auditable Metacognition
-//!
-//! Sinex is built on four fundamental pillars that guide all architectural decisions:
-//!
-//! ## 1. Deep Oneness
-//!
-//! Dissolving artificial distinctions to reveal underlying unity:
-//! - **One event stream** (`core.events`) - no separation between raw and synthesis
-//! - **One processing primitive** (`StatefulStreamProcessor`) - all components are stream processors
-//! - **One data lifecycle** (Stage → Replay → Synthesis → Curation → Action)
-//!
-//! ## 2. Declarative Core
-//!
-//! Logic as data, not code:
-//! - System behavior described through configuration and patterns
-//! - Imperative code reserved for inherently complex operations
-//! - Evolution toward SQL-as-Automaton and Prompt-as-Automaton
-//!
-//! ## 3. Human-in-the-Loop
-//!
-//! Acknowledging imperfection, empowering users:
-//! - Faithful recording of messy reality without premature cleverness
-//! - Automated resolution where possible, human judgment when needed
-//! - Users as final arbiters of meaning through curation
-//!
-//! ## 4. Auditable Metacognition
-//!
-//! Complete thought process preservation:
-//! - Data provenance via `source_event_ids` chains
-//! - Intent provenance via `core.operations_log`
-//! - System remembers not just facts but why it changed its mind
-//!
-//! # Sentient Archive Vision
-//!
-//! Sinex transcends traditional data capture by implementing a "sentient archive" -
-//! a system that not only captures but understands and participates in the user's
-//! digital experience. Through its satellite constellation architecture and deep
-//! philosophical principles, Sinex creates an external augmentation of human cognition.
+#![doc = include_str!("../../doc/types_overview.md")]
 
 pub mod domain;
 pub mod error;

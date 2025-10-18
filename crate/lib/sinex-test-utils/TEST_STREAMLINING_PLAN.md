@@ -1,5 +1,10 @@
 # Test Streamlining Plan for sinex-test-utils
 
+> _Status update (migrated October 2024):_ Property tests and most crate-owned
+> suites now live alongside their respective crates. Counts in this document
+> refer to the pre-migration workspace layout and should be recomputed before
+> acting on the remaining TODOs.
+
 ## Current State
 - 195 tests total across 21 files
 - Significant duplication and overlap

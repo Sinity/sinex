@@ -72,6 +72,16 @@ impl HeartbeatEmitter {
         }
     }
 
+    /// Expose configured service name for tests and diagnostics
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Expose configured heartbeat interval
+    pub fn interval_seconds(&self) -> u64 {
+        self.interval_seconds
+    }
+
     /// Increment the events processed counter
     pub fn increment_events_processed(&self, count: u64) {
         self.events_processed.add(count as usize);

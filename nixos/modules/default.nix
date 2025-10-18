@@ -5,6 +5,21 @@ with lib;
 
 let
   cfg = config.services.sinex;
+
+  defaultSinexPackage =
+    if pkgs ? sinex then
+      pkgs.sinex
+    else
+      throw ''
+        services.sinex.package is unset and no sinex package was found in pkgs.
+        Provide one explicitly or overlay pkgs.sinex.
+      '';
+
+  defaultCliPackage =
+    if pkgs ? sinexCli then
+      pkgs.sinexCli
+    else
+      pkgs.python3;
   
   # Import utility modules
   healthChecks = import ./health-checks.nix { inherit lib; };
@@ -38,14 +53,14 @@ in
 
     package = mkOption {
       type = types.package;
-      default = if pkgs ? sinex then pkgs.sinex else (import ../. { }).packages.${pkgs.system}.sinex;
+      default = defaultSinexPackage;
       defaultText = literalExpression "pkgs.sinex";
       description = "Sinex package to use";
     };
 
     cliPackage = mkOption {
       type = types.package;
-      default = if pkgs ? sinexCli then pkgs.sinexCli else pkgs.python3;
+      default = defaultCliPackage;
       defaultText = literalExpression "pkgs.sinexCli";
       description = "Sinex CLI package to use";
     };
@@ -377,15 +392,31 @@ in
         default = true;
         description = "Preserve DLQ and failure data during updates";
       };
+
+      units = mkOption {
+        type = types.listOf types.str;
+        default = [];
+        description = ''
+          Systemd services to cycle during coordinated updates. When left
+          empty, the preflight module derives the list from the enabled
+          satellite services.
+        '';
+      };
     };
 
   };
 
   config = mkIf cfg.enable {
+    services.sinex.satellite.enable =
+      mkDefault (cfg.serviceManagement.serviceGroups.core or true);
+    services.sinex.monitoring.enable =
+      mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
+
     # Environment packages
-    environment.systemPackages = with pkgs; [ 
-      asciinema 
+    environment.systemPackages = with pkgs; [
+      asciinema
       cfg.cliPackage
+      dbus
     ];
 
 
@@ -395,26 +426,29 @@ in
 
 
     # User and group creation
-    users.users.${cfg.database.user} = {
-      isSystemUser = true;
-      group = cfg.database.user;
-      description = "Sinex database user";
-      home = "/var/lib/${cfg.database.user}";
-      createHome = true;
+    users.users = {
+      ${cfg.database.user} = {
+        isSystemUser = true;
+        group = cfg.database.user;
+        description = "Sinex database user";
+        home = "/var/lib/${cfg.database.user}";
+        createHome = true;
+      };
+    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
+      ${cfg.satelliteUser} = {
+        isSystemUser = true;
+        group = cfg.satelliteUser;
+        description = "Sinex satellite services user";
+        home = "/var/lib/sinex";
+        createHome = true;
+      };
     };
 
-    users.groups.${cfg.database.user} = {};
-
-    # Satellite services user
-    users.users.${cfg.satelliteUser} = mkIf cfg.satellite.enable {
-      isSystemUser = true;
-      group = cfg.satelliteUser;
-      description = "Sinex satellite services user";
-      home = "/var/lib/sinex";
-      createHome = true;
+    users.groups = {
+      ${cfg.database.user} = {};
+    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
+      ${cfg.satelliteUser} = {};
     };
-
-    users.groups.${cfg.satelliteUser} = mkIf cfg.satellite.enable {};
 
     # Directory setup and configuration
     systemd.tmpfiles.rules = [
@@ -443,7 +477,6 @@ in
       ];
     };
 
-    
     # Terminal auto-recording for all users
     programs.bash.promptInit = mkIf cfg.eventSources.asciinema.autoRecord ''
       # Automatic asciinema recording for Sinex

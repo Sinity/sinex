@@ -1,4 +1,6 @@
-//! Main sensd service implementation
+#![doc = include_str!("../doc/service.md")]
+
+//! Main sensd service implementation.
 
 use crate::{
     config::SensdConfig,

@@ -1,9 +1,11 @@
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
 #![allow(unused_imports, unused_variables, unreachable_patterns)]
-//! Terminal Command Canonicalizer - Event-driven command standardization
+
+//! Terminal command canonicalizer.
 //!
-//! This automaton consumes terminal command events and produces canonicalized
-//! command representations with semantic insights. It implements the proper automaton pattern:
-//! Terminal Events → Analysis → Canonicalized Command Events
+//! Terminal Events → Analysis → Canonicalized Command Events.
 
 pub mod unified_processor;
 

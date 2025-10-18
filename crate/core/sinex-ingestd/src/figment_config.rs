@@ -1,7 +1,6 @@
-//! Modern configuration for ingestd using Figment
-//!
-//! This module provides configuration management for the ingestion daemon
-//! using Figment for multi-source configuration loading.
+#![doc = include_str!("../doc/figment_config.md")]
+
+//! Figment bindings for ingestion configuration.
 
 use camino::Utf8PathBuf;
 
@@ -242,78 +241,4 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
         return Err(validator::ValidationError::new("empty_work_dir"));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-    use std::env;
-
-    #[sinex_test]
-    fn test_default_config() -> color_eyre::eyre::Result<()> {
-        let config = IngestdFigmentConfig::default();
-        assert_eq!(config.database_pool_size, DEFAULT_POOL_SIZE);
-        assert_eq!(config.batch_size, DEFAULT_BATCH_SIZE);
-        assert_eq!(config.batch_timeout_secs, DEFAULT_BATCH_TIMEOUT);
-        assert!(!config.dry_run);
-        assert!(config.validate_schemas);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_config_validation() -> color_eyre::eyre::Result<()> {
-        let mut config = IngestdFigmentConfig::default();
-        config.database_url = "postgresql://localhost/test".to_string();
-        config.nats_url = "nats://localhost:4222".to_string();
-
-        assert!(config.validate_config().is_ok());
-
-        // Invalid database URL
-        config.database_url = "mysql://localhost/test".to_string();
-        assert!(config.validate_config().is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_from_args() -> color_eyre::eyre::Result<()> {
-        let config = IngestdFigmentConfig::from_args(
-            Some("postgresql://custom/db".to_string()),
-            "nats://custom:4222".to_string(),
-            "/custom/socket.sock".to_string(),
-            50,
-            200,
-            10,
-            true,
-        );
-
-        assert_eq!(config.database_url, "postgresql://custom/db");
-        assert_eq!(config.nats_url, "nats://custom:4222");
-        assert_eq!(config.socket_path, "/custom/socket.sock");
-        assert_eq!(config.database_pool_size, 50);
-        assert_eq!(config.batch_size, 200);
-        assert_eq!(config.batch_timeout_secs, 10);
-        assert!(config.dry_run);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_env_override() -> color_eyre::eyre::Result<()> {
-        // Set environment variables
-        env::set_var("INGESTD_BATCH_SIZE", "500");
-        env::set_var("INGESTD_DRY_RUN", "true");
-
-        // Load config (this would normally load from file + env)
-        // For testing, we'll just create a default and imagine env vars were applied
-        let config = IngestdFigmentConfig::default();
-
-        // In real usage, IngestdFigmentConfig::load() would pick up these env vars
-        // For now, just verify our structure is correct
-        assert!(config.validate_config().is_ok());
-
-        // Clean up
-        env::remove_var("INGESTD_BATCH_SIZE");
-        env::remove_var("INGESTD_DRY_RUN");
-        Ok(())
-    }
 }

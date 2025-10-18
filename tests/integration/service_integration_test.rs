@@ -1,14 +1,4 @@
-//! Service Integration Tests
-//!
-//! Comprehensive tests for service integration patterns within the Sinex ecosystem.
-//! This module tests cross-service interactions, service lifecycle management,
-//! and integration scenarios using modern test infrastructure.
-//!
-//! ## Modern Test Infrastructure
-//! - `#[sinex_test]` for async test execution
-//! - TestContext with repository pattern access
-//! - color-eyre for enhanced error handling
-//! - Repository pattern for data access
+// Service integration tests covering cross-service flows.
 
 use chrono::{Duration, Utc};
 use color_eyre::eyre::Result;

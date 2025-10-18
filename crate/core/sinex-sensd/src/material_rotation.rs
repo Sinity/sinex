@@ -1,11 +1,11 @@
-//! Material rotation manager for zero-gap invariant enforcement
+#![doc = include_str!("../doc/material_rotation.md")]
+
+//! Material rotation manager for zero-gap invariant enforcement.
 //!
 //! Ensures continuous materials always have zero gaps during rotation by:
 //! 1. Staging next material before finalizing current
 //! 2. Atomic switchover with brief overlap period
 //! 3. Finalization only after new material is confirmed active
-//!
-//! This implements TARGET_final.md line 221: "Zero-gap invariant for continuous materials"
 
 use crate::temporal_ledger::TemporalLedger;
 use chrono::{DateTime, Utc};

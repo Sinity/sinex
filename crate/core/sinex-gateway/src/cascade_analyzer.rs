@@ -1,32 +1,4 @@
-//! Cascade analyzer for dependency graph analysis
-//!
-//! This module provides memory-efficient algorithms for analyzing event dependencies
-//! and planning safe cascade operations during replay.
-//!
-//! ## Algorithm Overview
-//!
-//! The cascade analyzer uses an iterative deepening approach to build dependency graphs:
-//!
-//! 1. **Initialization**: Create a temporary table with initial events at depth 0
-//! 2. **Iterative Deepening**: For each depth level, find all events that depend on
-//!    events at the current depth, up to a configurable maximum depth
-//! 3. **Memory Management**: Process events in batches to avoid memory exhaustion
-//! 4. **Integrity Analysis**: Detect violations where live events would reference archived events
-//! 5. **Circular Dependency Detection**: Use recursive CTEs to find potential cycles
-//!
-//! ## Security Considerations
-//!
-//! - All SQL queries use parameterized binding where possible
-//! - Table names are generated using controlled timestamp-based session IDs
-//! - Memory limits prevent resource exhaustion attacks
-//! - Advisory locks prevent concurrent analysis conflicts
-//!
-//! ## Performance Characteristics
-//!
-//! - Time Complexity: O(V + E) where V is vertices (events) and E is edges (dependencies)
-//! - Space Complexity: O(V) for the temporary analysis table
-//! - Batch processing prevents memory spikes for large dependency graphs
-//! - Early termination on depth or memory limits
+#![doc = include_str!("../doc/cascade_analyzer.md")]
 
 use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
@@ -1075,46 +1047,5 @@ impl StreamingCascadeAnalyzer {
 
         info!("Planned cascade order for {} events", result.len());
         Ok(result)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_cascade_analysis_structure() {
-        let analysis = CascadeAnalysis {
-            max_depth: 5,
-            depth_histogram: HashMap::from([(0, 10), (1, 20), (2, 15)]),
-            integrity_violations: vec![],
-            total_affected: 45,
-            circular_dependencies: vec![],
-            memory_estimate: 11520,
-        };
-
-        assert_eq!(analysis.max_depth, 5);
-        assert_eq!(analysis.total_affected, 45);
-        assert_eq!(analysis.depth_histogram.get(&1), Some(&20));
-    }
-
-    #[test]
-    fn test_violation_types() {
-        let violation = IntegrityViolation {
-            archived_event_id: Ulid::new(),
-            live_event_id: Ulid::new(),
-            violation_type: ViolationType::LiveToArchived,
-            severity: Severity::Critical,
-        };
-
-        match violation.violation_type {
-            ViolationType::LiveToArchived => assert!(true),
-            _ => panic!("Wrong violation type"),
-        }
-
-        match violation.severity {
-            Severity::Critical => assert!(true),
-            _ => panic!("Wrong severity"),
-        }
     }
 }

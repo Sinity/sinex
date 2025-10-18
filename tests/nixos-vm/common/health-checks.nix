@@ -42,14 +42,14 @@
         fi
       fi
       
-      # Check promo worker if enabled
+      # Check gateway if enabled
       if systemctl list-unit-files | grep -q "sinex-gateway.service"; then
         if systemctl is-enabled --quiet sinex-gateway; then
           if ! systemctl is-active --quiet sinex-gateway; then
-            echo "❌ Sinex promo worker is not running"
+            echo "❌ Sinex gateway is not running"
             FAILED=1
           else
-            echo "✅ Sinex promo worker is running"
+            echo "✅ Sinex gateway is running"
           fi
         fi
       fi

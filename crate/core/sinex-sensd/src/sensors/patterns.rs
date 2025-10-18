@@ -346,34 +346,3 @@ impl SensorPattern {
         Self::MultiFile(MultiFileSensor::new(temporal_ledger).with_rotation(policy, source_path))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_batched_pull_pattern() {
-        // This would require mock TemporalLedger
-        // Testing that:
-        // 1. Events accumulate until batch_size
-        // 2. Batch flushes when full
-        // 3. Timeout triggers flush of partial batch
-    }
-
-    #[tokio::test]
-    async fn test_replace_snapshot_pattern() {
-        // Testing that:
-        // 1. New snapshot replaces old one
-        // 2. Each snapshot gets new material_id
-        // 3. Materials are immediately finalized
-    }
-
-    #[tokio::test]
-    async fn test_multi_file_pattern() {
-        // Testing that:
-        // 1. Files are queued from directory scan
-        // 2. Files processed in order
-        // 3. Rotation works if configured
-        // 4. Each file gets appropriate ledger entry
-    }
-}

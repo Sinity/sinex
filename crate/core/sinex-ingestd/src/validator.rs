@@ -1,4 +1,6 @@
-//! Event validation for the ingestion daemon
+#![doc = include_str!("../doc/validator.md")]
+
+//! Event validation for the ingestion daemon.
 
 use crate::{IngestdResult, SinexError};
 use ahash::AHashMap;

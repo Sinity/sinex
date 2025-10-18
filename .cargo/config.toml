@@ -19,15 +19,15 @@ rustflags = [
   "link-arg=-fuse-ld=mold",     # Fastest linker available
   "-C",
   "codegen-units=256",          # Maximum parallelism
+  "--check-cfg=cfg(rust_analyzer)",
 ]
 
 [alias]
-# Make 'cargo test' use nextest for better performance
-# This prevents accidentally running the slow built-in test runner
-test = ["nextest", "run"]
-
 # Provide escape hatch if built-in test is really needed
 test-builtin = ["test"]
+
+# Replacement for the removed `cargo test` override (no longer supported by cargo)
+test-nextest = ["nextest", "run"]
 
 # Quick test aliases
 t = ["nextest", "run"]

@@ -1,7 +1,6 @@
-//! Modern systemd/journald integration using nix crate
-//!
-//! This module provides efficient and safe integration with systemd services
-//! using the nix crate instead of spawning external processes.
+#![doc = include_str!("../doc/systemd_integration.md")]
+
+//! Modern systemd/journald integration using the `nix` crate.
 
 use color_eyre::eyre::{eyre, Result};
 use nix::sys::signal::{self, Signal};
@@ -417,43 +416,4 @@ pub enum SystemdChange {
         old_state: SystemdUnitState,
         new_state: SystemdUnitState,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_unit_type_detection() {
-        assert_eq!(
-            SystemdUnitType::from_name("sshd.service"),
-            SystemdUnitType::Service
-        );
-        assert_eq!(
-            SystemdUnitType::from_name("backup.timer"),
-            SystemdUnitType::Timer
-        );
-        assert_eq!(
-            SystemdUnitType::from_name("dbus.socket"),
-            SystemdUnitType::Socket
-        );
-        assert_eq!(
-            SystemdUnitType::from_name("multi-user.target"),
-            SystemdUnitType::Target
-        );
-    }
-
-    #[tokio::test]
-    async fn test_systemd_monitor_creation() {
-        // This test may fail in non-systemd environments
-        match SystemdMonitor::new() {
-            Ok(monitor) => {
-                // Try to list units
-                let _ = monitor.list_service_units();
-            }
-            Err(e) => {
-                eprintln!("SystemdMonitor not available in this environment: {}", e);
-            }
-        }
-    }
 }

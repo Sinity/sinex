@@ -4,10 +4,15 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 ## Documentation Structure
 
-- **example.nix** - Complete configuration example with all options and defaults
+- **example.nix** - Minimal workstation deployment (filesystem + terminal satellites)
+- **example-monitoring.nix** - Staging configuration with maintenance + observability stack
+- **example-dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
+- **example-headless.nix** - Headless/server capture (filesystem + system satellites)
+- **example-remote-satellite.nix** - Edge satellite forwarding events to remote ingest
+- **example-coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
-  - `sinex-config.nix` - Core configuration interface and PostgreSQL setup
-  - `database.nix` - Database connection pooling and health monitoring  
+  - `default.nix` - Main module entry point and base options
+  - `database.nix` - PostgreSQL provisioning, pooling, and health monitoring  
   - `satellite-services.nix` - Individual satellite service configurations
   - `monitoring.nix` - Prometheus/Grafana monitoring setup
   - `preflight-verification.nix` - Pre-deployment validation checks
@@ -17,7 +22,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 Key architectural decisions and implementation details are documented at their implementation points:
 
 ### Database Layer
-- **PostgreSQL Extensions Setup**: [`modules/sinex-config.nix:285-305`](modules/sinex-config.nix#L285-L305)
+- **PostgreSQL Extensions Setup**: [`modules/database.nix`](modules/database.nix)
   - pgx_ulid configuration for ULID primary keys
   - TimescaleDB setup for hypertable partitioning  
   - Optional monotonic ULID generation instructions
@@ -65,6 +70,27 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
+### Service Group Controls
+
+You can toggle major service bundles via `services.sinex.serviceManagement.serviceGroups`:
+
+```nix
+services.sinex.serviceManagement.serviceGroups = {
+  core = true;        # ingestd, gateway, satellites, NATS
+  maintenance = false; # DLQ cleanup, git-annex timers, resource monitors
+  monitoring = false;  # Prometheus, Grafana, exporters
+};
+
+# Typical development overrides
+services.sinex.satellite = {
+  enable = true;
+  coordination.enable = false;
+  eventSources.filesystem.instances = 1;
+};
+```
+
+Set the maintenance or monitoring flags to `true` when you need the supporting timers or observability stack.
+
 ### Production Setup with Hot Standby
 
 For production deployments with zero-downtime upgrades and automatic failover:
@@ -90,6 +116,22 @@ cp nixos/example.nix /etc/nixos/sinex.nix
 # Edit targetUser and other settings
 sudo nixos-rebuild switch
 ```
+
+### Evaluating Examples
+
+Each example is exported through the flake. To explore them safely:
+
+```bash
+# Boot the minimal example in a disposable VM
+nix build .#nixosConfigurations.example.config.system.build.vm
+./result/bin/run-nixos-vm
+
+# Temporarily apply the developer sandbox on a host (rolls back on reboot)
+sudo nixos-rebuild test --flake .#exampleDevSandbox
+```
+
+Switch permanently only after merging the example into your host configuration.
+> **Note**: The remote satellite example expects existing PostgreSQL/NATS endpoints and does not provision them locally.
 
 ## Architecture Overview
 

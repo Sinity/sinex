@@ -1,4 +1,6 @@
-//! Content service for managing event content and source material
+#![doc = include_str!("../doc/content.md")]
+
+//! Content service entry points for binary payload workflows.
 
 use crate::error::{Result as ServiceResult, SinexError};
 use sinex_core::db::DbPool;

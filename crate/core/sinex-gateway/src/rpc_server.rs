@@ -1,31 +1,4 @@
-//! JSON-RPC server for CLI communication
-//!
-//! This module implements a JSON-RPC 2.0 compliant server that provides the API gateway
-//! functionality for Sinex. It serves as the primary interface between CLI tools and
-//! the Sinex core services.
-//!
-//! ## Supported RPC Methods
-//!
-//! - **query_events**: Query events from the database with filtering and pagination
-//! - **replay_analyze**: Analyze replay cascades for a set of events
-//! - **replay_create**: Create a new replay operation
-//! - **replay_approve**: Approve a replay operation for execution
-//! - **replay_status**: Get status of replay operations
-//! - **health_check**: Basic health check endpoint
-//!
-//! ## Protocol Specification
-//!
-//! The server implements JSON-RPC 2.0 specification:
-//! - Request format: `{"jsonrpc": "2.0", "method": "...", "params": {...}, "id": 1}`
-//! - Success response: `{"jsonrpc": "2.0", "result": {...}, "id": 1}`
-//! - Error response: `{"jsonrpc": "2.0", "error": {"code": -1, "message": "..."}, "id": 1}`
-//!
-//! ## Security Features
-//!
-//! - CORS headers configured for local development
-//! - Request/response logging for audit trails
-//! - Error sanitization to prevent information leakage
-//! - Rate limiting and request size limits (TODO: implement)
+#![doc = include_str!("../doc/rpc_server.md")]
 
 // Local crate imports
 use crate::{handlers::*, service_container::ServiceContainer};
@@ -34,12 +7,12 @@ use crate::{handlers::*, service_container::ServiceContainer};
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Result, WrapErr};
-use futures::StreamExt;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio_stream::StreamExt;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 

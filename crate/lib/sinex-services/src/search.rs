@@ -1,4 +1,6 @@
-//! Search service for querying events and content
+#![doc = include_str!("../doc/search.md")]
+
+//! Search service orchestration.
 
 use crate::error::ServiceResult;
 use serde::{Deserialize, Serialize};

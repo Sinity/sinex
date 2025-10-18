@@ -271,24 +271,3 @@ pub async fn run_integration_test_with_pool(db_pool: PgPool) -> Result<()> {
     let test = SensdIntegrationTest::with_pool(db_pool).await?;
     test.test_complete_flow().await
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::TestContext;
-    use std::env;
-
-    #[tokio::test]
-    async fn test_sensd_integration() -> Result<()> {
-        // Always exercise the isolated test context to keep nextest runs deterministic.
-        let ctx = TestContext::with_name("sensd_integration").await?;
-        run_integration_test_with_pool(ctx.pool.clone()).await?;
-
-        // Optionally exercise a user-provided database when explicitly configured.
-        if let Ok(database_url) = env::var("SENSD_INTEGRATION_DATABASE_URL") {
-            run_integration_test(&database_url).await?;
-        }
-
-        Ok(())
-    }
-}

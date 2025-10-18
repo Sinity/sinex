@@ -146,7 +146,7 @@ pub fn detect_current_shell() -> Result<ShellInfo, sinex_satellite_sdk::Satellit
 }
 
 /// Detect shell type from path or name
-fn detect_shell_type(shell_path: &str) -> ShellType {
+pub fn detect_shell_type(shell_path: &str) -> ShellType {
     let shell_name = shell_path
         .split('/')
         .last()
@@ -165,7 +165,7 @@ fn detect_shell_type(shell_path: &str) -> ShellType {
 }
 
 /// Detect shell capabilities
-fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
+pub fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     ShellCapabilities {
         supports_hooks: shell_type.supports_hooks(),
         supports_functions: matches!(
@@ -231,39 +231,6 @@ fn get_parent_pid() -> Option<u32> {
         .process(sysinfo::Pid::from_u32(current_pid))?
         .parent()
         .map(|pid| pid.as_u32())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_shell_type_detection() -> color_eyre::eyre::Result<()> {
-        assert_eq!(detect_shell_type("/bin/bash"), ShellType::Bash);
-        assert_eq!(detect_shell_type("/usr/bin/zsh"), ShellType::Zsh);
-        assert_eq!(detect_shell_type("fish"), ShellType::Fish);
-        assert_eq!(detect_shell_type("/usr/local/bin/nu"), ShellType::Nushell);
-        assert_eq!(
-            detect_shell_type("unknown"),
-            ShellType::Unknown("unknown".to_string())
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_shell_capabilities() -> color_eyre::eyre::Result<()> {
-        let bash_caps = detect_capabilities(&ShellType::Bash);
-        assert!(bash_caps.supports_hooks);
-        assert!(bash_caps.supports_functions);
-        assert!(bash_caps.supports_aliases);
-
-        let nushell_caps = detect_capabilities(&ShellType::Nushell);
-        assert!(!nushell_caps.supports_hooks);
-        assert!(nushell_caps.supports_functions);
-        assert!(!nushell_caps.supports_aliases);
-        Ok(())
-    }
 }
 
 /// Helper function to get home directory as Utf8PathBuf

@@ -1,62 +1,4 @@
-//! ULID/UUID conversion functions for database boundaries
-//!
-//! This module provides conversion functions between ULID and UUID types
-//! specifically for database operations. These are pure schema-level utilities
-//! that handle the boundary between Rust ULID types and PostgreSQL UUID storage.
-//!
-//! ## Architecture Overview
-//!
-//! Sinex uses ULIDs throughout the application for their time-ordering properties,
-//! but stores them as UUIDs in PostgreSQL for compatibility with the pgx_ulid extension.
-//! This module provides efficient, zero-copy conversion utilities to bridge this gap.
-//!
-//! ## Usage Patterns
-//!
-//! ### Basic Conversions
-//!
-//! ```rust
-//! use sinex_schema::ulid::Ulid;
-//! use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid};
-//!
-//! let ulid = Ulid::new();
-//! let db_uuid = ulid_to_uuid(ulid);
-//! let restored_ulid = uuid_to_ulid(db_uuid);
-//! assert_eq!(ulid, restored_ulid);
-//! ```
-//!
-//! ### Extension Trait Usage
-//!
-//! ```rust
-//! use sinex_schema::ulid::Ulid;
-//! use sinex_schema::ulid_conversions::UlidExt;
-//!
-//! let ulid = Ulid::new();
-//! let db_uuid = ulid.to_db();
-//!
-//! // For collections
-//! let ulids = vec![Ulid::new(), Ulid::new()];
-//! let db_uuids = ulids.to_uuid_vec();
-//! ```
-//!
-//! ### Query Parameter Binding
-//!
-//! ```rust,ignore
-//! // In actual database queries
-//! sqlx::query!(
-//!     "SELECT * FROM core.events WHERE id = $1",
-//!     ulid.to_db()  // Convert to SqlxUuid for parameter binding
-//! )
-//! ```
-//!
-//! ## Performance Characteristics
-//!
-//! - **Zero-copy conversions**: ULIDs and UUIDs share the same 16-byte representation
-//! - **Batch operations**: Collection conversions are optimized for large datasets
-//! - **Optional overhead**: Minimal overhead for `Option<T>` handling
-//!
-//! ## Thread Safety
-//!
-//! All conversion functions are pure and thread-safe. No shared state is maintained.
+#![doc = include_str!("../doc/ulid_conversions.md")]
 
 use crate::ulid::Ulid;
 use sqlx::types::Uuid as SqlxUuid;
@@ -312,31 +254,4 @@ pub fn opt_vec_to_db(ulids: Option<Vec<Ulid>>) -> Option<Vec<SqlxUuid>> {
 #[inline]
 pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
     uuids.map(|v| v.to_ulid_vec())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_ulid_conversion() -> color_eyre::eyre::Result<()> {
-        let ulid = Ulid::new();
-        let uuid = ulid_to_uuid(ulid);
-        let converted_back = uuid_to_ulid(uuid);
-        assert_eq!(ulid, converted_back);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_ulid_array_conversion() -> color_eyre::eyre::Result<()> {
-        let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
-        let uuids = ulids.to_uuid_vec();
-        assert_eq!(ulids.len(), uuids.len());
-
-        for (ulid, uuid) in ulids.iter().zip(uuids.iter()) {
-            assert_eq!(*ulid, uuid_to_ulid(*uuid));
-        }
-        Ok(())
-    }
 }

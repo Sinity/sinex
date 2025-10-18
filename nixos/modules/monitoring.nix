@@ -36,6 +36,17 @@ let
   # Import health check utilities
   healthChecks = import ./health-checks.nix { inherit lib; };
 
+  logServiceNames =
+    let
+      baseServices = [
+        "sinex-ingestd"
+        "sinex-gateway"
+        "sinex-preflight"
+        "sinex-update"
+      ];
+      satelliteServices = config.services.sinex.satellite.generatedUnits or [];
+    in lib.unique (baseServices ++ satelliteServices);
+
 in
 {
   options.services.sinex.monitoring = {
@@ -642,22 +653,48 @@ in
         '')
         (writeShellScriptBin "sinex-logs" ''
           echo "📋 Sinex Service Logs"
-          echo "Press Ctrl+C to exit, or choose a specific service:"
-          echo "1) Unified Collector"
-          echo "2) Promo Worker" 
-          echo "3) Prometheus"
-          echo "4) Grafana"
-          echo "5) All services"
-          read -p "Choice (1-5): " choice
+          echo "Press Ctrl+C to exit."
+          echo ""
 
-          case $choice in
-            1) ${systemd}/bin/journalctl -u sinex-ingestd -f ;;
-            2) ${systemd}/bin/journalctl -u sinex-gateway -f ;;
-            3) ${systemd}/bin/journalctl -u prometheus -f ;;
-            4) ${systemd}/bin/journalctl -u grafana -f ;;
-            5) ${systemd}/bin/journalctl -u prometheus -u grafana -u sinex-ingestd -u sinex-gateway -u sinex-fs-watcher -f ;;
-            *) echo "Invalid choice" ;;
-          esac
+          services=(
+            ${lib.concatStringsSep "\n            " (map (name: "\"${name}\"") logServiceNames)}
+            "prometheus"
+            "grafana"
+          )
+
+          if [ "''${#services[@]}" -eq 0 ]; then
+            echo "No Sinex services registered."
+            exit 0
+          fi
+
+          echo "0) All services"
+          for idx in "''${!services[@]}"; do
+            printf "%d) %s\n" "$((idx + 1))" "''${services[$idx]}"
+          done
+
+          read -rp "Choice (0-$(( ''${#services[@]} ))) : " choice
+
+          if [ -z "$choice" ]; then
+            echo "No selection made."
+            exit 1
+          fi
+
+          if [ "$choice" = "0" ]; then
+            exec ${systemd}/bin/journalctl -f ${lib.concatStringsSep " " (map (svc: "-u ${svc}") logServiceNames ++ [ "-u prometheus" "-u grafana" ])}
+          fi
+
+          if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+            echo "Invalid choice"
+            exit 1
+          fi
+
+          idx=$((choice - 1))
+          if [ "$idx" -lt 0 ] || [ "$idx" -ge "''${#services[@]}" ]; then
+            echo "Invalid choice"
+            exit 1
+          fi
+
+          exec ${systemd}/bin/journalctl -u "''${services[$idx]}" -f
         '')
       ]
     );
@@ -692,4 +729,3 @@ in
     ];
   };
 }
-

@@ -1,19 +1,10 @@
-//! # Sinex Database Migrations
-//!
-//! This crate contains the complete schema definition and the evolutionary history
-//! of the Sinex database. It uses the `sea-orm-migration` framework with `sea-query`
-//! to define the schema in a type-safe, programmatic way.
-//!
-//! ## Architecture
-//!
-//! - **`src/schema/`:** Contains the canonical, state-of-the-art definition of
-//!   every table in the database as of the latest version. This is the single
-//!   source of truth for the schema.
-//! - **`src/migrations/`:** Contains a single "squashed" initial migration that
-//!   creates the entire canonical schema from scratch. All future schema changes
-//!   will be new, timestamped migration files that apply incremental `ALTER`
-//!   statements.
-//! - **`src/main.rs`:** Provides a CLI for managing migrations.
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../doc/schema_design.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/ULID_HANDLING.md")]
+
+//! Workspace schema definitions and migrations.
 
 pub use sea_orm_migration::prelude::*;
 
