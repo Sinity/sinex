@@ -276,10 +276,49 @@ pkgs.nixosTest {
         enable = true;
         package = sinexPackage;
         cliPackage = sinexCliPackage;
-        promoWorker.enable = true;
+        targetUser = "test";
+
+        serviceManagement.serviceGroups = {
+          core = true;
+          maintenance = false;
+          monitoring = false;
+        };
+
+        satellite = {
+          enable = true;
+          coordination.enable = false;
+          database.url = "postgresql:///sinex?host=/run/postgresql";
+          logLevel = "info";
+
+          coreServices.enable = true;
+
+          eventSources = {
+            filesystem = {
+              enable = true;
+              instances = 1;
+              extraArgs = "";
+            };
+            terminal = {
+              enable = true;
+              instances = 1;
+            };
+            desktop = {
+              enable = true;
+              instances = 1;
+            };
+            system = {
+              enable = true;
+              instances = 1;
+            };
+          };
+
+          automata = {
+            canonicalCommandSynthesizer.enable = true;
+            healthAggregator.enable = true;
+          };
+        };
 
         eventSources = {
-          # Enable multiple sources for recovery testing
           filesystem = {
             enable = true;
             watchPaths = [ "/home/test/watched" ];

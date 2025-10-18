@@ -227,10 +227,50 @@ pkgs.nixosTest {
         enable = true;
         package = sinexPackage;
         cliPackage = sinexCliPackage;
-        promoWorker.enable = true;  # Enable worker for this test
+        targetUser = "test";
 
+        serviceManagement.serviceGroups = {
+          core = true;
+          maintenance = false;
+          monitoring = false;
+        };
+
+        satellite = {
+          enable = true;
+          coordination.enable = false;
+          database.url = "postgresql:///sinex?host=/run/postgresql";
+          logLevel = "info";
+
+          coreServices.enable = true;
+
+          eventSources = {
+            filesystem = {
+              enable = true;
+              instances = 2;
+              extraArgs = "";
+            };
+            terminal = {
+              enable = true;
+              instances = 1;
+            };
+            desktop = {
+              enable = true;
+              instances = 1;
+            };
+            system = {
+              enable = true;
+              instances = 1;
+            };
+          };
+
+          automata = {
+            canonicalCommandSynthesizer.enable = true;
+            healthAggregator.enable = true;
+          };
+        };
+
+        # Legacy option block retained so bridging layer can surface detailed settings.
         eventSources = {
-          # Enable ALL event sources for comprehensive testing
           filesystem = {
             enable = true;
             watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
@@ -423,11 +463,25 @@ EOF
     machine.wait_for_unit("postgresql.service")
     
     # Wait for Sinex services
-    machine.wait_for_unit("sinex-migrate.service")
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
-    
-    # Verify all services are active
+    machine.wait_for_unit("nats.service")
+
+    # Ensure satellite instances are online
+    satellite_units = [
+        "sinex-fs-watcher-1.service",
+        "sinex-fs-watcher-2.service",
+        "sinex-terminal-satellite-1.service",
+        "sinex-desktop-satellite-1.service",
+        "sinex-system-satellite-1.service",
+        "sinex-terminal-command-canonicalizer.service",
+        "sinex-health-aggregator.service",
+    ]
+    for unit in satellite_units:
+        machine.wait_for_unit(unit)
+        machine.succeed(f"systemctl is-active {unit}")
+
+    # Verify core hubs are active
     machine.succeed("systemctl is-active sinex-ingestd")
     machine.succeed("systemctl is-active sinex-gateway")
 

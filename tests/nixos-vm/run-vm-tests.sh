@@ -18,7 +18,7 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 
 # Test categories (initial modernization pass)
 SMOKE_TESTS=("basic")
-INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix")
+INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix" "multi-source" "failure-recovery")
 PERFORMANCE_TESTS=()  # TODO: Re-enable performance scenarios once satellite conversion is complete
 CHAOS_TESTS=()        # TODO: Restore chaos suites after new failure-injection harness lands
 ALL_TESTS=("${SMOKE_TESTS[@]}" "${INTEGRATION_TESTS[@]}" "${PERFORMANCE_TESTS[@]}" "${CHAOS_TESTS[@]}")

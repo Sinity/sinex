@@ -64,8 +64,10 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
    - Comprehensive feature validation
    - Multiple event source testing (`test-scenarios/satellite-matrix.nix`)
    - Maintenance timers and git-annex flow (`test-scenarios/maintenance.nix`)
+   - Multi-source stress path (`test-scenarios/multi-source.nix`)
+   - Failure recovery drills (`test-scenarios/failure-recovery.nix`)
    - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
-   - *(Coming soon: failure-recovery, multi-source stress, production scale)*
+   - *(Coming soon: production scale)*
 
 3. **Performance Tests** *(pending migration)*
    - High-throughput event processing
@@ -83,8 +85,8 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 - [x] Pre-flight / coordination coverage (`preflight`)
 - [x] Maintenance timers & blob storage (`maintenance`)
 - [x] Satellite constellation matrix (`satellite-matrix`)
-- [ ] Re-enable multi-source stress testing on satellites
-- [ ] Port failure-recovery suite to new services
+- [x] Re-enable multi-source stress testing on satellites
+- [x] Port failure-recovery suite to new services
 - [ ] Restore performance + chaos scenarios with monitoring assertions
 
 ## Key Improvements

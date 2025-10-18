@@ -25,5 +25,13 @@
   "satellite-matrix" = import ./test-scenarios/satellite-matrix.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
+
+  "multi-source" = import ./test-scenarios/multi-source.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
+  "failure-recovery" = import ./test-scenarios/failure-recovery.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
   
 }
