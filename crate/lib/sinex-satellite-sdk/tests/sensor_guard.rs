@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use sinex_core::db::models::Event;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::JsonValue;
@@ -9,12 +10,13 @@ impl EventProcessor for TestSatellite {
     type Guard = NotASensor;
 }
 
+#[async_trait]
 impl MaterialConsumer for TestSatellite {
     async fn process_material_slice(
         &self,
         _material_id: Ulid,
         _slice_data: &[u8],
-    ) -> Result<Vec<Event<JsonValue>>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Event<JsonValue>>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(vec![])
     }
 }

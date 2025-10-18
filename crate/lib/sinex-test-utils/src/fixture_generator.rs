@@ -13,10 +13,7 @@ use sinex_core::events::{
     ClipboardCopiedPayload, DbusSignalPayload, FileCreatedPayload, HyprlandWindowFocusedPayload,
     KittyCommandExecutedPayload, SystemdUnitStartedPayload,
 };
-use sinex_core::{
-    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue,
-    Operation, OperationRecord, Provenance, SourceMaterial,
-};
+use sinex_core::{Event, JsonValue};
 
 use camino::Utf8Path;
 use sinex_core::types::error::SinexError;

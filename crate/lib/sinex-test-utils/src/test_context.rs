@@ -39,6 +39,7 @@
 //! ```
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
+use crate::db_common::verify_clean_state;
 use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
@@ -49,6 +50,7 @@ use sinex_core::types::{DbPool, Id, Ulid};
 use sinex_core::DbPoolExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::warn;
 
 /// Test context providing database isolation and test utilities
 ///
@@ -120,9 +122,19 @@ impl TestContext {
     /// Create test context with custom name
     pub async fn with_name(test_name: &str) -> Result<Self> {
         let db = acquire_test_database().await?;
-        // Defensive cleanup in case a previous test left residue due to panic
-        db.force_cleanup().await?;
         let pool = db.pool().clone();
+
+        if let Err(err) = verify_clean_state(&pool).await {
+            warn!(
+                "Database {} not clean on acquisition ({}); forcing cleanup",
+                db.name(),
+                err
+            );
+            db.force_cleanup().await?;
+            // Verify again after forced cleanup
+            verify_clean_state(&pool).await?;
+        }
+
         let baseline_events = pool.events().count_all().await?;
 
         Ok(Self {
@@ -292,9 +304,9 @@ impl TestContext {
     /// Insert multiple events (batch operation)
     pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> Result<()> {
         for event in events {
-            self.pool.events().insert(event.clone()).await?;
-            if let Some(id) = &event.id {
-                self.created_events.lock().push(id.clone().into());
+            let inserted = self.pool.events().insert(event.clone()).await?;
+            if let Some(id) = inserted.id {
+                self.created_events.lock().push(id.into());
             }
         }
         Ok(())
@@ -508,76 +520,5 @@ impl<'ctx> ContextualAssert<'ctx> {
             }
         }
         Ok(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(unused_imports)]
-    use super::*;
-    use crate::prelude::*;
-    use crate::sinex_test;
-    use serde_json::json;
-
-    #[sinex_test]
-    async fn test_context_basic_functionality(ctx: TestContext) -> Result<()> {
-        // Test that context provides proper database isolation
-        assert!(!ctx.test_name().is_empty());
-        assert!(ctx.elapsed().as_nanos() > 0);
-
-        // Test event count tracking
-        let initial_count = ctx.pool.events().count_all().await?;
-        assert_eq!(initial_count, 0);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_contextual_assertions(ctx: TestContext) -> Result<()> {
-        // Test the assertion helpers
-        ctx.assert("equality test").eq(&42, &42)?;
-
-        ctx.assert("condition test").that(true, "should be true")?;
-
-        let vec = vec![1, 2, 3];
-        ctx.assert("size test").has_size(&vec, 3)?;
-
-        ctx.assert("not empty test").not_empty(&vec)?;
-
-        let some_val = Some(42);
-        ctx.assert("option test").some(&some_val)?;
-
-        let none_val: Option<i32> = None;
-        ctx.assert("none test").none(&none_val)?;
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_assertion_failures(ctx: TestContext) -> Result<()> {
-        // Test that assertions fail correctly
-        let result = ctx.assert("fail test").eq(&1, &2);
-        assert!(result.is_err());
-
-        let result = ctx.assert("condition fail").that(false, "should fail");
-        assert!(result.is_err());
-
-        let empty: Vec<i32> = vec![];
-        let result = ctx.assert("empty fail").not_empty(&empty);
-        assert!(result.is_err());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_log_capture(ctx: TestContext) -> Result<()> {
-        // Test log capture functionality
-        ctx.capture_log("test log message".to_string());
-        ctx.assert_logged("test log")?;
-
-        let result = ctx.assert_logged("non-existent message");
-        assert!(result.is_err());
-
-        Ok(())
     }
 }

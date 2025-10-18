@@ -226,6 +226,8 @@
         {
           packages = sinexPackages;
 
+          formatter = pkgs.nixpkgs-fmt;
+
           checks = pkgs.lib.mapAttrs' (name: value:
             pkgs.lib.nameValuePair "sinex-vm-${name}" value
           ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
@@ -286,6 +288,7 @@
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
               export SINEX_TEST_OPTIMIZATIONS="true"
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
               # Clear screen for clean start
               clear
@@ -352,6 +355,129 @@
         sinex = ./nixos;
       };
 
+      nixosConfigurations = {
+        example = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              nixpkgs.config.allowUnfree = true;
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+
+        exampleMonitoring = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example-monitoring.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+
+        exampleDevSandbox = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example-dev-sandbox.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+
+        exampleHeadless = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example-headless.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+
+        exampleRemoteSatellite = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example-remote-satellite.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+
+        exampleCoordination = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [
+            ./nixos/example-coordination.nix
+            ({ lib, ... }: {
+              boot.isContainer = true;
+              boot.loader.grub.enable = false;
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+              };
+              services.sinex.preflightVerification.enable = false;
+              services.sinex.update.enable = false;
+              services.nats.enable = lib.mkForce false;
+              services.postgresql.enable = lib.mkForce false;
+              system.stateVersion = "24.05";
+            })
+          ];
+        };
+      };
+
       # Overlay providing pg_jsonschema
       overlays.default = final: prev: {
         postgresql16Packages = prev.postgresql16Packages // {
@@ -361,5 +487,7 @@
         sinex = self.packages.${final.system}.sinex;
         sinexCli = self.packages.${final.system}.sinexCli;
       };
+
+      checks = builtins.mapAttrs (name: cfg: cfg.config.system.build.toplevel) self.nixosConfigurations;
     };
 }

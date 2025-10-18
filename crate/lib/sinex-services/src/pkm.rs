@@ -1,4 +1,6 @@
-//! Personal Knowledge Management (PKM) service
+#![doc = include_str!("../doc/pkm.md")]
+
+//! Personal Knowledge Management (PKM) orchestrator.
 
 use crate::error::{Result as ServiceResult, SinexError};
 use serde::{Deserialize, Serialize};

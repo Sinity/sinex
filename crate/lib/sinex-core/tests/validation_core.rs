@@ -1,13 +1,13 @@
 use camino::Utf8PathBuf as PathBuf;
 use serde_json::{json, Value};
-use sinex_core::types::validation::core::{
+use sinex_core::types::validation::{
     contains_shell_metacharacters, deserialize_json_with_validation, normalize_unicode,
-    sanitize_filename_component, validate_json, validate_json_value, validate_path, Result,
+    sanitize_filename_component, validate_json, validate_json_value, validate_path,
 };
 use sinex_test_utils::sinex_test;
 
 #[sinex_test]
-fn path_validation_blocks_traversal() -> Result<()> {
+fn path_validation_blocks_traversal() -> color_eyre::eyre::Result<()> {
     assert!(validate_path("normal/path.txt").is_ok());
     assert!(validate_path("/absolute/path.txt").is_ok());
     assert!(validate_path("/etc/passwd\0.txt").is_err());
@@ -20,7 +20,7 @@ fn path_validation_blocks_traversal() -> Result<()> {
 }
 
 #[sinex_test]
-fn filename_sanitization_removes_disallowed_characters() -> Result<()> {
+fn filename_sanitization_removes_disallowed_characters() -> color_eyre::eyre::Result<()> {
     assert_eq!(
         sanitize_filename_component("normal.txt").unwrap(),
         "normal.txt"
@@ -36,7 +36,7 @@ fn filename_sanitization_removes_disallowed_characters() -> Result<()> {
 }
 
 #[sinex_test]
-fn json_validation_enforces_limits() -> Result<()> {
+fn json_validation_enforces_limits() -> color_eyre::eyre::Result<()> {
     assert!(validate_json(r#"{"key": "value", "number": 42}"#).is_ok());
 
     let large = format!(r#"{{"data": "{}"}}"#, "x".repeat(11_000_000));
@@ -56,7 +56,7 @@ fn json_validation_enforces_limits() -> Result<()> {
 }
 
 #[sinex_test]
-fn json_value_validation_checks_structure() -> Result<()> {
+fn json_value_validation_checks_structure() -> color_eyre::eyre::Result<()> {
     let valid = json!({"key": "value", "number": 42});
     assert!(validate_json_value(&valid).is_ok());
 
@@ -74,7 +74,7 @@ fn json_value_validation_checks_structure() -> Result<()> {
 }
 
 #[sinex_test]
-fn deserialize_json_with_validation_enforces_schema() -> Result<()> {
+fn deserialize_json_with_validation_enforces_schema() -> color_eyre::eyre::Result<()> {
     #[derive(Debug, serde::Deserialize, PartialEq)]
     struct TestStruct {
         name: String,

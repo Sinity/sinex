@@ -1,10 +1,9 @@
 use sinex_core::types::events::payloads::filesystem::FileCreatedPayload;
-use sinex_core::types::events::EventPayload;
-use sinex_core::types::events::SinexError;
+use sinex_core::EventPayload;
 use sinex_test_utils::sinex_test;
 
 #[sinex_test]
-fn option_payload_supports_legacy_conversion() -> Result<(), SinexError> {
+fn option_payload_supports_legacy_conversion() -> Result<(), sinex_core::SinexError> {
     let value = serde_json::json!(null);
     let result: Option<FileCreatedPayload> =
         Option::<FileCreatedPayload>::try_from_legacy(value, "1.0.0").unwrap();
@@ -22,7 +21,7 @@ fn option_payload_supports_legacy_conversion() -> Result<(), SinexError> {
 }
 
 #[sinex_test]
-fn vec_payload_supports_legacy_conversion() -> Result<(), SinexError> {
+fn vec_payload_supports_legacy_conversion() -> Result<(), sinex_core::SinexError> {
     let value = serde_json::json!([
         {
             "path": "/test1.txt",

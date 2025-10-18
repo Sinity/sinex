@@ -22,12 +22,15 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Run**: `cargo nextest run --test integration_tests`
 
 ### 🎯 Property Tests (`property_tests.rs`)
-- **Scope**: Behavior validation across input ranges
+- **Scope**: Cross-crate properties that genuinely require the workspace harness
 - **Speed**: Variable (depends on iterations)
 - **Dependencies**: Proptest framework
-- **Purpose**: Verify properties hold across many inputs
+- **Purpose**: Verify properties that span multiple crates
 - **Features**: Randomized testing, edge case discovery, invariant validation
 - **Run**: `cargo nextest run --test property_tests`
+- **Note**: Most property suites now live alongside the crates they fuzz (see
+  `crate/lib/sinex-core/tests/property/` and
+  `crate/lib/sinex-satellite-sdk/tests/property/`).
 
 ### ⚡ Simple Tests (`simple_tests.rs`)
 - **Scope**: Basic functionality verification
@@ -60,11 +63,13 @@ Each category serves a specific testing purpose and has different runtime charac
 - **Run**: `cargo nextest run --test performance`
 
 ### 🔒 Security Tests (`security/`)
-- **Scope**: Security-focused test scenarios
+- **Scope**: Workspace-wide security scenarios that span multiple crates
 - **Speed**: Medium to slow
 - **Dependencies**: Full system setup
 - **Purpose**: Security validation and vulnerability testing
 - **Run**: `cargo nextest run --test security`
+- **Note**: Crate-specific hardening tests (filesystem watcher, terminal history)
+  now live with their respective crates.
 
 ### 🔄 Concurrency Tests (`concurrency/`)
 - **Scope**: Multi-threaded and async behavior validation

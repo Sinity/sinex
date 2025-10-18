@@ -102,8 +102,18 @@ impl Events {
             .table((Alias::new("core"), Events::Table))
             .if_not_exists()
             .col(ColumnDef::new(Events::Id).custom(Alias::new("ULID")).primary_key().extra("DEFAULT gen_ulid()"))
-            .col(ColumnDef::new(Events::Source).text().not_null().check(Expr::cust("length(TRIM(source)) > 0")))
-            .col(ColumnDef::new(Events::EventType).text().not_null().check(Expr::cust("length(TRIM(event_type)) > 0")))
+            .col(
+                ColumnDef::new(Events::Source)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust("length(BTRIM(source, E' \\t\\n\\r\\v\\f')) > 0")),
+            )
+            .col(
+                ColumnDef::new(Events::EventType)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust("length(BTRIM(event_type, E' \\t\\n\\r\\v\\f')) > 0")),
+            )
             .col(ColumnDef::new(Events::Host).text().not_null())
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())

@@ -10,12 +10,13 @@ Start Here
 
 Core Topics
 - Ingestion Plan: `docs/way.md` (JetStream-first ingestion and sensd retirement)
-- Satellites SDK: `crate/lib/sinex-satellite-sdk/` and `docs/architecture/satellite-implementation.md`
+- Satellites SDK: `crate/lib/sinex-satellite-sdk/doc/overview.md`
 - Event Taxonomy: `docs/architecture/event-taxonomy.md`
 - Operations & Monitoring: `nixos/README.md` and service logs (journald); `SystemOperations_And_Integrity_Architecture.md` for principles
 
 How-To Guides
-- Testing Guide: `TESTING.md` and `tests/README.md`
+- Documentation Guidelines: `docs/documentation-guidelines.md`
+- Testing Guide: `TESTING.md`
 - Gateway/CLI: `./cli/exo.py --help`
 
 Navigation

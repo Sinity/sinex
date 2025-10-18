@@ -1,8 +1,11 @@
-//! Analytics Automaton - Event-driven data analysis and insights
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+
+//! Analytics automaton entry points.
 //!
-//! This automaton consumes events from the event stream and produces synthesized
-//! analytical insights and patterns. It implements the proper automaton pattern:
-//! Events → Analysis → Synthesized Events
+//! Events → Analysis → Synthesized Events.
 
 // Local facade module to reduce import verbosity
 mod common {

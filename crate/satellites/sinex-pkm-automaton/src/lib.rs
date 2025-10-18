@@ -1,8 +1,10 @@
-//! PKM Automaton - Event-driven Personal Knowledge Management system
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+
+//! PKM automaton.
 //!
-//! This automaton consumes events related to knowledge work and produces synthesized
-//! insights for Personal Knowledge Management. It implements the proper automaton pattern:
-//! Knowledge Events → Analysis → Synthesized PKM Insights
+//! Knowledge Events → Analysis → Synthesized PKM Insights.
 
 // Local facade module to reduce import verbosity
 mod common {

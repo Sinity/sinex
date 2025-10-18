@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_core::db::repositories::state::Operation;
 use sinex_core::repositories::DbPoolExt;
-use sinex_core::{Checkpoint, CheckpointRepository, Id};
+use sinex_core::{Checkpoint, Id};
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
@@ -119,7 +119,7 @@ async fn state_repository_collects_operation_statistics(
 
     let stats = repo.get_operation_statistics(None).await?;
     assert_eq!(stats.total, 5);
-    assert_eq__(stats.successful, 3);
+    assert_eq!(stats.successful, 3);
     assert_eq!(stats.failed, 1);
     assert_eq!(stats.cancelled, 1);
     assert!(stats.avg_duration_ms.is_some());

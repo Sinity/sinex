@@ -1,8 +1,11 @@
-//! Health Aggregator - Event-driven system health monitoring and aggregation
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../doc/automaton.md")]
+#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+
+//! Health aggregator automaton.
 //!
-//! This automaton consumes health-related events from various system components
-//! and produces synthesized health status reports. It implements the proper automaton pattern:
-//! Health Events → Aggregation → Synthesized Health Status Events
+//! Health Events → Aggregation → Synthesized Health Status Events.
 
 // Local facade module to reduce import verbosity
 mod common {

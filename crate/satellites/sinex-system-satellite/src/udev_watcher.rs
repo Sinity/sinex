@@ -1,6 +1,6 @@
-//! udev watcher
-//!
-//! Monitors hardware device events via udev
+#![doc = include_str!("../doc/udev_watcher.md")]
+
+//! udev watcher module.
 
 use sinex_core::db::models::event::Event;
 use sinex_core::db::models::event::EventId;

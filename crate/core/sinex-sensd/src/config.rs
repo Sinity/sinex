@@ -1,4 +1,6 @@
-//! Configuration for sensd daemon
+#![doc = include_str!("../doc/config.md")]
+
+//! Configuration for sensd daemon.
 
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};

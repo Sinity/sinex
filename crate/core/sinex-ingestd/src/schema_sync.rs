@@ -1,7 +1,6 @@
-//! Schema synchronization module for ingestd
-//!
-//! This module handles synchronizing payload schemas discovered at build time
-//! with the database schema registry.
+#![doc = include_str!("../doc/schema_sync.md")]
+
+//! Helpers that ensure ingestd stays in sync with schema metadata.
 
 use crate::IngestdResult;
 use sinex_core::types::events::schema_registry::{generate_all_schemas, get_all_payloads};
@@ -250,6 +249,10 @@ fn compute_content_hash(content: &serde_json::Value) -> String {
     hex::encode(result)
 }
 
+pub fn compute_content_hash_for_testing(content: &serde_json::Value) -> String {
+    compute_content_hash(content)
+}
+
 /// List all discovered payload information
 pub fn list_discovered_payloads() {
     info!("Listing all discovered EventPayload types:");
@@ -263,26 +266,5 @@ pub fn list_discovered_payloads() {
             version = %payload.version,
             "Discovered payload"
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::sinex_test;
-
-    #[sinex_test]
-    fn test_content_hash() -> color_eyre::eyre::Result<()> {
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" }
-            }
-        });
-
-        let hash = compute_content_hash(&schema);
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64); // SHA-256 produces 32 bytes = 64 hex chars
-        Ok(())
     }
 }

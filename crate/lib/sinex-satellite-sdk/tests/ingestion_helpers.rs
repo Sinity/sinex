@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_core::types::events::EventType;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::EventType;
 use sinex_satellite_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
     SnapshotDiff, SnapshotRow, TimeQuality,
@@ -152,7 +152,7 @@ fn snapshot_diff_detects_mixed_changes() {
     let changes = diff.compute_diff(current_rows);
     assert_eq!(changes.len(), 2);
     let change_types: std::collections::HashSet<_> =
-        changes.iter().map(|c| c.change_type).collect();
+        changes.iter().map(|c| c.change_type.clone()).collect();
     assert!(change_types.contains(&ChangeType::Insert));
     assert!(change_types.contains(&ChangeType::Update));
 }

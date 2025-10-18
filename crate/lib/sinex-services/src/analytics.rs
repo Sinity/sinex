@@ -1,4 +1,6 @@
-//! Analytics service for event analysis and insights
+#![doc = include_str!("../doc/analytics.md")]
+
+//! Analytics service entry points for dashboards and reporting.
 
 use crate::error::Result as ServiceResult;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};

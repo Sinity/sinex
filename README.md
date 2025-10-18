@@ -139,42 +139,11 @@ All satellites support two operational modes:
 
 ## 🧪 Test Coverage
 
-Sinex has comprehensive test coverage across multiple categories:
-
-### Test Summary
-- **Total test files**: 75+ (including new satellite tests)
-- **Total tests**: 250+ tests
-- **Test organization**: Hierarchical structure under `test/` directory
-
-### Test Categories
-- **Unit tests**: 52 tests - Component isolation and core logic
-- **Integration tests**: 45+ tests - Component interaction, database, and satellite integration
-- **System tests**: 22 tests - End-to-end pipeline validation
-- **Adversarial tests**: 83 tests - Security, edge cases, and stress scenarios
-- **Satellite tests**: Comprehensive tests for dual-mode operation, reconnection, coordination
-- **VM tests**: NixOS integration tests (being updated for satellite architecture)
-
-### Running Tests
-
-```bash
-# Run fast loop (Nextest)
-just test                    # wraps `cargo nextest run --workspace --lib`
-
-# Run full suite (Nextest)
-just test-all                # primes DB, then `cargo nextest run --workspace`
-cargo nextest run --workspace --test <target>   # Manual filtering via Nextest
-
-# Run satellite-specific tests
-cargo nextest run --workspace --test satellite_architecture_test
-cargo nextest run --workspace --test satellite_comprehensive_test
-
-# Run with coverage
-just coverage                # Generate coverage report
-just coverage-html           # Generate HTML coverage report
-
-# Run VM tests (when updated for satellites)
-nix build .#checks.x86_64-linux.sinex-vm-satellite -L
-```
+All current guidance—suite layout, quick-start commands, Nextest profiles, and
+property-testing conventions—lives in the [Testing Handbook](TESTING.md).
+Keep that document handy when adding or reviewing tests; it links directly to
+crate-level deep dives such as the `sinex-test-utils` API reference and the
+NixOS VM harness.
 
 ## 🚀 Quick Start
 
@@ -252,8 +221,8 @@ just test-dev       # Quick dev cycle (<2 min)
 
 ### Key Components
 - **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
-- **Schema & Taxonomy**: [`docs/architecture/SCHEMA.md`](docs/architecture/SCHEMA.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
-- **Satellites SDK & Patterns**: [`docs/architecture/satellite-implementation.md`](docs/architecture/satellite-implementation.md)
+- **Schema & Taxonomy**: [`crate/lib/sinex-schema/doc/overview.md`](crate/lib/sinex-schema/doc/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](crate/lib/sinex-satellite-sdk/doc/overview.md)
 
 ### For Contributors
 - **Testing Guide**: [`TESTING.md`](TESTING.md)

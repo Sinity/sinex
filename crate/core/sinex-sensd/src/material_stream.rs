@@ -1,6 +1,8 @@
-//! MaterialSliceStream interface for ingestors
+#![doc = include_str!("../doc/material_stream.md")]
+
+//! MaterialSliceStream interface for ingestors.
 //!
-//! Provides streaming access to source materials with temporal integrity
+//! Provides streaming access to source materials with temporal integrity.
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};

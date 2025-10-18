@@ -1,7 +1,9 @@
-//! D-Bus watcher with real-time signal subscription
+#![doc = include_str!("../doc/dbus_watcher.md")]
+
+//! D-Bus watcher with real-time signal subscription.
 //!
-//! This module provides advanced D-Bus monitoring with direct signal subscription,
-//! rich metadata extraction, and specialized event parsing. Ported from the
+//! Provides advanced D-Bus monitoring with direct signal subscription,
+//! rich metadata extraction, and specialized event parsing.
 
 use crate::payloads::DbusConfig; // Only import what we need
 use dbus::channel::MatchingReceiver;

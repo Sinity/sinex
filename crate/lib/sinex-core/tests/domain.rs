@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
-use color_eyre::eyre::eyre;
 use sinex_core::types::domain::{
     AbsoluteUri, AnnexKey, Blake3Hash, EventSource, EventType, JobId, NatsSubject, RelativePath,
     SanitizedPath, SchemaVersion, ServiceName, Sha256Hash,
@@ -159,7 +158,8 @@ fn annex_key_validation_and_parsing() -> color_eyre::eyre::Result<()> {
     assert!(AnnexKey::from_str("prefix--").is_err());
     assert!(AnnexKey::from_str("multiple--double--dashes").is_err());
 
-    let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt")?;
+    let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
+        .map_err(|err| eyre!("invalid annex key: {err}"))?;
     let (backend, size, mtime, filename) = key
         .parse_components()
         .ok_or_else(|| color_eyre::eyre::eyre!("invalid annex key"))?;
@@ -168,7 +168,8 @@ fn annex_key_validation_and_parsing() -> color_eyre::eyre::Result<()> {
     assert_eq!(mtime, Some(1234567890));
     assert_eq!(filename, "filename.txt");
 
-    let simple_key = AnnexKey::from_str("BLAKE2B--document.pdf")?;
+    let simple_key = AnnexKey::from_str("BLAKE2B--document.pdf")
+        .map_err(|err| eyre!("invalid annex key: {err}"))?;
     let (backend, size, mtime, filename) = simple_key
         .parse_components()
         .ok_or_else(|| color_eyre::eyre::eyre!("invalid annex key"))?;

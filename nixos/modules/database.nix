@@ -5,6 +5,30 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  ensureUserOption = types.submodule ({ name, ... }: {
+    options = {
+      name = mkOption {
+        type = types.str;
+        description = "Database role name";
+      };
+
+      ensureDBOwnership = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Grant ownership of the Sinex database to this role";
+      };
+
+      ensureClauses = mkOption {
+        type = types.attrsOf types.bool;
+        default = {};
+        description = "Additional role clauses (e.g. { login = true; createdb = true; })";
+      };
+    };
+
+    config = {
+      ensureClauses.login = mkDefault true;
+    };
+  });
 in
 {
   options.services.sinex.database = {
@@ -18,6 +42,12 @@ in
       type = types.port;
       default = 5432;
       description = "PostgreSQL port";
+    };
+
+    listenAddress = mkOption {
+      type = types.str;
+      default = "127.0.0.1";
+      description = "PostgreSQL listen address";
     };
 
     name = mkOption {
@@ -43,6 +73,53 @@ in
       type = types.bool;
       default = true;
       description = "Automatically setup database user and permissions";
+    };
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.postgresql_16;
+      defaultText = literalExpression "pkgs.postgresql_16";
+      description = "PostgreSQL package to deploy";
+    };
+
+    extraExtensions = mkOption {
+      type = types.listOf types.package;
+      default = [];
+      description = "Additional PostgreSQL extension packages to load alongside the defaults";
+    };
+
+    extraSharedPreloadLibraries = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      description = "Extra entries appended to shared_preload_libraries";
+    };
+
+    monotonicUlids = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Enable pgx_ulid in shared_preload_libraries to support monotonic ULIDs";
+    };
+
+    additionalUsers = mkOption {
+      type = types.listOf ensureUserOption;
+      default = [];
+      description = "Additional database roles to ensure (appended to services.postgresql.ensureUsers)";
+    };
+
+    additionalSettings = mkOption {
+      type = types.attrsOf types.anything;
+      default = {};
+      description = "Extra PostgreSQL configuration settings merged onto the managed defaults";
+    };
+
+    authentication = mkOption {
+      type = types.lines;
+      default = ''
+        local   all             all                                     peer
+        host    all             all             0.0.0.0/0               reject
+        host    all             all             ::/0                    reject
+      '';
+      description = "pg_hba.conf rules applied when autoSetup is enabled";
     };
 
     # Connection pool with sensible defaults
@@ -187,33 +264,74 @@ in
       computedMaxConnections =
         let baseline = totalServiceCount * perServiceConnections + 50;
         in lib.max (perServiceConnections + 10) baseline;
+      postgresqlPackages =
+        if cfg.database.package ? pkgs then cfg.database.package.pkgs
+        else pkgs.postgresql16Packages;
+
+      defaultExtensionPackages =
+        [ postgresqlPackages.timescaledb ]
+        ++ lib.optional (postgresqlPackages ? pg_jsonschema) postgresqlPackages.pg_jsonschema
+        ++ [
+          postgresqlPackages.pgx_ulid
+          postgresqlPackages.pgvector
+        ];
+
+      extensionPackages =
+        lib.unique (defaultExtensionPackages ++ cfg.database.extraExtensions);
+
+      sharedPreloadBase =
+        [ "timescaledb" ]
+        ++ lib.optionals cfg.database.monotonicUlids [ "pgx_ulid" ];
+
+      sharedPreloadLibraries =
+        lib.concatStringsSep "," (lib.unique (sharedPreloadBase ++ cfg.database.extraSharedPreloadLibraries));
+
+      ensuredUsers =
+        [{ name = cfg.database.user; ensureDBOwnership = true; }]
+        ++ cfg.database.additionalUsers;
+
+      baseSettings = {
+        # Connection and timeout settings
+        statement_timeout = mkDefault "60s";
+        lock_timeout = mkDefault "30s";
+        idle_in_transaction_session_timeout = mkDefault "300s";
+
+        # Performance settings
+        shared_buffers = mkDefault "256MB";
+        effective_cache_size = mkDefault "1GB";
+        maintenance_work_mem = mkDefault "256MB";
+        checkpoint_completion_target = mkDefault "0.9";
+
+        # Prepared statements
+        max_prepared_transactions = mkDefault 256;
+
+        # Logging for monitoring
+        log_statement = mkDefault "mod";
+        log_duration = mkDefault true;
+        log_min_duration_statement = mkDefault "1000ms";
+
+        # Connection limits
+        max_connections = mkDefault computedMaxConnections;
+
+        # Extension requirements
+        shared_preload_libraries = mkDefault sharedPreloadLibraries;
+        listen_addresses = mkDefault cfg.database.listenAddress;
+      };
+
+      finalSettings = mkMerge [
+        baseSettings
+        cfg.database.additionalSettings
+      ];
     in
-    mkIf cfg.enable {
-      # Auto-apply sensible database performance defaults when autoSetup is enabled
-      services.postgresql = mkIf cfg.database.autoSetup {
-        settings = {
-          # Connection and timeout settings
-          statement_timeout = mkDefault "60s";
-          lock_timeout = mkDefault "30s"; 
-          idle_in_transaction_session_timeout = mkDefault "300s";
-          
-          # Performance settings
-          shared_buffers = mkDefault "256MB";
-          effective_cache_size = mkDefault "1GB";
-          maintenance_work_mem = mkDefault "256MB";
-          checkpoint_completion_target = mkDefault "0.9";
-          
-          # Prepared statements
-          max_prepared_transactions = mkDefault 256;
-          
-          # Logging for monitoring
-          log_statement = mkDefault "mod";
-          log_duration = mkDefault true;
-          log_min_duration_statement = mkDefault "1000ms";
-          
-          # Connection limits
-          max_connections = mkDefault computedMaxConnections;
-        };
+    mkIf cfg.database.autoSetup {
+      services.postgresql = {
+        enable = true;
+        package = lib.mkForce cfg.database.package;
+        extensions = extensionPackages;
+        ensureDatabases = mkDefault [ cfg.database.name ];
+        ensureUsers = mkDefault ensuredUsers;
+        authentication = mkDefault cfg.database.authentication;
+        settings = finalSettings;
       };
     };
 }

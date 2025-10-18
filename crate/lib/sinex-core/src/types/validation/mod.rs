@@ -10,9 +10,9 @@ pub mod validation_chains;
 
 // Re-export main validation utilities
 pub use core::{
-    check_json_expansion, contains_shell_metacharacters, normalize_unicode,
-    sanitize_filename_component, validate_json, validate_path, validate_path_within_root, Result,
-    ValidationError,
+    check_json_expansion, contains_shell_metacharacters, deserialize_json_with_validation,
+    normalize_unicode, sanitize_filename_component, validate_json, validate_json_value,
+    validate_path, validate_path_within_root, Result, ValidationError,
 };
 
 pub use config_validation::{

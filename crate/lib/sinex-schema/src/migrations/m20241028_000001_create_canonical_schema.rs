@@ -65,6 +65,27 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .get_connection()
+            .execute_unprepared(
+                r#"
+                DO $$
+                BEGIN
+                    -- Replace legacy whitespace constraints with normalized checks that trim all whitespace characters.
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
+                    ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
+
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
+                    ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
+                    ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
+                END
+                $$;
+                "#,
+            )
+            .await?;
+        manager
+            .get_connection()
             .execute_unprepared(&ArchivedEvents::create_table_sql())
             .await?;
         manager

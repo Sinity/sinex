@@ -1,7 +1,6 @@
-//! Unified system processor implementing StatefulStreamProcessor
-//!
-//! This module implements the system satellite processor supporting snapshot, historical, and
-//! continuous scanning modes for system events.
+#![doc = include_str!("../doc/unified_processor.md")]
+
+//! Unified system processor implementing `StatefulStreamProcessor`.
 
 // Use local facade for common types
 use crate::common::*;

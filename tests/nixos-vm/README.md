@@ -38,10 +38,10 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 ./test/nixos-vm/run-vm-tests.sh -c performance
 
 # Debug mode (keeps VM on failure)
-./test/nixos-vm/run-vm-tests.sh -d basic-flow
+./tests/nixos-vm/run-vm-tests.sh -d basic
 
 # Custom timeout and output directory
-./test/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
+./tests/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
 ```
 
 ## Test Structure
@@ -62,18 +62,33 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 
 2. **Integration Tests** 
    - Comprehensive feature validation
-   - Multiple event source testing
-   - Service interaction verification
+   - Multiple event source testing (`test-scenarios/satellite-matrix.nix`)
+   - Maintenance timers and git-annex flow (`test-scenarios/maintenance.nix`)
+   - Multi-source stress path (`test-scenarios/multi-source.nix`)
+   - Failure recovery drills (`test-scenarios/failure-recovery.nix`)
+   - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
+   - *(Coming soon: production scale)*
 
 3. **Performance Tests** (`test-scenarios/performance.nix`)
    - High-throughput event processing
-   - Resource usage monitoring
-   - Query performance under load
+   - Load-generator coverage across filesystem/system sources
+   - Metrics inspection via helper scripts
 
-4. **Chaos Tests** (`chaos-engineering.nix`)
+4. **Chaos Tests** *(pending migration)*
    - Failure injection and recovery
    - Resource exhaustion scenarios
    - Service resilience validation
+
+### Modernization Roadmap
+
+- [x] Baseline smoke test (`basic`)
+- [x] Pre-flight / coordination coverage (`preflight`)
+- [x] Maintenance timers & blob storage (`maintenance`)
+- [x] Satellite constellation matrix (`satellite-matrix`)
+- [x] Re-enable multi-source stress testing on satellites
+- [x] Port failure-recovery suite to new services
+- [x] Restore performance suite on satellites
+- [ ] Restore chaos scenarios with monitoring assertions
 
 ## Key Improvements
 

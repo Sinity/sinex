@@ -1,7 +1,6 @@
-//! Journal watcher with historical import and cursor tracking
-//!
-//! This module provides systemd journal monitoring with historical import,
-//! cursor-based position tracking, rich metadata extraction, and batch processing.
+#![doc = include_str!("../doc/journal_watcher.md")]
+
+//! Journal watcher with historical import and cursor tracking.
 
 use sinex_core::db::models::{EventId, Provenance};
 use sinex_core::types::Ulid;

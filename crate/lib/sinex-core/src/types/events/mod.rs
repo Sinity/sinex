@@ -19,10 +19,8 @@ pub mod schema_registry;
 mod version;
 pub use version::*;
 
-// Test helpers (only available in test builds)
-#[cfg(test)]
-mod test_helpers;
-#[cfg(test)]
+// Test helpers for payload migration
+pub mod test_helpers;
 pub use test_helpers::*;
 
 // All payload types

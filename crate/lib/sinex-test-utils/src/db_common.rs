@@ -179,6 +179,18 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         .execute(conn.as_mut())
         .await?;
 
+    // Ensure no stale bootstrap records remain from prior runs
+    sqlx::query(
+        r#"
+        DELETE FROM raw.source_material_registry
+        WHERE id = $1::text::ulid OR source_identifier = $2
+        "#,
+    )
+    .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+    .bind("test-material-bootstrap")
+    .execute(conn.as_mut())
+    .await?;
+
     // Restore canonical test material record for fixtures that rely on Event::test_event
     sqlx::query(
         r#"
