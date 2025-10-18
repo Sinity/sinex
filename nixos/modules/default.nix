@@ -432,9 +432,10 @@ in
       mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
 
     # Environment packages
-    environment.systemPackages = with pkgs; [ 
-      asciinema 
+    environment.systemPackages = with pkgs; [
+      asciinema
       cfg.cliPackage
+      dbus
     ];
 
 
