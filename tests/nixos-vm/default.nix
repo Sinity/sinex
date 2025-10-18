@@ -33,5 +33,9 @@
   "failure-recovery" = import ./test-scenarios/failure-recovery.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
+
+  performance = import ./test-scenarios/performance.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
   
 }

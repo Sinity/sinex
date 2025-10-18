@@ -6,26 +6,9 @@ with lib;
 let
   cfg = config.services.sinex;
 
-  repoRoot = ../..;
-
-  flakePackages =
-    let
-      flakeResult =
-        if lib.hasAttr "getFlake" builtins then
-          lib.tryEval (builtins.getFlake (toString repoRoot))
-        else
-          { success = false; value = null; };
-    in
-    if flakeResult.success then
-      lib.attrByPath [ "packages" pkgs.system ] {} flakeResult.value
-    else
-      {};
-
   defaultSinexPackage =
     if pkgs ? sinex then
       pkgs.sinex
-    else if flakePackages ? sinex then
-      flakePackages.sinex
     else
       throw ''
         services.sinex.package is unset and no sinex package was found in pkgs.
@@ -35,8 +18,6 @@ let
   defaultCliPackage =
     if pkgs ? sinexCli then
       pkgs.sinexCli
-    else if flakePackages ? sinexCli then
-      flakePackages.sinexCli
     else
       pkgs.python3;
   
@@ -445,26 +426,29 @@ in
 
 
     # User and group creation
-    users.users.${cfg.database.user} = {
-      isSystemUser = true;
-      group = cfg.database.user;
-      description = "Sinex database user";
-      home = "/var/lib/${cfg.database.user}";
-      createHome = true;
+    users.users = {
+      ${cfg.database.user} = {
+        isSystemUser = true;
+        group = cfg.database.user;
+        description = "Sinex database user";
+        home = "/var/lib/${cfg.database.user}";
+        createHome = true;
+      };
+    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
+      ${cfg.satelliteUser} = {
+        isSystemUser = true;
+        group = cfg.satelliteUser;
+        description = "Sinex satellite services user";
+        home = "/var/lib/sinex";
+        createHome = true;
+      };
     };
 
-    users.groups.${cfg.database.user} = {};
-
-    # Satellite services user
-    users.users.${cfg.satelliteUser} = mkIf cfg.satellite.enable {
-      isSystemUser = true;
-      group = cfg.satelliteUser;
-      description = "Sinex satellite services user";
-      home = "/var/lib/sinex";
-      createHome = true;
+    users.groups = {
+      ${cfg.database.user} = {};
+    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
+      ${cfg.satelliteUser} = {};
     };
-
-    users.groups.${cfg.satelliteUser} = mkIf cfg.satellite.enable {};
 
     # Directory setup and configuration
     systemd.tmpfiles.rules = [

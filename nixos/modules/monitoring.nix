@@ -672,7 +672,7 @@ in
             printf "%d) %s\n" "$((idx + 1))" "''${services[$idx]}"
           done
 
-          read -rp "Choice (0-$(( ${#services[@]} ))) : " choice
+          read -rp "Choice (0-$(( ''${#services[@]} ))) : " choice
 
           if [ -z "$choice" ]; then
             echo "No selection made."

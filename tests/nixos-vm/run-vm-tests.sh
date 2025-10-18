@@ -19,7 +19,7 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 # Test categories (initial modernization pass)
 SMOKE_TESTS=("basic")
 INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix" "multi-source" "failure-recovery")
-PERFORMANCE_TESTS=()  # TODO: Re-enable performance scenarios once satellite conversion is complete
+PERFORMANCE_TESTS=("performance")
 CHAOS_TESTS=()        # TODO: Restore chaos suites after new failure-injection harness lands
 ALL_TESTS=("${SMOKE_TESTS[@]}" "${INTEGRATION_TESTS[@]}" "${PERFORMANCE_TESTS[@]}" "${CHAOS_TESTS[@]}")
 
@@ -78,10 +78,6 @@ list_tests() {
             echo "  - $test"
         done
         echo ""
-    else
-        echo "Performance tests:"
-        echo "  (pending modernization)"
-        echo ""
     fi
 
     if ((${#CHAOS_TESTS[@]})); then
@@ -106,9 +102,8 @@ validate_infrastructure() {
         "tests/nixos-vm/preflight_deployment_test.nix"
         "tests/nixos-vm/test-scenarios/maintenance.nix"
         "tests/nixos-vm/test-scenarios/satellite-matrix.nix"
-        # TODO: re-enable legacy heavy suites once satellite conversion completes
-        # "tests/nixos-vm/test-scenarios/multi-source.nix"
-        # "tests/nixos-vm/test-scenarios/performance.nix"
+        "tests/nixos-vm/test-scenarios/multi-source.nix"
+        "tests/nixos-vm/test-scenarios/performance.nix"
     )
 
     local common_files=(

@@ -326,7 +326,7 @@ in
     mkIf cfg.database.autoSetup {
       services.postgresql = {
         enable = true;
-        package = mkDefault cfg.database.package;
+        package = lib.mkForce cfg.database.package;
         extensions = extensionPackages;
         ensureDatabases = mkDefault [ cfg.database.name ];
         ensureUsers = mkDefault ensuredUsers;

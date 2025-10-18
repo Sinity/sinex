@@ -474,19 +474,109 @@ pkgs.nixosTest {
 
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
-      (import ../common/test-base.nix { 
+      (import ../common/test-base.nix {       services.sinex = {
+        serviceManagement.serviceGroups = {
+          core = true;
+          maintenance = true;
+          monitoring = false;
+        };
+
+        database = {
+          autoSetup = true;
+          name = "sinex_perf";
+          user = "sinex";
+        };
+
+        satellite = {
+          enable = true;
+          coordination.enable = false;
+          database.url = "postgresql:///sinex_perf?host=/run/postgresql";
+          logLevel = "info";
+
+          coreServices.enable = true;
+
+          eventSources = {
+            filesystem = {
+              enable = true;
+              instances = 2;
+            };
+            terminal = {
+              enable = true;
+              instances = 2;
+            };
+            desktop.enable = false;
+            system = {
+              enable = true;
+              instances = 1;
+            };
+          };
+
+          automata = {
+            canonicalCommandSynthesizer.enable = true;
+            healthAggregator.enable = true;
+          };
+        };
+      };
+
         inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli; 
       })
     ];
 
     # Override for performance testing
     services.sinex = {
-      # Enable promo worker for performance tests
-      promoWorker.enable = true;
-      
+      serviceManagement.serviceGroups = {
+        core = true;
+        maintenance = true;
+        monitoring = false;
+      };
+
+      database = {
+        autoSetup = true;
+        name = "sinex_perf";
+        user = "sinex";
+      };
+
+      satellite = {
+        enable = true;
+        coordination.enable = false;
+        database.url = "postgresql:///sinex_perf?host=/run/postgresql";
+        logLevel = "info";
+
+        coreServices.enable = true;
+
+        eventSources = {
+          filesystem = {
+            enable = true;
+            instances = 2;
+            batchSize = 150;
+            batchTimeout = 2;
+          };
+          terminal = {
+            enable = true;
+            instances = 2;
+            batchSize = 120;
+            batchTimeout = 2;
+          };
+          desktop.enable = false;
+          system = {
+            enable = true;
+            instances = 1;
+            batchSize = 150;
+            batchTimeout = 3;
+          };
+        };
+
+        automata = {
+          canonicalCommandSynthesizer.enable = true;
+          healthAggregator.enable = true;
+        };
+      };
+
       eventSources = {
-        # Additional sources for performance testing
-        filesystem.watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
+        filesystem = {
+          enable = true;
+          watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
+        };
         shellHistory.enable = true;
         atuin = {
           enable = true;
@@ -494,9 +584,11 @@ pkgs.nixosTest {
         };
         dbus.enable = true;
       };
+
+      monitoring.observabilityStack.enable = false;
     };
     
-    # Performance test packages
+      # Performance test packages
     environment.systemPackages = with pkgs; [
       atuin
       zsh
