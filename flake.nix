@@ -364,6 +364,11 @@
           modules = [ ./nixos/example-monitoring.nix ];
         };
 
+        exampleDevSandbox = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/example-dev-sandbox.nix ];
+        };
+
         exampleCoordination = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [ ./nixos/example-coordination.nix ];

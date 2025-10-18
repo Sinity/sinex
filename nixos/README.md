@@ -6,6 +6,7 @@ Complete deployment and operations guide for the Sinex Exocortex personal data c
 
 - **example.nix** - Minimal workstation deployment (filesystem + terminal satellites)
 - **example-monitoring.nix** - Staging configuration with maintenance + observability stack
+- **example-dev-sandbox.nix** - Comprehensive developer sandbox with all services enabled
 - **example-coordination.nix** - Hot standby deployment with coordination enabled
 - **modules/** - Implementation modules:
   - `default.nix` - Main module entry point and base options
