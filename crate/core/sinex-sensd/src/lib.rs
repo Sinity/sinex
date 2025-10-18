@@ -1,7 +1,9 @@
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
 #![allow(unexpected_cfgs, unused_imports, unused_variables, dead_code)]
-//! sensd - Universal acquisition daemon library
-//!
-//! Core modules for source material acquisition and temporal ledger management
+
+//! Core modules for source material acquisition and temporal ledger management.
 
 pub mod config;
 pub mod grpc_server;

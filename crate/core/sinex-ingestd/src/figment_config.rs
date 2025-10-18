@@ -1,7 +1,6 @@
-//! Modern configuration for ingestd using Figment
-//!
-//! This module provides configuration management for the ingestion daemon
-//! using Figment for multi-source configuration loading.
+#![doc = include_str!("../doc/figment_config.md")]
+
+//! Figment bindings for ingestion configuration.
 
 use camino::Utf8PathBuf;
 

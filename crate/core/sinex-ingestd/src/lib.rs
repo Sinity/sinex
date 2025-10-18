@@ -1,8 +1,9 @@
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
 #![allow(unexpected_cfgs)]
-//! Sinex Ingestion Daemon
-//!
-//! Central hub for event ingestion that receives events from satellite sources,
-//! validates them, writes them to PostgreSQL, and broadcasts them to NATS JetStream.
+
+//! Runtime entry points for the Sinex ingestion daemon.
 
 pub mod config;
 pub mod figment_config;

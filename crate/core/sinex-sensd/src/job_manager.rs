@@ -1,7 +1,8 @@
-//! Job manager for sensd
+#![doc = include_str!("../doc/job_manager.md")]
+
+//! Job manager for sensd.
 //!
-//! Manages sensor jobs, coordinating data acquisition tasks
-//! and ensuring reliable capture of source materials.
+//! Coordinates acquisition tasks and handles retries/backoff.
 
 use crate::{
     config::JobManagerConfig,

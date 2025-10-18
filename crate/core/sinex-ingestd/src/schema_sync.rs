@@ -1,7 +1,6 @@
-//! Schema synchronization module for ingestd
-//!
-//! This module handles synchronizing payload schemas discovered at build time
-//! with the database schema registry.
+#![doc = include_str!("../doc/schema_sync.md")]
+
+//! Helpers that ensure ingestd stays in sync with schema metadata.
 
 use crate::IngestdResult;
 use sinex_core::types::events::schema_registry::{generate_all_schemas, get_all_payloads};

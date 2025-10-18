@@ -1,0 +1,14 @@
+# sinex-analytics-automaton
+
+The analytics automaton consumes event streams and emits synthesized insights.
+It implements the shared `StatefulStreamProcessor` traits from
+`sinex-satellite-sdk` and is responsible for turning raw events into aggregated
+analytics.
+
+- Listens for events from filesystem, desktop, and other satellites.
+- Produces derived events and metrics requested by gateways.
+- Maintains checkpoint state for reliable replay.
+
+Reference `docs/architecture/SystemOperations_And_Integrity_Architecture.md` for
+consumer dashboards and `docs/architecture/satellite-implementation.md` for the
+shared processor architecture.

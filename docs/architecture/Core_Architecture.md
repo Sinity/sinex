@@ -19,7 +19,7 @@ Data Substrate
 - Storage: PostgreSQL (+ TimescaleDB)
 - IDs: ULIDs for ordering and distribution
 - Event store: `core.events` with strict provenance
-- Schema: see `docs/architecture/SCHEMA.md` for table details
+- Schema: see `crate/lib/sinex-schema/doc/overview.md` for table details
 
 Streaming & Ingestion
 - Messaging: NATS JetStream (subjects, durable consumers, explicit acks)
@@ -32,7 +32,7 @@ Security & Operations
 - Ops & integrity: backups, invariants, journald-based observability: `docs/architecture/SystemOperations_And_Integrity_Architecture.md`
 
 Schema & Taxonomy
-- Schema notes: `docs/architecture/SCHEMA.md`
+- Schema notes: `crate/lib/sinex-schema/doc/overview.md`
 - Event taxonomy: `docs/architecture/event-taxonomy.md`
 
 Implementation Guides

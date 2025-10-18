@@ -1,4 +1,6 @@
-//! gRPC server implementation for sensd
+#![doc = include_str!("../doc/grpc_server.md")]
+
+//! gRPC server implementation for sensd.
 //!
 //! Provides MaterialSliceStream and job management interfaces
 

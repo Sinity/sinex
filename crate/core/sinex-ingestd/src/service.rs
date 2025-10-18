@@ -1,4 +1,6 @@
-//! Main ingestion service implementation
+#![doc = include_str!("../doc/service.md")]
+
+//! Main ingestion service implementation.
 
 // Local crate imports
 use crate::{

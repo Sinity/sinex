@@ -1,45 +1,4 @@
-//! Replay State Machine for persistent replay operation tracking
-//!
-//! This module implements a distributed state machine for replay operations,
-//! enabling pause/resume, collaborative approval, and failure recovery.
-//!
-//! ## State Machine Overview
-//!
-//! The replay state machine manages the lifecycle of replay operations with these states:
-//!
-//! - **Planning**: Initial state, gathering scope and planning the operation
-//! - **Previewed**: Preview computed, awaiting approval from authorized user
-//! - **Approved**: Operation approved for execution
-//! - **Executing**: Active replay in progress with checkpoint tracking
-//! - **Committing**: Finalizing changes and cleanup
-//! - **Completed**: Successfully finished
-//! - **Failed**: Error occurred during execution
-//! - **Cancelled**: User cancelled the operation
-//!
-//! ## State Transitions
-//!
-//! Valid transitions ensure operational safety:
-//! ```text
-//! Planning → Previewed → Approved → Executing → Committing → Completed
-//!     ↓          ↓         ↓          ↓            ↓
-//! Cancelled  Cancelled  Cancelled   Failed      Failed
-//!     ↓          ↓         
-//! Planning   Planning   
-//! ```
-//!
-//! ## Distributed Coordination
-//!
-//! - PostgreSQL advisory locks prevent concurrent execution conflicts
-//! - Checkpoints enable pause/resume functionality
-//! - Node tracking identifies which executor is running operations
-//! - Approval workflow ensures human oversight of destructive operations
-//!
-//! ## Error Handling and Recovery
-//!
-//! - Failed operations can be restarted from Planning state
-//! - Checkpoints contain savepoint information for transaction rollback
-//! - Detailed error logging helps with troubleshooting
-//! - Operations can be cancelled at any non-terminal state
+#![doc = include_str!("../doc/replay_state_machine.md")]
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};

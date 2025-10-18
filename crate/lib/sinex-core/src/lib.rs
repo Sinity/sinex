@@ -1,52 +1,10 @@
-#![allow(async_fn_in_trait)]
-//! # Sinex Core
-//!
-//! Unified core types and database layer for the Sinex event-driven data capture system.
-//! This crate combines the functionality that was previously split across sinex-types and sinex-db.
-//!
-//! ## Architecture Overview
-//!
-//! The Sinex data model implements key architectural principles through its table design:
-//!
-//! ### Core Tables
-//!
-//! #### `raw.source_material_registry`
-//! The manifest of all external data - the "birth certificates" for all data entering the system:
-//! - Immutable storage via git-annex integration
-//! - Rich metadata including timing, source, and user context
-//! - Supports the Stage-as-You-Go pattern for real-time provenance
-//!
-//! #### `core.events`
-//! The unified interpretation log implementing Deep Oneness:
-//! ```sql
-//! CREATE TABLE core.events (
-//!     id ULID PRIMARY KEY,                  -- Time-ordered, globally unique
-//!     ts_ingest TIMESTAMPTZ GENERATED ALWAYS AS (id::timestamp) STORED,
-//!     ts_orig TIMESTAMPTZ,                  -- Semantic time (optional)
-//!     source TEXT NOT NULL,                 -- Who created this
-//!     event_type TEXT NOT NULL,             -- What happened
-//!     host TEXT NOT NULL,                   -- Envelope host provenance
-//!     payload JSONB NOT NULL,               -- The details
-//!
-//!     -- Envelope provenance (XOR):
-//!     source_event_ids ULID[],              -- Internal provenance (synthesis)
-//!     source_material_id ULID,              -- External provenance (material)
-//!     source_material_offset_start BIGINT,
-//!     source_material_offset_end BIGINT,
-//!     anchor_byte BIGINT,
-//!
-//!     -- Schema evolution support
-//!     ingestor_version TEXT,
-//!     payload_schema_id ULID,
-//!     payload_schema_name TEXT,
-//!     payload_schema_version TEXT,
-//!
-//!     -- Optional associated content
-//!     associated_blob_ids ULID[]
-//! );
-//! -- Plus a CHECK enforcing XOR between (source_material_id, anchor_byte) and source_event_ids.
-//! ```
+#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/event-taxonomy.md")]
+#![doc = include_str!("../../../../docs/architecture/ULID_HANDLING.md")]
 
+//! Core Sinex abstractions for types, persistence, and environment wiring.
+#![allow(async_fn_in_trait)]
 // Types module - unified types system
 pub mod types {
     // Re-export the entire types module structure

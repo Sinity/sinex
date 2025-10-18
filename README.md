@@ -252,7 +252,7 @@ just test-dev       # Quick dev cycle (<2 min)
 
 ### Key Components
 - **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
-- **Schema & Taxonomy**: [`docs/architecture/SCHEMA.md`](docs/architecture/SCHEMA.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+- **Schema & Taxonomy**: [`crate/lib/sinex-schema/doc/overview.md`](crate/lib/sinex-schema/doc/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
 - **Satellites SDK & Patterns**: [`docs/architecture/satellite-implementation.md`](docs/architecture/satellite-implementation.md)
 
 ### For Contributors

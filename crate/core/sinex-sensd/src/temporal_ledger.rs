@@ -1,4 +1,6 @@
-//! Temporal ledger management
+#![doc = include_str!("../doc/temporal_ledger.md")]
+
+//! Temporal ledger management.
 //!
 //! The temporal ledger records precise capture-time information for all
 //! source materials, ensuring temporal integrity and provenance tracking.

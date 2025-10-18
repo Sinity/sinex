@@ -1,4 +1,6 @@
-//! Configuration for the ingestion daemon
+#![doc = include_str!("../doc/config.md")]
+
+//! Configuration helpers for the ingestion daemon.
 
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
