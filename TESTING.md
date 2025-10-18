@@ -45,6 +45,9 @@ For comprehensive testing documentation, see:
 
 ## Common Commands
 
+> See `docs/documentation-and-testing-playbook.md` §5.2 for a catalogue of
+> Nextest profiles and when to use each.
+
 ```bash
 # Run fast loop (Nextest)
 just test                     # wraps `cargo nextest run --workspace --lib`

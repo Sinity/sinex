@@ -1,8 +1,8 @@
 # Documentation & Testing Playbook
 
-This playbook captures how Sinex organizes written design context and executable
-tests. Treat it as the canonical reference when adding new crates, wiring up
-rustdoc, or deciding where tests belong.
+This playbook captures how Sinex organizes written design context. Treat it as
+the canonical reference when adding new crates or wiring up rustdoc. For
+testing and QA policy, see `crate/lib/sinex-test-utils/doc/testing_quality_overview.md`.
 
 ## 1. Documentation Principles
 
@@ -57,49 +57,13 @@ rustdoc, or deciding where tests belong.
   crate doc should highlight the relationship and trust the reader to follow the
   link for the full story.
 
-## 5. Testing Strategy
+## 5. Further Reading
 
-- **Inline tests** are allowed only for private helpers or code that cannot be
-  reached from integration-style tests (e.g., proc-macro parsing utilities). All
-  other scenarios belong in dedicated files under `<crate>/tests/`.
-- **Crate-level tests** mirror the module or behaviour they cover. For instance,
-  `stream_processor.rs` should have a partner test file such as
-  `tests/stream_processor.rs`.
-- **Shared fixtures** live inside the crate (e.g., `crate::tests::util`) or in
-  `sinex-test-utils` when reused across the workspace.
-- The workspace `tests/` tree remains reserved for cross-cutting, multi-crate, or
-  system validation suites; do not mirror crate-level behaviour there.
-- Always invoke tests through `just test` / `cargo nextest run` to match CI and
-  ensure `.proptest-regressions` files stay synchronized when property tests
-  introduce new seeds.
-
-### 5.1 Test Categories
-
-Sinex maintains dedicated suites for distinct concerns. When adding or updating
-tests, align with the existing directory structure:
-
-- `tests/unit/` – fast, isolated component checks.
-- `tests/integration/` – cross-component workflows and database interactions.
-- `tests/system/` – end-to-end scenarios that exercise the full stack.
-- `tests/property/` – property-based tests powered by proptest.
-- `tests/adversarial/` – boundary, chaos, and attack surface validation.
-- `tests/performance/` – throughput, latency, and resource behaviour.
-- `tests/security/`, `tests/concurrency/` – specialised suites for their domains.
-
-### 5.2 Nextest Profiles
-
-Nextest drives all automated runs. The repository defines the following
-profiles in `nextest.toml`:
-
-| Profile    | Purpose                                  | Tweaks                                      |
-|------------|------------------------------------------|---------------------------------------------|
-| `default`  | CI and developer baseline                | `test-threads = num-cpus`, retry once       |
-| `fast`     | Quick local feedback                     | 4 threads, shorter slow-timeout             |
-| `reliable` | Flake hunting / soak tests               | 2 threads, 3 retries, longer timeouts       |
-| `parallel` | Maximum throughput on beefy machines     | `test-threads = num-cpus`, retries disabled |
-
-Select a profile via `cargo nextest run --profile <name>` or using the `just`
-aliases (e.g., `just test-fast`, `just test-reliable`).
+- Testing policy, suite layout, Nextest profiles, and CI expectations are
+  documented alongside the harness in
+  `crate/lib/sinex-test-utils/doc/testing_quality_overview.md`.
+- The workspace `tests/` directory contains per-suite READMEs where additional
+  guidance is helpful (property tests, VM fixtures, etc.).
 
 ## 6. Migration Checklist
 
@@ -120,32 +84,3 @@ When touching a crate, run through this list:
 Following this playbook keeps Sinex documentation discoverable and our tests
 reliable, while avoiding the drift that comes from scattering long-form context
 throughout the source tree.
-
-## 7. Quality Gates & Automation
-
-### 7.1 Linting & Static Analysis
-
-- **Clippy** (`clippy.toml`) enforces architectural rules such as banning raw
-  SQL (`sqlx::query`) and discouraging generic `anyhow` errors. Complexity
-  thresholds (arguments, lines, cognitive complexity) ensure maintainable code.
-- **Unsafe code** is globally denied. If a future change requires it, document
-  the justification and safety invariants explicitly.
-- **Async hygiene**: linting rejects holding locks across `.await` and other
-  unsafe async patterns.
-
-### 7.2 Continuous Integration
-
-GitHub Actions (`.github/workflows/ci.yml`) executes the following stages:
-
-1. **Environment checks** – `nix flake check` keeps the dev shell reproducible.
-2. **Formatting & linting** – `cargo fmt`, `cargo clippy`, and the static rules
-   above.
-3. **Tests** – `cargo nextest run --profile default --workspace` against a
-   TimescaleDB-enabled PostgreSQL instance.
-4. **SQLx offline validation** – ensures query metadata in `.sqlx/` matches the
-   current schema.
-5. **Coverage (optional)** – `cargo llvm-cov` can be triggered via `just` when
-   deeper analysis is required.
-
-Reference the workflow when adding new steps so local and CI expectations stay
-aligned.

@@ -1,8 +1,10 @@
-//! Search Automaton - Event-driven search indexing and query processing
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+
+//! Search automaton.
 //!
-//! This automaton consumes events containing searchable content and produces
-//! synthesized search indices and query insights. It implements the proper automaton pattern:
-//! Content Events → Indexing → Synthesized Search Events
+//! Content Events → Indexing → Synthesized Search Events.
 
 // Local facade module to reduce import verbosity
 mod common {

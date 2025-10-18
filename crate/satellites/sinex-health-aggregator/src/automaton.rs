@@ -1,3 +1,5 @@
+#![doc = include_str!("../doc/automaton.md")]
+
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,6 @@
-//! Unified StatefulStreamProcessor implementation for Terminal Command Canonicalizer
-//!
-//! This automaton creates canonical command events as synthesis events based on terminal
-//! command events from multiple sources (kitty, atuin, shell history).
+#![doc = include_str!("../doc/unified_processor.md")]
+
+//! Unified `StatefulStreamProcessor` implementation for the terminal command canonicalizer.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

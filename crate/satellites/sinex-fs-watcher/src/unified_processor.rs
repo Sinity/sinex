@@ -1,8 +1,6 @@
-//! Unified filesystem processor using sensd MaterialSliceStream
-//!
-//! This module implements filesystem monitoring through sensd's source material capture system.
-//! Instead of directly monitoring filesystem events, it submits TreeWatch jobs to sensd
-//! and processes the resulting MaterialSliceStream to generate events with proper provenance.
+#![doc = include_str!("../doc/unified_processor.md")]
+
+//! Unified filesystem processor using sensd `MaterialSliceStream`.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -176,6 +174,11 @@ impl FilesystemProcessor {
             stage_context: None,
             event_sender: None,
         }
+    }
+
+    /// Access the current processor configuration.
+    pub fn config(&self) -> &FilesystemConfig {
+        &self.config
     }
 
     /// Submit a TreeWatch job to sensd for filesystem monitoring
@@ -939,61 +942,6 @@ impl ExplorationProvider for FilesystemProcessor {
 
             std::fs::write(path.as_str(), content)?;
         }
-
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sinex_test_utils::prelude::*;
-
-    #[sinex_test]
-    async fn test_processor_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let config = FilesystemConfig {
-            watch_paths: vec!["/tmp/test".to_string()],
-            max_depth: Some(5),
-            follow_symlinks: false,
-            batch_size: 50,
-            processing_interval_ms: 500,
-        };
-
-        let processor = FilesystemProcessor::with_config(config.clone());
-
-        assert_eq!(processor.config.watch_paths, config.watch_paths);
-        assert_eq!(processor.config.max_depth, config.max_depth);
-        assert_eq!(processor.config.follow_symlinks, config.follow_symlinks);
-        assert_eq!(processor.config.batch_size, config.batch_size);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        // Valid config
-        let valid_config = FilesystemConfig {
-            watch_paths: vec!["/tmp/test".to_string()],
-            max_depth: Some(10),
-            follow_symlinks: false,
-            batch_size: 100,
-            processing_interval_ms: 1000,
-        };
-        assert!(valid_config.validate_config().is_ok());
-
-        // Invalid config - empty watch paths
-        let invalid_config = FilesystemConfig {
-            watch_paths: vec![],
-            ..valid_config.clone()
-        };
-        assert!(invalid_config.validate_config().is_err());
-
-        // Invalid config - batch size too large
-        let invalid_config = FilesystemConfig {
-            batch_size: 2000,
-            ..valid_config.clone()
-        };
-        assert!(invalid_config.validate_config().is_err());
 
         Ok(())
     }

@@ -1,10 +1,8 @@
-//! Filesystem watcher satellite for Sinex using sensd integration
-//!
-//! Independent satellite service that monitors filesystem changes through sensd's
-//! MaterialSliceStream and generates events with proper provenance.
-//!
-//! This module provides the unified StatefulStreamProcessor architecture that uses
-//! ONLY sensd for source material capture - no direct filesystem monitoring.
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+
+//! Filesystem watcher satellite facade.
 
 pub mod unified_processor;
 

@@ -1,4 +1,6 @@
-//! CLI for fs-watcher with sensd integration option
+#![doc = include_str!("../doc/cli.md")]
+
+//! CLI for fs-watcher with sensd integration option.
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;

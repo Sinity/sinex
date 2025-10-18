@@ -1,8 +1,11 @@
-//! Content Automaton - Event-driven text and media analysis
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+
+//! Content automaton entry points.
 //!
-//! This automaton consumes events containing textual or media content and produces
-//! synthesized content insights and classifications. It implements the proper automaton pattern:
-//! Content Events → Analysis → Synthesized Content Insights
+//! Content Events → Analysis → Synthesized Content Insights.
 
 // Local facade module to reduce import verbosity
 mod common {

@@ -1,7 +1,6 @@
-//! systemd watcher
-//!
-//! Monitors systemd services, timers, and unit state changes
-//! Now uses modern nix-based integration instead of spawning external processes
+#![doc = include_str!("../doc/systemd_watcher.md")]
+
+//! systemd watcher module.
 
 use sinex_core::db::models::{EventId, Provenance};
 use sinex_core::types::utils::wait_helpers::retry_with_exponential_backoff;

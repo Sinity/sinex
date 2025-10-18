@@ -1,41 +1,61 @@
 # Testing, Quality Assurance, and Reliability Overview
 
 This note complements the day-to-day guides by highlighting the cross-cutting
-quality controls that keep the Sinex test ecosystem healthy. For detailed
-instructions see:
+quality controls that keep the Sinex test ecosystem healthy. For hands-on
+usage, see:
 
-- `docs/documentation-and-testing-playbook.md` – canonical testing strategy,
-  suite layout, linting rules, and CI stages.
 - `TESTING.md` – quick-start guide for writing and running tests with
-  `TestContext`.
-- `doc/overview.md` – API-level documentation for `sinex-test-utils`.
+  `TestContext` and Nextest.
+- `doc/overview.md` – API-level documentation for `sinex-test-utils` helpers
+  (fixtures, timing utilities, assertions, database pool).
+- README files under `tests/` for suite-specific notes (e.g., property tests,
+  VM smoke tests).
 
-## Testing Architecture Snapshot
+## Test Suite Layout
 
-- Test categories (`unit`, `integration`, `system`, `property`, `adversarial`,
-  `performance`, `security`, `concurrency`) are documented in the playbook
-  (§5.1). Align new suites with that structure so ownership and runtime
-  expectations stay clear.
-- Nextest profiles (`default`, `fast`, `reliable`, `parallel`) live in
-  `nextest.toml` and are summarised in the playbook (§5.2). Use `cargo nextest
-  run --profile <name>` or the `just test-*` helpers to pick the right balance of
-  speed vs. determinism.
-- `TestContext` remains the single entry point for DB access, fixtures, timing
-  utilities, and assertion helpers. See `doc/overview.md` for the full feature
-  set and examples.
+| Location                     | Focus / Scope                                             | Notes                                                   |
+|------------------------------|-----------------------------------------------------------|---------------------------------------------------------|
+| `tests/unit/`                | Fast, isolated component tests                           | Keep under ~1 s each; prefer direct API usage           |
+| `tests/integration/`         | Cross-crate workflows and database interactions          | Largest suite; beware legacy raw SQL during migrations  |
+| `tests/system/`              | End-to-end flows exercising ingest → automata → gateway  | Uses real services; slower (~minutes)                   |
+| `tests/property/`            | proptest-based fuzzing of core invariants                | Commit new `.proptest-regressions` seeds                |
+| `tests/adversarial/`         | Chaos/boundary/security scenarios                        | Stress error paths, malformed input                     |
+| `tests/performance/`         | Throughput/latency/resource measurements                 | Optional in CI; document dataset sizes                  |
+| `tests/security/`, `...`     | Specialised suites (Unicode handling, concurrency, etc.) | Add README if suite-specific setup is required          |
+
+`TestContext` is the single entry point for database access, fixture creation,
+timing utilities, and assertion helpers. Favour it over one-off utilities when
+adding new tests.
+
+## Nextest Profiles
+
+The workspace ships with several profiles (`.config/nextest.toml`):
+
+| Profile       | Use case                               | Tweaks                                              |
+|---------------|----------------------------------------|-----------------------------------------------------|
+| `default`     | CI / day-to-day baseline                | `test-threads = num-cpus`, retry once               |
+| `fast`        | Quick local feedback                    | 4 threads, shorter slow-timeout                     |
+| `reliable`    | Flake hunting / soak tests              | 2 threads, 3 retries, longer slow-timeout           |
+| `parallel`    | Max throughput on large machines        | `test-threads = num-cpus`, retries disabled         |
+| `debug`       | Single-threaded with full output        | 1 thread, `success-output = immediate-final`        |
+| `ci-parallel` | High-parallel CI runners                | 18 threads, retry once, balanced slow-timeout       |
+
+Invoke with `cargo nextest run --profile <name>` or the corresponding `just`
+aliases (e.g., `just test`, `just test-fast`, `just test-reliable`).
 
 ## Quality Controls
 
-- `clippy.toml` enforces architectural invariants: no raw SQL (`sqlx::query`),
-  structured errors instead of `anyhow`, async hygiene (`await_holding_lock`),
-  and bounded complexity. Treat any new lint as a design conversation rather
-  than an annoyance.
+- Linting lives in `Cargo.toml` (`workspace.lints.*`). Clippy runs with `warn`
+  levels for the `pedantic`/`nursery` groups and escalates targeted lints
+  (`too_many_arguments`, `type_complexity`). The root `clippy.toml` currently
+  only bans `std::thread::sleep` so we do not block inside async code.
 - CI (`.github/workflows/ci.yml`) mirrors the local workflow: formatting,
-  clippy, `cargo nextest` against TimescaleDB, SQLx offline metadata checks, and
-  optional coverage via `cargo llvm-cov`. Keep local runs (`just dev`, `just
-  test`) green before pushing so CI stays boring.
-- Coverage helpers (`just coverage-*`) rely on `cargo llvm-cov`. Use them during
-  larger refactors to confirm we are exercising new execution paths.
+  clippy, `cargo nextest --profile default --workspace` against TimescaleDB,
+  SQLx offline metadata checks (`cargo sqlx prepare --check`), and optional
+  coverage via `just coverage` (Tarpaulin).
+- Coverage generation uses `cargo tarpaulin` (`just coverage`). Run it during
+  larger refactors or before landing riskier changes to confirm we are
+  exercising new execution paths.
 
 ## Reliability & Observability
 

@@ -1,6 +1,6 @@
-//! Unified main.rs for filesystem processor using StatefulStreamProcessor architecture
-//!
-//! This demonstrates the new CLI structure with service/scan/explore subcommands.
+#![doc = include_str!("../doc/unified_main.md")]
+
+//! Unified binary entrypoint for the filesystem processor.
 
 use clap::Parser;
 use sinex_fs_watcher::{FilesystemProcessor, FilesystemConfig};

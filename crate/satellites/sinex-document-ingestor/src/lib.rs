@@ -1,7 +1,8 @@
-//! Document Ingestor that consumes MaterialSliceStream from sensd
-//!
-//! This ingestor demonstrates the proper pattern for consuming source materials
-//! from sensd and creating events with proper provenance traceability.
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+
+//! Document ingestor that consumes `MaterialSliceStream` from sensd.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -414,7 +415,7 @@ impl DocumentProcessor {
         }
 
         // Create document.ingested event with proper material provenance
-        let mut event = Event::<JsonValue>::dynamic(
+        let event = Event::<JsonValue>::dynamic(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),
             serde_json::json!({

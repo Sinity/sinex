@@ -1,12 +1,8 @@
-//\! Unified System Satellite
-//\!
-//\! Coordinates multiple system event sources:
-//\! - D-Bus events (signals, method calls, notifications)
-//\! - systemd Journal events
-//\! - udev hardware events
-//\! - systemd unit state changes
-//\!
-//\! This module provides the unified StatefulStreamProcessor architecture from Part 16.
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
+
+//! Unified system satellite that coordinates D-Bus, journal, udev, and systemd signals.
 
 mod dbus_watcher;
 mod journal_watcher;

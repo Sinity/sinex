@@ -1,8 +1,9 @@
-//! # Sinex Services Layer
-//!
-//! This crate provides high-level business logic services that abstract
-//! over the raw database operations in sinex-db. Services encapsulate
-//! complex workflows and provide clean APIs for the rest of the system.
+#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../../../../docs/architecture/security-architecture.md")]
+
+//! Thin facade that re-exports high-level services used by gateways and satellites.
 
 /// Analytics service for processing and aggregating event data
 pub mod analytics;
