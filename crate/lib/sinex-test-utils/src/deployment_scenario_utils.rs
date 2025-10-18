@@ -1106,6 +1106,16 @@ impl ConfigCompatibilityTester {
             .map(|s| s.name.as_str())
             .collect()
     }
+
+    /// Total number of scenarios currently registered
+    pub fn scenario_count(&self) -> usize {
+        self.test_scenarios.len()
+    }
+
+    /// Path to the temporary workspace directory backing this tester
+    pub fn temp_dir_path(&self) -> &std::path::Path {
+        self.temp_dir.path()
+    }
 }
 
 /// Generate a comprehensive compatibility report

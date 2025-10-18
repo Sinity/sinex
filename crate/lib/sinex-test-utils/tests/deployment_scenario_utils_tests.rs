@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 
 use sinex_test_utils::{
-    sinex_test, CompatibilityResult, ComponentConfig, ConfigCompatibilityTester,
-    DependencyAvailability, DependencyType, EnvironmentSetup, EnvironmentType, ExpectedOutcome,
-    ExternalDependency, PerformanceExpectations, PerformanceMetrics, ResourceConstraints, Result,
-    TestContext, ValidationExpectation, ValidationStep, ValidationType,
+    sinex_test, CompatibilityResult, CompatibilityTestScenario, ComponentConfig,
+    ConfigCompatibilityTester, DependencyAvailability, DependencyType, EnvironmentSetup,
+    EnvironmentType, ExpectedOutcome, ExternalDependency, PerformanceExpectations,
+    PerformanceMetrics, ResourceConstraints, Result, TestContext, ValidationExpectation,
+    ValidationStep, ValidationType,
 };
 
 #[sinex_test]
 async fn test_compatibility_tester_creation() -> Result<()> {
     let tester = ConfigCompatibilityTester::new().await?;
-    assert!(!tester.test_scenarios.is_empty());
+    assert!(tester.scenario_count() > 0);
 
     let scenario_names = tester.list_scenarios();
     assert!(scenario_names.contains(&"development_environment"));
@@ -233,8 +234,8 @@ async fn test_compatibility_scenario_creation(_ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_config_compatibility_tester_creation(_ctx: TestContext) -> Result<()> {
     let tester = ConfigCompatibilityTester::new().await?;
-    assert!(!tester.test_scenarios.is_empty());
-    assert!(tester.temp_dir.path().exists());
+    assert!(tester.scenario_count() > 0);
+    assert!(tester.temp_dir_path().exists());
 
     Ok(())
 }

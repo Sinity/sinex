@@ -1,4 +1,4 @@
-use serde_json::json;
+use sinex_test_utils::prelude::DbPoolExt;
 use sinex_test_utils::{sinex_test, Result, TestContext};
 
 #[sinex_test]

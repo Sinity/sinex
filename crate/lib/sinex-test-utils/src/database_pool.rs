@@ -312,6 +312,11 @@ impl TestDatabase {
         &self.slot.url
     }
 
+    /// Advisory lock identifier associated with this database slot
+    pub fn lock_id(&self) -> i64 {
+        self.lock_id
+    }
+
     /// Get acquisition timestamp for diagnostics
     pub fn acquired_at(&self) -> Instant {
         self.acquired_at

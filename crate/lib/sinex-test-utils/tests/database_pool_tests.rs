@@ -15,6 +15,7 @@ use sinex_test_utils::{
     acquire_test_database, check_pool_health, get_pool_stats, reset_pool, sinex_test, Result,
 };
 use sqlx::postgres::PgConnection;
+use sqlx::Connection;
 
 #[sinex_test]
 async fn test_pool_handles_concurrent_acquisition() -> Result<()> {
@@ -60,7 +61,7 @@ async fn test_database_cleanup_on_drop() -> Result<()> {
         let baseline = db.pool().events().count_all().await?;
         db_name = db.name().to_string();
 
-        let repo = db.pool.events();
+        let repo = db.pool().events();
         let event = Event::<JsonValue>::test_event(
             EventSource::new("test"),
             EventType::new("test.event"),
@@ -89,7 +90,7 @@ async fn test_database_cleanup_on_drop() -> Result<()> {
 #[sinex_test]
 async fn test_advisory_lock_prevents_double_acquisition() -> Result<()> {
     let db1 = acquire_test_database().await?;
-    let lock_id1 = db1.lock_id;
+    let lock_id1 = db1.lock_id();
 
     let mut probe_conn = PgConnection::connect(db1.url()).await?;
     let lock_acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -137,7 +138,7 @@ async fn test_pool_statistics() -> Result<()> {
 async fn test_clean_database_handles_complex_data() -> Result<()> {
     let db = acquire_test_database().await?;
 
-    let repo = db.pool.events();
+    let repo = db.pool().events();
     let event_to_insert = Event::<JsonValue>::test_event(
         EventSource::new("test"),
         EventType::new("test"),
@@ -200,7 +201,7 @@ async fn test_stress_concurrent_operations() -> Result<()> {
                 .await?;
             let material_id = sinex_core::Id::<SourceMaterial>::from_ulid(material_record.id);
 
-            let repo = db.pool.events();
+            let repo = db.pool().events();
             for _ in 0..5 {
                 let mut event = Event::<JsonValue>::test_event(
                     EventSource::new(format!("task_{i}")),
@@ -212,7 +213,7 @@ async fn test_stress_concurrent_operations() -> Result<()> {
                 repo.insert(event).await?;
             }
 
-            let repo = db.pool.events();
+            let repo = db.pool().events();
             let count = repo.count_all().await?;
             assert!(count >= 5);
 
@@ -317,7 +318,7 @@ async fn test_pool_reset_clears_state() -> Result<()> {
     let baseline = db.pool().events().count_all().await?;
     assert_eq!(baseline, 0);
 
-    let repo = db.pool.events();
+    let repo = db.pool().events();
     let event = Event::<JsonValue>::test_event(
         EventSource::new("reset"),
         EventType::new("pool.reset"),
