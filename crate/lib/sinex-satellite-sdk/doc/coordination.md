@@ -4,7 +4,7 @@ Coordination helpers for leader election, handoff, and failure recovery.
 
 The module wraps advisory-lock arbitration, version-aware priority, optional
 preflight gating, and the work-tracking needed to leave leadership cleanly.
-Refer to `docs/architecture/satellite-implementation.md` for the lifecycle
+Refer to `crate/lib/sinex-satellite-sdk/doc/overview.md` for the lifecycle
 narrative and timing diagrams that inform this implementation.
 - **Timeout Handling**: Force shutdown if graceful completion takes too long
 - **Heartbeat Integration**: Report work status via heartbeat metrics

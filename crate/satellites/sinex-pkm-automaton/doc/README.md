@@ -8,4 +8,4 @@ relation events into curated knowledge graph updates.
 - Maintains checkpointed state using `sinex-satellite-sdk` helpers.
 
 See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
-`docs/architecture/satellite-implementation.md` for the broader workflow.
+`crate/lib/sinex-satellite-sdk/doc/overview.md` for the broader workflow.

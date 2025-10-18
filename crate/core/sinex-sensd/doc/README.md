@@ -15,4 +15,4 @@ Major components:
 - `grpc_server` – optional control plane for remote introspection.
 
 For end-to-end acquisition topology see `docs/architecture/Core_Architecture.md`
-and `docs/architecture/satellite-implementation.md`.
+and `crate/lib/sinex-satellite-sdk/doc/overview.md`.

@@ -15,7 +15,7 @@ See also: the high-level map in `../Architecture.md` and definitions in `../GLOS
 - **[User Interaction Architecture](./UserInteraction_And_Query_Architecture.md)** - Query interfaces, CLI, and future UI systems
 - **[Event Taxonomy](./event-taxonomy.md)** - Canonical event families and minimal payload contracts
 
-- **[Satellite Implementation](./satellite-implementation.md)** - Patterns for building new satellites
+- **Satellite SDK Reference**: `crate/lib/sinex-satellite-sdk/doc/overview.md` (shared traits, checkpoints, configuration)
 - Event Relations and Tagging System are tracked under roadmap; historical design notes are in `../archive/architecture/`.
 
 ### Deprecated/Consolidated

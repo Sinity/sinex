@@ -36,5 +36,5 @@ Schema & Taxonomy
 - Event taxonomy: `docs/architecture/event-taxonomy.md`
 
 Implementation Guides
-- Satellites SDK and patterns: `docs/architecture/satellite-implementation.md`
+- Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/doc/overview.md`
 - Gateway/CLI: see repository README and `./cli/exo.py`

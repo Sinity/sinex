@@ -10,4 +10,4 @@ in real time.
 - Emits synthesized content insights that downstream services (search, PKM)
   consume.
 - Shares dashboards and health semantics with the broader automaton family
-  documented in `docs/architecture/satellite-implementation.md`.
+  documented in `crate/lib/sinex-satellite-sdk/doc/overview.md`.

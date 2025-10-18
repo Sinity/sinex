@@ -9,4 +9,4 @@ classifications and metadata. It builds on the shared automaton pattern from
 - Uses the shared annex and database adapters for retrieval.
 
 See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
-`docs/architecture/satellite-implementation.md` for higher-level context.
+`crate/lib/sinex-satellite-sdk/doc/overview.md` for higher-level context.

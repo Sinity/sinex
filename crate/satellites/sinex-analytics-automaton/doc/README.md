@@ -10,5 +10,5 @@ analytics.
 - Maintains checkpoint state for reliable replay.
 
 Reference `docs/architecture/SystemOperations_And_Integrity_Architecture.md` for
-consumer dashboards and `docs/architecture/satellite-implementation.md` for the
+consumer dashboards and `crate/lib/sinex-satellite-sdk/doc/overview.md` for the
 shared processor architecture.

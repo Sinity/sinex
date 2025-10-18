@@ -1,6 +1,6 @@
 #![doc = include_str!("../doc/README.md")]
 #![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
 #![allow(unexpected_cfgs, unused_imports, unused_variables, dead_code)]
 
 //! Core modules for source material acquisition and temporal ledger management.

@@ -8,4 +8,4 @@ and scheduling reindexing work.
 - Maintains checkpointed state for incremental updates.
 
 See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
-`docs/architecture/satellite-implementation.md` for overarching design.
+`crate/lib/sinex-satellite-sdk/doc/overview.md` for overarching design.

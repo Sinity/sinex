@@ -9,4 +9,4 @@ about equivalent command lines.
 - Emits canonical command events with provenance metadata.
 
 See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
-`docs/architecture/satellite-implementation.md` for context.
+`crate/lib/sinex-satellite-sdk/doc/overview.md` for context.

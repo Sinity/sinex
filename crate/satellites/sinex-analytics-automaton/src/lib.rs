@@ -1,7 +1,7 @@
 #![doc = include_str!("../doc/README.md")]
 #![doc = include_str!("../doc/overview.md")]
 #![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../../../../docs/architecture/satellite-implementation.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
 
 //! Analytics automaton entry points.
 //!
