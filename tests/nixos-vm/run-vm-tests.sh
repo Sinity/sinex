@@ -16,11 +16,11 @@ KEEP_FAILED_VMS="${KEEP_FAILED_VMS:-false}"
 PARALLEL_TESTS="${PARALLEL_TESTS:-false}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 
-# Test categories
-SMOKE_TESTS=("basic-flow")
-INTEGRATION_TESTS=("basic-flow" "multi-source" "failure-recovery")
-PERFORMANCE_TESTS=("performance")
-CHAOS_TESTS=("chaos-engineering")
+# Test categories (initial modernization pass)
+SMOKE_TESTS=("basic")
+INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix")
+PERFORMANCE_TESTS=()  # TODO: Re-enable performance scenarios once satellite conversion is complete
+CHAOS_TESTS=()        # TODO: Restore chaos suites after new failure-injection harness lands
 ALL_TESTS=("${SMOKE_TESTS[@]}" "${INTEGRATION_TESTS[@]}" "${PERFORMANCE_TESTS[@]}" "${CHAOS_TESTS[@]}")
 
 # Unique tests only
@@ -56,25 +56,45 @@ EOF
 list_tests() {
     echo "Available tests:"
     echo ""
-    echo "Smoke tests (quick validation):"
-    for test in "${SMOKE_TESTS[@]}"; do
-        echo "  - $test"
-    done
-    echo ""
-    echo "Integration tests:"
-    for test in "${INTEGRATION_TESTS[@]}"; do
-        echo "  - $test"
-    done
-    echo ""
-    echo "Performance tests:"
-    for test in "${PERFORMANCE_TESTS[@]}"; do
-        echo "  - $test"
-    done
-    echo ""
-    echo "Chaos tests:"
-    for test in "${CHAOS_TESTS[@]}"; do
-        echo "  - $test"
-    done
+    if ((${#SMOKE_TESTS[@]})); then
+        echo "Smoke tests (quick validation):"
+        for test in "${SMOKE_TESTS[@]}"; do
+            echo "  - $test"
+        done
+        echo ""
+    fi
+
+    if ((${#INTEGRATION_TESTS[@]})); then
+        echo "Integration tests:"
+        for test in "${INTEGRATION_TESTS[@]}"; do
+            echo "  - $test"
+        done
+        echo ""
+    fi
+
+    if ((${#PERFORMANCE_TESTS[@]})); then
+        echo "Performance tests:"
+        for test in "${PERFORMANCE_TESTS[@]}"; do
+            echo "  - $test"
+        done
+        echo ""
+    else
+        echo "Performance tests:"
+        echo "  (pending modernization)"
+        echo ""
+    fi
+
+    if ((${#CHAOS_TESTS[@]})); then
+        echo "Chaos tests:"
+        for test in "${CHAOS_TESTS[@]}"; do
+            echo "  - $test"
+        done
+        echo ""
+    else
+        echo "Chaos tests:"
+        echo "  (pending modernization)"
+        echo ""
+    fi
 }
 
 validate_infrastructure() {
@@ -82,13 +102,19 @@ validate_infrastructure() {
     
     # Check syntax of individual test files
     local test_files=(
-        "test/nixos-vm/chaos-engineering.nix"
-        "test/nixos-vm/production-scale.nix"
+        "tests/nixos-vm/test-scenarios/basic-flow.nix"
+        "tests/nixos-vm/preflight_deployment_test.nix"
+        "tests/nixos-vm/test-scenarios/maintenance.nix"
+        "tests/nixos-vm/test-scenarios/satellite-matrix.nix"
+        # TODO: re-enable legacy heavy suites once satellite conversion completes
+        # "tests/nixos-vm/test-scenarios/multi-source.nix"
+        # "tests/nixos-vm/test-scenarios/performance.nix"
     )
-    
+
     local common_files=(
-        "test/nixos-vm/common/chaos-toolkit.nix"
-        "test/nixos-vm/common/production-load.nix"
+        "tests/nixos-vm/common/test-base.nix"
+        "tests/nixos-vm/common/test-helpers.nix"
+        "tests/nixos-vm/common/health-checks.nix"
     )
     
     # Check test files syntax
@@ -125,7 +151,7 @@ validate_infrastructure() {
     
     # Check justfile integration
     log "✅ Checking justfile integration..."
-    local required_commands=("test-vm-chaos" "test-vm-production" "test-vm-advanced")
+    local required_commands=("test-vm")
     
     for cmd in "${required_commands[@]}"; do
         if ! grep -q "$cmd" justfile 2>/dev/null; then

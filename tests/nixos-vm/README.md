@@ -38,10 +38,10 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 ./test/nixos-vm/run-vm-tests.sh -c performance
 
 # Debug mode (keeps VM on failure)
-./test/nixos-vm/run-vm-tests.sh -d basic-flow
+./tests/nixos-vm/run-vm-tests.sh -d basic
 
 # Custom timeout and output directory
-./test/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
+./tests/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
 ```
 
 ## Test Structure
@@ -65,16 +65,27 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
    - Multiple event source testing (`test-scenarios/satellite-matrix.nix`)
    - Maintenance timers and git-annex flow (`test-scenarios/maintenance.nix`)
    - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
+   - *(Coming soon: failure-recovery, multi-source stress, production scale)*
 
-3. **Performance Tests** (`test-scenarios/performance.nix`)
+3. **Performance Tests** *(pending migration)*
    - High-throughput event processing
    - Resource usage monitoring
    - Query performance under load
 
-4. **Chaos Tests** (`chaos-engineering.nix`)
+4. **Chaos Tests** *(pending migration)*
    - Failure injection and recovery
    - Resource exhaustion scenarios
    - Service resilience validation
+
+### Modernization Roadmap
+
+- [x] Baseline smoke test (`basic`)
+- [x] Pre-flight / coordination coverage (`preflight`)
+- [x] Maintenance timers & blob storage (`maintenance`)
+- [x] Satellite constellation matrix (`satellite-matrix`)
+- [ ] Re-enable multi-source stress testing on satellites
+- [ ] Port failure-recovery suite to new services
+- [ ] Restore performance + chaos scenarios with monitoring assertions
 
 ## Key Improvements
 
