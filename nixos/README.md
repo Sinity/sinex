@@ -65,6 +65,27 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
+### Service Group Controls
+
+You can toggle major service bundles via `services.sinex.serviceManagement.serviceGroups`:
+
+```nix
+services.sinex.serviceManagement.serviceGroups = {
+  core = true;        # ingestd, gateway, satellites, NATS
+  maintenance = false; # DLQ cleanup, git-annex timers, resource monitors
+  monitoring = false;  # Prometheus, Grafana, exporters
+};
+
+# Typical development overrides
+services.sinex.satellite = {
+  enable = true;
+  coordination.enable = false;
+  eventSources.filesystem.instances = 1;
+};
+```
+
+Set the maintenance or monitoring flags to `true` when you need the supporting timers or observability stack.
+
 ### Production Setup with Hot Standby
 
 For production deployments with zero-downtime upgrades and automatic failover:

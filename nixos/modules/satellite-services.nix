@@ -6,6 +6,7 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  legacyEnabled = path: lib.attrByPath path false cfg;
 
   coordinationDependencies =
     lib.optionals (cfg.satellite.coordination.enable or false) [
@@ -121,7 +122,33 @@ let
       # Event Source Satellites with Hot Standby Support
       eventSourceServices = 
         let
-          mkEventSource = name: sourceConfig: mkIf sourceConfig.enable (
+          mkEventSource = name: sourceConfig:
+            let
+              legacyExtraArgs =
+                if name == "fs-watcher" then
+                  let
+                    fsLegacy = cfg.eventSources.filesystem or {};
+                    watchPaths = fsLegacy.watchPaths or [];
+                  in
+                  if watchPaths == [] then
+                    ""
+                  else
+                    let
+                      processorConfig = builtins.toJSON {
+                        filesystem = {
+                          watch_paths = watchPaths;
+                        };
+                      };
+                    in "--processor-config ${lib.escapeShellArg processorConfig}"
+                else "";
+
+              combinedExtraArgs =
+                lib.concatStringsSep " " (lib.filter (arg: arg != "") [
+                  legacyExtraArgs;
+                  sourceConfig.extraArgs;
+                ]);
+            in
+            mkIf sourceConfig.enable (
             # Generate multiple instances for hot standby pattern
             lib.listToAttrs (map (instanceNum: 
               let instanceId = "${name}-${toString instanceNum}"; in
@@ -130,7 +157,7 @@ let
                 after = [ "nats.service" ];
                 requires = [ "nats.service" ];
                 execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service" + 
-                  (if sourceConfig.extraArgs != "" then " ${sourceConfig.extraArgs}" else "");
+                  (if combinedExtraArgs != "" then " ${combinedExtraArgs}" else "");
                 environment = [
                   "RUST_LOG=${cfg.satellite.logLevel}"
                   "DATABASE_URL=${cfg.satellite.database.url}"
@@ -618,7 +645,7 @@ in {
     };
   };
 
-  config = mkIf (cfg.enable && cfg.satellite.enable) {
+  config = mkIf (cfg.enable && cfg.satellite.enable && (cfg.serviceManagement.serviceGroups.core or true)) {
     # Create satellite user
     users.users.${cfg.satelliteUser} = {
       isSystemUser = true;
@@ -663,6 +690,23 @@ in {
     };
 
     services.sinex.satellite.nats.servers = mkDefault "nats://127.0.0.1:${toString cfg.satellite.nats.port}";
+
+    services.sinex.satellite.eventSources.terminal.enable = mkDefault (
+      legacyEnabled [ "eventSources" "shellHistory" "enable" ]
+      || legacyEnabled [ "eventSources" "asciinema" "enable" ]
+      || legacyEnabled [ "eventSources" "kitty" "enable" ]
+      || legacyEnabled [ "eventSources" "kittyScrollback" "enable" ]
+      || legacyEnabled [ "eventSources" "atuin" "enable" ]
+    );
+
+    services.sinex.satellite.eventSources.desktop.enable = mkDefault (
+      legacyEnabled [ "eventSources" "clipboard" "enable" ]
+      || legacyEnabled [ "eventSources" "kitty" "enable" ]
+    );
+
+    services.sinex.satellite.eventSources.system.enable = mkDefault (
+      legacyEnabled [ "eventSources" "dbus" "enable" ]
+    );
 
     # Generate systemd services for all satellites and supporting setup jobs
     systemd.services =

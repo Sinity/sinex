@@ -28,7 +28,7 @@ with lib;
           core = mkOption {
             type = types.bool;
             default = true;
-            description = "Enable core runtime services (collector, worker, coordinator)";
+            description = "Enable the satellite constellation (ingestd, gateway, satellites)";
           };
           
           maintenance = mkOption {
@@ -39,8 +39,8 @@ with lib;
           
           monitoring = mkOption {
             type = types.bool;
-            default = config.services.sinex.monitoring.enable or false;
-            description = "Enable monitoring and health check services";
+            default = true;
+            description = "Enable monitoring stack (Prometheus, Grafana, exporters)";
           };
         };
       };
@@ -49,27 +49,26 @@ with lib;
     };
   };
   
-  config = mkIf config.services.sinex.enable {
-    # Add configuration validation
-    assertions = [
-      {
-        assertion = config.services.sinex.serviceManagement.consolidatedMode -> 
-                   (config.services.sinex.targetUser != null);
-        message = "services.sinex.targetUser must be set when using consolidated service management";
-      }
-      
-      {
-        assertion = config.services.sinex.serviceManagement.serviceGroups.maintenance ->
-                   (config.services.sinex.database.autoSetup || config.services.postgresql.enable);
-        message = "Database must be managed or explicitly enabled for maintenance services";
-      }
-    ];
-    
-    # Warning about legacy service definitions
-    warnings = optional (!config.services.sinex.serviceManagement.consolidatedMode) ''
-      You are using legacy Sinex service definitions. Consider migrating to 
-      consolidated service management by setting:
-      services.sinex.serviceManagement.consolidatedMode = true;
-    '';
-  };
+  config = mkIf config.services.sinex.enable (
+    let
+      cfg = config.services.sinex;
+    in
+    {
+      assertions = [
+        {
+          assertion = cfg.serviceManagement.consolidatedMode -> (cfg.targetUser != null);
+          message = "services.sinex.targetUser must be set when using consolidated service management";
+        }
+        {
+          assertion = cfg.serviceManagement.serviceGroups.maintenance ->
+                     (cfg.database.autoSetup || config.services.postgresql.enable);
+          message = "Database must be managed or explicitly enabled for maintenance services";
+        }
+        {
+          assertion = cfg.serviceManagement.consolidatedMode;
+          message = "Legacy Sinex service definitions have been removed; consolidatedMode must remain true.";
+        }
+      ];
+    }
+  );
 }

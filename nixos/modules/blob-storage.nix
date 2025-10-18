@@ -5,6 +5,8 @@ with lib;
 
 let
   cfg = config.services.sinex;
+  repositoryUser =
+    if cfg.satellite.enable then cfg.satelliteUser else cfg.database.user;
 in
 {
   options.services.sinex.blobStorage = {
@@ -100,7 +102,7 @@ in
   config = mkIf (cfg.enable && cfg.blobStorage.enable) {
     # Ensure repository directory exists
     systemd.tmpfiles.rules = [
-      "d ${cfg.blobStorage.repositoryPath} 0755 ${cfg.database.user} ${cfg.database.user} -"
+      "d ${cfg.blobStorage.repositoryPath} 0755 ${repositoryUser} ${repositoryUser} -"
     ];
 
     # Git-annex initialization service
@@ -111,8 +113,8 @@ in
       
       serviceConfig = {
         Type = "oneshot";
-        User = cfg.database.user;
-        Group = cfg.database.user;
+        User = repositoryUser;
+        Group = repositoryUser;
         RemainAfterExit = true;
         
         ExecStart = pkgs.writeShellScript "sinex-git-annex-init" ''

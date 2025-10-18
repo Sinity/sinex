@@ -37,7 +37,7 @@ let
 
 in
 {
-  config = mkIf cfg.enable {
+  config = mkIf (cfg.enable && cfg.serviceManagement.serviceGroups.maintenance) {
     systemd = {
       # ============================================================================
       # Maintenance Services

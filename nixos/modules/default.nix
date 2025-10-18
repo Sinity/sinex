@@ -5,6 +5,40 @@ with lib;
 
 let
   cfg = config.services.sinex;
+
+  repoRoot = ../..;
+
+  flakePackages =
+    let
+      flakeResult =
+        if lib.hasAttr "getFlake" builtins then
+          lib.tryEval (builtins.getFlake (toString repoRoot))
+        else
+          { success = false; value = null; };
+    in
+    if flakeResult.success then
+      lib.attrByPath [ "packages" pkgs.system ] {} flakeResult.value
+    else
+      {};
+
+  defaultSinexPackage =
+    if pkgs ? sinex then
+      pkgs.sinex
+    else if flakePackages ? sinex then
+      flakePackages.sinex
+    else
+      throw ''
+        services.sinex.package is unset and no sinex package was found in pkgs.
+        Provide one explicitly or overlay pkgs.sinex.
+      '';
+
+  defaultCliPackage =
+    if pkgs ? sinexCli then
+      pkgs.sinexCli
+    else if flakePackages ? sinexCli then
+      flakePackages.sinexCli
+    else
+      pkgs.python3;
   
   # Import utility modules
   healthChecks = import ./health-checks.nix { inherit lib; };
@@ -38,14 +72,14 @@ in
 
     package = mkOption {
       type = types.package;
-      default = if pkgs ? sinex then pkgs.sinex else (import ../. { }).packages.${pkgs.system}.sinex;
+      default = defaultSinexPackage;
       defaultText = literalExpression "pkgs.sinex";
       description = "Sinex package to use";
     };
 
     cliPackage = mkOption {
       type = types.package;
-      default = if pkgs ? sinexCli then pkgs.sinexCli else pkgs.python3;
+      default = defaultCliPackage;
       defaultText = literalExpression "pkgs.sinexCli";
       description = "Sinex CLI package to use";
     };
@@ -392,6 +426,11 @@ in
   };
 
   config = mkIf cfg.enable {
+    services.sinex.satellite.enable =
+      mkDefault (cfg.serviceManagement.serviceGroups.core or true);
+    services.sinex.monitoring.enable =
+      mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
+
     # Environment packages
     environment.systemPackages = with pkgs; [ 
       asciinema 
