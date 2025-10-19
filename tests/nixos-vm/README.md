@@ -69,15 +69,15 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
    - Pre-flight and coordinated updates (`preflight_deployment_test.nix`)
    - *(Coming soon: production scale)*
 
-3. **Performance Tests** (`test-scenarios/performance.nix`)
-   - High-throughput event processing
+3. **Performance Tests**
+   - Satellite performance harness (`test-scenarios/performance.nix`)
    - Load-generator coverage across filesystem/system sources
    - Metrics inspection via helper scripts
 
-4. **Chaos Tests** *(pending migration)*
-   - Failure injection and recovery
-   - Resource exhaustion scenarios
-   - Service resilience validation
+4. **Chaos Tests** *(legacy – pending satellite migration)*
+   - Failure injection across satellites and core services (legacy architecture)
+   - Cascading and resource-storm scenarios with recovery asserts
+   - Continuous monitoring via the chaos control plane
 
 ### Modernization Roadmap
 
@@ -88,7 +88,8 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 - [x] Re-enable multi-source stress testing on satellites
 - [x] Port failure-recovery suite to new services
 - [x] Restore performance suite on satellites
-- [ ] Restore chaos scenarios with monitoring assertions
+- [ ] Rebuild production-scale soak on satellites
+- [ ] Port chaos scenarios with monitoring assertions
 
 ## Key Improvements
 
