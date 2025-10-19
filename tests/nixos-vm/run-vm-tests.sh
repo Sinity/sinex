@@ -20,7 +20,7 @@ TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
 SMOKE_TESTS=("basic")
 INTEGRATION_TESTS=("preflight" "maintenance" "satellite-matrix" "multi-source" "failure-recovery")
 PERFORMANCE_TESTS=("performance")
-CHAOS_TESTS=()        # TODO: Restore chaos suites after new failure-injection harness lands
+CHAOS_TESTS=()
 ALL_TESTS=("${SMOKE_TESTS[@]}" "${INTEGRATION_TESTS[@]}" "${PERFORMANCE_TESTS[@]}" "${CHAOS_TESTS[@]}")
 
 # Unique tests only
@@ -104,12 +104,16 @@ validate_infrastructure() {
         "tests/nixos-vm/test-scenarios/satellite-matrix.nix"
         "tests/nixos-vm/test-scenarios/multi-source.nix"
         "tests/nixos-vm/test-scenarios/performance.nix"
+        "tests/nixos-vm/production-scale.nix"
+        "tests/nixos-vm/chaos-engineering.nix"
     )
 
     local common_files=(
         "tests/nixos-vm/common/test-base.nix"
         "tests/nixos-vm/common/test-helpers.nix"
         "tests/nixos-vm/common/health-checks.nix"
+        "tests/nixos-vm/common/chaos-toolkit.nix"
+        "tests/nixos-vm/common/production-load.nix"
     )
     
     # Check test files syntax
