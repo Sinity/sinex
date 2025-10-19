@@ -9,6 +9,7 @@
 
 use sinex_core::db::models::{Event, JsonValue};
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::{Id, SourceMaterial, Ulid};
 use sinex_test_utils::prelude::*;
 
 // Additional specific imports
@@ -22,23 +23,23 @@ use std::sync::Arc;
 #[sinex_test]
 async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test basic event creation using modern patterns
-    let event = Event::<JsonValue>::test_event(
-        EventSource::from("fs-watcher"),
-        EventType::from("file.created"),
-        json!({
-            "path": "/tmp/test.txt",
-            "size": 1024,
-            "permissions": "0o644"
-        }),
-    );
+    let inserted = ctx
+        .create_test_event(
+            "fs-watcher",
+            "file.created",
+            json!({
+                "path": "/tmp/test.txt",
+                "size": 1024,
+                "permissions": "0o644"
+            }),
+        )
+        .await?;
 
     // Verify event structure
-    assert_eq!(event.source.as_str(), "fs-watcher");
-    assert_eq!(event.event_type.as_str(), "file.created");
-    assert_eq!(event.payload["path"], json!("/tmp/test.txt"));
-    assert_eq!(event.payload["size"], json!(1024));
-    assert!(event.id.is_none()); // test_event returns not yet inserted; insert to persist
-    let inserted = ctx.pool.events().insert(event).await?;
+    assert_eq!(inserted.source.as_str(), "fs-watcher");
+    assert_eq!(inserted.event_type.as_str(), "file.created");
+    assert_eq!(inserted.payload["path"], json!("/tmp/test.txt"));
+    assert_eq!(inserted.payload["size"], json!(1024));
     assert!(inserted.id.is_some());
 
     // Note: Database insertion test skipped due to operator resolution issue
@@ -150,20 +151,35 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
             // Insert events concurrently
             for event_num in 0..events_per_task {
-                let event = ctx_clone
-                    .create_test_event(
-                        &format!("task-{task_id}"),
-                        "concurrent.test",
-                        json!({
-                            "task_id": task_id,
-                            "event_num": event_num,
-                            "timestamp": chrono::Utc::now()
-                        }),
+                let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+                ctx_clone
+                    .ensure_source_material(
+                        material_id,
+                        Some(&format!("task-{task_id}-event-{event_num}")),
                     )
                     .await
                     .map_err(|e| SinexError::unknown(e.to_string()))?;
 
-                task_ids.push(event.id.unwrap());
+                let event = Event::dynamic(
+                    EventSource::from(format!("task-{task_id}")),
+                    EventType::from("concurrent.test"),
+                    json!({
+                        "task_id": task_id,
+                        "event_num": event_num,
+                        "timestamp": chrono::Utc::now()
+                    }),
+                )
+                .from_material(material_id, 0)
+                .build();
+
+                let inserted = ctx_clone
+                    .pool
+                    .events()
+                    .insert(event)
+                    .await
+                    .map_err(|e| SinexError::unknown(e.to_string()))?;
+
+                task_ids.push(inserted.id.unwrap());
             }
 
             // Verify all events for this task
@@ -306,18 +322,24 @@ async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()
 async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let batch_size = 100;
     let start_time = std::time::Instant::now();
+    let bootstrap_material =
+        Id::<SourceMaterial>::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap id");
+    ctx.ensure_source_material(bootstrap_material, Some("test-material-bootstrap"))
+        .await?;
 
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::dynamic(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({
                 "batch_index": i,
                 "data": format!("event_{}", i)
             }),
-        );
+        )
+        .from_material(bootstrap_material, 0)
+        .build();
         events.push(event);
     }
 
@@ -355,14 +377,19 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
 
     for i in 0..num_events {
         let source = format!("query-perf-{}", i % 10); // 10 different sources
-        let event = Event::<JsonValue>::test_event(
+        let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+        ctx.ensure_source_material(material_id, Some(&format!("query-perf-{i}")))
+            .await?;
+        let event = Event::dynamic(
             EventSource::from(source),
             EventType::from("query.test"),
             json!({
                 "index": i,
                 "category": i % 5  // 5 different categories
             }),
-        );
+        )
+        .from_material(material_id, 0)
+        .build();
         events.push(event);
     }
 

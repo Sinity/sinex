@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::Event;
+use sinex_core::{Event, Provenance};
 use sinex_satellite_sdk::CheckpointState;
 use sinex_test_utils::prelude::*;
 use std::future::Future;
@@ -58,6 +58,11 @@ fn sanitized_events_roundtrip_through_db() -> color_eyre::eyre::Result<()> {
 
             EventSanitizer::sanitize_event(&mut event)
                 .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+            if let Provenance::Material { id, .. } = &event.provenance {
+                ctx.ensure_source_material(*id, None)
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+            }
             let stored = ctx
                 .pool
                 .events()

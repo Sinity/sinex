@@ -546,27 +546,12 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
                     payload,
                     prov,
                 );
-                ctx_clone
-                    .pool
-                    .events()
-                    .insert(event.clone().to_json_event().unwrap())
-                    .await?;
-
-                // Get the ID after insertion (should be set by repository)
-                let inserted_events = ctx_clone
-                    .pool
-                    .events()
-                    .get_by_source(&EventSource::from_static("fs-watcher"), Some(100), None)
-                    .await?;
-
-                // Find our event by checking the path in payload
-                for inserted_event in inserted_events {
-                    if inserted_event.payload["path"] == json!(format!("/test/file{}_{}.txt", i, j))
-                    {
-                        event_ids.push(inserted_event.id.expect("Inserted event should have ID"));
-                        break;
-                    }
-                }
+                let event_json = event.to_json_event().unwrap();
+                let inserted = ctx_clone.pool.events().insert(event_json).await?;
+                let id = inserted
+                    .id
+                    .expect("repository should assign an ID to inserted events");
+                event_ids.push(id);
             }
 
             Ok::<Vec<Id<Event<JsonValue>>>, color_eyre::eyre::Error>(event_ids)
