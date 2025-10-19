@@ -11,6 +11,7 @@ use color_eyre::eyre::Result;
 use sinex_core::db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_core::db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
 use sinex_core::types::events::{event_types, services, EventFactory};
+use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
@@ -243,6 +244,83 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.gap_detection'")
         .execute(&pool)
         .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let service_name = format!("failover_service_{}", Ulid::new());
+    let consumer_group = format!("failover_group_{}", Ulid::new());
+
+    let mut leader = CheckpointManager::new(
+        ctx.pool.clone(),
+        service_name.clone(),
+        consumer_group.clone(),
+        "worker-primary".to_string(),
+    );
+
+    for index in 0..5u64 {
+        let state = CheckpointState {
+            checkpoint: Checkpoint::Stream {
+                message_id: format!("message-{}", index),
+                event_id: None,
+            },
+            processed_count: index + 1,
+            last_activity: chrono::Utc::now(),
+            data: Some(serde_json::json!({ "worker": "primary" })),
+            version: 2,
+        };
+        leader.save_checkpoint(&state).await?;
+    }
+
+    let mut follower = CheckpointManager::new(
+        ctx.pool.clone(),
+        service_name.clone(),
+        consumer_group.clone(),
+        "worker-standby".to_string(),
+    );
+
+    let latest = follower
+        .get_latest_checkpoint()
+        .await?
+        .expect("expected checkpoint state");
+    assert_eq!(latest.processed_count, 5);
+
+    for index in 5..10u64 {
+        let state = CheckpointState {
+            checkpoint: Checkpoint::Stream {
+                message_id: format!("message-{}", index),
+                event_id: None,
+            },
+            processed_count: index + 1,
+            last_activity: chrono::Utc::now(),
+            data: Some(serde_json::json!({ "worker": "standby" })),
+            version: 2,
+        };
+        follower.save_checkpoint(&state).await?;
+    }
+
+    let mut restarted_leader = CheckpointManager::new(
+        ctx.pool.clone(),
+        service_name.clone(),
+        consumer_group.clone(),
+        "worker-primary-restart".to_string(),
+    );
+
+    let latest_after_failover = restarted_leader
+        .get_latest_checkpoint()
+        .await?
+        .expect("checkpoint after failover");
+
+    assert_eq!(latest_after_failover.processed_count, 10);
+    assert_eq!(
+        latest_after_failover
+            .last_processed_id()
+            .as_deref()
+            .unwrap_or_default(),
+        "message-9"
+    );
 
     Ok(())
 }
