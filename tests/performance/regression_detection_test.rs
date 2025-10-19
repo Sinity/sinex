@@ -5,14 +5,119 @@
 // statistical significance testing, and automated alerting capabilities.
 
 use color_eyre::eyre::Result;
-use super::baseline_performance_test::{
-    BaselineTracker, EnvironmentInfo, PerformanceBaseline,
-};
 use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
+
+/// Metadata captured alongside baseline measurements (historical compatibility).
+#[derive(Debug, Clone)]
+pub struct EnvironmentInfo {
+    pub test_data_size: usize,
+    pub concurrent_operations: usize,
+    pub database_pool_size: usize,
+    pub system_load: String,
+}
+
+/// Snapshot of historical performance for a specific operation.
+#[derive(Debug, Clone)]
+pub struct PerformanceBaseline {
+    pub operation_name: String,
+    pub average_latency: StdDuration,
+    pub percentile_95_latency: StdDuration,
+    pub throughput: f64,
+    pub success_rate: f64,
+    pub sample_size: usize,
+    pub environment: EnvironmentInfo,
+}
+
+/// Helper for accumulating measurements and computing baselines.
+pub struct BaselineTracker {
+    measurements: HashMap<String, Vec<StdDuration>>,
+    success_counts: HashMap<String, usize>,
+    error_counts: HashMap<String, usize>,
+    baselines: HashMap<String, PerformanceBaseline>,
+    start_time: Instant,
+}
+
+impl BaselineTracker {
+    pub fn new() -> Self {
+        Self {
+            measurements: HashMap::new(),
+            success_counts: HashMap::new(),
+            error_counts: HashMap::new(),
+            baselines: HashMap::new(),
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn record_measurement(&mut self, operation: &str, duration: StdDuration, success: bool) {
+        self.measurements
+            .entry(operation.to_string())
+            .or_insert_with(Vec::new)
+            .push(duration);
+
+        if success {
+            *self
+                .success_counts
+                .entry(operation.to_string())
+                .or_insert(0) += 1;
+        } else {
+            *self
+                .error_counts
+                .entry(operation.to_string())
+                .or_insert(0) += 1;
+        }
+    }
+
+    pub fn calculate_baseline(
+        &mut self,
+        operation: &str,
+        environment: EnvironmentInfo,
+    ) -> Option<PerformanceBaseline> {
+        let measurements = self.measurements.get(operation)?;
+        if measurements.len() < 10 {
+            return None;
+        }
+
+        let mut sorted = measurements.clone();
+        sorted.sort();
+
+        let average_latency = measurements.iter().sum::<StdDuration>() / measurements.len() as u32;
+        let p95_index = (sorted.len() as f64 * 0.95) as usize;
+        let percentile_95 = sorted[p95_index.min(sorted.len() - 1)];
+
+        let success = self.success_counts.get(operation).copied().unwrap_or(0);
+        let errors = self.error_counts.get(operation).copied().unwrap_or(0);
+        let total = success + errors;
+        let success_rate = if total > 0 {
+            success as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        let throughput = success as f64 / self.start_time.elapsed().as_secs_f64();
+
+        let baseline = PerformanceBaseline {
+            operation_name: operation.to_string(),
+            average_latency,
+            percentile_95_latency: percentile_95,
+            throughput,
+            success_rate,
+            sample_size: measurements.len(),
+            environment,
+        };
+
+        self.baselines
+            .insert(operation.to_string(), baseline.clone());
+        Some(baseline)
+    }
+
+    pub fn get_baseline(&self, operation: &str) -> Option<&PerformanceBaseline> {
+        self.baselines.get(operation)
+    }
+}
 
 /// Performance regression detection results
 #[derive(Debug, Clone, bon::Builder)]
