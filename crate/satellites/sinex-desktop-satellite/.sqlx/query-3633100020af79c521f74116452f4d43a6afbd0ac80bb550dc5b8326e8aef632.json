@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO raw.source_material_registry (\n                id, source_identifier, staged_at,\n                material_kind, timing_info_type, metadata,\n                status, staged_by\n            )\n            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3633100020af79c521f74116452f4d43a6afbd0ac80bb550dc5b8326e8aef632"
+}

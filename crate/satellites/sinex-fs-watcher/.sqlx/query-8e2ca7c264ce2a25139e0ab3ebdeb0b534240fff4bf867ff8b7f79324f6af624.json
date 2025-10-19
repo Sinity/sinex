@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT \n                        tl.source_material_id as \"material_id: Ulid\",\n                        tl.offset_start,\n                        tl.offset_end,\n                        tl.ts_capture,\n                        NULL::text as note,\n                        NULL::bytea as \"inline_data?: Vec<u8>\"\n                    FROM raw.temporal_ledger tl\n                    LEFT JOIN raw.source_material_registry sm \n                        ON sm.id = tl.source_material_id\n                    WHERE tl.source_material_id = $1::ulid\n                    AND tl.offset_start >= $2\n                    ORDER BY tl.offset_start\n                    LIMIT $3\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "offset_start",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "offset_end",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "ts_capture",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "note",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "inline_data?: Vec<u8>",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "8e2ca7c264ce2a25139e0ab3ebdeb0b534240fff4bf867ff8b7f79324f6af624"
+}

@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                sm.id as \"material_id: Ulid\",\n                sm.source_identifier,\n                sm.staged_at as acquired_at,\n                sm.metadata,\n                b.size_bytes,\n                b.mime_type\n            FROM raw.source_material_registry sm\n            LEFT JOIN core.blobs b ON sm.optional_blob_id = b.id\n            WHERE sm.id = $1::ulid\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source_identifier",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "acquired_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "mime_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "ef5ac3eb489ee98f184ab7ad1d30ed491cf561ce9e3ba07316bf90c3fd8dd96a"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "extname",
+        "type_info": "Name"
+      },
+      {
+        "ordinal": 1,
+        "name": "extversion",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c99c7b82c3bab9996f80ad48b3e17a4390b3d9dc41e1fbcbb1bd476eae55fd9f"
+}

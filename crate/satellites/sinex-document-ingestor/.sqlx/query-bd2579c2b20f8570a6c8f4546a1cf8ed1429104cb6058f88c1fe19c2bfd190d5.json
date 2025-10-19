@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id as \"id: Ulid\"\n            FROM raw.sensor_jobs\n            WHERE id = ANY($1::ulid[])\n            AND status IN ('active', 'paused')\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ulid",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bd2579c2b20f8570a6c8f4546a1cf8ed1429104cb6058f88c1fe19c2bfd190d5"
+}

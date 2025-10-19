@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                COUNT(*) as total_schemas,\n                COUNT(*) FILTER (WHERE is_active = true) as active_schemas,\n                COUNT(DISTINCT source) as unique_sources,\n                COUNT(DISTINCT event_type) as unique_event_types\n            FROM sinex_schemas.event_payload_schemas\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_schemas",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "active_schemas",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "unique_sources",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "unique_event_types",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c64f47fb5ef6d0f8dc730cc9d213d0d75250c74226783b83c007a4aa4d17fcb0"
+}

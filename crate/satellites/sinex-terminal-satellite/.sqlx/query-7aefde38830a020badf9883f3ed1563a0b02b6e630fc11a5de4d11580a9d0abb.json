@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT \n                        tl.source_material_id as \"material_id: Ulid\",\n                        tl.offset_start,\n                        tl.offset_end,\n                        tl.ts_capture,\n                        sm.optional_blob_id as \"optional_blob_id?: Ulid\"\n                    FROM raw.temporal_ledger tl\n                    LEFT JOIN raw.source_material_registry sm \n                        ON sm.id::uuid = tl.source_material_id::uuid\n                    WHERE tl.source_material_id = $1::ulid\n                    AND tl.offset_start >= $2\n                    ORDER BY tl.offset_start\n                    LIMIT $3\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "offset_start",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "offset_end",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "ts_capture",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "optional_blob_id?: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "7aefde38830a020badf9883f3ed1563a0b02b6e630fc11a5de4d11580a9d0abb"
+}
