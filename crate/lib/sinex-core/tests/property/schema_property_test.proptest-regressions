@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 66100640b9352e72d0f931d0719ed9e7256128ff149a8b04a879185c49b84449 # shrinks to payload_sizes = [9528, 1365, 4003], validation_count = 17
+cc 13bb8550189fefa9bb0a39b47e638c60402c878de9c156eb8e08734773b82fd6 # shrinks to payload_sizes = [1966, 7321, 6562, 5587, 5446, 1485, 4857, 5575, 6921, 9292], validation_count = 23
+cc a41d0a57832f962d4c532b820cf4e76f44737f04932048e907072102560da47e # shrinks to payload_sizes = [4124, 973, 9292, 1112, 8041], validation_count = 11
