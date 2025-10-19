@@ -4,6 +4,9 @@
 
 This document provides brutally honest, non-sycophantic analysis of Sinex's actual innovations, comparative quality, and likely failure modes.
 
+> **Historical notice (2025-07-24)**  
+> Infrastructure critiques reference the Redis Streams-based deployment. JetStream has since replaced Redis in the target architecture (`docs/way.md`).
+
 ## Table of Contents
 
 1. [Solved Problems Being Reimplemented](#solved-problems)

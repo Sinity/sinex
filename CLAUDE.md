@@ -105,11 +105,11 @@ just unused             # Check unused dependencies
 
 ### Satellite Architecture
 
-Sinex uses a satellite constellation pattern where independent services communicate via gRPC and Redis Streams:
+Sinex uses a satellite constellation pattern. Today satellites submit events to `sinex-ingestd` over gRPC; ingestd persists to Postgres and fans out via NATS JetStream. The JetStream-first ingestion path (satellites publishing directly to JetStream) is tracked in `docs/way.md` and under active development.
 
 - **Satellites**: Independent event capture services
 - **ingestd**: Central ingestion hub and coordinator
-- **Redis Streams**: Real-time event distribution message bus
+- **NATS JetStream**: Durable message bus and fan-out
 - **PostgreSQL + TimescaleDB**: Event storage with time-series optimization
 - **Gateway**: API layer for CLI and future web interfaces
 

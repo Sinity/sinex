@@ -4,6 +4,9 @@
 
 Sinex implements a sophisticated event-driven architecture centered around immutable event capture, type-safe processing, and knowledge synthesis. The system uses a hierarchical event taxonomy across 7 primary domains, with 27 strongly-typed payload structures ensuring data integrity. The architecture balances flexibility with type safety through a three-layer data model: raw event storage, knowledge graph extraction, and analytics aggregation.
 
+> **Historical notice (2025-07-24)**  
+> When this analysis was written the message bus relied on Redis Streams. Treat those references as historical; JetStream is the target path (`docs/way.md`).
+
 ## Event Taxonomy
 
 ### Primary Event Domains

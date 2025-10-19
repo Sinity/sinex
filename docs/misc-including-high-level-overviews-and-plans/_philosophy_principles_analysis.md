@@ -4,6 +4,9 @@
 *Analysis Scope: Complete philosophical and theoretical foundation review*
 *Sources: VISION.md, SADI.md, ADRs, comprehensive analysis documents*
 
+> **Historical notice (2025-07-24)**  
+> Infrastructure references (e.g., Redis Streams) mirror the architecture at the time of writing. The ongoing JetStream migration is documented in `docs/way.md`.
+
 ## Executive Summary
 
 The Sinex project represents a profound philosophical statement about human-computer interaction, personal data sovereignty, and cognitive augmentation. At its core, it embodies what its creators call "cognitive sovereignty" - a radical response to digital amnesia and fragmentation in modern computing. This comprehensive analysis reveals a system that operates at the intersection of philosophy, cognitive science, computer science, and experimental psychology, creating an unprecedented foundation for personal computing.

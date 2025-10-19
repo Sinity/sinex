@@ -4,6 +4,9 @@
 
 The Sinex project exhibits an extraordinary development pattern that raises both admiration and concern. With 1,028 commits in approximately 55 days (May 30 - July 23, 2025), averaging 18.5 commits per day, this represents one of the most intense development sprints observable in modern software projects. The pattern strongly suggests heavy AI assistance, likely from Claude or similar tools, given the commit message quality and architectural sophistication despite the solo developer status.
 
+> **Historical notice (2025-07-24)**  
+> Architectural summaries in this analysis predate the move to NATS JetStream. For current implementation details see `docs/way.md`.
+
 ## Development Timeline Analysis
 
 ### Phase 1: Genesis (May 30 - June 3, 2025)

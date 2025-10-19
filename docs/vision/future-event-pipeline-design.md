@@ -4,6 +4,9 @@
 
 This document preserves the valuable concepts from the pipeline.rs implementation and outlines how a future event processing pipeline could enhance Sinex after the core provenance infrastructure is complete.
 
+> **Historical notice (2025-07-24)**  
+> Examples reference a Redis-backed transport layer; adapt them to JetStream when revisiting the pipeline work.
+
 ## Overview
 
 The event pipeline pattern provides a composable, stage-based approach to event processing. While not immediately necessary, it could become valuable for:

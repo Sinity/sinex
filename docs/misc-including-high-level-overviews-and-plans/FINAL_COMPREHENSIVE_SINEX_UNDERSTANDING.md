@@ -4,6 +4,9 @@
 
 This document represents my deepest, most holistic understanding of the Sinex project after extensive analysis of its codebase, specifications, architectural documents, and the philosophical discussions between the user and various LLMs about its design and future direction.
 
+> **Historical notice (2025-07-24)**  
+> Architectural descriptions reflect the Redis Streams deployment that pre-dated the JetStream migration. For current behaviour consult `docs/way.md` and crate-local documentation.
+
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)

@@ -3,6 +3,9 @@
 **Analysis Date**: 2025-07-23
 **Scope**: Complete project understanding across all dimensions
 **Status**: Definitive synthesis based on comprehensive investigation
+
+> **Historical notice (2025-07-24)**  
+> Operational details here reflect the Redis Streams era. Use `docs/way.md` and crate-local docs for the JetStream migration status.
 **Author**: AI Analysis System via Claude Code
 
 ---

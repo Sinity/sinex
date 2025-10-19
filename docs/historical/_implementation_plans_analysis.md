@@ -8,6 +8,9 @@
 
 Sinex has achieved a remarkable **98% production-ready implementation** as of July 2025, representing a complete transformation from prototype to production-ready personal digital archiving system. The project demonstrates sophisticated architectural planning with a clear progression from foundational infrastructure to advanced AI-powered features.
 
+> **Historical notice (2025-07-24)**  
+> This analysis reflects the Redis Streams era. The active implementation path replaces Redis with NATS JetStream (see `docs/way.md`). Treat Redis-specific claims as legacy context until the migration completes.
+
 ### Key Achievement Metrics
 
 - **556 tests passing** with zero critical bugs
