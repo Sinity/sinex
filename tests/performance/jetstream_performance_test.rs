@@ -14,12 +14,19 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_test_utils::{prelude::*, EphemeralNats};
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{Duration as StdDuration, Instant};
+use tokio::sync::Mutex;
+use tokio::{task::JoinSet, time::sleep};
 
 /// Helper to publish a batch of messages and report the elapsed time.
 async fn publish_batch(
@@ -65,21 +72,23 @@ async fn create_pull_consumer(
     stream_name: &str,
     subject: &str,
     durable_name: &str,
+    ack_wait: StdDuration,
+    max_ack_pending: i32,
 ) -> Result<Consumer> {
-    js
-        .get_or_create_consumer(
-            stream_name,
-            ConsumerConfig {
-                durable_name: Some(durable_name.to_string()),
-                name: Some(durable_name.to_string()),
-                deliver_policy: DeliverPolicy::All,
-                ack_policy: AckPolicy::Explicit,
-                filter_subject: subject.to_string(),
-                max_ack_pending: 256,
-                ..Default::default()
-            },
-        )
-        .await
+    js.get_or_create_consumer(
+        stream_name,
+        ConsumerConfig {
+            durable_name: Some(durable_name.to_string()),
+            name: Some(durable_name.to_string()),
+            deliver_policy: DeliverPolicy::All,
+            ack_policy: AckPolicy::Explicit,
+            ack_wait,
+            filter_subject: subject.to_string(),
+            max_ack_pending,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 #[sinex_bench]
@@ -115,6 +124,200 @@ async fn jetstream_publish_throughput(_ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_bench]
+async fn jetstream_concurrent_consumer_distribution(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let js = JetStream::new(client);
+
+    let stream_name = format!("perf_fair_{}", Ulid::new());
+    let subject = format!("perf.fair.{}", Ulid::new());
+    let config = StreamConfig {
+        name: stream_name.clone(),
+        subjects: vec![subject.clone()],
+        retention: RetentionPolicy::WorkQueue,
+        max_age: StdDuration::from_secs(120),
+        ..Default::default()
+    };
+    js.get_or_create_stream(config).await?;
+
+    let total_messages = 240usize;
+    for idx in 0..total_messages {
+        let payload = serde_json::to_vec(&json!({
+            "sequence": idx,
+            "payload": format!("message-{idx}")
+        }))?;
+        js.publish(&subject, payload.into()).await?.await?;
+    }
+
+    let durable = format!("perf_fair_consumer_{}", Ulid::new());
+    let consumer = Arc::new(
+        create_pull_consumer(
+            &js,
+            &stream_name,
+            &subject,
+            &durable,
+            StdDuration::from_secs(30),
+            512,
+        )
+        .await?,
+    );
+
+    let processed_total = Arc::new(AtomicUsize::new(0));
+    let distribution: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mut join_set = JoinSet::new();
+    let workers = 3usize;
+
+    for worker_id in 0..workers {
+        let consumer = consumer.clone();
+        let processed_total = processed_total.clone();
+        let distribution = distribution.clone();
+        join_set.spawn(async move {
+            let worker_name = format!("worker-{worker_id}");
+            let mut processed_by_worker = 0usize;
+            loop {
+                if processed_total.load(Ordering::SeqCst) >= total_messages {
+                    break;
+                }
+
+                let mut batch = consumer
+                    .fetch()
+                    .max_messages(16)
+                    .expires(StdDuration::from_secs(1))
+                    .messages()
+                    .await
+                    .map_err(|err| eyre!("fetch failed: {err}"))?;
+
+                let mut handled_any = false;
+                while let Some(message) = batch.next().await {
+                    let message = message.map_err(|err| eyre!("message fetch failed: {err}"))?;
+                    message
+                        .ack()
+                        .await
+                        .map_err(|err| eyre!("ack failed: {err}"))?;
+                    processed_total.fetch_add(1, Ordering::SeqCst);
+                    processed_by_worker += 1;
+                    handled_any = true;
+
+                    if processed_total.load(Ordering::SeqCst) >= total_messages {
+                        break;
+                    }
+                }
+
+                if !handled_any {
+                    break;
+                }
+            }
+
+            distribution
+                .lock()
+                .await
+                .insert(worker_name, processed_by_worker);
+
+            Ok::<_, color_eyre::Report>(())
+        });
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        result??;
+    }
+
+    let counts = distribution.lock().await;
+    let total_processed: usize = counts.values().sum();
+    color_eyre::eyre::ensure!(
+        total_processed == total_messages,
+        "expected {total_messages} messages processed, observed {total_processed}"
+    );
+
+    if let (Some(min), Some(max)) = (counts.values().min(), counts.values().max()) {
+        let imbalance = max - min;
+        color_eyre::eyre::ensure!(
+            imbalance <= total_messages / workers / 2,
+            "work distribution imbalance too high (min {min}, max {max}, diff {imbalance})"
+        );
+    }
+
+    js.delete_consumer(&stream_name, &durable).await?;
+    js.delete_stream(&stream_name).await?;
+    Ok(())
+}
+
+#[sinex_bench]
+async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let js = JetStream::new(client);
+
+    let stream_name = format!("perf_redelivery_{}", Ulid::new());
+    let subject = format!("perf.redelivery.{}", Ulid::new());
+    create_stream(&js, &stream_name, &subject).await?;
+
+    js.publish(
+        &subject,
+        serde_json::to_vec(&json!({
+            "id": Ulid::new().to_string(),
+            "purpose": "redelivery-test"
+        }))?
+        .into(),
+    )
+    .await?
+    .await?;
+
+    let durable = format!("perf_redelivery_consumer_{}", Ulid::new());
+    let consumer = create_pull_consumer(
+        &js,
+        &stream_name,
+        &subject,
+        &durable,
+        StdDuration::from_millis(500),
+        8,
+    )
+    .await?;
+
+    let mut batch = consumer
+        .fetch()
+        .max_messages(1)
+        .expires(StdDuration::from_secs(1))
+        .messages()
+        .await?;
+
+    let first = batch
+        .next()
+        .await
+        .ok_or_else(|| eyre!("expected first delivery"))??;
+    let sequence = first.info().stream_sequence;
+    // Intentionally skip ack to trigger redelivery.
+
+    sleep(StdDuration::from_millis(900)).await;
+
+    let mut redelivery = consumer
+        .fetch()
+        .max_messages(1)
+        .expires(StdDuration::from_secs(1))
+        .messages()
+        .await?;
+
+    let mut redelivered = false;
+    while let Some(message) = redelivery.next().await {
+        let message = message?;
+        if message.info().stream_sequence == sequence && message.info().redelivery_count >= 1 {
+            redelivered = true;
+            message.ack().await?;
+            break;
+        } else {
+            message.ack().await?;
+        }
+    }
+
+    color_eyre::eyre::ensure!(redelivered, "expected message redelivery after ack wait");
+
+    js.delete_consumer(&stream_name, &durable).await?;
+    js.delete_stream(&stream_name).await?;
+    Ok(())
+}
+
+#[sinex_bench]
 async fn jetstream_consumer_latency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -135,7 +338,15 @@ async fn jetstream_consumer_latency(_ctx: TestContext) -> color_eyre::eyre::Resu
     );
 
     let durable = format!("perf_consumer_{}", Ulid::new());
-    let consumer = create_pull_consumer(&js, &stream_name, &subject, &durable).await?;
+    let consumer = create_pull_consumer(
+        &js,
+        &stream_name,
+        &subject,
+        &durable,
+        StdDuration::from_secs(30),
+        512,
+    )
+    .await?;
 
     let mut latency_samples = Vec::with_capacity(total_messages);
     let mut received = 0usize;

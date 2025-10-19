@@ -13,9 +13,8 @@
 // - **Database Performance Tests**: Query performance and optimization
 // - **JetStream Performance**: Publish/consume behaviour on the current bus
 // - **Resource Exhaustion Tests**: Behavior at system limits
-// - **Baseline Performance**: Establishes performance baselines
-// - **Regression Detection**: Automated performance regression detection
-// - **Bottleneck Identification**: Tools for identifying system bottlenecks
+// - **Checkpoint Performance**: Persistence and recovery speed
+// - **Bottleneck Identification**: Tools for identifying JetStream stress cases
 
 use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
@@ -23,5 +22,11 @@ use sinex_test_utils::prelude::*;
 /// JetStream publish/consume performance tests
 pub mod jetstream_performance_test;
 
+/// Checkpoint persistence and recovery tests
+pub mod checkpoint_performance_test;
+
 /// Resource exhaustion and limit tests
 pub mod resource_exhaustion_test;
+
+/// JetStream bottleneck identification tests
+pub mod bottleneck_identification_test;
