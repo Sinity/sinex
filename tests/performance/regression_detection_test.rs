@@ -7,6 +7,8 @@
 use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
+use async_nats::jetstream::Context as JetStream;
+use sinex_test_utils::nats::EphemeralNats;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -807,6 +809,90 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_ey
     }
 
     println!("✅ Multi-operation regression detection test passed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_jetstream_publish_regression_detection(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let js = JetStream::new(client.clone());
+
+    let stream_name = format!("regression_publish_{}", Ulid::new());
+    let subject = format!("regression.publish.{}", Ulid::new());
+
+    js.get_or_create_stream(
+        async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![subject.clone()],
+            retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+            max_age: std::time::Duration::from_secs(120),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut baseline_tracker = BaselineTracker::new();
+
+    for _ in 0..200 {
+        let payload = serde_json::to_vec(&json!({
+            "kind": "baseline",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }))?;
+        let start = Instant::now();
+        js.publish(&subject, payload.into()).await?.await?;
+        baseline_tracker.record_measurement(
+            "jetstream_publish",
+            start.elapsed(),
+            true,
+        );
+    }
+
+    let baseline_env = EnvironmentInfo {
+        test_data_size: 200,
+        concurrent_operations: 1,
+        database_pool_size: 0,
+        system_load: "jetstream_publish_baseline".to_string(),
+    };
+    let baseline = baseline_tracker
+        .calculate_baseline("jetstream_publish", baseline_env)
+        .expect("baseline should be computed");
+
+    let mut detector = RegressionDetector::new();
+    detector.set_baseline(baseline.clone());
+
+    // Normal measurement
+    for _ in 0..100 {
+        let payload = serde_json::to_vec(&json!({ "kind": "normal" }))?;
+        let start = Instant::now();
+        js.publish(&subject, payload.into()).await?.await?;
+        detector.record_measurement("jetstream_publish", start.elapsed(), true);
+    }
+
+    if let Some(result) = detector.detect_regression("jetstream_publish") {
+        assert!(!result.regression_detected, "normal publish path should not trigger regression");
+    }
+
+    // Degraded measurement (artificial delay)
+    let mut degraded_detector = RegressionDetector::new();
+    degraded_detector.set_baseline(baseline);
+
+    for _ in 0..100 {
+        let payload = serde_json::to_vec(&json!({ "kind": "degraded" }))?;
+        let start = Instant::now();
+        js.publish(&subject, payload.into()).await?.await?;
+        tokio::time::sleep(StdDuration::from_millis(5)).await;
+        degraded_detector.record_measurement("jetstream_publish", start.elapsed(), true);
+    }
+
+    let regression = degraded_detector
+        .detect_regression("jetstream_publish")
+        .expect("regression detection result");
+    assert!(regression.regression_detected, "should detect JetStream publish regression");
+
+    js.delete_stream(&stream_name).await?;
     Ok(())
 }
 

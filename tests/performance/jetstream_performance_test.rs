@@ -318,6 +318,82 @@ async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_bench]
+async fn jetstream_sustained_publish_throughput(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let js = JetStream::new(client.clone());
+
+    let stream_name = format!("perf_sustained_publish_{}", Ulid::new());
+    let subject = format!("perf.sustained.publish.{}", Ulid::new());
+    create_stream(&js, &stream_name, &subject).await?;
+
+    let total_messages = 2_000usize;
+    let payload = serde_json::to_vec(&json!({
+        "kind": "sustained-test",
+        "payload": "a".repeat(256)
+    }))?;
+
+    let start = Instant::now();
+    for _ in 0..total_messages {
+        js.publish(&subject, payload.clone().into()).await?.await?;
+    }
+    let elapsed = start.elapsed();
+
+    let throughput = total_messages as f64 / elapsed.as_secs_f64();
+    color_eyre::eyre::ensure!(
+        throughput > 500.0,
+        "expected publish throughput > 500 msgs/sec, observed {:.1}",
+        throughput
+    );
+
+    let durable = format!("perf_sustained_consumer_{}", Ulid::new());
+    let consumer = create_pull_consumer(
+        &js,
+        &stream_name,
+        &subject,
+        &durable,
+        StdDuration::from_secs(60),
+        1024,
+    )
+    .await?;
+
+    let mut drained = 0usize;
+    loop {
+        let mut batch = consumer
+            .fetch()
+            .max_messages(128)
+            .expires(StdDuration::from_secs(1))
+            .messages()
+            .await?;
+
+        let mut handled = false;
+        while let Some(message) = batch.next().await {
+            let message = message?;
+            message.ack().await?;
+            drained += 1;
+            handled = true;
+        }
+
+        if !handled {
+            break;
+        }
+    }
+
+    color_eyre::eyre::ensure!(
+        drained == total_messages,
+        "expected to drain {} messages, received {}",
+        total_messages,
+        drained
+    );
+
+    js.delete_consumer(&stream_name, &durable).await?;
+    js.delete_stream(&stream_name).await?;
+    Ok(())
+}
+
+#[sinex_bench]
 async fn jetstream_consumer_latency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
