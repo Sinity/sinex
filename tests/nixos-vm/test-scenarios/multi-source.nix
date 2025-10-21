@@ -9,8 +9,8 @@
 }:
 
 let
-  sinexPackage = sinex or sinex-ingestd;
-  sinexCliPackage = sinexCli or pkgs.python3;
+  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with metrics support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -248,6 +248,7 @@ pkgs.nixosTest {
               enable = true;
               instances = 2;
               extraArgs = "";
+              watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
             };
             terminal = {
               enable = true;
@@ -269,33 +270,11 @@ pkgs.nixosTest {
           };
         };
 
-        # Legacy option block retained so bridging layer can surface detailed settings.
-        eventSources = {
-          filesystem = {
-            enable = true;
-            watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
-          };
-          atuin = {
-            enable = true;
-            databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
-          };
-          shellHistory.enable = true;
-          asciinema = {
-            enable = true;
-            recordingsPath = "/home/test/.local/share/asciinema";
-            autoRecord = false;
-          };
-          kittyScrollback = {
-            enable = true;
-            socketPath = "/tmp/kitty";
-          };
-          clipboard.enable = true;
-          dbus.enable = true;
-          hyprlandIpc = {
-            enable = true;
-            socketPath = "/tmp/hypr/hyprland.sock";
-          };
+        shell = {
+          asciinema.recordingsPath = "/home/test/.local/share/asciinema";
+          kitty.enable = true;
         };
+
       };
 
       # Test user setup with additional stress directories

@@ -7,8 +7,8 @@
 //! - Advisory lock cleanup
 
 use color_eyre::eyre::Result;
-use sinex_core_utils::{CoordinationPrimitive, ResourceGuard};
 use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
+use sinex_core::types::utils::{CoordinationPrimitive, ResourceGuard};
 use sinex_satellite_sdk::{InstanceMode, SatelliteCoordination};
 use sinex_satellite_sdk::{SatelliteInstance, SatelliteVersion};
 use sinex_test_utils::{sinex_test, TestContext};

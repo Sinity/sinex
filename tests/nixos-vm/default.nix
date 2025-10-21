@@ -37,5 +37,9 @@
   performance = import ./test-scenarios/performance.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
+
+  "production-scale" = import ./production-scale.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
   
 }

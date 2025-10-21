@@ -8,9 +8,6 @@ with lib;
 let
   cfg = config.services.sinex;
   
-  # Import utility modules
-  healthChecks = import ../health-checks.nix { inherit lib; };
-  
   # Service enhancement flags
   enablePreflight = cfg.preflightVerification.enable or false;
   enableMonitoring = cfg.monitoring.enable or false;
@@ -133,13 +130,5 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
-    # Legacy collector and worker services have been removed
-    # Use satellite architecture services from satellite-services.nix
-    
-    # This module is retained for backward compatibility and
-    # service enhancement configuration options
-    warnings = optional (cfg.services.enhancementMode != "standard") 
-      "Sinex core-services.nix is deprecated. Use satellite-services.nix for the new architecture.";
-  };
+  config = mkIf cfg.enable {};
 }

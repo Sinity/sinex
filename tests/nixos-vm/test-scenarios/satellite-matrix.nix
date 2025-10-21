@@ -35,6 +35,7 @@ pkgs.nixosTest {
           filesystem = {
             enable = lib.mkForce true;
             instances = lib.mkForce 2;
+            watchPaths = lib.mkForce [ "/home/test/watched" ];
           };
           terminal = {
             enable = lib.mkForce true;

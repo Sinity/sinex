@@ -6,8 +6,6 @@ with lib;
 
 let
   cfg = config.services.sinex;
-  legacyEnabled = path: lib.attrByPath path false cfg;
-
   coordinationDependencies =
     lib.optionals (cfg.satellite.coordination.enable or false) [
       "sinex-coordination-setup.service"
@@ -67,7 +65,13 @@ let
       TasksMax = serviceConfig.tasksMax or 100;
 
       ExecStart = serviceConfig.execStart;
-      Environment = serviceConfig.environment or [] ++ [
+      EnvironmentFile =
+        (cfg.satellite.environmentFiles or [])
+        ++ (serviceConfig.environmentFiles or []);
+      Environment =
+        (cfg.satellite.environment or [])
+        ++ (serviceConfig.environment or [])
+        ++ [
         "COORDINATION_HEARTBEAT_INTERVAL=${toString cfg.satellite.coordination.heartbeatInterval}"
         "COORDINATION_LEADERSHIP_TIMEOUT=${toString cfg.satellite.coordination.leadershipTimeout}" 
         "COORDINATION_HANDOFF_TIMEOUT=${toString cfg.satellite.coordination.handoffTimeout}"
@@ -126,11 +130,10 @@ let
 
           mkEventSource = name: sourceConfig:
             let
-              legacyExtraArgs =
+              derivedExtraArgs =
                 if name == "fs-watcher" then
                   let
-                    fsLegacy = cfg.eventSources.filesystem or {};
-                    watchPaths = fsLegacy.watchPaths or [];
+                    watchPaths = cfg.satellite.eventSources.filesystem.watchPaths;
                   in
                   if watchPaths == [] then
                     ""
@@ -140,13 +143,13 @@ let
                         filesystem = {
                           watch_paths = watchPaths;
                         };
-                      };
-                    in "--processor-config ${lib.escapeShellArg processorConfig}"
+                    };
+                  in "--processor-config ${lib.escapeShellArg processorConfig}"
                 else "";
 
               combinedExtraArgs =
                 lib.concatStringsSep " " (lib.filter (arg: arg != "") [
-                  legacyExtraArgs
+                  derivedExtraArgs
                   sourceConfig.extraArgs
                 ]);
             in
@@ -213,6 +216,19 @@ in {
       type = types.enum [ "trace" "debug" "info" "warn" "error" ];
       default = "info";
       description = "Log level for all satellite services";
+    };
+
+    environment = mkOption {
+      type = types.listOf (types.strMatching "^[^=]+=.+$");
+      default = [];
+      example = [ "SINEX_NATS_TOKEN=env:prod/nats/token" ];
+      description = "Additional environment variables applied to every satellite unit (KEY=value format).";
+    };
+
+    environmentFiles = mkOption {
+      type = types.listOf (types.oneOf [ types.path types.str ]);
+      default = [];
+      description = "Environment files to include for each satellite unit (use for secrets or TLS material).";
     };
 
     database = {
@@ -304,9 +320,15 @@ in {
         };
 
         instances = mkOption {
-          type = types.int;
+          type = types.ints.positive;
           default = 2;
           description = "Number of instances for hot standby (2-3 recommended)";
+        };
+
+        watchPaths = mkOption {
+          type = types.listOf types.str;
+          default = [ "~/" ];
+          description = "Paths to monitor for filesystem events.";
         };
 
         description = mkOption {
@@ -360,7 +382,7 @@ in {
         };
 
         instances = mkOption {
-          type = types.int;
+          type = types.ints.positive;
           default = 2;
           description = "Number of instances for hot standby (2-3 recommended)";
         };
@@ -416,7 +438,7 @@ in {
         };
 
         instances = mkOption {
-          type = types.int;
+          type = types.ints.positive;
           default = 2;
           description = "Number of instances for hot standby (2-3 recommended)";
         };
@@ -472,7 +494,7 @@ in {
         };
 
         instances = mkOption {
-          type = types.int;
+          type = types.ints.positive;
           default = 2;
           description = "Number of instances for hot standby (2-3 recommended)";
         };
@@ -668,10 +690,7 @@ in {
       settings = {
         server_name = "sinex-nats";
         host = "127.0.0.1";
-        http = {
-          host = "127.0.0.1";
-          port = cfg.satellite.nats.monitoringPort;
-        };
+        http = "127.0.0.1:${toString cfg.satellite.nats.monitoringPort}";
         jetstream = {
           store_dir = lib.mkDefault "/var/lib/nats/jetstream";
           max_memory_store = "1G";
@@ -681,23 +700,6 @@ in {
     };
 
     services.sinex.satellite.nats.servers = mkDefault "nats://127.0.0.1:${toString cfg.satellite.nats.port}";
-
-    services.sinex.satellite.eventSources.terminal.enable = mkDefault (
-      legacyEnabled [ "eventSources" "shellHistory" "enable" ]
-      || legacyEnabled [ "eventSources" "asciinema" "enable" ]
-      || legacyEnabled [ "eventSources" "kitty" "enable" ]
-      || legacyEnabled [ "eventSources" "kittyScrollback" "enable" ]
-      || legacyEnabled [ "eventSources" "atuin" "enable" ]
-    );
-
-    services.sinex.satellite.eventSources.desktop.enable = mkDefault (
-      legacyEnabled [ "eventSources" "clipboard" "enable" ]
-      || legacyEnabled [ "eventSources" "kitty" "enable" ]
-    );
-
-    services.sinex.satellite.eventSources.system.enable = mkDefault (
-      legacyEnabled [ "eventSources" "dbus" "enable" ]
-    );
 
     # Generate systemd services for all satellites and supporting setup jobs
     systemd.services =

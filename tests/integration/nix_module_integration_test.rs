@@ -24,18 +24,32 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> Result<()> {
     let sinex_config = &module_config["services"]["sinex"];
     assert!(sinex_config.get("enable").is_some(), "Should have enable flag");
     assert!(sinex_config.get("database").is_some(), "Should have database config");
-    assert!(sinex_config.get("eventSources").is_some(), "Should have collector config");
+    assert!(sinex_config.get("satellite").is_some(), "Should have satellite config");
+    assert!(sinex_config.get("shell").is_some(), "Should have shell helpers config");
     
     // Validate database configuration
     let db_config = &sinex_config["database"];
     assert!(db_config.get("host").is_some(), "Should have database host");
     assert!(db_config.get("port").is_some(), "Should have database port");
     assert!(db_config.get("name").is_some(), "Should have database name");
+
+    // Validate satellite event source configuration
+    let satellite_config = &sinex_config["satellite"];
+    assert!(satellite_config.get("eventSources").is_some(), "Satellite config should expose event sources");
+
+    let event_sources_config = &satellite_config["eventSources"];
+    for source in ["filesystem", "terminal", "desktop", "system"] {
+        assert!(
+            event_sources_config.get(source).is_some(),
+            "Satellite configuration should expose {} source config",
+            source
+        );
+    }
     
-    // Validate event source configuration
-    let event_sources_config = &sinex_config["eventSources"];
-    assert!(event_sources_config.get("filesystem").is_some(), "Should expose filesystem source config");
-    assert!(event_sources_config.get("shellHistory").is_some(), "Should expose shellHistory source config");
+    // Validate shell helper configuration
+    let shell_config = &sinex_config["shell"];
+    assert!(shell_config.get("asciinema").is_some(), "Shell config should expose asciinema settings");
+    assert!(shell_config.get("kitty").is_some(), "Shell config should expose kitty settings");
     
     // Validate configuration can be serialized (basic structure test)
     let _config_json = serde_json::to_string(&module_config)
@@ -97,10 +111,8 @@ async fn test_nixos_module_options_schema(_ctx: TestContext) -> Result<()> {
     let expected_categories = vec![
         "enable",
         "database", 
-        "eventSources",
-        "gateway",
-        "security",
-        "performance",
+        "satellite",
+        "shell",
         "logging",
     ];
     
@@ -122,10 +134,9 @@ async fn test_nixos_module_options_schema(_ctx: TestContext) -> Result<()> {
     }
     
     // Validate source-specific options
-    let event_source_options = &module_options["eventSources"]["options"];
-    let source_types = vec![
-        "filesystem", "shellHistory", "atuin", "clipboard"
-    ];
+    let event_source_options =
+        &module_options["satellite"]["options"]["eventSources"]["options"];
+    let source_types = vec!["filesystem", "terminal", "desktop", "system"];
 
     for source_type in source_types {
         let source_config = &event_source_options[source_type];
@@ -319,8 +330,8 @@ async fn test_database_configuration_integration(_ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn test_collector_source_configuration(_ctx: TestContext) -> Result<()> {
-    // Test individual source configurations from NixOS module
+async fn test_satellite_source_configuration(_ctx: TestContext) -> Result<()> {
+    // Test individual satellite source configurations from the NixOS module
     let sources_config = create_test_sources_config();
     
     // Test filesystem source
@@ -338,87 +349,20 @@ async fn test_collector_source_configuration(_ctx: TestContext) -> Result<()> {
         }
     }
     
-    // Test shell history source
-    let shell_config = &sources_config["shellHistory"];
-    if shell_config["enable"].as_bool().unwrap_or(false) {
-        assert!(shell_config.get("historyFiles").is_some(), "Shell history should specify files to watch");
+    // Test terminal source
+    let terminal_config = &sources_config["terminal"];
+    assert!(terminal_config["enable"].as_bool().unwrap_or(false), "Terminal source should be enabled");
+    if let Some(instances) = terminal_config.get("instances") {
+        assert!(instances.as_i64().unwrap_or(0) >= 1, "Terminal source should define instances >= 1");
     }
     
-    // Test atuin source
-    let atuin_config = &sources_config["atuin"];
-    if atuin_config["enable"].as_bool().unwrap_or(false) {
-        assert!(
-            atuin_config.get("databasePath").is_some(),
-            "Atuin source should specify database path"
-        );
-    }
-    
-    // Test clipboard source (optional, Wayland-dependent)
-    let clipboard_config = &sources_config["clipboard"];
-    if clipboard_config["enable"].as_bool().unwrap_or(false) {
-        // Clipboard source should handle missing dependencies gracefully
-        assert!(
-            clipboard_config.get("backend").is_some(),
-            "Clipboard source should specify backend"
-        );
-    }
+    // Desktop and system sources should exist
+    assert!(sources_config.get("desktop").is_some(), "Desktop source should be present");
+    assert!(sources_config.get("system").is_some(), "System source should be present");
     
     // Validate sources configuration structure
     let _sources_json = serde_json::to_string(&sources_config)
         .expect("Sources config should be valid JSON");
-    
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_nixos_module_conditional_features(_ctx: TestContext) -> Result<()> {
-    // Test that NixOS module handles conditional features correctly
-    let conditional_config = create_test_conditional_config();
-    
-    // Test Wayland-dependent features
-    let wayland_features = &conditional_config["waylandFeatures"];
-    
-    if wayland_features["available"].as_bool().unwrap_or(false) {
-        // If Wayland is available, clipboard and window manager sources should be configurable
-        assert!(
-            wayland_features.get("clipboardSource").is_some(),
-            "Should configure clipboard source when Wayland available"
-        );
-        assert!(
-            wayland_features.get("hyprlandIntegration").is_some(),
-            "Should configure Hyprland integration when Wayland available"
-        );
-    } else {
-        // If Wayland not available, features should be disabled or have fallbacks
-        let clipboard_fallback = wayland_features.get("clipboardFallback");
-        assert!(
-            clipboard_fallback.is_some(),
-            "Should provide clipboard fallback when Wayland unavailable"
-        );
-    }
-    
-    // Test optional dependency handling
-    let optional_deps = &conditional_config["optionalDependencies"];
-    
-    for (dep_name, dep_config) in optional_deps.as_object().unwrap() {
-        if dep_config["required"].as_bool().unwrap_or(false) {
-            assert!(
-                dep_config["fallback"].is_null(),
-                "Required dependency {} should not have fallback",
-                dep_name
-            );
-        } else {
-            assert!(
-                dep_config.get("gracefulDegradation").is_some(),
-                "Optional dependency {} should have graceful degradation",
-                dep_name
-            );
-        }
-    }
-    
-    // Validate conditional configuration structure
-    let _conditional_json = serde_json::to_string(&conditional_config)
-        .expect("Conditional config should be valid JSON");
     
     Ok(())
 }
@@ -505,7 +449,7 @@ async fn test_module_upgrade_compatibility(_ctx: TestContext) -> Result<()> {
         let sinex_config = &config["services"]["sinex"];
         
         // Core options should be present in all versions
-        let core_options = vec!["enable", "database", "eventSources"];
+        let core_options = vec!["enable", "database", "satellite", "shell"];
         for option in core_options {
             assert!(
                 sinex_config.get(option).is_some(),
@@ -558,11 +502,25 @@ fn create_test_module_config() -> serde_json::Value {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "eventSources": {
-                    "filesystem": {"enable": true},
-                    "shellHistory": {"enable": true},
-                    "atuin": {"enable": false},
-                    "clipboard": {"enable": false}
+                "satellite": {
+                    "enable": true,
+                    "eventSources": {
+                        "filesystem": {"enable": true, "watchPaths": ["/home"]},
+                        "terminal": {"enable": true, "instances": 2},
+                        "desktop": {"enable": false},
+                        "system": {"enable": true}
+                    }
+                },
+                "shell": {
+                    "asciinema": {
+                        "autoRecord": false,
+                        "recordingsPath": "~/.local/share/asciinema"
+                    },
+                    "kitty": {
+                        "enable": true,
+                        "autoConfigure": true,
+                        "userConfigPath": "~/.config/kitty/kitty.conf"
+                    }
                 },
                 "gateway": {
                     "enable": true,
@@ -701,49 +659,68 @@ fn create_test_module_options_schema() -> serde_json::Value {
                 }
             }
         },
-        "eventSources": {
+        "satellite": {
             "type": "submodule",
-            "description": "Event source configuration",
+            "description": "Satellite configuration",
             "options": {
-                "filesystem": {
-                    "type": "submodule",
-                    "options": {
-                        "enable": {"type": "bool", "default": true},
-                        "watchPaths": {"type": "list", "default": []}
-                    }
+                "enable": {
+                    "type": "bool",
+                    "default": true,
+                    "description": "Enable satellite constellation"
                 },
-                "shellHistory": {
+                "eventSources": {
                     "type": "submodule",
                     "options": {
-                        "enable": {"type": "bool", "default": true}
-                    }
-                },
-                "atuin": {
-                    "type": "submodule",
-                    "options": {
-                        "enable": {"type": "bool", "default": false},
-                        "databasePath": {"type": "str", "default": "~/.local/share/atuin/history.db"}
-                    }
-                },
-                "clipboard": {
-                    "type": "submodule",
-                    "options": {
-                        "enable": {"type": "bool", "default": false}
+                        "filesystem": {
+                            "type": "submodule",
+                            "options": {
+                                "enable": {"type": "bool", "default": true},
+                                "watchPaths": {"type": "list", "default": ["/home"]}
+                            }
+                        },
+                        "terminal": {
+                            "type": "submodule",
+                            "options": {
+                                "enable": {"type": "bool", "default": true},
+                                "instances": {"type": "int", "default": 2}
+                            }
+                        },
+                        "desktop": {
+                            "type": "submodule",
+                            "options": {
+                                "enable": {"type": "bool", "default": false}
+                            }
+                        },
+                        "system": {
+                            "type": "submodule",
+                            "options": {
+                                "enable": {"type": "bool", "default": true}
+                            }
+                        }
                     }
                 }
             }
         },
-        "gateway": {
+        "shell": {
             "type": "submodule",
-            "description": "API gateway configuration"
-        },
-        "security": {
-            "type": "submodule", 
-            "description": "Security settings"
-        },
-        "performance": {
-            "type": "submodule",
-            "description": "Performance tuning options"
+            "description": "Workstation shell helpers",
+            "options": {
+                "asciinema": {
+                    "type": "submodule",
+                    "options": {
+                        "autoRecord": {"type": "bool", "default": false},
+                        "recordingsPath": {"type": "str", "default": "~/.local/share/asciinema"}
+                    }
+                },
+                "kitty": {
+                    "type": "submodule",
+                    "options": {
+                        "enable": {"type": "bool", "default": true},
+                        "autoConfigure": {"type": "bool", "default": true},
+                        "userConfigPath": {"type": "str", "default": "~/.config/kitty/kitty.conf"}
+                    }
+                }
+            }
         },
         "logging": {
             "type": "submodule",
@@ -882,76 +859,20 @@ fn create_test_sources_config() -> serde_json::Value {
     json!({
         "filesystem": {
             "enable": true,
-            "watchPaths": ["/home", "/etc", "/var/log"],
-            "excludePatterns": ["*.tmp", "*.swp"]
+            "watchPaths": ["/home", "/var/log"]
         },
-        "shellHistory": {
+        "terminal": {
             "enable": true,
-            "historyFiles": [
-                "/var/lib/sinex/.bash_history",
-                "/var/lib/sinex/.zsh_history"
-            ]
+            "instances": 2
         },
-        "atuin": {
-            "enable": false,
-            "databasePath": "/var/lib/sinex/.local/share/atuin/history.db"
+        "desktop": {
+            "enable": false
         },
-        "asciinema": {
-            "enable": false,
-            "recordingsPath": "/var/lib/sinex/.local/share/asciinema"
-        },
-        "clipboard": {
-            "enable": false,
-            "backend": "wayland"
-        },
-        "kittyScrollback": {
-            "enable": false,
-            "socketPath": "/tmp/kitty"
-        },
-        "dbus": {
-            "enable": true,
-            "sessionBus": true,
-            "systemBus": false
+        "system": {
+            "enable": true
         }
     })
 }
-
-fn create_test_conditional_config() -> serde_json::Value {
-    json!({
-        "waylandFeatures": {
-            "available": false,
-            "clipboardSource": {
-                "backend": "wayland",
-                "fallback": "xclip"
-            },
-            "clipboardFallback": {
-                "backend": "x11",
-                "command": "xclip"
-            },
-            "hyprlandIntegration": {
-                "socketPath": "/tmp/hypr"
-            }
-        },
-        "optionalDependencies": {
-            "atuin": {
-                "required": false,
-                "gracefulDegradation": "disable_source",
-                "fallback": null
-            },
-            "git-annex": {
-                "required": false,
-                "gracefulDegradation": "inline_storage",
-                "fallback": "filesystem"
-            },
-            "kitty": {
-                "required": false,
-                "gracefulDegradation": "skip_terminal_capture",
-                "fallback": null
-            }
-        }
-    })
-}
-
 fn create_test_system_integration_config() -> serde_json::Value {
     json!({
         "systemd": {
@@ -1004,7 +925,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "port": 5432,
                     "name": "sinex"
                 },
-                "eventSources": {
+                "satellite": {
                     "enable": true
                 }
             }
@@ -1021,9 +942,9 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "eventSources": {
+                "satellite": {
                     "enable": true,
-                    "sources": {
+                    "eventSources": {
                         "filesystem": {"enable": true}
                     }
                 }
@@ -1041,16 +962,16 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "eventSources": {
+                "satellite": {
                     "enable": true,
-                    "sources": {
+                    "eventSources": {
                         "filesystem": {"enable": true},
-                        "shellHistory": {"enable": true},
-                        "atuin": {"enable": false}
+                        "terminal": {"enable": true},
+                        "system": {"enable": true}
                     }
                 },
-                "gateway": {
-                    "enable": true
+                "shell": {
+                    "kitty": {"enable": true}
                 }
             }
         }
@@ -1059,12 +980,13 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
     versions
 }
 
+
 fn create_test_migration_info(_versions: &HashMap<String, serde_json::Value>) -> serde_json::Value {
     json!({
         "backward_compatible": true,
         "breaking_changes": [],
         "deprecated_options": [
-            {"version": "0.2.0", "option": "old_collector_config", "replacement": "eventSources"}
+            {"version": "0.2.0", "option": "old_collector_config", "replacement": "satellite.eventSources"}
         ],
         "migration_path": {
             "0.1.0_to_0.2.0": "automatic",

@@ -25,14 +25,19 @@ pkgs.nixosTest {
 
     # Kitty-specific sinex configuration
     services.sinex = {
-      eventSources = {
-        kittyTerminal = {
-          enable = true;
-          socketPath = "/tmp/kitty-test";
-          pollIntervalSeconds = 2;
-        };
-        # Minimal other sources for this test
+      targetUser = "testuser";
+      satellite.eventSources = {
         filesystem.enable = true;
+        terminal.enable = true;
+      };
+
+      shell = {
+        asciinema.autoRecord = false;
+        kitty = {
+          enable = true;
+          autoConfigure = false;
+          userConfigPath = "/etc/kitty/kitty.conf";
+        };
       };
     };
 
@@ -63,7 +68,7 @@ pkgs.nixosTest {
     environment.etc."kitty/kitty.conf".text = ''
       # Enable remote control for Sinex integration
       allow_remote_control yes
-      listen_on unix:/tmp/kitty-test
+      listen_on unix:/tmp/kitty-$USER
       
       # Terminal settings for testing
       scrollback_lines 10000
@@ -95,7 +100,7 @@ pkgs.nixosTest {
       after = [ "systemd-user-sessions.service" ];
       
       serviceConfig = {
-        ExecStart = "${pkgs.kitty}/bin/kitty --listen-on=unix:/tmp/kitty-test --session=/dev/stdin";
+        ExecStart = "${pkgs.kitty}/bin/kitty --listen-on=unix:/tmp/kitty-$USER --session=/dev/stdin";
         ExecStartPost = "${pkgs.coreutils}/bin/sleep 2";
         Restart = "always";
         RestartSec = 5;
@@ -188,11 +193,11 @@ EOF
             machine.sleep(5)
             
             # Check if kitty socket exists
-            machine.wait_until_succeeds("test -S /tmp/kitty-test", timeout=30)
+            machine.wait_until_succeeds("test -S /tmp/kitty-$USER", timeout=30)
             print("✓ Kitty socket created")
             
             # Test kitty remote control
-            machine.succeed("su - testuser -c 'kitty @ --to unix:/tmp/kitty-test ls'")
+            machine.succeed("su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER ls'")
             print("✓ Kitty remote control working")
             
         except Exception as e:
@@ -212,17 +217,17 @@ EOF
         try:
             # Test basic kitty command detection
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"echo test-command-1\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"echo test-command-1\\n\"'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"ls -la\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"ls -la\\n\"'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"pwd\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"pwd\\n\"'"
             )
             machine.sleep(2)
             
@@ -262,7 +267,7 @@ EOF
         try:
             # Generate scrollback content
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"for i in {1..50}; do echo \\\"Line \\$i of test output\\\"; done\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"for i in {1..50}; do echo \\\"Line \\$i of test output\\\"; done\\n\"'"
             )
             machine.sleep(3)
             
@@ -289,34 +294,34 @@ EOF
             
             # Create multiple tabs to test tab focus events
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test new-tab'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER new-tab'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test new-tab'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER new-tab'"
             )
             machine.sleep(2)
             
             # Switch between tabs to generate focus events
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test focus-tab --match index:0'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER focus-tab --match index:0'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test focus-tab --match index:1'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER focus-tab --match index:1'"
             )
             machine.sleep(2)
             
             # Run different processes to generate process change events
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"sleep 5 &\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"sleep 5 &\\n\"'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"echo \\\"process test\\\"\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"echo \\\"process test\\\"\\n\"'"
             )
             machine.sleep(2)
             
@@ -354,17 +359,17 @@ EOF
             
             # Run commands with different exit statuses
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"echo \\\"success command\\\"\\n\"'"
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"echo \\\"success command\\\"\\n\"'"
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"false\\n\"'"  # Exit status 1
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"false\\n\"'"  # Exit status 1
             )
             machine.sleep(2)
             
             machine.succeed(
-                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-test send-text \"exit 42\\n\"'"  # Exit status 42
+                "su - testuser -c 'kitty @ --to unix:/tmp/kitty-$USER send-text \"exit 42\\n\"'"  # Exit status 42
             )
             machine.sleep(2)
             

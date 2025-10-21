@@ -12,22 +12,24 @@
       case "$LOAD_TYPE" in
         "--filesystem")
           echo "Generating filesystem load: ''$RATE ops/sec for ''$DURATION seconds"
-          
-          # Create 50 watched directories (reduced for testing)
+
+          WATCH_BASE="/home/test/watched/production"
+          install -d -o test -g users "$WATCH_BASE"
           for i in {1..50}; do
-            mkdir -p "/watched/dir''$i"
+            install -d -o test -g users "$WATCH_BASE/dir''$i"
           done
-          
-          # Generate file operations
-          ${pkgs.python3}/bin/python3 -c "
+
+          WATCH_BASE="$WATCH_BASE" ${pkgs.python3}/bin/python3 - <<'PYCODE'
 import os
 import time
 import random
 import threading
 from pathlib import Path
 
+watch_base = os.environ.get("WATCH_BASE", "/home/test/watched")
+
 def generate_operations(dir_num, rate_per_dir, duration):
-    base_dir = f'/watched/dir{dir_num}'
+    base_dir = f"{watch_base}/dir{dir_num}"
     end_time = time.time() + duration
     
     while time.time() < end_time:
@@ -62,7 +64,7 @@ for t in threads:
     t.join()
 
 print(f'Generated filesystem operations at ~''$RATE ops/sec')
-"
+PYCODE
           ;;
           
         "--mixed")
@@ -128,10 +130,14 @@ print(f'Generated {count} clipboard operations')
       # Output system metrics in JSON format
       
       # Calculate ingestion rate
-      EVENTS_1=$(sinex-query --format csv 2>/dev/null | wc -l || echo "0")
+      EVENTS_1=$(su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
       sleep 5
-      EVENTS_2=$(sinex-query --format csv 2>/dev/null | wc -l || echo "0")
-      INGESTION_RATE=$(( (EVENTS_2 - EVENTS_1) / 5 ))
+      EVENTS_2=$(su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events;\"" 2>/dev/null | tr -d '\r\n' || echo "0")
+      DIFF=$(( EVENTS_2 - EVENTS_1 ))
+      if [ "$DIFF" -lt 0 ]; then
+        DIFF=0
+      fi
+      INGESTION_RATE=$(( DIFF / 5 ))
       
       # Get memory usage
       MEMORY_MB=$(free -m | grep Mem | awk '{print $3}')
@@ -141,7 +147,7 @@ print(f'Generated {count} clipboard operations')
       
       # Database query latency (simplified)
       LATENCY_START=$(date +%s%N)
-      sinex-query --limit 1 >/dev/null 2>&1 || true
+      su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events LIMIT 1;\"" >/dev/null 2>&1 || true
       LATENCY_END=$(date +%s%N)
       LATENCY_MS=$(( (LATENCY_END - LATENCY_START) / 1000000 ))
       

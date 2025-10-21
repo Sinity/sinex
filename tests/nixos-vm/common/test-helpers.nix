@@ -7,11 +7,58 @@ let
     import time
     import re
     import subprocess
-    from typing import Optional, Tuple, List
+    from typing import List
 
     class TestHelpers:
         def __init__(self, machine):
             self.machine = machine
+            self._last_satellite_units: List[str] = []
+            self._last_sinex_units: List[str] = []
+
+        def _list_units(self, pattern: str) -> List[str]:
+            """Return active systemd units matching the supplied pattern."""
+            try:
+                result = self.machine.succeed(
+                    f"systemctl list-units '{pattern}' --state=active --no-legend --plain 2>/dev/null || true"
+                ).strip()
+            except Exception:
+                return []
+
+            units = []
+            for line in result.splitlines():
+                unit = line.split()[0]
+                if unit.endswith(".service"):
+                    units.append(unit)
+            return units
+
+        def list_active_sinex_units(self) -> List[str]:
+            """Return all active sinex-* systemd units."""
+            units = self._list_units("sinex-*.service")
+            self._last_sinex_units = units
+            return units
+
+        def list_active_satellites(self) -> List[str]:
+            """Return active satellite units (sinex-* excluding core services)."""
+            units = [
+                unit for unit in self.list_active_sinex_units()
+                if unit not in {
+                    "sinex-ingestd.service",
+                    "sinex-gateway.service",
+                    "sinex-migrate.service",
+                }
+            ]
+            self._last_satellite_units = units
+            return units
+
+        def wait_for_satellites(self, timeout: int = 60) -> List[str]:
+            """Wait for at least one satellite unit to become active."""
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                satellites = self.list_active_satellites()
+                if satellites:
+                    return satellites
+                time.sleep(1)
+            raise RuntimeError("Timed out waiting for Sinex satellite services to start")
             
         def wait_for_sinex_ready(self, timeout: int = 60) -> None:
             """Wait for Sinex services to be fully ready."""
@@ -24,6 +71,13 @@ let
                 "systemctl is-active sinex-ingestd",
                 timeout=30
             )
+
+            # Wait for satellite services when they are enabled
+            try:
+                self.wait_for_satellites(timeout=timeout)
+            except RuntimeError:
+                # Satellite services might be disabled for some test profiles; continue anyway
+                pass
             
         def get_event_count(self) -> int:
             """Get current event count from database."""
@@ -35,6 +89,21 @@ let
             except:
                 pass
             return 0
+
+        def get_event_count_since(self, seconds: int) -> int:
+            """Count events ingested within the last N seconds."""
+            assert seconds > 0, "seconds must be positive"
+            sql = (
+                "SELECT COUNT(*) FROM core.events "
+                f"WHERE ts_ingest > NOW() - INTERVAL '{seconds} seconds';"
+            )
+            try:
+                result = self.machine.succeed(
+                    "su - postgres -c \"psql -d sinex -At -c \\\"%s\\\"\"" % sql.replace('"', '\\"')
+                ).strip()
+                return int(result or "0")
+            except Exception:
+                return 0
             
         def generate_events(self, count: int, prefix: str = "test", 
                           path: str = "/home/test/watched") -> int:

@@ -9,8 +9,8 @@
 }:
 
 let
-  sinexPackage = sinex or sinex-ingestd;
-  sinexCliPackage = sinexCli or pkgs.python3;
+  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -297,6 +297,7 @@ pkgs.nixosTest {
               enable = true;
               instances = 1;
               extraArgs = "";
+              watchPaths = [ "/home/test/watched" ];
             };
             terminal = {
               enable = true;
@@ -318,19 +319,7 @@ pkgs.nixosTest {
           };
         };
 
-        eventSources = {
-          filesystem = {
-            enable = true;
-            watchPaths = [ "/home/test/watched" ];
-          };
-          atuin = {
-            enable = true;
-            databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
-          };
-          shellHistory.enable = true;
-          clipboard.enable = true;
-          dbus.enable = true;
-        };
+        shell.kitty.enable = true;
       };
 
       # Test user setup

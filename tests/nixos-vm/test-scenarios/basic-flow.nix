@@ -26,24 +26,24 @@ pkgs.nixosTest {
 
     # Override base config for this test
     services.sinex = {
-      eventSources = {
-        shellHistory.enable = true;
-        atuin = {
-          enable = true;
-          databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
-        };
+      shell = {
         asciinema = {
-          enable = true;
-          path = "/home/test/.local/share/asciinema";
           autoRecord = false;
+          recordingsPath = "/home/test/.local/share/asciinema";
         };
-        dbus.enable = true;
-
-        # Optional sources - will be tested only if available
-        clipboard.enable = true;
-        kittyScrollback = {
+        kitty = {
           enable = true;
-          socketPath = "/tmp/kitty";
+          autoConfigure = true;
+          userConfigPath = "~/.config/kitty/kitty.conf";
+        };
+      };
+
+      satellite = {
+        eventSources = {
+          filesystem.watchPaths = lib.mkAfter [ "/home/test/watched" ];
+          terminal.enable = true;
+          desktop.enable = true;
+          system.enable = true;
         };
       };
     };

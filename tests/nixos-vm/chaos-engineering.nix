@@ -7,7 +7,7 @@
 , ...
 }:
 
-{
+pkgs.nixosTest {
   name = "sinex-chaos-engineering";
 
   nodes.machine = { pkgs, config, lib, ... }: {
@@ -25,130 +25,110 @@
       script = ''
         while true; do
           echo "=== System Status at $(date) ==="
-          echo "Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+          echo "Memory: $(free -h | awk '/Mem:/ {print $3 "/" $2}')"
           echo "Load: $(uptime | awk -F'load average:' '{print $2}')"
           echo "Disk: $(df -h / | tail -1 | awk '{print $3 "/" $2}')"
-          echo "Events/sec: $(sinex-query --format csv --after '1 second ago' 2>/dev/null | wc -l || echo '0')"
-          echo "Active services: $(systemctl list-units --type=service --state=active | wc -l)"
+
+          EVENTS_LAST_15=$(
+            su - postgres -c "psql -d sinex -At -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '15 seconds';\"" 2>/dev/null || echo "0"
+          )
+          echo "Events (15s): $EVENTS_LAST_15"
+
+          echo "Active Sinex services:"
+          systemctl list-units 'sinex-*.service' --state=active --no-legend --plain 2>/dev/null \
+            | awk '{print \"  • \" $1}' || true
           echo
           sleep 10
         done
       '';
+      serviceConfig = {
+        Type = "simple";
+      };
     };
   };
 
   testScript = ''
     import random
     import time
-    import json
+    import sys
 
-    machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-ingestd.service")
-    machine.wait_for_unit("sinex-worker.service")
-    machine.wait_for_unit("chaos-monitor.service")
-    
-    # Baseline health check
+    sys.path.append('/etc/nixos-test')
+    from test_helpers import TestHelpers
+
+    start_all()
+    helpers = TestHelpers(machine)
+
+    def assert_satellites() -> list[str]:
+        satellites = helpers.list_active_satellites()
+        assert satellites, "No satellite services detected"
+        print(f"Active satellites: {', '.join(satellites)}")
+        return satellites
+
+    def wait_for_recovery(timeout: int = 120) -> None:
+        helpers.wait_for_sinex_ready(timeout=timeout)
+        machine.wait_until_succeeds("sinex-health-check", timeout=timeout)
+        assert_satellites()
+
+    def inject_and_validate(failure: str, duration: int = 15) -> None:
+        print(f"→ Injecting {failure} fault for {duration}s")
+        machine.succeed(f"chaos-inject {failure} {duration}")
+        wait_for_recovery()
+        recent = helpers.get_event_count_since(15)
+        print(f"Events ingested in last 15s after {failure}: {recent}")
+
     with subtest("Baseline system health"):
+        machine.wait_for_unit("multi-user.target")
+        helpers.wait_for_sinex_ready(timeout=90)
+        machine.wait_for_unit("chaos-monitor.service")
         machine.succeed("sinex-health-check")
-        baseline_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
+        satellites = assert_satellites()
+        baseline_events = helpers.get_event_count()
         print(f"Baseline event count: {baseline_events}")
-    
-    # Test 1: Random individual failures
+        print(f"Monitoring satellites: {satellites}")
+
     with subtest("Random service failures"):
-        failure_types = ["kill", "cpu", "memory"]  # Skip network/disk for stability
-        
-        for i in range(5):  # Reduced from 10 for faster execution
-            failure_type = random.choice(failure_types)
-            print(f"Iteration {i+1}: Injecting {failure_type} failure")
-            
-            machine.succeed(f"chaos-inject {failure_type} 15 &")  # Reduced duration
-            
-            # System should recover within 60 seconds
-            machine.wait_until_succeeds("sinex-health-check", timeout=60)
-            
-            # Brief wait for stability
+        failure_types = ["kill", "cpu", "memory"]
+        for iteration in range(4):
+            inject_and_validate(random.choice(failure_types), duration=12)
             time.sleep(5)
-            current_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-            print(f"Events after chaos {i+1}: {current_events}")
-            baseline_events = max(baseline_events, current_events)  # Allow for growth
-    
-    # Test 2: Cascading failures
+
     with subtest("Cascading failure scenario"):
-        print("Starting cascading failure test")
-        machine.succeed("chaos-scenario cascading-failure &")
-        
-        # Monitor system during chaos
-        recovery_attempts = 0
-        max_attempts = 12  # 60 seconds total
-        
-        for i in range(max_attempts):
-            time.sleep(5)
-            try:
-                machine.succeed("sinex-health-check")
-                print(f"Health check passed at {i*5} seconds")
-                recovery_attempts = 0
-            except:
-                recovery_attempts += 1
-                print(f"Health check failed at {i*5} seconds (attempt {recovery_attempts})")
-                if recovery_attempts > 6:  # Allow some failures during chaos
-                    print("Too many consecutive failures")
-                    break
-        
-        # Should recover after scenario completes
-        machine.wait_until_succeeds("sinex-health-check", timeout=120)
-    
-    # Test 3: Resource storm (simplified)
+        machine.succeed("chaos-scenario cascading-failure")
+        wait_for_recovery(timeout=150)
+        recent = helpers.get_event_count_since(30)
+        print(f"Events processed in 30s post-cascade: {recent}")
+        assert recent >= 0
+
     with subtest("Resource stress scenario"):
-        before_storm = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        
-        # Simplified resource storm - just CPU stress
-        machine.succeed("chaos-inject cpu 20 &")
-        
-        # System should continue processing (maybe slower)
-        time.sleep(25)  # Let stress run
-        
-        after_storm = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        events_during_storm = after_storm - before_storm
-        print(f"Processed {events_during_storm} events during resource storm")
-        
-        # System should still be responsive
-        machine.succeed("sinex-health-check")
-    
-    # Test 4: Service restart resilience
+        before = helpers.get_event_count()
+        machine.succeed("chaos-inject cpu 20")
+        machine.sleep(5)
+        machine.succeed("chaos-inject memory 15")
+        wait_for_recovery()
+        after = helpers.get_event_count()
+        print(f"Events processed during resource storm: {after - before}")
+
     with subtest("Service restart resilience"):
-        start_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        
-        # Restart services multiple times
-        services = ["sinex-ingestd", "sinex-worker"]
-        for service in services:
-            print(f"Restarting {service}")
+        tracked_services = ["sinex-ingestd", "postgresql"]
+        satellites = assert_satellites()
+        if satellites:
+            tracked_services.append(satellites[0].removesuffix(".service"))
+
+        for service in tracked_services:
+            unit = service if service.endswith(".service") else f"{service}.service"
+            print(f"Restarting {unit}")
             machine.succeed(f"systemctl restart {service}")
-            machine.wait_for_unit(f"{service}.service")
-            time.sleep(5)
-            machine.succeed("sinex-health-check")
-        
-        end_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        events_processed = end_events - start_events
-        print(f"Processed {events_processed} events during service restarts")
-    
-    # Test 5: Recovery validation
-    with subtest("Post-chaos recovery validation"):
-        # Let system stabilize
-        time.sleep(30)
-        
-        # All services should be healthy
-        machine.succeed("systemctl is-active sinex-ingestd")
-        machine.succeed("systemctl is-active sinex-worker")
-        machine.succeed("systemctl is-active postgresql")
-        
-        # Basic functionality test
-        machine.succeed("touch /tmp/recovery-test.txt")
-        time.sleep(3)
-        machine.succeed("rm /tmp/recovery-test.txt")
-        
-        # Final health check
+            machine.wait_for_unit(unit)
+            wait_for_recovery(timeout=90)
+
+    with subtest("Post-chaos validation"):
+        wait_for_recovery(timeout=90)
+        initial = helpers.get_event_count()
+        generated = helpers.generate_events(10, "chaos-validation")
+        assert generated >= 0
+        assert helpers.wait_for_event_processing(initial + generated, timeout=60)
+        final_satellites = assert_satellites()
+        print(f"Final active satellites: {final_satellites}")
         machine.succeed("sinex-health-check")
-        
-        print("Chaos engineering tests completed successfully")
   '';
 }

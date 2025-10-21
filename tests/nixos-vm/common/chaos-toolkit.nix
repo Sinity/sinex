@@ -6,13 +6,28 @@
       #!${pkgs.bash}/bin/bash
       set -euo pipefail
       
-      FAILURE_TYPE="$1"
+      FAILURE_TYPE="''${1:-}"
       DURATION="''${2:-30}"
+
+      if [[ -z "$FAILURE_TYPE" ]]; then
+        echo "Usage: chaos-inject <kill|network|disk|cpu|memory|fd-exhaust> [duration]" >&2
+        exit 1
+      fi
+
+      mapfile -t SERVICES < <(
+        systemctl list-units 'sinex-*.service' --state=active --no-legend --plain 2>/dev/null \
+          | awk '{print $1}' || true
+      )
+
+      # Fall back to core services if satellites are not yet active
+      if [[ "''${#SERVICES[@]}" -eq 0 ]]; then
+        SERVICES=("sinex-ingestd.service")
+      fi
+      SERVICES+=("postgresql.service")
       
       case "$FAILURE_TYPE" in
         "kill")
           # Random service kill
-          SERVICES=("sinex-ingestd" "sinex-worker" "postgresql")
           SERVICE="''${SERVICES[''$RANDOM % ''${#SERVICES[@]}]}"
           echo "Killing ''$SERVICE for ''$DURATION seconds..."
           systemctl stop "''$SERVICE"
@@ -104,34 +119,7 @@ for fd in fds:
           ;;
       esac
     '')
-    
-    (writeScriptBin "sinex-health-check" ''
-      #!${pkgs.bash}/bin/bash
-      # Comprehensive health check
-      
-      set -e
-      
-      # Check services
-      systemctl is-active sinex-ingestd >/dev/null
-      systemctl is-active sinex-worker >/dev/null
-      systemctl is-active postgresql >/dev/null
-      
-      # Check database connectivity
-      sinex-query --source status >/dev/null 2>&1 || sinex-query --limit 1 >/dev/null
-      
-      # Check event ingestion
-      BEFORE=$(sinex-query --format csv 2>/dev/null | wc -l || echo "0")
-      sleep 2
-      AFTER=$(sinex-query --format csv 2>/dev/null | wc -l || echo "0")
-      
-      if [ "''$AFTER" -le "''$BEFORE" ]; then
-        echo "WARNING: No new events in 2 seconds (might be normal during low activity)"
-        # Don't fail health check for this - system might be idle
-      fi
-      
-      echo "Health check passed"
-    '')
-    
+
     stress-ng
   ];
 }

@@ -10,8 +10,8 @@
 , ...
 }:
 let
-  sinexPackage = sinex or sinex-ingestd;
-  sinexCliPackage = sinexCli or pkgs.python3;
+  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
 in
 {
   imports = [
@@ -33,6 +33,8 @@ in
       monitoring = lib.mkDefault false;
     };
 
+    preflightVerification.enable = lib.mkDefault false;
+
     satellite = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
@@ -45,6 +47,7 @@ in
           enable = lib.mkDefault true;
           instances = lib.mkDefault 1;
           extraArgs = lib.mkDefault "";
+          watchPaths = lib.mkDefault [ "/home/test/watched" ];
         };
         terminal.enable = lib.mkDefault false;
         desktop.enable = lib.mkDefault false;
@@ -57,12 +60,6 @@ in
       };
     };
 
-    eventSources = {
-      filesystem = {
-        enable = true;
-        watchPaths = [ "/home/test/watched" ];
-      };
-    };
   };
 
   # Test user

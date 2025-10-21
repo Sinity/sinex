@@ -1,160 +1,38 @@
-# Sinex Test Suite
+# Workspace Test Harness
 
-Comprehensive test suite organized by scope, complexity, and resource requirements.
-Each category serves a specific testing purpose and has different runtime characteristics.
+Most high-signal coverage now lives beside the crates it exercises. In
+particular, `sinex-core` owns the former `unit`, `system`, `performance`, and
+`adversarial` suites, while the satellite SDK exports its integration and
+property harness from `crate/lib/sinex-satellite-sdk/tests/`.
 
-## Test Organization
+What remains under `tests/` is deliberately narrow and cross-cutting:
 
-### 🏃‍♂️ Unit Tests (`unit_tests.rs`)
-- **Scope**: Individual functions and components in isolation
-- **Speed**: Fast (< 1s per test)
-- **Dependencies**: Minimal external dependencies
-- **Purpose**: Verify correctness of individual components
-- **Features**: Generic ID system, ULID properties, domain types, event builders
-- **Run**: `cargo nextest run --test unit_tests`
+- **`integration/`** – scenarios that still touch multiple crates (e.g. Nix
+  module wiring, Stage-as-you-go) or depend on legacy harness glue. Plan to
+  migrate into crate-owned suites when feasible.
+- **`property/`** – workspace-level fuzzing that genuinely spans crates. These
+  modules back the `property_tests.rs` harness.
+- **`property_tests.rs`** – thin wrapper that pulls the property modules into a
+  single integration target for Nextest.
+- **`examples/`** – documentation-style snapshots that demonstrate modern
+  testing patterns with `sinex-test-utils`.
+- **`nixos-vm/`** – NixOS VM blueprints and chaos scenarios. See
+  `tests/nixos-vm/README.md` for runner details.
+- **`scripts/` & `unified-test-runner.py`** – helper utilities for migrating and
+  running suites.
 
-### 🔗 Integration Tests (`integration_tests.rs`)
-- **Scope**: Component interactions within the system
-- **Speed**: Medium (1-10s per test)
-- **Dependencies**: Database, some external services
-- **Purpose**: Verify components work together correctly
-- **Features**: Database operations, repository pattern, schema validation, concurrent operations
-- **Run**: `cargo nextest run --test integration_tests`
-
-### 🎯 Property Tests (`property_tests.rs`)
-- **Scope**: Cross-crate properties that genuinely require the workspace harness
-- **Speed**: Variable (depends on iterations)
-- **Dependencies**: Proptest framework
-- **Purpose**: Verify properties that span multiple crates
-- **Features**: Randomized testing, edge case discovery, invariant validation
-- **Run**: `cargo nextest run --test property_tests`
-- **Note**: Most property suites now live alongside the crates they fuzz (see
-  `crate/lib/sinex-core/tests/property/` and
-  `crate/lib/sinex-satellite-sdk/tests/property/`).
-
-### ⚡ Simple Tests (`simple_tests.rs`)
-- **Scope**: Basic functionality verification
-- **Speed**: Very fast (< 100ms per test)
-- **Dependencies**: Minimal
-- **Purpose**: Smoke tests and basic validation
-- **Run**: `cargo nextest run --test simple_tests`
-
-## Specialized Test Categories
-
-### 🌍 System Tests (`system/`)
-- **Scope**: Complete system validation
-- **Speed**: Slow (10s+ per test)
-- **Dependencies**: Full system, external services
-- **Purpose**: End-to-end system behavior validation
-- **Run**: `cargo nextest run --test system`
-
-### ⚔️ Adversarial Tests (`adversarial/`)
-- **Scope**: Edge cases, attacks, stress scenarios
-- **Speed**: Variable (often slow due to stress testing)
-- **Dependencies**: Full system setup
-- **Purpose**: System robustness under hostile conditions
-- **Run**: `cargo nextest run --test adversarial`
-
-### 🚀 Performance Tests (`performance/`)
-- **Scope**: Performance characteristics and benchmarks
-- **Speed**: Variable (can be slow for stress tests)
-- **Dependencies**: Full system, performance monitoring
-- **Purpose**: Performance regression detection and optimization
-- **Run**: `cargo nextest run --test performance`
-
-### 🔒 Security Tests (`security/`)
-- **Scope**: Workspace-wide security scenarios that span multiple crates
-- **Speed**: Medium to slow
-- **Dependencies**: Full system setup
-- **Purpose**: Security validation and vulnerability testing
-- **Run**: `cargo nextest run --test security`
-- **Note**: Crate-specific hardening tests (filesystem watcher, terminal history)
-  now live with their respective crates.
-
-### 🔄 Concurrency Tests (`concurrency/`)
-- **Scope**: Multi-threaded and async behavior validation
-- **Speed**: Medium to slow
-- **Dependencies**: Full system, thread management
-- **Purpose**: Race condition and synchronization testing
-- **Run**: `cargo nextest run --test concurrency`
-
-### 📚 Examples (`examples/`)
-- **Scope**: Code examples and usage demonstrations
-- **Purpose**: Documentation and API usage examples
-- **Run**: Files in this directory demonstrate modern test patterns
-
-### 🛠️ Scripts (`scripts/`)
-- **Scope**: Test automation and utilities
-- **Purpose**: Test conversion scripts and utilities
-
-### 💻 VM Tests (`nixos-vm/`)
-- **Scope**: Full NixOS deployment testing
-- **Speed**: Very slow (5-15min)
-- **Dependencies**: NixOS, VM infrastructure
-- **Purpose**: Complete system deployment validation
-
-## Test Infrastructure
-
-All tests use the unified `#[sinex_test]` infrastructure providing:
-- **Automatic Database Setup**: Shared pool with transaction isolation
-- **Standard Error Handling**: `color_eyre::eyre::Result<()>`
-- **Modern Test Stack**: rstest, insta, tracing-test, similar-asserts
-- **Test Context**: `TestContext` parameter for consistent resource access
-- **Cleanup**: Automatic transaction rollback for perfect test isolation
-
-## Quick Reference
-
-```rust
-use sinex_test_utils::prelude::*;
-
-#[sinex_test]
-async fn my_test(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let pool = ctx.pool().clone();
-    // Test implementation
-    Ok(())
-}
-```
-
-## Running Tests
+## Running the Workspace Suites
 
 ```bash
-# All tests (workspace)
-cargo nextest run --workspace
-
-# Specific test files
-cargo nextest run --test unit_tests
-cargo nextest run --test integration_tests
+# Property harness (uses proptest regressions under tests/property/)
 cargo nextest run --test property_tests
-cargo nextest run --test simple_tests
 
-# Specific test categories
-cargo nextest run --test performance
-cargo nextest run --test adversarial
-cargo nextest run --test security
-cargo nextest run --test system
-cargo nextest run --test concurrency
-
-# Using just commands
-just test              # Unit + property tests (~30s, Nextest)
-just test-all         # Complete test suite (Nextest)
-just test-integration # Integration tests only (Nextest filter)
-just test-performance # Performance tests only
+# Remaining cross-crate integration cases
+cargo nextest run --test multi_source_integration_test
+cargo nextest run --test stage_as_you_go_integration_test
+# ...or simply: just test --tests integration
 ```
 
-## Performance Expectations
-
-- **Unit Tests**: 1-5 seconds total
-- **Integration Tests**: 30 seconds - 2 minutes
-- **Property Tests**: 1-2 minutes
-- **Performance Tests**: 2-10 minutes
-- **System Tests**: 5-15 minutes
-- **VM Tests**: 15-30 minutes
-
-## Test Development Guidelines
-
-1. **Use appropriate test category**: Choose the right test file/directory for your test scope
-2. **Follow naming conventions**: Use descriptive test names that explain what's being tested
-3. **Use modern infrastructure**: Leverage `#[sinex_test]`, rstest, and insta where appropriate
-4. **Maintain isolation**: Tests should not depend on each other
-5. **Performance awareness**: Keep unit tests fast, use integration tests for database operations
-6. **Documentation**: Include docstrings for complex test scenarios
+When adding new coverage, default to the owning crate’s `tests/` directory.
+Only keep scenarios under `tests/` when the flow truly spans multiple crates or
+requires the legacy harness.

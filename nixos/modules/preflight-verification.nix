@@ -81,7 +81,7 @@ in
         Systemd service names that must depend on a successful
         sinex-preflight run before starting. When left empty, the module
         derives the list from services.sinex.satellite.generatedUnits or falls
-        back to the legacy collector/gateway units.
+        back to the core ingestion/gateway services.
       '';
     };
   };
@@ -153,7 +153,7 @@ in
           if [ "$RECORD_RESULTS" = "1" ]; then
             HOST=$(hostname)
             NOW=$(date +%s)
-            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', '${HOST}-${NOW}', 'success', '{"event":"preflight_pass"}'::jsonb, NOW())" || true
+            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', ''${HOST}-''${NOW}', 'success', '{"event":"preflight_pass"}'::jsonb, NOW())" || true
           fi
 
           exit 0
@@ -172,7 +172,7 @@ in
           if [ "$RECORD_RESULTS" = "1" ]; then
             HOST=$(hostname)
             NOW=$(date +%s)
-            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', '${HOST}-${NOW}', 'failure', '{"event":"preflight_fail"}'::jsonb, NOW())" || true
+            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', ''${HOST}-''${NOW}', 'failure', '{"event":"preflight_fail"}'::jsonb, NOW())" || true
           fi
 
           case "${preflightCfg.failureAction}" in
@@ -284,7 +284,7 @@ in
               HOST=$(hostname)
               NOW=$(date +%s)
               FAILED_COUNT="''${#FAILED_UNITS[@]}"
-              "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', '${HOST}-${NOW}', 'rollback', ('{\"event\":\"update_rollback\",\"failed_count\":' || ${FAILED_COUNT}::text || '}')::jsonb, NOW())" || true
+              "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', ''${HOST}-''${NOW}', 'rollback', ('{\"event\":\"update_rollback\",\"failed_count\":' || ''${FAILED_COUNT}::text || '}')::jsonb, NOW())" || true
             fi
           fi
           exit 1
@@ -298,7 +298,7 @@ in
           HOST=$(hostname)
           NOW=$(date +%s)
           UNIT_COUNT="''${#ACTIVE_UNITS[@]}"
-          "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', '${HOST}-${NOW}', 'success', ('{\"event\":\"update_completed\",\"unit_count\":' || ${UNIT_COUNT}::text || '}')::jsonb, NOW())" || true
+          "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', ''${HOST}-''${NOW}', 'success', ('{\"event\":\"update_completed\",\"unit_count\":' || ''${UNIT_COUNT}::text || '}')::jsonb, NOW())" || true
         fi
 
         echo "$(date): coordinated update completed successfully"
@@ -339,7 +339,7 @@ in
                   "DATABASE_URL=${databaseUrl}"
                   "RUST_LOG=sinex_preflight=info"
                 ];
-                ExecStart = runPreflightScript;
+                ExecStart = builtins.toString runPreflightScript;
               };
             };
           }
@@ -351,7 +351,7 @@ in
               serviceConfig = {
                 Type = "oneshot";
                 RemainAfterExit = true;
-                ExecStart = updateScript;
+                ExecStart = builtins.toString updateScript;
               };
             };
           }
@@ -360,7 +360,7 @@ in
           (lib.listToAttrs (map (unit: lib.nameValuePair unit {
             after = lib.mkAfter [ "sinex-preflight.service" ];
             requires = lib.mkAfter [ "sinex-preflight.service" ];
-            serviceConfig.ExecStartPre = lib.mkAfter [ preflightCheckScript unit ];
+            serviceConfig.ExecStartPre = lib.mkAfter [ builtins.toString (preflightCheckScript unit) ];
           }) requiredUnits))
         ]
       );

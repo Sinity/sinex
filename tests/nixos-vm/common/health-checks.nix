@@ -42,6 +42,26 @@
         fi
       fi
       
+      # Enumerate active Sinex services
+      SINEX_UNITS=$(systemctl list-units 'sinex-*.service' --state=active --no-legend --plain 2>/dev/null || true)
+      if [[ -n "$SINEX_UNITS" ]]; then
+        echo "✅ Active Sinex services:"
+        echo "$SINEX_UNITS" | awk '{print "   • "$1}'
+      else
+        echo "⚠️  No active sinex-* units detected"
+      fi
+
+      # Ensure filesystem satellites are alive when defined
+      FS_UNIT_FILES=$(systemctl list-unit-files 'sinex-fs-watcher-*.service' --no-legend --plain 2>/dev/null || true)
+      if [[ -n "$FS_UNIT_FILES" ]]; then
+        if echo "$SINEX_UNITS" | grep -q 'sinex-fs-watcher'; then
+          echo "✅ Filesystem satellites active"
+        else
+          echo "❌ Filesystem satellites declared but not active"
+          FAILED=1
+        fi
+      fi
+
       # Check gateway if enabled
       if systemctl list-unit-files | grep -q "sinex-gateway.service"; then
         if systemctl is-enabled --quiet sinex-gateway; then

@@ -38,6 +38,7 @@
           enable = true;
           instances = 1;
           memoryLimit = "256M";
+          watchPaths = [ "/var/lib/sinex/sources" "/srv/data" ];
         };
         system = {
           enable = true;
@@ -53,6 +54,8 @@
         healthAggregator.enable = true;
       };
     };
+
+    shell.kitty.enable = false;
   };
 
   users.users.serveruser = {

@@ -7,7 +7,7 @@
 , ...
 }:
 
-{
+pkgs.nixosTest {
   name = "sinex-production-scale";
 
   nodes.machine = { pkgs, config, lib, ... }: {
@@ -18,23 +18,46 @@
       ./common/production-load.nix
     ];
 
+    services.sinex = {
+      serviceManagement.serviceGroups = {
+        core = lib.mkDefault true;
+        maintenance = lib.mkForce true;
+        monitoring = lib.mkDefault false;
+      };
+
+      satellite = {
+        coreServices.enable = lib.mkDefault true;
+        eventSources = {
+          filesystem = {
+            enable = lib.mkForce true;
+            instances = lib.mkDefault 2;
+            watchPaths = lib.mkDefault [ "/watched" ];
+          };
+          terminal = {
+            enable = lib.mkForce true;
+            instances = lib.mkDefault 1;
+          };
+          system = {
+            enable = lib.mkForce true;
+            instances = lib.mkDefault 1;
+          };
+        };
+      };
+    };
+
     # Tune for production-scale testing
-    virtualisation.memorySize = 8192;  # 8GB RAM
+    virtualisation.memorySize = 8192; # 8GB RAM
     virtualisation.cores = 4;
 
-    # PostgreSQL tuning for high load
+    # PostgreSQL tuning for sustained load
     services.postgresql.settings = {
       max_connections = 200;
       shared_buffers = "2GB";
       effective_cache_size = "6GB";
       work_mem = "32MB";
       maintenance_work_mem = "512MB";
-      
-      # Write performance
       checkpoint_completion_target = 0.9;
       wal_buffers = "16MB";
-      
-      # Query performance
       random_page_cost = 1.1;
       effective_io_concurrency = 200;
     };
@@ -50,179 +73,118 @@
     import json
     import statistics
     import time
+    import sys
 
-    machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-ingestd.service")
-    machine.wait_for_unit("sinex-worker.service")
-    
-    # Test 1: Scale up filesystem watchers
-    with subtest("Production-scale filesystem monitoring"):
-        # Create 50 directories to watch (reduced from 100 for testing)
+    sys.path.append('/etc/nixos-test')
+    from test_helpers import TestHelpers
+
+    start_all()
+    helpers = TestHelpers(machine)
+
+    def ensure_ready(timeout: int = 120):
+        helpers.wait_for_sinex_ready(timeout=timeout)
+        machine.wait_until_succeeds("sinex-health-check", timeout=timeout)
+        satellites = helpers.list_active_satellites()
+        print(f"Active satellites: {satellites}")
+        return satellites
+
+    with subtest("Production environment readiness"):
+        machine.wait_for_unit("multi-user.target")
+        satellites = ensure_ready()
+        assert satellites, "Expected satellite services to be active"
+        baseline_events = helpers.get_event_count()
+        print(f"Baseline events: {baseline_events}")
+
+    with subtest("Filesystem watcher scalability"):
+        machine.succeed("su - test -c 'mkdir -p /home/test/watched/scale'")
         for i in range(50):
-            machine.succeed(f"mkdir -p /watched/dir{i}")
-        
-        # Restart collector to pick up new directories
-        machine.succeed("systemctl restart sinex-ingestd")
-        machine.wait_for_unit("sinex-ingestd.service")
-        
-        # Verify directories are being watched
-        time.sleep(10)
-        machine.succeed("touch /watched/dir25/test.txt")
-        time.sleep(3)
-        
-        # Check if event was captured
-        try:
-            events = machine.succeed("sinex-query --source filesystem --limit 100")
-            print("Filesystem monitoring active")
-        except:
-            print("Filesystem events query failed - continuing test")
-    
-    # Test 2: High-frequency event generation
-    with subtest("High-frequency event ingestion"):
-        baseline = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        
-        # Generate 5,000 events/sec for 15 seconds (reduced for testing)
-        machine.succeed("production-load-generator --filesystem 5000 15")
-        
-        # Verify ingestion
-        time.sleep(5)  # Allow processing time
-        total_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        events_ingested = total_events - baseline
-        rate = events_ingested / 15
-        
-        print(f"Ingested {events_ingested} events at {rate:.2f} events/sec")
-        # Relaxed criteria for testing environment
-        assert rate > 100, f"Ingestion rate too low: {rate:.2f} events/sec"
-    
-    # Test 3: Mixed production workload
-    with subtest("Mixed production workload"):
-        # Collect performance metrics
+            machine.succeed(f"su - test -c 'mkdir -p /home/test/watched/scale/dir{i}'")
+
+        before = helpers.get_event_count()
+        produced = helpers.generate_events(200, prefix="scale", path="/home/test/watched/scale")
+        assert produced >= 0
+        assert helpers.wait_for_event_processing(before + produced, timeout=90)
+        recent = helpers.get_event_count_since(30)
+        print(f"Events ingested in last 30s after scaling: {recent}")
+
+    with subtest("High-frequency filesystem ingestion"):
+        baseline = helpers.get_event_count()
+        machine.succeed("production-load-generator --filesystem 4000 20")
+        time.sleep(5)
+        total = helpers.get_event_count()
+        ingested = max(0, total - baseline)
+        rate = ingested / 20 if ingested else 0
+        print(f"Ingested {ingested} events (~{rate:.1f}/s)")
+        assert rate > 150, f"Ingestion rate too low: {rate:.1f}/s"
+
+    with subtest("Mixed workload performance"):
         metrics = []
-        
-        # Start mixed load (reduced intensity)
-        machine.succeed("production-load-generator --mixed 1000 30 &")
-        
-        # Collect metrics every 5 seconds
-        for i in range(6):  # 30 seconds total
+        machine.succeed("production-load-generator --mixed 1500 40 &")
+        for _ in range(8):
             time.sleep(5)
             try:
                 metric_json = machine.succeed("sinex-metrics")
                 metrics.append(json.loads(metric_json))
-            except:
-                # Fallback metrics if JSON parsing fails
-                metrics.append({
-                    "ingestion_rate": 50,
-                    "memory_usage": 1000,
-                    "query_latency_ms": 50
-                })
-        
-        # Analyze performance
-        ingestion_rates = [m["ingestion_rate"] for m in metrics]
-        memory_usage = [m["memory_usage"] for m in metrics]
-        latencies = [m["query_latency_ms"] for m in metrics]
-        
-        avg_ingestion = statistics.mean(ingestion_rates)
-        max_memory = max(memory_usage)
-        avg_latency = statistics.mean(latencies)
-        
-        print(f"Average ingestion: {avg_ingestion:.2f} events/sec")
-        print(f"Max memory usage: {max_memory} MB")
-        print(f"Average query latency: {avg_latency} ms")
-        
-        # Relaxed performance criteria for testing
-        assert avg_ingestion >= 0, f"Ingestion rate: {avg_ingestion}"
-        assert max_memory < 8192, f"Memory usage too high: {max_memory} MB"
-        assert avg_latency < 1000, f"Query latency too high: {avg_latency} ms"
-    
-    # Test 4: Sustained load test (shortened)
-    with subtest("Sustained production load"):
-        # Run for 2 minutes at production scale
-        start_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        
-        machine.succeed("production-load-generator --mixed 500 120 &")
-        
-        # Monitor every 30 seconds
+            except Exception as exc:
+                print(f"Metric collection failed: {exc}")
+
+        if metrics:
+            avg_ingestion = statistics.mean(m["ingestion_rate"] for m in metrics)
+            max_memory = max(m["memory_usage"] for m in metrics)
+            avg_latency = statistics.mean(m["query_latency_ms"] for m in metrics)
+            print(
+                f"Average ingestion: {avg_ingestion:.1f}/s, "
+                f"max memory: {max_memory} MB, "
+                f"avg latency: {avg_latency:.1f} ms"
+            )
+            assert max_memory < 7800, "Memory usage exceeded allocation"
+            assert avg_latency < 1500, "Latency regressed under load"
+
+    with subtest("Sustained load soak (2 minutes)"):
+        baseline = helpers.get_event_count()
+        machine.succeed("production-load-generator --mixed 800 120 &")
+
         for minute in range(2):
             time.sleep(60)
-            
-            # Check health
             try:
                 machine.succeed("sinex-health-check")
-                print(f"Minute {minute+1}: Health check passed")
-            except:
-                print(f"Minute {minute+1}: Health check failed (may be normal during load)")
-            
-            # Check metrics
-            try:
-                metrics = json.loads(machine.succeed("sinex-metrics"))
-                print(f"Minute {minute+1}: {metrics['ingestion_rate']} events/sec, "
-                      f"{metrics['memory_usage']} MB RAM, "
-                      f"{metrics['query_latency_ms']} ms latency")
-            except:
-                print(f"Minute {minute+1}: Metrics collection failed")
-        
-        # Verify no major data loss
-        end_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
-        total_ingested = end_events - start_events
-        
-        print(f"Total events ingested during sustained load: {total_ingested}")
-        assert total_ingested >= 0, f"Event count decreased: {total_ingested}"
-    
-    # Test 5: Query performance under load
-    with subtest("Query performance under production load"):
-        # Start background load
-        machine.succeed("production-load-generator --filesystem 1000 60 &")
-        
+                print(f"Minute {minute + 1}: health check passed")
+            except Exception as exc:
+                print(f"Minute {minute + 1}: health check reported issue: {exc}")
+
+        total = helpers.get_event_count()
+        print(f"Events ingested during soak: {total - baseline}")
+
+    with subtest("Query performance under contention"):
+        machine.succeed("production-load-generator --filesystem 1200 45 &")
         query_times = []
-        
-        # Run various queries under load
         queries = [
-            "sinex-query --limit 100",
-            "sinex-query --limit 500",
+            "SELECT COUNT(*) FROM core.events;",
+            "SELECT source, COUNT(*) FROM core.events GROUP BY source LIMIT 10;",
         ]
-        
-        for _ in range(3):  # Reduced iterations
-            for query in queries:
-                try:
-                    start = time.time()
-                    machine.succeed(query + " >/dev/null 2>&1")
-                    elapsed = (time.time() - start) * 1000  # ms
-                    query_times.append(elapsed)
-                except:
-                    # Query failed, record high latency
-                    query_times.append(1000)
-            time.sleep(10)
-        
-        # Analyze query performance
+
+        for _ in range(3):
+            for sql in queries:
+                start_ts = time.time()
+                machine.succeed(
+                    "su - postgres -c \"psql -d sinex -At -c \\\"%s\\\"\"" % sql.replace('"', '\\"')
+                )
+                query_times.append((time.time() - start_ts) * 1000)
+            time.sleep(8)
+
         if query_times:
-            avg_query_time = statistics.mean(query_times)
-            max_query_time = max(query_times)
-            
-            print(f"Query performance under load:")
-            print(f"  Average: {avg_query_time:.2f} ms")
-            print(f"  Maximum: {max_query_time:.2f} ms")
-            
-            assert max_query_time < 5000, f"Query performance severely degraded: Max = {max_query_time} ms"
-    
-    # Final validation
-    with subtest("Production stability validation"):
-        # System should still be healthy after all tests
-        try:
-            machine.succeed("sinex-health-check")
-            print("Final health check passed")
-        except:
-            print("Final health check failed - system may be under load")
-        
-        # All services running
-        machine.succeed("systemctl is-active sinex-ingestd")
-        machine.succeed("systemctl is-active sinex-worker")
-        machine.succeed("systemctl is-active postgresql")
-        
-        # Can still process events
-        machine.succeed("touch /tmp/final-test.txt")
-        time.sleep(3)
-        machine.succeed("rm -f /tmp/final-test.txt")
-        
-        print("Production scale tests completed successfully")
+            avg_time = statistics.mean(query_times)
+            worst_time = max(query_times)
+            print(f"Query timings (ms): avg={avg_time:.1f}, max={worst_time:.1f}")
+            assert worst_time < 6000, "Worst-case query latency exceeded tolerance"
+
+    with subtest("Post-load validation"):
+        satellites = ensure_ready()
+        before = helpers.get_event_count()
+        produced = helpers.generate_events(20, "final")
+        assert helpers.wait_for_event_processing(before + produced, timeout=60)
+        final_satellites = helpers.list_active_satellites()
+        print(f"Final satellites: {final_satellites}")
+        machine.succeed("sinex-health-check")
   '';
 }

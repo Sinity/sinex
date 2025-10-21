@@ -22,7 +22,7 @@ let
     users.users.testuser = {
       isNormalUser = true;
       extraGroups = [ "wheel" ];
-      password = "test";
+      password = "***TEST_PASSWORD***"; # In a real deployment, use a securely managed secret
     };
     
     # System packages needed for testing
@@ -39,7 +39,7 @@ let
       enable = true;
       settings.PermitRootLogin = "yes";
     };
-    users.users.root.password = "root";
+    users.users.root.password = "***ROOT_PASSWORD***"; # In a real deployment, use a securely managed secret
   };
   
   # Sinex configuration with pre-flight verification enabled
@@ -86,6 +86,7 @@ let
             enable = true;
             instances = 1;
             extraArgs = "";
+            watchPaths = [ "/tmp/sinex-test" ];
           };
           terminal.enable = false;
           desktop.enable = false;
@@ -98,19 +99,9 @@ let
         };
       };
 
-      # Event source configuration for testing
-      eventSources = {
-        filesystem = {
-          enable = true;
-          watchPaths = [ "/tmp/sinex-test" ];
-        };
-        
-        # Disable complex sources for VM testing
-        clipboard.enable = false;
-        kittyScrollback.enable = false;
-        asciinema.enable = false;
-        hyprland.enable = false;
-        atuin.enable = false;
+      shell = {
+        asciinema.autoRecord = false;
+        kitty.enable = false;
       };
 
       dlq = {
