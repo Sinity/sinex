@@ -4241,6 +4241,7 @@ dependencies = [
  "humantime-serde",
  "nix 0.28.0",
  "parking_lot",
+ "proptest",
  "prost",
  "sd-notify",
  "semver",
@@ -4475,6 +4476,7 @@ dependencies = [
  "sha2",
  "similar-asserts",
  "sinex-core",
+ "sinex-ingestd",
  "sinex-satellite-sdk",
  "sinex-test-utils-macros",
  "sqlx",
@@ -4523,6 +4525,7 @@ dependencies = [
  "tracing",
  "tracing-test",
  "uuid",
+ "which 5.0.0",
 ]
 
 [[package]]

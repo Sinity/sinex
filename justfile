@@ -57,6 +57,7 @@ test:
 # Run all tests with nextest
 test-all:
     just db-setup
+    LD_LIBRARY_PATH="$(pkg-config --variable=libdir dbus-1)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     RUST_LOG=${RUST_LOG:-} cargo nextest run --workspace
 
 # (integration target removed to keep surface minimal; use `just test-all` with filters if needed)

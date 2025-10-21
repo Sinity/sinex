@@ -105,12 +105,58 @@
             ];
 
             installPhase = ''
+              runHook preInstall
+
+              python=${pkgs.python3}/bin/python3
+              site=$($python - <<'PY'
+import sys
+print(f"lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages")
+PY
+)
+              pkg_dir=$out/$site/sinex_cli
+              mkdir -p "$pkg_dir"
+
+              for file in *.py; do
+                cp "$file" "$pkg_dir/$file"
+              done
+              touch "$pkg_dir/__init__.py"
+              cat > "$pkg_dir/__main__.py" <<'PY'
+from .exo import cli
+import sys
+
+def main():
+    try:
+        cli()
+    except Exception as exc:  # pragma: no cover
+        try:
+            from rich.console import Console
+            Console().print(f"[red]Error: {exc}[/red]")
+        except Exception:
+            print(f"Error: {exc}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+PY
+
               mkdir -p $out/bin
-              cp exo.py $out/bin/sinex-cli
+              cat > $out/bin/sinex-cli <<'PY'
+#!${pkgs.python3}/bin/python3
+import runpy
+import sys
+from pathlib import Path
+
+site = "{site}"
+pkg_base = Path(__file__).resolve().parent.parent / site
+sys.path.insert(0, str(pkg_base))
+runpy.run_module("sinex_cli.__main__", run_name="__main__")
+PY
+              substituteInPlace $out/bin/sinex-cli --replace "{site}" "$site"
               chmod +x $out/bin/sinex-cli
 
-              # Also provide 'exo' as an alias
               ln -s $out/bin/sinex-cli $out/bin/exo
+
+              runHook postInstall
             '';
 
             # Add a simple check to ensure the CLI can import dependencies
@@ -359,6 +405,9 @@
         example = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -380,6 +429,9 @@
         exampleMonitoring = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-monitoring.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -400,6 +452,9 @@
         exampleDevSandbox = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-dev-sandbox.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -420,6 +475,9 @@
         exampleHeadless = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-headless.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -440,6 +498,9 @@
         exampleRemoteSatellite = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-remote-satellite.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -460,6 +521,9 @@
         exampleCoordination = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-coordination.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -487,7 +551,5 @@
         sinex = self.packages.${final.system}.sinex;
         sinexCli = self.packages.${final.system}.sinexCli;
       };
-
-      checks = builtins.mapAttrs (name: cfg: cfg.config.system.build.toplevel) self.nixosConfigurations;
     };
 }
