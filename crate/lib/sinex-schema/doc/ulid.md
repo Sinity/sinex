@@ -120,3 +120,52 @@ let id3 = Ulid::new();
 assert!(id1 < id2);
 assert!(id2 < id3);
 ```
+
+## SQLx Integration & Casting Helpers
+
+Rust code interacts with PostgreSQL through `sqlx`, which transmits ULIDs as UUID bytes. Keep the
+following rules in mind:
+
+1. **Parameter Binding** – pass `Ulid::as_uuid()` (or `Ulid::from(uuid)`) when binding parameters; let
+   Postgres convert via `pgx_ulid`.
+2. **Single Values** – cast inside SQL with `ulid_from_uuid($1)` when the query expects a `ULID`.
+3. **Arrays** – convert arrays using `ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($1::uuid[]) AS elem)`
+   to satisfy compile-time checking.
+4. **Batch Inserts** – SQLx cannot bind 2-D arrays; insert events inside a transaction loop rather
+   than attempting a single `UNNEST`.
+
+PostgreSQL helper functions:
+
+```sql
+CREATE OR REPLACE FUNCTION ulid_from_uuid(uuid) RETURNS ULID
+    LANGUAGE sql IMMUTABLE STRICT
+    AS 'SELECT $1::ULID';
+
+CREATE OR REPLACE FUNCTION ulid_to_uuid(ULID) RETURNS uuid
+    LANGUAGE sql IMMUTABLE STRICT
+    AS 'SELECT $1::uuid';
+```
+
+Example insert with casting:
+
+```rust
+sqlx::query!(
+    r#"
+    INSERT INTO core.events (id, source_event_ids)
+    VALUES (
+        ulid_from_uuid($1),
+        CASE
+            WHEN $2::uuid[] IS NULL THEN NULL
+            ELSE ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($2::uuid[]) AS elem)
+        END
+    )
+    "#,
+    event_id.as_uuid(),
+    source_event_ids.map(|ids| ids.iter().map(Ulid::as_uuid).collect::<Vec<_>>())
+)
+.execute(&pool)
+.await?;
+```
+
+When adding new repositories or queries, prefer `sqlx::query!` macros to keep compile-time checking
+intact and ensure the relevant casts are applied.

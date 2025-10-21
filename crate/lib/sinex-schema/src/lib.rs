@@ -2,7 +2,7 @@
 #![doc = include_str!("../doc/overview.md")]
 #![doc = include_str!("../doc/schema_design.md")]
 #![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/architecture/ULID_HANDLING.md")]
+#![doc = include_str!("../doc/ulid.md")]
 
 //! Workspace schema definitions and migrations.
 
