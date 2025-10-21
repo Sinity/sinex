@@ -1464,11 +1464,7 @@ mod tests {
         assert!(end > start);
 
         // Events should match the expected distribution per source
-        let uuids: Vec<uuid::Uuid> = fixture
-            .event_ids
-            .iter()
-            .map(|id| id.to_uuid())
-            .collect();
+        let uuids: Vec<uuid::Uuid> = fixture.event_ids.iter().map(|id| id.to_uuid()).collect();
         let rows = sqlx::query!(
             r#"
             SELECT source, COUNT(*) as "count!: i64"
@@ -1489,8 +1485,7 @@ mod tests {
         for (source, expected) in &fixture.source_distribution {
             let actual = actual_distribution.get(source).copied().unwrap_or(0);
             assert_eq!(
-                actual,
-                *expected,
+                actual, *expected,
                 "Expected {expected} events for source {source}, found {actual}"
             );
         }

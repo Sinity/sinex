@@ -340,6 +340,33 @@ impl TestContext {
         Ok(())
     }
 
+    /// Create and register a new source material returning its identifier.
+    pub async fn create_source_material(
+        &self,
+        source_identifier: Option<&str>,
+    ) -> Result<Id<SourceMaterial>> {
+        let id = Id::<SourceMaterial>::new();
+        self.ensure_source_material(id, source_identifier).await?;
+        Ok(id)
+    }
+
+    /// Ensure a specific source material exists, returning its ID handle.
+    pub async fn ensure_specific_material(
+        &self,
+        material_id: sinex_core::Ulid,
+        source_identifier: Option<&str>,
+    ) -> Result<Id<SourceMaterial>> {
+        let id = Id::<SourceMaterial>::from_ulid(material_id);
+        self.ensure_source_material(id, source_identifier).await?;
+        Ok(id)
+    }
+
+    /// Convenience helper returning a schema-layer ULID for compatibility tests.
+    pub async fn ensure_schema_material(&self, source_identifier: Option<&str>) -> Result<Ulid> {
+        let id = self.create_source_material(source_identifier).await?;
+        Ok(id.as_ulid().clone())
+    }
+
     async fn insert_with_provenance(&self, event: Event<JsonValue>) -> Result<Event<JsonValue>> {
         if let Provenance::Material { id, .. } = &event.provenance {
             self.ensure_material_entry(id).await?;

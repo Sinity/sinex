@@ -884,13 +884,24 @@ impl<'a> StateRepository<'a> {
 
     /// Test JSON schema validation functionality
     pub async fn test_json_schema_validation(&self) -> DbResult<bool> {
-        let row =
-            sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
-                .fetch_one(self.pool)
-                .await
-                .map_err(|e| db_error(e, "test JSON schema validation"))?;
+        let result = sqlx::query_scalar::<_, Option<bool>>(
+            r#"SELECT json_matches_schema('{"type": "object"}', '{}')"#,
+        )
+        .fetch_one(self.pool)
+        .await;
 
-        Ok(row.valid.unwrap_or(false))
+        match result {
+            Ok(value) => Ok(value.unwrap_or(false)),
+            Err(err) => {
+                if let sqlx::Error::Database(db_err) = &err {
+                    let message = db_err.message().to_lowercase();
+                    if message.contains("json_matches_schema") {
+                        return Ok(false);
+                    }
+                }
+                Err(db_error(err, "test JSON schema validation"))
+            }
+        }
     }
 
     /// Check if a table exists

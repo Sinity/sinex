@@ -422,13 +422,13 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Re
     }
 
     // Test JSON schema validation (if available)
-    match sqlx::query!(
+    match sqlx::query_scalar::<_, Option<bool>>(
         r#"
         SELECT json_matches_schema(
             '{"type": "object", "properties": {"name": {"type": "string"}}}'::json,
             '{"name": "test"}'::json
-        ) as valid
-        "#
+        )
+        "#,
     )
     .fetch_one(pool)
     .await
@@ -437,10 +437,20 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Re
             tested_extensions.insert("pg_jsonschema", json!({"status": "working"}));
         }
         Err(e) => {
-            tested_extensions.insert(
-                "pg_jsonschema",
-                json!({"status": "error", "message": e.to_string()}),
-            );
+            let status = if let sqlx::Error::Database(db_err) = &e {
+                if db_err
+                    .message()
+                    .to_lowercase()
+                    .contains("json_matches_schema")
+                {
+                    json!({"status": "not_installed"})
+                } else {
+                    json!({"status": "error", "message": e.to_string()})
+                }
+            } else {
+                json!({"status": "error", "message": e.to_string()})
+            };
+            tested_extensions.insert("pg_jsonschema", status);
         }
     }
 

@@ -46,13 +46,75 @@
 use crate::Result;
 
 use camino::Utf8PathBuf;
+use futures::Future;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
+use sqlx::pool::PoolConnection;
+use sqlx::Postgres;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 static BASELINE_EVENT_COUNT: AtomicI64 = AtomicI64::new(-1);
 static BASELINE_MATERIAL_COUNT: AtomicI64 = AtomicI64::new(-1);
+
+struct OperationIdGuard {
+    previous: Option<String>,
+    is_active: bool,
+}
+
+impl OperationIdGuard {
+    async fn apply(conn: &mut PoolConnection<Postgres>, value: &str) -> Result<Self> {
+        let previous = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT current_setting('sinex.operation_id', true)",
+        )
+        .fetch_optional(conn.as_mut())
+        .await?
+        .flatten();
+
+        sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+            .bind(value)
+            .execute(conn.as_mut())
+            .await?;
+
+        Ok(Self {
+            previous,
+            is_active: true,
+        })
+    }
+
+    async fn restore(mut self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
+        let outcome = if let Some(prev) = self.previous.take() {
+            sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+                .bind(prev)
+                .execute(conn.as_mut())
+                .await
+        } else {
+            sqlx::query("RESET sinex.operation_id")
+                .execute(conn.as_mut())
+                .await
+        };
+
+        if let Err(e) = outcome {
+            tracing::warn!(
+                "Failed to restore sinex.operation_id session setting after cleanup: {}",
+                e
+            );
+        }
+
+        self.is_active = false;
+        Ok(())
+    }
+}
+
+impl Drop for OperationIdGuard {
+    fn drop(&mut self) {
+        if self.is_active {
+            tracing::warn!(
+                "OperationIdGuard dropped without restore; session may retain cleanup operation id"
+            );
+        }
+    }
+}
 
 /// Reset database to clean state by truncating all tables
 ///
@@ -97,93 +159,94 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         .execute(conn.as_mut())
         .await?;
 
-    // Try to use TRUNCATE for non-hypertables (much faster)
-    let truncate_result = sqlx::query(
-        r#"
-        TRUNCATE TABLE 
-            core.event_annotations,
-            core.event_relations,
-            core.event_cluster_members,
-            core.event_embeddings,
-            core.entity_relations,
-            core.revisions,
-            core.entities,
-            core.event_clusters,
-            core.processor_checkpoints,
-            core.operations_log,
-            core.transactional_outbox,
-            core.blobs,
-            core.tags,
-            core.tagged_items,
-            raw.source_material_registry,
-            raw.temporal_ledger,
-            sinex_schemas.processor_manifests,
-            sinex_schemas.event_payload_schemas
-        CASCADE
-    "#,
-    )
-    .execute(conn.as_mut())
-    .await;
+    let pool_for_chunks = pool.clone();
+    let operation_guard = OperationIdGuard::apply(&mut conn, "test-cleanup").await?;
+    {
+        let pool_for_chunks = pool_for_chunks.clone();
+        // Try to use TRUNCATE for non-hypertables (much faster)
+        let truncate_result = sqlx::query(
+            r#"
+                TRUNCATE TABLE 
+                    core.event_annotations,
+                    core.event_relations,
+                    core.event_cluster_members,
+                    core.event_embeddings,
+                    core.entity_relations,
+                    core.revisions,
+                    core.entities,
+                    core.event_clusters,
+                    core.processor_checkpoints,
+                    core.operations_log,
+                    core.transactional_outbox,
+                    core.blobs,
+                    core.tags,
+                    core.tagged_items,
+                    raw.source_material_registry,
+                    raw.temporal_ledger,
+                    sinex_schemas.processor_manifests,
+                    sinex_schemas.event_payload_schemas
+                CASCADE
+            "#,
+        )
+        .execute(conn.as_mut())
+        .await;
 
-    if let Err(e) = truncate_result {
-        tracing::warn!("TRUNCATE failed ({}), falling back to DELETE", e);
+        if let Err(e) = truncate_result {
+            tracing::warn!("TRUNCATE failed ({}), falling back to DELETE", e);
 
-        // Fall back to DELETE in dependency order
-        let delete_queries = [
-            "DELETE FROM core.event_annotations",
-            "DELETE FROM core.event_relations",
-            "DELETE FROM core.event_cluster_members",
-            "DELETE FROM core.event_embeddings",
-            "DELETE FROM core.entity_relations",
-            "DELETE FROM core.revisions",
-            "DELETE FROM sinex_schemas.processor_manifests",
-            "DELETE FROM sinex_schemas.event_payload_schemas",
-            "DELETE FROM core.processor_checkpoints",
-            "DELETE FROM core.operations_log",
-            "DELETE FROM core.transactional_outbox",
-            "DELETE FROM core.tags",
-            "DELETE FROM core.tagged_items",
-            "DELETE FROM core.blobs",
-            "DELETE FROM raw.temporal_ledger",
-            "DELETE FROM core.entities",
-            "DELETE FROM core.event_clusters",
-        ];
+            // Fall back to DELETE in dependency order
+            let delete_queries = [
+                "DELETE FROM core.event_annotations",
+                "DELETE FROM core.event_relations",
+                "DELETE FROM core.event_cluster_members",
+                "DELETE FROM core.event_embeddings",
+                "DELETE FROM core.entity_relations",
+                "DELETE FROM core.revisions",
+                "DELETE FROM sinex_schemas.processor_manifests",
+                "DELETE FROM sinex_schemas.event_payload_schemas",
+                "DELETE FROM core.processor_checkpoints",
+                "DELETE FROM core.operations_log",
+                "DELETE FROM core.transactional_outbox",
+                "DELETE FROM core.tags",
+                "DELETE FROM core.tagged_items",
+                "DELETE FROM core.blobs",
+                "DELETE FROM raw.temporal_ledger",
+                "DELETE FROM core.entities",
+                "DELETE FROM core.event_clusters",
+            ];
 
-        for query in delete_queries {
-            if let Err(e) = sqlx::query(query).execute(conn.as_mut()).await {
-                let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
-                tracing::warn!("Failed to delete from {}: {}", table_name, e);
+            for query in delete_queries {
+                if let Err(e) = sqlx::query(query).execute(conn.as_mut()).await {
+                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
+                    tracing::warn!("Failed to delete from {}: {}", table_name, e);
+                }
             }
         }
-    }
 
-    // Ensure audit triggers allow deletions during cleanup
-    sqlx::query("SET sinex.operation_id = 'test-cleanup'")
-        .execute(conn.as_mut())
-        .await?;
-
-    // Handle core.events separately (hypertable cannot be truncated)
-    if let Err(e) = sqlx::query("DELETE FROM core.events")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!("Failed to delete from core.events: {}", e);
-        // Try TimescaleDB-specific cleanup
-        if let Err(e2) =
-            sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
-                .execute(pool)
-                .await
+        // Handle core.events separately (hypertable cannot be truncated)
+        if let Err(e) = sqlx::query("DELETE FROM core.events")
+            .execute(conn.as_mut())
+            .await
         {
-            tracing::warn!("Failed to drop chunks: {}", e2);
+            tracing::warn!("Failed to delete from core.events: {}", e);
+            // Try TimescaleDB-specific cleanup
+            if let Err(e2) =
+                sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
+                    .execute(&pool_for_chunks)
+                    .await
+            {
+                tracing::warn!("Failed to drop chunks: {}", e2);
+            }
+        }
+
+        if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!("Failed to delete from raw.source_material_registry: {}", e);
         }
     }
-
-    if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!("Failed to delete from raw.source_material_registry: {}", e);
-    }
+    operation_guard.restore(&mut conn).await?;
 
     // Re-enable FK checks
     sqlx::query("SET session_replication_role = 'origin'")
@@ -253,6 +316,50 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
 
     // Restore canonical test material record for fixtures that rely on Event::test_event
     Ok(())
+}
+
+async fn with_operation_id<F, Fut, T>(
+    conn: &mut PoolConnection<Postgres>,
+    operation_id: &str,
+    f: F,
+) -> Result<T>
+where
+    F: FnOnce(&mut PoolConnection<Postgres>) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let previous = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT current_setting('sinex.operation_id', true)",
+    )
+    .fetch_optional(conn.as_mut())
+    .await?
+    .flatten();
+
+    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+        .bind(operation_id)
+        .execute(conn.as_mut())
+        .await?;
+
+    let result = f(conn).await;
+
+    let restore_result = if let Some(prev) = previous {
+        sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+            .bind(prev)
+            .execute(conn.as_mut())
+            .await
+    } else {
+        sqlx::query("RESET sinex.operation_id")
+            .execute(conn.as_mut())
+            .await
+    };
+
+    if let Err(e) = restore_result {
+        tracing::warn!(
+            "Failed to restore sinex.operation_id session setting after cleanup: {}",
+            e
+        );
+    }
+
+    result
 }
 
 /// Load a named dataset fixture into the database
