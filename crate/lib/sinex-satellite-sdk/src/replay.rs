@@ -428,7 +428,7 @@ impl ReplayManager {
             tracker.complete_batch().await;
 
             // Save checkpoint periodically (every 10 batches)
-            if total_batches.is_multiple_of(10) {
+            if total_batches != 0 && total_batches % 10 == 0 {
                 let last_event_id = None; // Would need to extract from events
                 tracker
                     .save_checkpoint(

@@ -103,7 +103,8 @@ impl ReplayLogger {
 
     /// Log batch processing progress
     pub fn batch_progress(batch_num: usize, total_batches: usize, events_in_batch: usize) {
-        if batch_num.is_multiple_of(10) || batch_num == total_batches {
+        let is_milestone = batch_num != 0 && batch_num % 10 == 0;
+        if is_milestone || batch_num == total_batches {
             info!(
                 batch = batch_num,
                 total = total_batches,

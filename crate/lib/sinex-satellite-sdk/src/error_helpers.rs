@@ -17,17 +17,48 @@ use std::io;
 ///     .map_err(|e| io_error_with_context(e, "Failed to read config file"));
 /// ```
 pub fn io_error_with_context(error: io::Error, context: &str) -> SatelliteError {
-    SatelliteError::Processing(format!("{}: {}", context, error))
+    let err_str = error.to_string();
+    let ctx_is_empty = context.trim().is_empty();
+    let err_is_empty = err_str.trim().is_empty();
+
+    let message = match (ctx_is_empty, err_is_empty) {
+        (false, false) => format!("{}: {}", context, err_str),
+        (false, true) => format!("{}: IO error", context),
+        (true, false) => format!("IO error: {}", err_str),
+        (true, true) => "IO error occurred".to_string(),
+    };
+
+    SatelliteError::Processing(message)
 }
 
 /// Convert UTF-8 conversion errors to SatelliteError with context
 pub fn utf8_error_with_context(error: std::string::FromUtf8Error, context: &str) -> SatelliteError {
-    SatelliteError::Processing(format!("{}: {}", context, error))
+    let err_str = error.to_string();
+    let ctx_is_empty = context.trim().is_empty();
+
+    let message = if ctx_is_empty {
+        format!("UTF-8 error: {}", err_str)
+    } else {
+        format!("{}: {}", context, err_str)
+    };
+
+    SatelliteError::Processing(message)
 }
 
 /// Convert serde_json errors to SatelliteError with context
 pub fn json_error_with_context(error: serde_json::Error, context: &str) -> SatelliteError {
-    SatelliteError::Processing(format!("{}: {}", context, error))
+    let err_str = error.to_string();
+    let ctx_is_empty = context.trim().is_empty();
+    let err_is_empty = err_str.trim().is_empty();
+
+    let message = match (ctx_is_empty, err_is_empty) {
+        (false, false) => format!("{}: JSON error: {}", context, err_str),
+        (false, true) => format!("{}: JSON error", context),
+        (true, false) => format!("JSON error: {}", err_str),
+        (true, true) => "JSON error occurred".to_string(),
+    };
+
+    SatelliteError::Processing(message)
 }
 
 /// Create a processing error with formatted context

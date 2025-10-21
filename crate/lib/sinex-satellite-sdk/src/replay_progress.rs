@@ -192,19 +192,21 @@ impl ProgressTracker {
         progress.last_update = Utc::now();
 
         // Log progress every 10 batches or 10%
-        let should_log = progress.batches_processed.is_multiple_of(10)
-            || (progress.batches_processed * 10).is_multiple_of(progress.total_batches);
+        let batches = progress.batches_processed;
+        let total = progress.total_batches;
+        let every_ten_batches = batches != 0 && batches % 10 == 0;
+        let every_ten_percent = total != 0 && (batches * 10) % total == 0;
+        let should_log = every_ten_batches || every_ten_percent;
 
         if should_log {
-            let percentage =
-                (progress.batches_processed as f64 / progress.total_batches as f64) * 100.0;
+            let percentage = if total == 0 {
+                0.0
+            } else {
+                (batches as f64 / total as f64) * 100.0
+            };
             info!(
                 "Replay progress: {:.1}% ({}/{} batches, {} events at {:.1} events/sec)",
-                percentage,
-                progress.batches_processed,
-                progress.total_batches,
-                progress.processed_events,
-                progress.current_rate
+                percentage, batches, total, progress.processed_events, progress.current_rate
             );
         }
 

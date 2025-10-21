@@ -5,7 +5,8 @@ use sinex_satellite_sdk::stream_processor::Checkpoint;
 use sinex_test_utils::prelude::*;
 
 fn arb_ulid() -> impl Strategy<Value = Ulid> {
-    prop::array::uniform16(any::<u8>()).prop_map(|bytes| Ulid::from_bytes(bytes).expect("ULID bytes should always be valid"))
+    prop::array::uniform16(any::<u8>())
+        .prop_map(|bytes| Ulid::from_bytes(bytes).expect("ULID bytes should always be valid"))
 }
 
 fn arb_non_ulid_string() -> impl Strategy<Value = String> {
