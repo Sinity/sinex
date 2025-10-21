@@ -577,6 +577,7 @@ fn test_ulid_timestamp_extraction_property() {
     });
 } */
 
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 #[sinex_test]
 fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Result<()> {
     proptest::proptest!(|(

@@ -1,8 +1,5 @@
-//! Property test modules for workspace-level scenarios that still span multiple crates.
-
-pub mod automation_property_test;
-pub mod checkpoint_property_test;
-pub mod error_handling_property_test;
-pub mod queue_property_test;
-pub mod satellite_property_test;
-pub mod validation_invariants_property_test;
+//! Workspace-level property tests that genuinely span multiple crates.
+//!
+//! Most property suites have moved beside their owning crates. This module
+//! remains as a thin placeholder so `property_tests.rs` can pull in any
+//! residual cross-crate scenarios in the future.

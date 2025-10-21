@@ -39,7 +39,7 @@ pub struct TestIngestdHandle {
     pub stream_name: String,
     process: Option<Child>,
     service: Option<IngestService>,
-    join_handle: Option<JoinHandle<Result<(), SinexError>>>,
+    join_handle: Option<JoinHandle<Result<()>>>,
     _work_dir: Option<tempfile::TempDir>,
 }
 
@@ -83,7 +83,7 @@ pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
 ) -> Result<TestIngestdHandle> {
     let work_dir_temp = match &config.work_dir {
-        Some(path) => None,
+        Some(_existing) => None,
         None => Some(
             tempfile::tempdir()
                 .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?,
@@ -110,7 +110,7 @@ pub async fn start_test_ingestd_with_config(
         .nats_stream_name(format!("sinex_test_events_{}", Ulid::new()))
         .build();
 
-    let mut service = IngestService::new(ingest_config.clone()).await?;
+    let service = IngestService::new(ingest_config.clone()).await?;
 
     let mut service_runner = service.clone();
     let join_handle = tokio::spawn(async move { service_runner.run().await });

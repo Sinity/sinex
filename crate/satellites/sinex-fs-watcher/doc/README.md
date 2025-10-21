@@ -8,5 +8,5 @@ support snapshots, historical replays, and continuous monitoring.
 - Produces enriched events that include provenance metadata and content hashes.
 - Maintains checkpoints so the watcher can resume without gaps.
 
-See `docs/architecture/satellite-implementation.md` for the shared pattern and
-`docs/architecture/Core_Architecture.md` for downstream processing.
+See `crate/lib/sinex-satellite-sdk/doc/overview.md` for the shared lifecycle
+pattern and `docs/architecture/Core_Architecture.md` for downstream processing.

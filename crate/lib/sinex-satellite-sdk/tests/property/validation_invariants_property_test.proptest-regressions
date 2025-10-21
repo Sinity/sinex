@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 55bdd527d0ff6c9a373bda9481fdabd53ae2c11576c4a23635782fba65471c98 # shrinks to payload = Object {"kind": String("simple"), "value": String("test")}
+cc fa57362f1db09c7785ee8c810398a95eb92f5c9df244f218217beb9ad9396c16 # shrinks to payload = Object {"kind": String("simple"), "value": String("test")}
+cc 80fff23d7e6c8f1cb0d48fabd3a867670e0d6e60809b3f7a82925cb48e7a682a # shrinks to payload = Object {"kind": String("simple"), "value": String("test")}

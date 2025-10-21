@@ -3999,6 +3999,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "sinex-macros",
+ "sinex-satellite-sdk",
  "sinex-schema",
  "sinex-test-utils",
  "sqlx",

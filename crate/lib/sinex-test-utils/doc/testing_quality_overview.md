@@ -15,13 +15,14 @@ usage, see:
 
 | Location                     | Focus / Scope                                             | Notes                                                   |
 |------------------------------|-----------------------------------------------------------|---------------------------------------------------------|
-| `tests/unit/`                | Fast, isolated component tests                           | Keep under ~1 s each; prefer direct API usage           |
-| `tests/integration/`         | Cross-crate workflows and database interactions          | Largest suite; beware legacy raw SQL during migrations  |
-| `tests/system/`              | End-to-end flows exercising ingest → automata → gateway  | Uses real services; slower (~minutes)                   |
-| `tests/property/`            | proptest-based fuzzing of core invariants                | Commit new `.proptest-regressions` seeds                |
-| `tests/adversarial/`         | Chaos/boundary/security scenarios                        | Stress error paths, malformed input                     |
-| `tests/performance/`         | Throughput/latency/resource measurements                 | Optional in CI; document dataset sizes                  |
-| `tests/security/`, `...`     | Specialised suites (Unicode handling, concurrency, etc.) | Add README if suite-specific setup is required          |
+| `crate/lib/sinex-core/tests/unit/`        | Fast, isolated component tests                           | Keep under ~1 s each; prefer direct API usage           |
+| `crate/lib/sinex-core/tests/integration/` | Core repository and schema workflows                     | Former workspace suites now colocated with the crate    |
+| `crate/lib/sinex-core/tests/{system,performance,adversarial}/` | Heavy end-to-end, load, and chaos coverage            | Uses real services; slower (~minutes)                   |
+| `crate/lib/sinex-satellite-sdk/tests/{integration,property,system}/` | Satellite lifecycle and annex validation        | Property regressions live beside the SDK helpers        |
+| `tests/integration/`                      | Cross-crate workflows and legacy harness glue            | Trim as coverage migrates into crate-owned suites       |
+| `tests/property/`                         | Workspace-level fuzzing that still spans multiple crates | Commit new `.proptest-regressions` seeds                |
+| `tests/examples/`                         | Documentation and usage demonstrations                   | Great starting points for new helper patterns           |
+| `tests/nixos-vm/`                         | Full VM deployment and chaos scenarios                   | Optional in CI; document dataset sizes                  |
 
 `TestContext` is the single entry point for database access, fixture creation,
 timing utilities, and assertion helpers. Favour it over one-off utilities when

@@ -1,7 +1,7 @@
 # Performance Test Suite (JetStream Era)
 
 This note documents the JetStream-backed performance benches that replace the
-legacy Redis suite. Each test lives under `tests/performance/`.
+legacy Redis suite. Each test now lives under `crate/lib/sinex-core/tests/performance/`.
 
 ## Publish & Consume
 - `jetstream_performance_test::jetstream_publish_throughput`
