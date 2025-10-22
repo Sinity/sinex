@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                source_material_id as \"material_id: Ulid\",\n                offset_start,\n                offset_end,\n                ts_capture\n            FROM raw.temporal_ledger\n            WHERE source_material_id = $1::ulid\n            AND offset_start >= $2\n            ORDER BY offset_start\n            LIMIT $3\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "offset_start",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "offset_end",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "ts_capture",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b5f707b497d8f796393dade0a507d50bebca90c73192dc8f6fbde419ffd2c6b6"
+}

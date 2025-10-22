@@ -6,7 +6,6 @@ This directory contains the NixOS module for deploying and managing the Sinex sy
 
 - `default.nix` - Main module entry point
 - `database.nix` - PostgreSQL setup and migrations
-- `event-sources.nix` - Event source satellite configuration
 - `satellite-services.nix` - Satellite service management
 - `monitoring.nix` - Observability and metrics
 - `blob-storage.nix` - Git-annex configuration
@@ -203,12 +202,14 @@ in
       name = "sinex_prod";
     };
     
-    eventSources = {
+    satellite.eventSources = {
       filesystem.enable = true;
       terminal.enable = true;
       desktop.enable = true;
       system.enable = true;
     };
+    
+    shell.kitty.enable = true;
     
     monitoring = {
       enable = true;

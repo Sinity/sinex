@@ -5,7 +5,7 @@ with lib;
 
 let
   cfg = config.services.sinex;
-  kittySource = cfg.eventSources.kitty;
+  kittySource = cfg.shell.kitty;
   
   # Script to auto-configure kitty shell integration
   configureKittyScript = pkgs.writeShellScript "configure-kitty-integration" ''
@@ -108,7 +108,7 @@ shell_integration no-title
 
 in
 {
-  config = mkIf (cfg.enable && kittySource.enable && kittySource.autoConfigureShellIntegration) {
+  config = mkIf (cfg.enable && kittySource.enable && kittySource.autoConfigure) {
     
     # Systemd service to configure kitty on service startup
     systemd.services.sinex-kitty-setup = {
@@ -140,7 +140,7 @@ in
         echo "Removing Kitty shell integration configuration..."
         sudo -u ${cfg.targetUser} ${removeKittyConfigScript}
       '')
-    ] ++ lib.optionals (cfg.enable) [ pkgs.kitty ];
+    ] ++ lib.optionals (kittySource.enable) [ pkgs.kitty ];
     
     # Validation warning if targetUser is not set
     warnings = optional (cfg.targetUser == null) ''
@@ -149,7 +149,7 @@ in
     '';
     
     # Documentation for manual setup if auto-config is disabled
-    system.extraDependencies = mkIf (!kittySource.autoConfigureShellIntegration) [
+    system.extraDependencies = mkIf (!kittySource.autoConfigure) [
       (pkgs.writeText "sinex-kitty-manual-setup.md" ''
         # Manual Kitty Shell Integration Setup for Sinex
         

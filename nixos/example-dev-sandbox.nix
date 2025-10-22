@@ -57,6 +57,7 @@
           enable = true;
           instances = 2;
           memoryLimit = "384M";
+          watchPaths = [ "/home/developer" "/var/lib/sinex" ];
         };
         terminal = {
           enable = true;
@@ -78,6 +79,18 @@
       automata = {
         canonicalCommandSynthesizer.enable = true;
         healthAggregator.enable = true;
+      };
+    };
+
+    shell = {
+      asciinema = {
+        autoRecord = false;
+        recordingsPath = "/home/developer/.local/share/asciinema";
+      };
+      kitty = {
+        enable = true;
+        autoConfigure = true;
+        userConfigPath = "~/.config/kitty/kitty.conf";
       };
     };
 

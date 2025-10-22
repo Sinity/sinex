@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.operations_log (\n                id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms\n            ) VALUES (\n                $1::uuid, $2, $3, $4, $5, $6, $7, $8\n            )\n            RETURNING \n                id::uuid as \"id!: Id<Operation>\",\n                operation_type,\n                operator,\n                scope,\n                result_status,\n                result_message,\n                preview_summary,\n                duration_ms\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Id<Operation>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "operation_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "operator",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "result_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "result_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "preview_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "duration_ms",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "1bea78408dd25c9062c8eb7ef7f7fb4985780ba4bb05354f15092647c890a9c9"
+}

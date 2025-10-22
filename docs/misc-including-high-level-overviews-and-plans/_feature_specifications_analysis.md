@@ -3,6 +3,9 @@
 *Analysis Date: 2025-07-23*  
 *Source: Detailed examination of Sinex project specifications in spec/planned/, spec/ready/, and architectural decision records*
 
+> **Historical notice (2025-07-24)**  
+> Infrastructure notes assume Redis Streams as the message bus. Active work replaces Redis with NATS JetStream (`docs/way.md`).
+
 ## Executive Summary
 
 The Sinex project represents an extraordinarily sophisticated personal digital environment system with comprehensive technical specifications across multiple domains. The analysis reveals a transformation from basic data capture into an advanced personal intelligence platform with detailed implementations for browser integration, audio/video processing, mobile/IoT connectivity, AI-powered analytics, and multi-device synchronization.

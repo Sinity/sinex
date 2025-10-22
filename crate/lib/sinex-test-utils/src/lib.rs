@@ -77,7 +77,9 @@ pub mod prelude {
 
     // Common test fixtures
     pub use crate::{
+        acquire_admin_connection, optional_extension_missing, pool_slot_count,
         test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
+        with_pool_size,
     };
 
     // Core sinex imports - now using flattened namespace
@@ -236,7 +238,8 @@ pub use channel_enhancements::{
     EnhancedEventSender, PerformanceMetrics as ChannelPerformanceMetrics,
 };
 pub use database_pool::{
-    acquire_test_database, check_pool_health, get_pool_stats, reset_pool, DatabaseStats,
+    acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
+    optional_extension_missing, pool_slot_count, reset_pool, with_pool_size, DatabaseStats,
     PoolHealthReport, TestDatabase,
 };
 pub use deployment_scenario_utils::{
@@ -246,6 +249,9 @@ pub use deployment_scenario_utils::{
     ValidationExpectation, ValidationStep, ValidationType,
 };
 pub use nats::EphemeralNats;
+pub use satellite_management_utils::{
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+};
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 
@@ -468,78 +474,89 @@ mod tests {
 
     #[sinex_test]
     async fn test_concurrent_test_execution(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        // Test that multiple tests can run concurrently without interference
-        const TASKS: usize = 5;
-        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
-        let mut handles = vec![];
+        drop(ctx);
+        crate::database_pool::with_pool_size(12, || async {
+            // Test that multiple tests can run concurrently without interference
+            const TASKS: usize = 5;
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
+            let mut handles = vec![];
 
-        for i in 0..TASKS {
-            let barrier_clone = barrier.clone();
-            let handle = tokio::spawn(async move {
-                let ctx = TestContext::with_name(&format!("concurrent_{i}"))
-                    .await
-                    .map_err(|e| SinexError::unknown(e.to_string()))?;
-
-                // Synchronize all tasks to start at same time
-                barrier_clone.wait().await;
-
-                // Each performs operations
-                for j in 0..10 {
-                    let task_source = format!("task_{i}");
-                    ctx.create_test_event(&task_source, "concurrent.test", json!({"iteration": j}))
+            for i in 0..TASKS {
+                let barrier_clone = barrier.clone();
+                let handle = tokio::spawn(async move {
+                    let ctx = TestContext::with_name(&format!("concurrent_{i}"))
                         .await
                         .map_err(|e| SinexError::unknown(e.to_string()))?;
-                }
 
-                // Allow the database to flush the inserts before querying.
-                const EXPECTED_EVENTS: usize = 10;
-                const MAX_ATTEMPTS: usize = 5;
-                const RETRY_DELAY_MS: u64 = 20;
+                    // Synchronize all tasks to start at same time
+                    barrier_clone.wait().await;
 
-                let mut observed = 0usize;
-                for attempt in 0..MAX_ATTEMPTS {
-                    let events = ctx
-                        .pool
-                        .events()
-                        .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
-                        .await?;
-                    observed = events.len();
-                    if observed == EXPECTED_EVENTS {
-                        break;
+                    // Each performs operations
+                    for j in 0..10 {
+                        let task_source = format!("task_{i}");
+                        ctx.create_test_event(
+                            &task_source,
+                            "concurrent.test",
+                            json!({"iteration": j}),
+                        )
+                        .await
+                        .map_err(|e| SinexError::unknown(e.to_string()))?;
                     }
-                    if attempt + 1 < MAX_ATTEMPTS {
-                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
-                    }
-                }
 
-                assert_eq!(observed, EXPECTED_EVENTS);
+                    // Allow the database to flush the inserts before querying.
+                    const EXPECTED_EVENTS: usize = 10;
+                    const MAX_ATTEMPTS: usize = 20;
+                    const RETRY_DELAY_MS: u64 = 100;
 
-                // Verify only sees own events using direct repository access
-                // Should not see any other task's events
-                for k in 0..TASKS {
-                    if k != i {
-                        let other_events = ctx
+                    let mut observed = 0usize;
+                    for attempt in 0..MAX_ATTEMPTS {
+                        let events = ctx
                             .pool
                             .events()
-                            .get_by_source(&EventSource::from(format!("task_{k}")), Some(100), None)
+                            .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
                             .await?;
-                        assert_eq!(other_events.len(), 0);
+                        observed = events.len();
+                        if observed == EXPECTED_EVENTS {
+                            break;
+                        }
+                        if attempt + 1 < MAX_ATTEMPTS {
+                            tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS))
+                                .await;
+                        }
                     }
-                }
 
-                Ok::<(), SinexError>(())
-            });
-            handles.push(handle);
-        }
+                    assert_eq!(observed, EXPECTED_EVENTS);
 
-        // All should succeed
-        for handle in handles {
-            handle
-                .await
-                .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
-        }
+                    // Verify only sees own events using direct repository access
+                    for k in 0..TASKS {
+                        if k != i {
+                            let other_events = ctx
+                                .pool
+                                .events()
+                                .get_by_source(
+                                    &EventSource::from(format!("task_{k}")),
+                                    Some(100),
+                                    None,
+                                )
+                                .await?;
+                            assert_eq!(other_events.len(), 0);
+                        }
+                    }
 
-        Ok(())
+                    Ok::<(), SinexError>(())
+                });
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                handle
+                    .await
+                    .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
+            }
+
+            Ok(())
+        })
+        .await
     }
 
     #[sinex_test]

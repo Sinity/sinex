@@ -29,17 +29,18 @@ Key architectural decisions and implementation details are documented at their i
 - **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
-- **ULID Implementation**: [`sinex-ulid/src/lib.rs:188-246`](../crate/sinex-ulid/src/lib.rs#L188-L246)
-  - ULID-UUID casting for foreign keys
+- **ULID Implementation**: [`crate/lib/sinex-schema/doc/ulid.md`](../crate/lib/sinex-schema/doc/ulid.md)
+  - ULID/UUID casting helpers used by repositories
   - Monotonic generation for high concurrency
 
 ### Event Processing
-- **Redis Streams Architecture**: [`sinex-satellite-sdk/src/redis_client.rs:1-88`](../crate/sinex-satellite-sdk/src/redis_client.rs#L1-L88)
-  - Supersedes ADR-014 routing cache architecture
-  - Consumer group pattern documentation
-  - Checkpoint hybrid strategy
-- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)
-  - Unified interface for all satellites
+- **Ingestion & JetStream Playbook**: [`docs/way.md`](../docs/way.md)
+  - Target architecture for satellites → JetStream → ingestd
+  - Stream naming conventions, Stage-as-You-Go responsibilities
+- **Satellite SDK Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](../crate/lib/sinex-satellite-sdk/doc/overview.md)
+  - Unified processor interface and checkpoint semantics
+  - Replay patterns and lifecycle hooks
+- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/lib/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)
   - Snapshot, historical, and continuous modes
 
 ### Satellite Implementations  
@@ -58,9 +59,15 @@ Add to your NixOS configuration:
 {
   imports = [ ./path/to/sinex/nixos/modules ];
 
+  users.users.yourusername = {
+    isNormalUser = true;
+    createHome = true;
+    extraGroups = [ "wheel" ]; # optional
+  };
+
   services.sinex = {
     enable = true;
-    targetUser = "yourusername";  # REQUIRED: your username
+    targetUser = "yourusername";  # REQUIRED: match the user defined above
   };
 }
 ```
@@ -69,6 +76,19 @@ Apply with:
 ```bash
 sudo nixos-rebuild switch --flake .#your-host
 ```
+
+> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` and `pkgs.sinexCli` are available:
+> ```nix
+> {
+>   inputs.sinex.url = "github:.../sinex";
+> 
+>   outputs = { self, nixpkgs, sinex, ... }: {
+>     nixosModules.sinex = sinex.nixosModules.sinex;
+>     overlays.default = sinex.overlays.default;
+>   };
+> }
+> ```
+> Omitting the overlay will raise an evaluation error because the module requires a concrete Sinex package.
 
 ### Service Group Controls
 
@@ -85,11 +105,60 @@ services.sinex.serviceManagement.serviceGroups = {
 services.sinex.satellite = {
   enable = true;
   coordination.enable = false;
-  eventSources.filesystem.instances = 1;
+  eventSources.filesystem = {
+    enable = true;
+    instances = 1;
+  };
 };
 ```
 
 Set the maintenance or monitoring flags to `true` when you need the supporting timers or observability stack.
+
+### Satellite Secrets & TLS
+
+When deploying satellites across hosts (e.g. the remote example), inject shared environment through the module instead of patching systemd units manually:
+
+```nix
+services.sinex.satellite = {
+  environmentFiles = [ "/etc/sinex/remote-satellite.env" ];
+  environment = [
+    "SINEX_NATS_CA_CERT=/etc/sinex/nats/ca.pem"
+    "SINEX_NATS_CLIENT_CERT=/etc/sinex/nats/client.pem"
+    "SINEX_NATS_CLIENT_KEY=/etc/sinex/nats/client.key"
+  ];
+};
+
+environment.etc."sinex/remote-satellite.env" = {
+  text = ''
+    # DATABASE_PASSWORD=change-me
+    # SINEX_NATS_TOKEN=change-me
+  '';
+  mode = "0400";
+};
+```
+
+The values in `environmentFiles` load into every satellite unit (filesystem, terminal, automata, etc.), making it straightforward to distribute secrets via tools like agenix or sops-nix. The `environment` list is appended verbatim for shared TLS paths or feature flags.
+Entries in `environment` must be valid `KEY=value` pairs; the module now validates this at evaluation time so a missing value fails fast instead of reaching systemd.
+
+### Shell Helpers
+
+Workstation conveniences live under `services.sinex.shell`:
+
+```nix
+services.sinex.shell = {
+  asciinema = {
+    autoRecord = true;
+    recordingsPath = "~/.local/share/asciinema";
+  };
+
+  kitty = {
+    enable = true;
+    autoConfigure = true; # manage kitty.conf automatically
+  };
+};
+```
+
+Disabling `kitty.autoConfigure` keeps the helper scripts available without touching your existing Kitty configuration.
 
 ### Production Setup with Hot Standby
 
@@ -169,25 +238,29 @@ services.sinex = {
   enable = true;
   targetUser = "myuser";
   
-  # Enable satellite architecture (recommended)
   satellite = {
     enable = true;
     eventSources = {
-      filesystem.enable = true;    # File changes
-      terminal.enable = true;      # Shell commands
-      desktop.enable = true;       # Clipboard, windows
-      system.enable = true;        # System events
+      filesystem = {
+        enable = true;
+        watchPaths = [ "~/Documents" "~/Projects" ];
+      };
+      terminal.enable = true;
+      desktop.enable = true;
+      system.enable = true;
     };
     automata = {
       canonicalCommandSynthesizer.enable = true;  # Command processing
       healthAggregator.enable = true;             # Health monitoring
     };
   };
+
+  shell = {
+    asciinema.autoRecord = false;
+    kitty.enable = true;
+  };
   
-  # Database auto-setup
   database.autoSetup = true;
-  
-  # Blob storage for large files
   blobStorage.enable = true;
 };
 ```
@@ -204,8 +277,11 @@ services.sinex = {
   satellite = {
     enable = true;
     eventSources = {
-      filesystem.enable = true;
-      terminal.enable = true;
+      filesystem = {
+        enable = true;
+        watchPaths = [ "/srv/data" "/var/log" ];
+      };
+      terminal.enable = false;
       desktop.enable = false;      # No GUI
       system.enable = true;
     };
@@ -230,10 +306,21 @@ services.sinex = {
   satellite = {
     enable = true;
     logLevel = "debug";
-    eventSources.filesystem = {
-      enable = true;
-      watchPaths = [ "~/Projects" ];  # Only watch projects
+    eventSources = {
+      filesystem = {
+        enable = true;
+        watchPaths = [ "~/Projects" ];  # Only watch projects
+      };
+      terminal.enable = true;
     };
+  };
+  
+  shell = {
+    asciinema = {
+      autoRecord = true;
+      recordingsPath = "~/Projects/.sinex-recordings";
+    };
+    kitty.enable = true;
   };
   
   database = {
@@ -263,6 +350,8 @@ services.sinex = {
       system.enable = false;
     };
   };
+  
+  shell.asciinema.autoRecord = false;
   
   database = {
     autoSetup = true;
@@ -413,28 +502,32 @@ nix develop
 just migrate
 ```
 
-### Redis Operations
+### JetStream Operations
 
-**Access Redis:**
+The NixOS module enables JetStream on the bundled `nats-server`. Use the `nats` CLI for inspection:
+
+**List streams and consumers:**
 ```bash
-redis-cli
+nats --server nats://127.0.0.1:4222 stream ls
+nats --server nats://127.0.0.1:4222 consumer ls <stream>
 ```
 
-**Monitor event stream:**
+**Inspect a stream:**
 ```bash
-redis-cli XREAD STREAMS sinex:events $
+nats --server nats://127.0.0.1:4222 stream info <stream>
 ```
 
-**Check stream info:**
+**Tail messages (debugging):**
 ```bash
-redis-cli XINFO STREAM sinex:events
-redis-cli XINFO GROUPS sinex:events
+nats --server nats://127.0.0.1:4222 consumer next <stream> <consumer>
 ```
 
-**Clear Redis data (DESTRUCTIVE):**
+**Remove a stream (DESTRUCTIVE):**
 ```bash
-redis-cli FLUSHALL
+nats --server nats://127.0.0.1:4222 stream rm <stream> --force
 ```
+
+Stream names depend on the deployment. Consult `docs/way.md` or the satellite configuration when deciding which streams to inspect or delete.
 
 ### Data Management
 
@@ -448,8 +541,10 @@ sudo -u postgres dropdb sinex_dev
 sudo -u postgres createdb sinex_dev
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE sinex_dev TO sinex;"
 
-# Clear Redis
-redis-cli FLUSHALL
+# Reset JetStream state (optional, destructive)
+sudo systemctl stop nats
+sudo rm -rf /var/lib/nats/jetstream/*
+sudo systemctl start nats
 
 # Clear filesystem data
 sudo rm -rf /var/lib/sinex/*
@@ -485,8 +580,8 @@ sudo -u sinex psql sinex_dev < sinex_backup.sql
 # Check database connectivity
 sudo -u sinex psql sinex_dev -c "SELECT 1;"
 
-# Check Redis connectivity
-redis-cli ping
+# Check JetStream status
+nats --server nats://127.0.0.1:4222 server report jetstream
 
 # Check gRPC socket
 ls -la /run/sinex/ingest.sock

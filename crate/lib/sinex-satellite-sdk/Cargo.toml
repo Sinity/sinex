@@ -75,6 +75,7 @@ preflight = []
 [dev-dependencies]
 tempfile = "3.13"
 sinex-test-utils = { path = "../sinex-test-utils" }
+proptest = { workspace = true }
 
 [[bin]]
 name = "sinex-preflight"

@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                id::text as id,\n                source,\n                event_type,\n                schema_version,\n                schema_content,\n                content_hash,\n                is_active,\n                updated_at\n            FROM sinex_schemas.event_payload_schemas\n            WHERE source = $1 \n                AND ($2 OR is_active = true)\n            ORDER BY event_type, updated_at DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schema_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "schema_content",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "653cb5ed6523f0a6c6185fa20d6cd6e20d5dcf9290acc77b6e4adb8d9998ef1b"
+}

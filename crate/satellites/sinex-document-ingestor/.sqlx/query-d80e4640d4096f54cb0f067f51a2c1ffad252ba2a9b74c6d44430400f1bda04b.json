@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE raw.sensor_jobs\n            SET status = $2::text,\n                updated_at = NOW()\n            WHERE id = $1::ulid\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d80e4640d4096f54cb0f067f51a2c1ffad252ba2a9b74c6d44430400f1bda04b"
+}

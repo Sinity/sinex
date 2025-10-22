@@ -1,29 +1,32 @@
-Sinex Documentation — Canonical Map
+Sinex Documentation Index
 
-Use this curated index to find the authoritative docs fast. Many historical and brainstorming notes remain in this repo, but only the links below are considered canonical for day-to-day development.
+Use this index to locate the current sources of truth. “Historical” and “vision” artifacts are background reading only; organisation, invariants, and operational behaviour must come from the documents below.
 
-Start Here
-- Architecture Overview: `docs/architecture/README.md`
-- Core Architecture: `docs/architecture/Core_Architecture.md`
-- Integrity & Security: `docs/architecture/SystemOperations_And_Integrity_Architecture.md`, `docs/architecture/security-architecture.md`
-- Glossary: `docs/GLOSSARY.md`
+Architecture & Design
+- `docs/architecture/Core_Architecture.md` – end-to-end flow, invariants, and data substrate.
+- `docs/architecture/SystemOperations_And_Integrity_Architecture.md` – operating model, observability, recovery.
+- `docs/architecture/security-architecture.md` – current security posture and open work.
+- `docs/architecture/event-taxonomy.md` – canonical event families and payload minima.
+- `docs/way.md` – JetStream ingestion plan (authoritative).
 
-Core Topics
-- Ingestion Plan: `docs/way.md` (JetStream-first ingestion and sensd retirement)
-- Satellites SDK: `crate/lib/sinex-satellite-sdk/doc/overview.md`
-- Event Taxonomy: `docs/architecture/event-taxonomy.md`
-- Operations & Monitoring: `nixos/README.md` and service logs (journald); `SystemOperations_And_Integrity_Architecture.md` for principles
+Crate-Level References
+- `crate/lib/sinex-core/doc/overview.md` plus the adjacent deep dives – repositories, error handling, and shared types.
+- `crate/lib/sinex-satellite-sdk/doc/overview.md` – satellite/automaton lifecycle, processor runner, Stage-as-You-Go.
+- `crate/lib/sinex-schema/doc/overview.md` & `crate/lib/sinex-schema/doc/ulid.md` – schema source of truth and ULID integration.
+- `crate/lib/sinex-services/doc/README.md` – service layer APIs (analytics, content, PKM, search).
+- Each crate under `crate/*/*/doc/` owns its specific deep dives; consult those before adding material to `docs/`.
 
-How-To Guides
-- Documentation Guidelines: `docs/documentation-guidelines.md`
-- Testing Guide: `TESTING.md`
-- Gateway/CLI: `./cli/exo.py --help`
+Operations & Tooling
+- `nixos/README.md` – NixOS deployment guide.
+- `cli/README.md` & `cli/DESIGN.md` – gateway RPC integration and CLI philosophy.
+- `docs/documentation-guidelines.md` – how to add or relocate documentation.
+- `TESTING.md` and `crate/lib/sinex-test-utils/doc/testing_quality_overview.md` – testing expectations and utilities.
 
-Navigation
-- Architecture: `docs/architecture/`
-- Roadmap: `docs/roadmap/`
+Roadmap & Vision
+- Forward-looking plans: `docs/roadmap/`.
+- Speculative/vision work: `docs/vision/`.
+- Historical or exploratory analyses remain under `docs/misc-including-high-level-overviews-and-plans/`.
 
-Notes
-- Working notes and drafts live under `docs/_todo/`. Prefer the canonical docs above for day-to-day work.
-
-Historical docs (e.g., non‑NATS flows) are superseded by `plan_v3.txt` and the streaming architecture.
+Need something else?
+- Prefer crate-local docs when you need implementation detail.
+- If a link is stale or a description diverges from the code, add an inline note and open an issue/PR—the goal is to keep canonical explanations beside the implementation.

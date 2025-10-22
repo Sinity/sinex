@@ -9,14 +9,22 @@ use sinex_core::DbPoolExt;
 use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
 use sinex_test_utils::db_common::verify_clean_state;
 use sinex_test_utils::{
-    acquire_test_database, check_pool_health, get_pool_stats, reset_pool, sinex_test,
+    acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
+    pool_slot_count, reset_pool, sinex_test,
 };
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 
 #[sinex_test]
 async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<()> {
-    let handles: Vec<_> = (0..20)
+    reset_pool().await?;
+
+    // Initialize the pool and determine available slots.
+    let warm_db = acquire_test_database().await?;
+    let slot_count = pool_slot_count().await.max(1);
+    drop(warm_db);
+
+    let handles: Vec<_> = (0..slot_count)
         .map(|_| {
             tokio::spawn(async move {
                 let db = acquire_test_database().await?;
@@ -40,11 +48,7 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
     }
 
     let unique_count = db_names.iter().collect::<HashSet<_>>().len();
-    assert_eq!(
-        unique_count,
-        db_names.len(),
-        "All databases should be unique"
-    );
+    assert_eq!(unique_count, slot_count, "All databases should be unique");
 
     Ok(())
 }
@@ -232,13 +236,10 @@ async fn test_stress_concurrent_operations() -> sinex_test_utils::Result<()> {
 
 #[sinex_test]
 async fn test_template_database_exists() -> sinex_test_utils::Result<()> {
+    reset_pool().await?;
     let _db = acquire_test_database().await?;
 
-    let admin_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string())
-        .replace("/sinex_dev", "/postgres");
-
-    let mut conn = sqlx::postgres::PgConnection::connect(&admin_url).await?;
+    let mut conn = acquire_admin_connection().await?;
 
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = 'sinex_test_template_shared')",

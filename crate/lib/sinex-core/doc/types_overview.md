@@ -1,37 +1,42 @@
 # Core Types and Constants
 
-Foundational types, error handling, and constants used throughout the Sinex ecosystem.
+This file catalogues the type families exported from `sinex-core`. Each section points to the
+module that owns the implementation and highlights the invariants enforced by the type system.
 
-## Core Philosophy: Deep Oneness and Auditable Metacognition
+## Identifiers & Namespacing
 
-Sinex architecture is guided by four pillars:
+- [`sinex_schema::ulid::Ulid`](../../sinex-schema/doc/ulid.md) – canonical identifier used across all tables.
+- `types::ids` – strongly-typed wrappers (`EventId`, `BlobId`, `OperationId`, etc.) that prevent mixing domains.
+- `types::domain::EventSource` / `EventType` – validated wrappers for the `source` and `event_type` columns.
+- `environment::SinexEnvironment` – scopes database schemas, JetStream subjects, sockets, and filesystem paths.
 
-### 1. Deep Oneness
+## Events & Payloads
 
-- One event stream (`core.events`) – no separation between raw and synthesis.
-- One processing primitive (`StatefulStreamProcessor`) – all components are stream processors.
-- One data lifecycle (Stage → Replay → Synthesis → Curation → Action).
+- `types::events::Event` – logical representation of a persisted event, including provenance metadata.
+- `types::events::payloads::*` – typed payload structs for each canonical event family (e.g. filesystem, terminal).
+- `payloads::*` re-export – convenience namespace for consumers that prefer a flattened import path.
+- Constants under `types::events::constants` – common subject names, DLQ identifiers, and validation helpers.
 
-### 2. Declarative Core
+## Errors & Results
 
-- Logic as data, not code.
-- Behaviour described through configuration and patterns.
-- Imperative code reserved for inherently complex operations.
+- `types::error::SinexError` – application-wide error enum with rich context (database, IO, validation, etc.).
+- `types::error::Result<T>` / `SinexResult<T>` – crate-level aliases to reduce boilerplate.
+- `types::error::context` helpers – attach tracing metadata while preserving original error kinds.
 
-### 3. Human-in-the-Loop
+## Database Integration
 
-- Faithful recording of messy reality without premature cleverness.
-- Automate resolution where possible, rely on human judgment when necessary.
-- Users remain final arbiters of meaning through curation.
+- `db::pool` – connection pool builders and the `DbPoolExt` trait for accessing repositories.
+- `db::repositories::*` – repository traits and concrete implementations for events, blobs, checkpoints, operations log, etc.
+- `DbTransaction` alias – ergonomic wrapper for `sqlx::Transaction`.
 
-### 4. Auditable Metacognition
+## Validation & Utilities
 
-- Data provenance via `source_event_ids` chains.
-- Intent provenance via `core.operations_log`.
-- The system remembers not just facts but why it changed its mind.
+- `validation::path::validate_path` – ensures filesystem input respects sandbox rules.
+- `validation::json::validate_json` – JSON schema enforcement helpers used by ingest and services.
+- `types::utils` – date/time helpers, ULID conversions, and serde helpers shared across crates.
 
-## Sentient Archive Vision
+## Working with these Types
 
-Sinex implements a “sentient archive” — a system that not only captures but understands and
-participates in the user’s digital experience. Through its satellite constellation architecture and
-deep philosophical principles, Sinex augments human cognition outside the mind.
+- Always prefer the typed wrappers (`EventId`, `EventSource`, etc.) over raw strings—repositories and services assume validated input.
+- Repository methods return strongly-typed records (e.g. `EventRecord`) that mirror the database schema; map them to domain objects in the caller.
+- When introducing new event families or payloads, define the struct under `types::events::payloads`, add serde derives, and update the taxonomy in `docs/architecture/event-taxonomy.md`.

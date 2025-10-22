@@ -4,6 +4,9 @@
 
 The Sinex Exocortex represents a fundamental reimagining of personal computing that centers on comprehensive digital memory augmentation. This analysis examines the planned user experience designs, workflow patterns, and interaction paradigms that distinguish Sinex from conventional productivity tools. The project envisions a "sentient archive" that transforms fragmented digital experiences into a coherent, queryable, and intelligently structured cognitive substrate.
 
+> **Historical notice (2025-07-24)**  
+> Architectural descriptions in this analysis assume Redis Streams as the live message bus. The active codebase is migrating to NATS JetStream; consult `docs/way.md` for the authoritative ingestion plan.
+
 **Key UX Insights:**
 
 - **Zero-Friction Capture Philosophy**: Universal data ingestion with minimal user interruption

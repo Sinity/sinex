@@ -1,0 +1,108 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    SELECT \n                        id as \"id: Id<EntityRelation>\",\n                        from_entity_id as \"from_entity_id!: Id<Entity>\",\n                        to_entity_id as \"to_entity_id!: Id<Entity>\",\n                        relation_type as \"relation_type!\",\n                        properties as \"properties!\",\n                        source_event_ids as \"source_event_ids!: Vec<Id<Event<JsonValue>>>\",\n                        confidence_score as \"confidence_score!\",\n                        is_active as \"is_active!\",\n                        created_at as \"created_at!\",\n                        updated_at as \"updated_at!\"\n                    FROM core.entity_relations\n                    WHERE \n                        from_entity_id = $1 OR to_entity_id = $1\n                    ORDER BY created_at DESC\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: Id<EntityRelation>",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "from_entity_id!: Id<Entity>",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "to_entity_id!: Id<Entity>",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "relation_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "properties!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+        "type_info": {
+          "Custom": {
+            "name": "ulid[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "ulid",
+                  "kind": "Simple"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "confidence_score!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_active!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "340e8fc42bbfd5095956d2e85b99da33fac0f96e9815aa7f441bf40446fa808a"
+}

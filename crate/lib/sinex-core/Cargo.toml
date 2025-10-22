@@ -89,4 +89,5 @@ tokio-test = "0.4"
 rstest = { workspace = true }
 tempfile = { workspace = true }
 sinex-test-utils = { path = "../sinex-test-utils" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 proptest = { workspace = true }

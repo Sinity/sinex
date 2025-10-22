@@ -3,8 +3,13 @@
 
 use crate::Result;
 
+use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
+use sinex_core::types::error::SinexError;
+use sinex_core::types::ulid::Ulid;
+use sinex_ingestd::{config::IngestdConfig, service::IngestService};
 use tokio::process::Child;
+use tokio::task::JoinHandle;
 
 // Re-export StreamMessage for convenience
 
@@ -12,16 +17,18 @@ use tokio::process::Child;
 #[derive(Debug, Clone)]
 pub struct TestIngestdConfig {
     pub socket_path: String,
-    pub redis_url: String,
+    pub nats_url: String,
     pub database_url: String,
+    pub work_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for TestIngestdConfig {
     fn default() -> Self {
         Self {
             socket_path: "/tmp/test-ingestd.sock".to_string(),
-            redis_url: "redis://localhost:6379".to_string(),
+            nats_url: "nats://127.0.0.1:4222".to_string(),
             database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
+            work_dir: None,
         }
     }
 }
@@ -29,14 +36,34 @@ impl Default for TestIngestdConfig {
 /// Handle for a test ingestd process
 pub struct TestIngestdHandle {
     pub socket_path: String,
+    pub stream_name: String,
     process: Option<Child>,
+    service: Option<IngestService>,
+    join_handle: Option<JoinHandle<Result<()>>>,
+    _work_dir: Option<tempfile::TempDir>,
 }
 
 impl TestIngestdHandle {
     /// Stop the ingestd process
     pub async fn stop(&mut self) -> Result<()> {
+        if let Some(service) = self.service.as_mut() {
+            service.shutdown().await?;
+        }
+
         if let Some(mut process) = self.process.take() {
-            process.kill().await?;
+            let _ = process.kill().await;
+        }
+
+        if let Some(join) = self.join_handle.take() {
+            match join.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(err),
+                Err(join_err) => {
+                    return Err(SinexError::service(format!(
+                        "ingestd task join error: {join_err}"
+                    )))
+                }
+            }
         }
         Ok(())
     }
@@ -55,11 +82,58 @@ impl Drop for TestIngestdHandle {
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
 ) -> Result<TestIngestdHandle> {
-    // For now, return a mock handle
-    // In a full implementation, this would start the actual ingestd process
+    let work_dir_temp = match &config.work_dir {
+        Some(_existing) => None,
+        None => Some(
+            tempfile::tempdir()
+                .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?,
+        ),
+    };
+
+    let work_dir_path = config
+        .work_dir
+        .clone()
+        .or_else(|| work_dir_temp.as_ref().map(|d| d.path().to_path_buf()))
+        .ok_or_else(|| SinexError::service("failed to resolve ingestd work dir"))?;
+
+    let work_dir = Utf8PathBuf::try_from(work_dir_path)
+        .map_err(|e| SinexError::configuration(e.to_string()))?;
+
+    let ingest_config = IngestdConfig::builder()
+        .database_url(config.database_url.clone())
+        .nats_url(config.nats_url.clone())
+        .socket_path(config.socket_path.clone())
+        .batch_size(1)
+        .batch_timeout_secs(1)
+        .validate_schemas(false)
+        .work_dir(work_dir)
+        .nats_stream_name(format!("sinex_test_events_{}", Ulid::new()))
+        .build();
+
+    let service = IngestService::new(ingest_config.clone()).await?;
+
+    let mut service_runner = service.clone();
+    let join_handle = tokio::spawn(async move { service_runner.run().await });
+
+    // Wait for socket to become available
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if tokio::fs::metadata(&config.socket_path).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .map_err(|_| SinexError::service("ingestd socket did not become ready"))?;
+
     Ok(TestIngestdHandle {
         socket_path: config.socket_path,
+        stream_name: ingest_config.nats_stream_name,
         process: None,
+        service: Some(service),
+        join_handle: Some(join_handle),
+        _work_dir: work_dir_temp,
     })
 }
 
@@ -180,13 +254,14 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;
+    use crate::SinexError;
 
     #[sinex_test]
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
         let config = TestIngestdConfig::default();
 
         assert_eq!(config.socket_path, "/tmp/test-ingestd.sock");
-        assert_eq!(config.redis_url, "redis://localhost:6379");
+        assert_eq!(config.nats_url, "nats://127.0.0.1:4222");
         assert_eq!(
             config.database_url,
             "postgresql:///sinex_test?host=/run/postgresql"
@@ -196,23 +271,44 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_creation(_ctx: TestContext) -> Result<()> {
+    async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
+        use crate::nats::EphemeralNats;
+
+        let nats = EphemeralNats::start().await?;
+        let socket_dir = tempfile::tempdir()
+            .map_err(|e| SinexError::service(format!("failed to create temp socket dir: {e}")))?;
+        let socket_path = socket_dir.path().join("custom-test.sock");
+
         let config = TestIngestdConfig {
-            socket_path: "/tmp/custom-test.sock".to_string(),
-            redis_url: "redis://custom:6379".to_string(),
-            database_url: "postgresql:///custom_test".to_string(),
+            socket_path: socket_path.to_string_lossy().into(),
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(socket_dir.path().to_path_buf()),
         };
 
-        let handle = start_test_ingestd_with_config(config.clone()).await?;
+        let mut handle = start_test_ingestd_with_config(config.clone()).await?;
 
         assert_eq!(handle.socket_path, config.socket_path);
+        handle.stop().await?;
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_stop(_ctx: TestContext) -> Result<()> {
-        let config = TestIngestdConfig::default();
+    async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
+        use crate::nats::EphemeralNats;
+
+        let nats = EphemeralNats::start().await?;
+        let socket_dir = tempfile::tempdir()
+            .map_err(|e| SinexError::service(format!("failed to create temp socket dir: {e}")))?;
+        let socket_path = socket_dir.path().join("stop-test.sock");
+
+        let config = TestIngestdConfig {
+            socket_path: socket_path.to_string_lossy().into(),
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: Some(socket_dir.path().to_path_buf()),
+        };
         let mut handle = start_test_ingestd_with_config(config).await?;
 
         // Should be able to stop without error

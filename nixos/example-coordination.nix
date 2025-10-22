@@ -44,6 +44,10 @@
         filesystem = {
           enable = true;
           instances = 3;   # one leader + two standbys
+          watchPaths = [
+            "/home/sinex-prod"
+            "/var/lib/sinex"
+          ];
         };
         terminal = {
           enable = true;
@@ -62,6 +66,18 @@
       automata = {
         canonicalCommandSynthesizer.enable = true;
         healthAggregator.enable = true;
+      };
+    };
+
+    shell = {
+      asciinema = {
+        autoRecord = false;
+        recordingsPath = "/var/lib/sinex/.local/share/asciinema";
+      };
+      kitty = {
+        enable = true;
+        autoConfigure = true;
+        userConfigPath = "~/.config/kitty/kitty.conf";
       };
     };
 

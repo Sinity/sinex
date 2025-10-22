@@ -1,15 +1,19 @@
 # Content Service
 
-`ContentService` orchestrates ingest, storage, and retrieval of binary payloads.
-It wraps blob repositories exposed by `sinex-core`, enforces metadata
-expectations, and triggers downstream enrichment workflows.
+`ContentService` wraps the annex blob manager so callers can stage, fetch, and
+verify binary payloads without touching annex internals.
 
-Key responsibilities:
+## API Surface
 
-- Store large artifacts and return durable identifiers for later retrieval.
-- Maintain metadata records that make content searchable via the search service.
-- Coordinate with background workers for checksum validation and lifecycle
-  management.
+| Method | Description |
+|--------|-------------|
+| `store_content(bytes, filename, content_type, source)` | Persists payload bytes through `BlobManager::ingest_from_bytes` and returns the annex key. |
+| `retrieve_content(annex_key)` | Reads the stored bytes for the given key. |
+| `get_content_metadata(annex_key)` | Fetches `BlobMetadata` for inspection or provenance. |
+| `verify_content(annex_key)` | Runs checksum verification via the annex backend. |
 
-For the storage topology and replication guarantees, consult
-`docs/architecture/Core_Architecture.md`.
+All methods emit `SinexError::service(...)` with the failing annex operation in
+their context, enabling the gateway to forward helpful errors.
+
+For storage topology, replication, and annex configuration details, see
+`docs/architecture/Core_Architecture.md` and `crate/lib/sinex-satellite-sdk/doc/annex.md`.

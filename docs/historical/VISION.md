@@ -9,7 +9,7 @@
 
 [NOTE: This document contains the comprehensive vision. Key elements have been extracted to appropriate locations while preserving the full vision here for reference]
 
-> **⚠️ IMPLEMENTATION STATUS**: This document describes the **vision and aspirational goals** of the Sinex project. Current implementation provides ~40-45% of the described capabilities, with operational satellite constellation architecture, Redis Streams message bus, core.events table with comprehensive provenance, source material registry, processor manifests, and multiple domain event sources. See individual sections for specific status markers.
+> **⚠️ IMPLEMENTATION STATUS**: This document describes the **vision and aspirational goals** of the Sinex project. Current implementation provides ~40-45% of the described capabilities. References to Redis Streams reflect the pre-JetStream era; the active migration plan lives in `docs/way.md`, and the shipping system uses NATS JetStream for fan-out. See individual sections for specific status markers.
 
 ## Foreword: The Imperative of Cognitive Sovereignty
 

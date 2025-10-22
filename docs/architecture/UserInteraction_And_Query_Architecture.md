@@ -1,197 +1,90 @@
 Status: canonical
-# User Interaction & Query Architecture: Working Interface Systems
+# User Interaction & Query Architecture
 
-*   **Version:** 2.0
-*   **Date:** 2025-07-17
-*   **Implementation Status:** ✅ **OPERATIONAL** - Gateway, CLI, and query service operational with command/response patterns via NATS JetStream
-*   **Purpose:** This document describes the user interaction architecture for Sinex, focusing on the working gateway, CLI, and query systems. It outlines how users interact with the system through the operational interfaces.
-*   **Scope:** Covers gateway architecture, CLI interface, query service, and command/response patterns as currently implemented.
+*   **Version:** 2.1
+*   **Date:** 2025-07-24
+*   **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; JetStream command bus remains planned
+*   **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
+*   **Scope:** Current behaviour. Future enhancements are called out explicitly.
 
-## 1. User Interaction Architecture Overview
+> **Historical context**  
+> Earlier iterations of this document described a JetStream-backed command/response loop. That work has not shipped; the implementation below reflects the code in this repository.
 
-### 1.1. Interface Architecture
+## 1. Components Overview
 
-Sinex provides user interaction through a unified gateway architecture that handles API requests, command orchestration, and query processing. The system focuses on performance, reliability, and scriptability.
+| Component | Location | Role | Status |
+|-----------|----------|------|--------|
+| `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (Unix socket or TCP) and an optional native-messaging bridge | ✅ operational |
+| `exo` CLI | `cli/exo.py` | Primary user tooling; prefers RPC, can fall back to direct Postgres access | ✅ operational |
+| Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
+| JetStream command bus | — | Planned async command/response fabric | 🚧 planned |
 
-### 1.2. Core Interface Principles
+## 2. Gateway Architecture
 
-*   **Unified Gateway:** Single entry point for all user interactions
-*   **Asynchronous Operations:** Non-blocking operations with proper timeout handling
-*   **Complete Auditability:** All interactions logged as first-class events
-*   **Scriptable Access:** CLI-first design with programmatic access
-*   **Performance Focus:** Responsive interfaces with efficient query processing
+### 2.1 Execution Modes
+- **RPC server (`sinex-gateway rpc-server`)**  
+  - Binds to a Unix socket by default (non-dev) or `127.0.0.1:9999` in development.  
+  - Accepts JSON-RPC 2.0 POST requests at `/rpc` and `/`.
+  - Binding is controlled by `SINEX_GATEWAY_HOST`, `SINEX_GATEWAY_PORT`, and the current `SinexEnvironment`.
+- **Native messaging (`sinex-gateway native-messaging`)**  
+  - Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
 
-## 2. Gateway Architecture: Unified API and Native Messaging
+### 2.2 Request Handling
+1. Client submits JSON-RPC payload (method + params).
+2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
+3. Dispatch routes into the appropriate module in `sinex-services`, which talks to PostgreSQL via `sinex-core`.
+4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - sinex-gateway service working with command/response patterns via NATS JetStream
+**Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on JetStream today. All work is handled within the process using synchronous database calls.
 
-Sinex provides user interaction through a unified gateway architecture that handles API requests, native messaging, and orchestrates responses through the satellite constellation.
+### 2.3 Method Surface (current)
+- `analytics.event_count_by_source`
+- `analytics.activity_heatmap`
+- `search.search_events`
+- `pkm.create_note`, `pkm.create_entities_from_list`, `pkm.link_entities`
+- `content.store_blob`, `content.retrieve_blob`
 
-### 2.1. sinex-gateway: Central API Hub
+Adding a method requires extending `dispatch_rpc_method`, exposing functionality in `sinex-services`, and (optionally) wiring a CLI command.
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Gateway service handling API requests and command/response orchestration
+### 2.4 Deployment Considerations
+- Guard Unix socket permissions (default) or secure the loopback HTTP port behind SSH tunnelling when accessed remotely.
+- Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
+- Authentication and rate limiting are TODOs; current deployments rely on OS-level controls.
 
-The `sinex-gateway` service acts as the central API hub, translating user requests into command events and orchestrating responses through the satellite constellation.
-*   **Architectural Role:** Provides unified entry point for all user interactions, handles authentication, request validation, and manages asynchronous command/response patterns.
-*   **Communication Patterns:**
-    *   **Command Event Generation:** ✅ **OPERATIONAL** - API calls transformed into `api.command.*` events with correlation IDs
-    *   **Response Orchestration:** ✅ **OPERATIONAL** - Subscribes to `api.response.*` events and matches responses to pending requests
-    *   **Async by Default:** ✅ **OPERATIONAL** - All operations inherently asynchronous with timeout handling
-    *   **Native Messaging:** ✅ **OPERATIONAL** - Browser extension communication through native messaging protocol
+## 3. CLI Integration (`exo`)
 
-### 2.2. Command/Response Pattern via NATS JetStream
+### 3.1 Modes of Operation
+- **RPC mode (default):**  
+  - `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `http://127.0.0.1:9999`).  
+  - Commands such as `query`, `sources`, and `stats` map directly to the gateway methods above.
+- **Database mode (`--use-db`):**  
+  - Connects to PostgreSQL using `DATABASE_URL`.  
+  - Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Full request/response lifecycle working through message bus
+### 3.2 Error Handling & UX
+- RPC failures prompt the user to retry with `--use-db` and surface the JSON-RPC error code.
+- Database mode propagates SQLx errors directly; most commands wrap them with context.
+- Completion and help output derive from live metadata where possible (see `cli/DESIGN.md`).
 
-User interactions follow a standardized command/response pattern that provides auditability and enables asynchronous processing.
-*   **Request Flow:**
-    1. **API Request** - User calls gateway endpoint or CLI command
-    2. **Command Event** - Gateway generates `api.command.*` event with unique request ID
-    3. **Service Processing** - Appropriate service automaton processes command from NATS JetStream
-    4. **Response Event** - Service emits `api.response.*` event with request ID
-    5. **Response Delivery** - Gateway matches response and returns to client
-*   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `core.events`
-*   **Timeout Handling:** ✅ **OPERATIONAL** - Gateway implements request timeouts with graceful error handling
+## 4. Service Layer Responsibilities
 
-### 2.3. `exo` Command-Line Interface
+Gateway handlers delegate to `sinex-services`, which provides cohesive APIs over `sinex-core`:
+- **Analytics (`analytics.rs`)** – timed aggregates over `core.events`.
+- **Search (`search.rs`)** – filtered event queries with pagination.
+- **PKM (`pkm.rs`)** – CRUD operations for knowledge-management entities.
+- **Content (`content.rs`)** – blob storage/retrieval via annex.
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - CLI working with gateway integration
+These modules run synchronously and use shared database pools. Keep transactions small to avoid blocking other RPCs.
 
-The `exo` CLI provides scriptable access to all Sinex functionality through the gateway API.
-*   **Gateway Integration:** ✅ **OPERATIONAL** - CLI communicates with sinex-gateway via HTTP/JSON-RPC
-*   **Subcommand Structure:** ✅ **OPERATIONAL** - Comprehensive subcommands for query, management, and monitoring
-*   **Async Support:** ✅ **OPERATIONAL** - CLI handles asynchronous operations with progress indication
+## 5. Roadmap
 
-## 3. The Architecture of Query
+- **JetStream command/response:** Revisit once ingestion and automata have stabilised on JetStream (`docs/way.md`). Expected benefits include async processing and richer auditing.
+- **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
+- **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
+- **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
 
-> **✅ IMPLEMENTATION STATUS: OPERATIONAL** - Query service working with multiple output formats
-
-Unlocking the value of Sinex relies on powerful and flexible query capabilities.
-
-### 3.1. Query Service Architecture
-
-The query system operates through service automata that process search requests via the command/response pattern.
-*   **Query Service Automaton:**
-    *   **Architectural Role:** ✅ **OPERATIONAL** - Dedicated service processes `api.command.search_request` events and returns structured results
-    *   **Direct Database Access:** ✅ **OPERATIONAL** - Service automaton has direct PostgreSQL access for complex queries
-    *   **Response Generation:** ✅ **OPERATIONAL** - Results formatted and returned via `api.response.search_result` events
-*   **CLI Query Interface:**
-    *   **Gateway Integration:** ✅ **OPERATIONAL** - `exo query` commands flow through gateway with async response handling
-    *   **Supported Filters:** ✅ **OPERATIONAL** - Temporal, source, event type, and basic payload filtering
-    *   **Result Formatting:** ✅ **OPERATIONAL** - JSON, table, and streaming output formats
-
-### 3.2. Query Implementation
-
-**Basic Query Operations:**
-```bash
-# Query events by time range
-exo query --since "2025-07-01" --until "2025-07-17"
-
-# Query by source
-exo query --source "sinex-terminal-satellite"
-
-# Query by event type
-exo query --event-type "command.executed"
-
-# Complex payload filtering
-exo query --payload-filter '{"exit_status": 0}'
-```
-
-**Advanced Query Features:**
-*   **Temporal Queries:** ✅ **OPERATIONAL** - Efficient time-based filtering using TimescaleDB
-*   **Source Filtering:** ✅ **OPERATIONAL** - Filter by specific satellite services
-*   **Event Type Filtering:** ✅ **OPERATIONAL** - Filter by structured event types
-*   **Payload Queries:** ✅ **OPERATIONAL** - JSONB-based payload filtering
-*   **Pagination:** ✅ **OPERATIONAL** - Efficient result pagination for large datasets
-*   **Streaming Results:** ✅ **OPERATIONAL** - Real-time event streaming for continuous queries
-
-### 3.3. Query Performance
-
-**Optimization Strategies:**
-*   **TimescaleDB Indexing:** ✅ **OPERATIONAL** - Time-based partitioning for efficient queries
-*   **JSONB Indexing:** ✅ **OPERATIONAL** - GIN indexes for payload queries
-*   **Query Caching:** ✅ **OPERATIONAL** - Cache layer for frequent queries (in-memory or external)
-*   **Batch Processing:** ✅ **OPERATIONAL** - Efficient batch query processing
-
-**Performance Characteristics:**
-*   **Simple Queries:** <100ms p95 response time
-*   **Complex Aggregations:** <500ms p95 response time
-*   **Streaming Queries:** <50ms latency for real-time events
-*   **Pagination:** >100,000 results/second throughput
-
-## 4. Summary of User Interface Architecture
-
-### 4.1. Operational Interface Summary
-
-**Working Components:**
-- ✅ **sinex-gateway:** Complete API gateway with command/response orchestration
-- ✅ **exo CLI:** Full-featured command-line interface with all core functionality
-- ✅ **Native Messaging:** Browser extension integration for web activity capture
-- ✅ **Query Service:** Comprehensive query capabilities with multiple output formats
-- ✅ **WebSocket Interface:** Real-time event streaming and live updates
-
-**Key Architecture Benefits:**
-- **Unified API:** Single gateway for all user interactions
-- **Asynchronous Operations:** Non-blocking interface with proper timeout handling
-- **Complete Auditability:** All interactions logged as first-class events
-- **Service Isolation:** Interface layer separated from core processing
-- **Performance Optimized:** Efficient queries with proper indexing and caching
-
-### 4.2. Interface Performance Characteristics
-
-**Response Times:**
-- Simple queries: <100ms p95
-- Complex aggregations: <500ms p95
-- Real-time event streaming: <50ms latency
-- Command processing: <200ms p95
-
-**Throughput:**
-- Concurrent API requests: >1000 requests/second
-- Event streaming: >10,000 events/second
-- Query result pagination: >100,000 results/second
-- CLI operations: Limited by terminal I/O
-
-### 4.3. Interface Extensibility
-
-**Extension Points:**
-- **New Query Types:** Easy addition through service automaton pattern
-- **Output Formats:** Pluggable formatters for different data representations
-- **Authentication:** Token-based authentication for web interfaces
-- **Real-time Subscriptions:** WebSocket subscriptions for specific event types
-- **Batch Operations:** Support for bulk data operations
-
-This user interface architecture provides a solid foundation for all current and future user interaction needs while maintaining the core principles of auditability, performance, and extensibility.
-
-## 5. Authoritative Queries (Examples)
-
-Gateway JSON‑RPC
-```json
-POST /rpc
-{
-  "jsonrpc": "2.0",
-  "id": "q-001",
-  "method": "search.search_events",
-  "params": {
-    "sources": ["sinex-terminal-satellite"],
-    "start_time": "2025-07-17T10:00:00Z",
-    "end_time": "2025-07-17T12:00:00Z",
-    "limit": 50
-  }
-}
-```
-
-CLI (exo)
-```bash
-./cli/exo.py query --source sinex-terminal-satellite --last 2h --limit 50
-./cli/exo.py sources --rpc ${SINEX_RPC_URL:-http://127.0.0.1:9999}
-```
-
-### Method Index (selected)
-- `search.search_events`: Full‑text + structured search over events. Params: time window, sources[], event_types[], limit, offset, payload filters. Returns: array of events with pagination hints.
-- `analytics.event_count_by_source`: Count events grouped by source. Params: `days_back?` (default 7). Returns: `[ { source, count } ]`.
-- `analytics.activity_heatmap`: Activity buckets for temporal analysis. Params: `bucket_size_minutes?` (default 60), `limit?` (default 100). Returns: `[ { bucket_start, count } ]`.
-- `pkm.create_note`: Create a PKM note artifact. Params: `event_id`, `content`, `tags[]?`, `created_by?`. Returns: `{ annotation_id }`.
-- `pkm.create_entities_from_list`: Create entities from a list. Params: `source_material_id`, `entities: [ { name, type } ]`, `created_by?`. Returns: `{ entity_ids[] }`.
-- `pkm.link_entities`: Create links between entities. Params: `from_entity_id`, `to_entity_id`, `relationship_type`, `properties?{}`. Returns: `{ relation_id }`.
-- `content.store_blob`: Store a blob and return its identifier. Params: `content` (base64 or UTF‑8), `filename?`, `content_type?`, `source?`. Returns: `{ annex_key }`.
-- `content.retrieve_blob`: Retrieve a blob by identifier. Params: `annex_key`. Returns: `{ content }` (UTF‑8 or placeholder for binary).
+## 6. Reference Material
+- Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
+- CLI docs: `cli/README.md`, `cli/DESIGN.md`.
+- Service documentation: `crate/lib/sinex-services/doc/*.md`.
+- Future architecture: `docs/way.md`, `docs/vision/streaming-architecture.md`.

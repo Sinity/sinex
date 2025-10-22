@@ -3999,6 +3999,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "sinex-macros",
+ "sinex-satellite-sdk",
  "sinex-schema",
  "sinex-test-utils",
  "sqlx",
@@ -4065,6 +4066,22 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "sinex-e2e-tests"
+version = "0.4.2"
+dependencies = [
+ "color-eyre",
+ "serde_json",
+ "sinex-core",
+ "sinex-gateway",
+ "sinex-ingestd",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sinex-test-utils",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -4172,6 +4189,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sinex-core",
+ "sinex-satellite-sdk",
  "sinex-test-utils",
  "sqlx",
  "tokio",
@@ -4241,6 +4259,7 @@ dependencies = [
  "humantime-serde",
  "nix 0.28.0",
  "parking_lot",
+ "proptest",
  "prost",
  "sd-notify",
  "semver",
@@ -4475,6 +4494,7 @@ dependencies = [
  "sha2",
  "similar-asserts",
  "sinex-core",
+ "sinex-ingestd",
  "sinex-satellite-sdk",
  "sinex-test-utils-macros",
  "sqlx",
@@ -4523,6 +4543,7 @@ dependencies = [
  "tracing",
  "tracing-test",
  "uuid",
+ "which 5.0.0",
 ]
 
 [[package]]
