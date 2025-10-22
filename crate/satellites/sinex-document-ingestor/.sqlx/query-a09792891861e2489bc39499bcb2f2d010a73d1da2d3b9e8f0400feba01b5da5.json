@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT \n                    id as \"job_id: Ulid\",\n                    NULL::ulid as \"material_id: Ulid\"\n                FROM raw.sensor_jobs\n                WHERE sensor_type = 'document_capture'\n                AND status = 'active'\n                AND NOT EXISTS (\n                    SELECT 1 FROM core.events e\n                    WHERE e.payload->>'source_material_id' = sensor_jobs.target_uri\n                    AND e.event_type = 'document.ingested'\n                )\n                ORDER BY updated_at DESC\n                LIMIT 10\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "job_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "a09792891861e2489bc39499bcb2f2d010a73d1da2d3b9e8f0400feba01b5da5"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT pg_try_advisory_lock($1) as acquired\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "acquired",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d08b7afc51402b4632a4163c6193b7a3e09e1152d36da3e2462958b54c3636c5"
+}

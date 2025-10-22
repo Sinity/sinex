@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.blobs (\n                annex_backend, content_hash, original_filename, size_bytes, \n                mime_type, checksum_blake3, metadata,\n                created_at, last_verified_at, verification_status\n            ) VALUES (\n                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10\n            )\n            RETURNING \n                id as \"id: sinex_schema::ulid::Ulid\",\n                annex_backend,\n                content_hash,\n                original_filename,\n                size_bytes,\n                mime_type,\n                checksum_blake3,\n                metadata,\n                created_at,\n                last_verified_at,\n                verification_status\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: sinex_schema::ulid::Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "annex_backend",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "original_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "mime_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "checksum_blake3",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_verified_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "verification_status",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "585be7fc1204c2932f3ce74548c18c2aca019568a85dc7a897f9ebb01d5033a5"
+}

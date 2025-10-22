@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                sm.id as \"material_id: Ulid\",\n                sm.staged_at as acquired_at,\n                COALESCE((sm.metadata->>'file_size_bytes')::bigint, 0) as \"size_bytes!\",\n                sm.metadata->>'mime_type' as mime_type,\n                sm.metadata\n            FROM raw.source_material_registry sm\n            WHERE sm.source_identifier = $1\n              AND sm.staged_at > $2\n              AND NOT EXISTS (\n                  SELECT 1\n                  FROM core.events e\n                  WHERE e.source_material_id = sm.id\n              )\n            ORDER BY sm.staged_at DESC\n            LIMIT 100\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "material_id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "acquired_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "size_bytes!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "mime_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      false
+    ]
+  },
+  "hash": "d175b5f22c795576256e81894765bd300d4eb99ae4864f1162540445ff143c6b"
+}

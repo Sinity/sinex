@@ -21,8 +21,24 @@ impl MigrationTrait for Migration {
         manager.get_connection().execute_unprepared(
             r#"
             CREATE EXTENSION IF NOT EXISTS "ulid";
-            CREATE EXTENSION IF NOT EXISTS "pg_jsonschema";
-            CREATE EXTENSION IF NOT EXISTS "vector";
+
+            DO $$
+            BEGIN
+              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema') THEN
+                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "pg_jsonschema"';
+              ELSE
+                RAISE NOTICE 'pg_jsonschema extension not available on server; skipping JSON schema validation hooks';
+              END IF;
+            END$$;
+
+            DO $$
+            BEGIN
+              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "vector"';
+              ELSE
+                RAISE NOTICE 'pgvector extension not available on server; skipping vector similarity support';
+              END IF;
+            END$$;
 
             DO $$
             DECLARE v text;

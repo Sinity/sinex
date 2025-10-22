@@ -57,7 +57,7 @@ regex = "1.10"
 # Database access for sensd integration
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls", "macros", "uuid", "chrono"] }
 async-stream = "0.3"
-tokio-stream = "0.1"
+tokio-stream = { workspace = true, features = ["net"] }
 
 # Validation
 validator = { workspace = true, features = ["derive"] }

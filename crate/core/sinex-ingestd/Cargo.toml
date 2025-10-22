@@ -70,6 +70,7 @@ sinex-core = { path = "../../lib/sinex-core", features = [] }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 
 [build-dependencies]
 tonic-build.workspace = true

@@ -1,14 +1,18 @@
 # Search Service
 
-`SearchService` fronts the indexing pipeline and query execution path. It
-normalises user intent, executes queries against the backing search index, and
-returns hydrated results ready for gateways or satellites.
+`SearchService` executes structured searches against `core.events`. It does not
+maintain a separate index; instead it generates parameterised SQL on the fly and
+returns lightweight DTOs for the gateway.
 
-Responsibilities:
+## API Surface
 
-- Translate high-level `SearchQuery` structs into engine-specific requests.
-- Post-process matches with context snippets and relevance metadata.
-- Coordinate with ingestion jobs to keep the search index up to date.
+- `search_events(query: SearchQuery) -> Vec<SearchResult>`  
+  - Filters by sources, event types, time ranges, and free-text payload matches
+    (`ILIKE`).  
+  - Orders results by `ts_ingest DESC`, applying limit/offset pagination.  
+  - Produces an inline snippet for convenience (first match or first 150 chars).
 
-The broader discovery workflow is covered in
+`SearchQuery` and `SearchResult` are serializable structs designed for RPC.
+
+For discovery UX guidance see
 `docs/architecture/UserInteraction_And_Query_Architecture.md`.

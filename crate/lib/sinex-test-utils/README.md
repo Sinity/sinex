@@ -294,7 +294,7 @@ The test utilities can be configured via environment variables:
 
 ```bash
 # Database settings (usually handled by nix develop)
-export DATABASE_URL="postgresql://sinex:password@localhost/sinex_test_template"
+export DATABASE_URL="postgresql://sinex:***REDACTED_PASSWORD***@localhost/sinex_test_template"
 
 # Test-specific settings
 export SINEX_TEST_TIMEOUT=30        # Default test timeout in seconds

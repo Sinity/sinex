@@ -48,9 +48,13 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::types::{DbPool, Id, Ulid};
 
 use sinex_core::DbPoolExt;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
+
+const BOOTSTRAP_MATERIAL_ID: &str = "014D2PF2DBSQQZXQ5TK1V58CGG";
+const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
 
 /// Test context providing database isolation and test utilities
 ///
@@ -123,6 +127,29 @@ impl TestContext {
     pub async fn with_name(test_name: &str) -> Result<Self> {
         let db = acquire_test_database().await?;
         let pool = db.pool().clone();
+
+        if let Ok(bootstrap_ulid) = Ulid::from_str(BOOTSTRAP_MATERIAL_ID) {
+            let bootstrap_id = Id::<SourceMaterial>::from_ulid(bootstrap_ulid);
+            let _ = sqlx::query!(
+                r#"
+                    INSERT INTO raw.source_material_registry
+                        (id, material_kind, source_identifier, status, timing_info_type, metadata)
+                    VALUES ($1::uuid::ulid, $2, $3, $4, $5, '{}'::jsonb)
+                    ON CONFLICT (source_identifier) DO UPDATE
+                    SET id = EXCLUDED.id,
+                        status = EXCLUDED.status,
+                        timing_info_type = EXCLUDED.timing_info_type,
+                        metadata = EXCLUDED.metadata
+                "#,
+                bootstrap_id.to_uuid(),
+                "annex",
+                BOOTSTRAP_MATERIAL_IDENTIFIER,
+                "completed",
+                "realtime"
+            )
+            .execute(&pool)
+            .await;
+        }
 
         if let Err(err) = verify_clean_state(&pool).await {
             warn!(
@@ -218,6 +245,35 @@ impl TestContext {
         Ok(self.current_event_count().await? - self.baseline_events)
     }
 
+    async fn ensure_material_entry(&self, id: &Id<SourceMaterial>) -> Result<()> {
+        let material_ulid_uuid = id.to_uuid();
+        let source_identifier = format!("test-material-{id}");
+
+        let identifier = if id.to_string() == BOOTSTRAP_MATERIAL_ID {
+            BOOTSTRAP_MATERIAL_IDENTIFIER.to_string()
+        } else {
+            source_identifier
+        };
+
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.source_material_registry 
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+            material_ulid_uuid,
+            "annex",
+            identifier,
+            "completed",
+            "realtime"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Force cleanup of the underlying database (use with caution)
     pub async fn force_cleanup(&self) -> Result<()> {
         self.db
@@ -243,28 +299,7 @@ impl TestContext {
             Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
 
         // Ensure a matching source material exists for the test material ID to satisfy FK
-        if let Provenance::Material { id, .. } = &event.provenance {
-            let material_ulid_uuid = id.to_uuid();
-            // Use deterministic source_identifier to avoid unique conflicts
-            let source_identifier = format!("test-material-{id}");
-            // Insert minimal required row; ignore if it already exists
-            let _ = sqlx::query!(
-                r#"
-                INSERT INTO raw.source_material_registry 
-                    (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (id) DO NOTHING
-                "#,
-                material_ulid_uuid,
-                "annex",
-                source_identifier,
-                "completed",
-                "realtime"
-            )
-            .execute(&self.pool)
-            .await;
-        }
-        let inserted = self.pool.events().insert(event).await?;
+        let inserted = self.insert_with_provenance(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
         }
@@ -278,9 +313,13 @@ impl TestContext {
         source_identifier: Option<&str>,
     ) -> Result<()> {
         let material_ulid_uuid = id.to_uuid();
-        let identifier = source_identifier
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("test-material-{id}"));
+        let identifier = source_identifier.map(|s| s.to_string()).unwrap_or_else(|| {
+            if id.to_string() == BOOTSTRAP_MATERIAL_ID {
+                BOOTSTRAP_MATERIAL_IDENTIFIER.to_string()
+            } else {
+                format!("test-material-{id}")
+            }
+        });
 
         sqlx::query!(
             r#"
@@ -301,9 +340,57 @@ impl TestContext {
         Ok(())
     }
 
+    /// Create and register a new source material returning its identifier.
+    pub async fn create_source_material(
+        &self,
+        source_identifier: Option<&str>,
+    ) -> Result<Id<SourceMaterial>> {
+        let id = Id::<SourceMaterial>::new();
+        self.ensure_source_material(id, source_identifier).await?;
+        Ok(id)
+    }
+
+    /// Ensure a specific source material exists, returning its ID handle.
+    pub async fn ensure_specific_material(
+        &self,
+        material_id: sinex_core::Ulid,
+        source_identifier: Option<&str>,
+    ) -> Result<Id<SourceMaterial>> {
+        let id = Id::<SourceMaterial>::from_ulid(material_id);
+        self.ensure_source_material(id, source_identifier).await?;
+        Ok(id)
+    }
+
+    /// Convenience helper returning a schema-layer ULID for compatibility tests.
+    pub async fn ensure_schema_material(&self, source_identifier: Option<&str>) -> Result<Ulid> {
+        let id = self.create_source_material(source_identifier).await?;
+        Ok(id.as_ulid().clone())
+    }
+
+    async fn insert_with_provenance(&self, event: Event<JsonValue>) -> Result<Event<JsonValue>> {
+        if let Provenance::Material { id, .. } = &event.provenance {
+            self.ensure_material_entry(id).await?;
+        }
+
+        match self.pool.events().insert(event.clone()).await {
+            Ok(inserted) => Ok(inserted),
+            Err(err) => {
+                if let Provenance::Material { id, .. } = &event.provenance {
+                    self.ensure_material_entry(id).await?;
+                    self.pool.events().insert(event).await.map_err(Into::into)
+                } else {
+                    Err(err.into())
+                }
+            }
+        }
+    }
+
     /// Insert multiple events (batch operation)
     pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> Result<()> {
         for event in events {
+            if let Provenance::Material { id, .. } = &event.provenance {
+                self.ensure_material_entry(id).await?;
+            }
             let inserted = self.pool.events().insert(event.clone()).await?;
             if let Some(id) = inserted.id {
                 self.created_events.lock().push(id.into());
@@ -316,6 +403,11 @@ impl TestContext {
     pub fn fixtures(&self) -> &Self {
         // TODO: Implement fixture access without wrapper abstractions
         self
+    }
+
+    /// Connection URL for the underlying test database.
+    pub fn database_url(&self) -> &str {
+        self.db.url()
     }
 
     /// Access timing utilities

@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                source,\n                COUNT(*) as event_count,\n                MIN(ts_orig) as first_event,\n                MAX(ts_orig) as last_event\n            FROM core.events\n            WHERE ts_orig >= $1\n            GROUP BY source\n            ORDER BY event_count DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "first_event",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_event",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "687d8c679f728f6d62a9df5299007470f2930adaa329ec2c5cee19bbdd9c1339"
+}

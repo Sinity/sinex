@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO raw.source_material_registry (\n                id, source_identifier, material_kind, \n                status, timing_info_type, metadata,\n                staged_at, staged_by\n            ) VALUES (\n                $1::ulid, $2, $3, $4, $5, $6, $7, $8\n            )\n            RETURNING id as \"id: Ulid\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: Ulid",
+        "type_info": {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c8bc6dc0185ab6092fb3d64e260bd4a91634aa0c8778502a2d4e3bc7b9c538a1"
+}

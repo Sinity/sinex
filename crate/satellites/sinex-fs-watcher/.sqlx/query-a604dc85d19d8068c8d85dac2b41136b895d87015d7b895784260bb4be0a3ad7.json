@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO raw.source_material_registry (\n                id,\n                material_kind,\n                source_identifier,\n                status,\n                timing_info_type,\n                metadata,\n                start_time,\n                end_time,\n                staged_by,\n                staged_on_host,\n                optional_blob_id\n            ) VALUES (\n                ($1::uuid)::ulid,\n                $2,\n                $3,\n                $4,\n                $5,\n                $6,\n                $7,\n                $8,\n                $9,\n                $10,\n                ($11::uuid)::ulid\n            )\n            RETURNING\n                id::uuid as \"id!: crate::Ulid\",\n                material_kind,\n                source_identifier,\n                status,\n                timing_info_type,\n                metadata,\n                staged_at,\n                start_time,\n                end_time,\n                staged_by,\n                staged_on_host,\n                optional_blob_id::uuid as \"optional_blob_id?: crate::Ulid\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: crate::Ulid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "material_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "source_identifier",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "timing_info_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "staged_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "staged_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "staged_on_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "optional_blob_id?: crate::Ulid",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "a604dc85d19d8068c8d85dac2b41136b895d87015d7b895784260bb4be0a3ad7"
+}

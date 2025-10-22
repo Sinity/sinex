@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                id::uuid as \"id!: Id<Operation>\",\n                operation_type,\n                operator,\n                scope,\n                result_status,\n                result_message,\n                preview_summary,\n                duration_ms\n            FROM core.operations_log \n            WHERE id::uuid = $1::uuid\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Id<Operation>",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "operation_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "operator",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "scope",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "result_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "result_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "preview_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "duration_ms",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e7e349fda060923b32a52a7ed3d3f0714dc6006778ac86d2936fc1a2af23d780"
+}

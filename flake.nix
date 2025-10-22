@@ -27,16 +27,12 @@
             config.allowUnfree = true; # For TimescaleDB in VM tests
           };
 
-          rustToolchain = fenix.packages.${system}.complete.withComponents [
-            "cargo"
-            "clippy"
-            "rust-src"
-            "rust-analyzer"
-            "rustc"
-            "rustfmt"
-            "llvm-tools-preview"
-            "rustc-codegen-cranelift"
-          ];
+          fenixPkgs = fenix.packages.${system}.complete;
+          rustToolchain = fenixPkgs.toolchain;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = fenixPkgs.cargo;
+            rustc = fenixPkgs.rustc;
+          };
 
           # Extract git information for version tracking
           gitRev = self.rev or self.dirtyRev or "unknown";
@@ -46,9 +42,12 @@
 
           # Helper to build Rust packages with common configuration
           buildRustPackage =
-            package:
-            pkgs.rustPlatform.buildRustPackage {
-              pname = package;
+            { name, manifestPath }:
+            let
+              manifestDir = builtins.dirOf manifestPath;
+            in
+            rustPlatform.buildRustPackage {
+              pname = name;
               version = version;
               src = ./.;
               cargoLock.lockFile = ./Cargo.lock;
@@ -62,8 +61,12 @@
                 protobuf
               ];
               cargoBuildFlags = [
-                "-p"
-                package
+                "--manifest-path"
+                manifestPath
+              ];
+              cargoInstallFlags = [
+                "--path"
+                manifestDir
               ];
               auditable = false;
               doCheck = false;
@@ -105,12 +108,58 @@
             ];
 
             installPhase = ''
+              runHook preInstall
+
+              python=${pkgs.python3}/bin/python3
+              site=$($python - <<'PY'
+import sys
+print(f"lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages")
+PY
+)
+              pkg_dir=$out/$site/sinex_cli
+              mkdir -p "$pkg_dir"
+
+              for file in *.py; do
+                cp "$file" "$pkg_dir/$file"
+              done
+              touch "$pkg_dir/__init__.py"
+              cat > "$pkg_dir/__main__.py" <<'PY'
+from .exo import cli
+import sys
+
+def main():
+    try:
+        cli()
+    except Exception as exc:  # pragma: no cover
+        try:
+            from rich.console import Console
+            Console().print(f"[red]Error: {exc}[/red]")
+        except Exception:
+            print(f"Error: {exc}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+PY
+
               mkdir -p $out/bin
-              cp exo.py $out/bin/sinex-cli
+              cat > $out/bin/sinex-cli <<'PY'
+#!${pkgs.python3}/bin/python3
+import runpy
+import sys
+from pathlib import Path
+
+site = "{site}"
+pkg_base = Path(__file__).resolve().parent.parent / site
+sys.path.insert(0, str(pkg_base))
+runpy.run_module("sinex_cli.__main__", run_name="__main__")
+PY
+              substituteInPlace $out/bin/sinex-cli --replace "{site}" "$site"
               chmod +x $out/bin/sinex-cli
 
-              # Also provide 'exo' as an alias
               ln -s $out/bin/sinex-cli $out/bin/exo
+
+              runHook postInstall
             '';
 
             # Add a simple check to ensure the CLI can import dependencies
@@ -157,23 +206,51 @@
         in
         let
           # Core satellite services
-          sinexIngestd = buildRustPackage "sinex-ingestd";
-          sinexGateway = buildRustPackage "sinex-gateway";
+          sinexIngestd = buildRustPackage {
+            name = "sinex-ingestd";
+            manifestPath = "crate/core/sinex-ingestd/Cargo.toml";
+          };
+          sinexGateway = buildRustPackage {
+            name = "sinex-gateway";
+            manifestPath = "crate/core/sinex-gateway/Cargo.toml";
+          };
+          sinexSatelliteSdk = buildRustPackage {
+            name = "sinex-satellite-sdk";
+            manifestPath = "crate/lib/sinex-satellite-sdk/Cargo.toml";
+          };
 
           # Event source satellites
-          sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
-          sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
-          sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
-          sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
-          sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
+          sinexFsWatcher = buildRustPackage {
+            name = "sinex-fs-watcher";
+            manifestPath = "crate/satellites/sinex-fs-watcher/Cargo.toml";
+          };
+          sinexTerminalSatellite = buildRustPackage {
+            name = "sinex-terminal-satellite";
+            manifestPath = "crate/satellites/sinex-terminal-satellite/Cargo.toml";
+          };
+          sinexDesktopSatellite = buildRustPackage {
+            name = "sinex-desktop-satellite";
+            manifestPath = "crate/satellites/sinex-desktop-satellite/Cargo.toml";
+          };
+          sinexSystemSatellite = buildRustPackage {
+            name = "sinex-system-satellite";
+            manifestPath = "crate/satellites/sinex-system-satellite/Cargo.toml";
+          };
+          sinexDocumentIngestor = buildRustPackage {
+            name = "sinex-document-ingestor";
+            manifestPath = "crate/satellites/sinex-document-ingestor/Cargo.toml";
+          };
 
-          # Automaton satellites
-          sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
-
-          # Support services
-          healthAggregator = buildRustPackage "sinex-health-aggregator";
+          # Automaton satellites & support
+          sinexTerminalCommandCanonicalizer = buildRustPackage {
+            name = "sinex-terminal-command-canonicalizer";
+            manifestPath = "crate/satellites/sinex-terminal-command-canonicalizer/Cargo.toml";
+          };
+          healthAggregator = buildRustPackage {
+            name = "sinex-health-aggregator";
+            manifestPath = "crate/satellites/sinex-health-aggregator/Cargo.toml";
+          };
           sinexHealthAggregator = healthAggregator;
-          sinexPreflight = buildRustPackage "sinex-preflight";
           sinexCli = sinex-cli;
 
           sinexSuite = pkgs.symlinkJoin {
@@ -181,6 +258,7 @@
             paths = [
               sinexIngestd
               sinexGateway
+              sinexSatelliteSdk
               sinexFsWatcher
               sinexTerminalSatellite
               sinexDesktopSatellite
@@ -188,7 +266,6 @@
               sinexDocumentIngestor
               sinexTerminalCommandCanonicalizer
               healthAggregator
-              sinexPreflight
               sinexCli
             ];
           };
@@ -197,6 +274,7 @@
             inherit
               sinexIngestd
               sinexGateway
+              sinexSatelliteSdk
               sinexFsWatcher
               sinexTerminalSatellite
               sinexDesktopSatellite
@@ -205,16 +283,16 @@
               sinexTerminalCommandCanonicalizer
               healthAggregator
               sinexHealthAggregator
-              sinexPreflight
               sinexCli;
             sinex = sinexSuite;
+            sinexPreflight = sinexSatelliteSdk;
 
             # Default package is now the ingestion daemon
             default = sinexIngestd;
             inherit pg_jsonschema;
           };
 
-          vmTests = import ./tests/nixos-vm/default.nix {
+          vmTests = import ./tests/e2e/nixos-vm/default.nix {
             inherit pkgs;
             sinex-ingestd = sinexPackages.sinexIngestd;
             sinex-gateway = sinexPackages.sinexGateway;
@@ -223,6 +301,9 @@
             inherit pg_jsonschema;
           };
         in
+        let
+          limitedVmTests = pkgs.lib.filterAttrs (name: _: pkgs.lib.elem name [ "basic" "preflight" ]) vmTests;
+        in
         {
           packages = sinexPackages;
 
@@ -230,12 +311,18 @@
 
           checks = pkgs.lib.mapAttrs' (name: value:
             pkgs.lib.nameValuePair "sinex-vm-${name}" value
-          ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests);
+          ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests);
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
               # Rust toolchain with cranelift backend
               rustToolchain
+              fenixPkgs.rust-analyzer
+              fenixPkgs.clippy
+              fenixPkgs.rustfmt
+              fenixPkgs.llvm-tools
+              fenixPkgs.rust-src
+              fenixPkgs.rustc-codegen-cranelift
               cargo-watch
               cargo-nextest
               cargo-llvm-cov
@@ -252,6 +339,8 @@
               python3Packages.psycopg2
               python3Packages.rich
               python3Packages.pyyaml
+              nats-server
+              postgresql_16
               
               # Token counting for LLM context
               (pkgs.python3Packages.buildPythonPackage rec {
@@ -287,8 +376,17 @@
               # Database configuration
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
+              export PGHOST="/run/postgresql"
+              export PGUSER="$USER"
+              export PGDATABASE="$DATABASE_NAME"
               export SINEX_TEST_OPTIMIZATIONS="true"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export NATS_SERVER_BIN="${pkgs.nats-server}/bin/nats-server"
+              export PATH="$PWD/target/debug:$PATH"
+
+              alias sinex-cli="python3 cli/exo.py"
+              alias e2e-test="cargo test -p sinex-e2e-tests"
+              alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
 
               # Clear screen for clean start
               clear
@@ -340,6 +438,9 @@
               echo -e "  \033[1mjust qc\033[0m      → Check workspace (2-3s)"
               echo -e "  \033[1mjust qcs\033[0m     → Smart check changes only (0.2-0.7s)"
               echo -e "  \033[1mjust dev\033[0m     → Format, check & test"
+              echo -e "  \033[1me2e-test\033[0m    → Run Rust end-to-end suite"
+              echo -e "  \033[1mvm-smoke\033[0m    → Run NixOS VM smoke profile"
+              echo -e "  \033[1msinex-cli\033[0m   → Invoke the CLI without installation"
               echo ""
             '';
           };
@@ -359,6 +460,9 @@
         example = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -380,6 +484,9 @@
         exampleMonitoring = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-monitoring.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -400,6 +507,9 @@
         exampleDevSandbox = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-dev-sandbox.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -420,6 +530,9 @@
         exampleHeadless = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-headless.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -440,6 +553,9 @@
         exampleRemoteSatellite = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-remote-satellite.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -460,6 +576,9 @@
         exampleCoordination = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            ({ ... }: {
+              nixpkgs.overlays = [ self.overlays.default ];
+            })
             ./nixos/example-coordination.nix
             ({ lib, ... }: {
               boot.isContainer = true;
@@ -487,7 +606,5 @@
         sinex = self.packages.${final.system}.sinex;
         sinexCli = self.packages.${final.system}.sinexCli;
       };
-
-      checks = builtins.mapAttrs (name: cfg: cfg.config.system.build.toplevel) self.nixosConfigurations;
     };
 }

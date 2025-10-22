@@ -34,6 +34,7 @@ use sinex_core::db::models::Event;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::Id;
 use sinex_core::uuid_to_ulid;
+use sinex_core::Provenance;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -197,6 +198,29 @@ pub struct PayloadSizeStats {
     pub max_size: usize,
     pub avg_size: usize,
     pub total_size: usize,
+}
+
+async fn ensure_material_for_event(pool: &DbPool, event: &Event<JsonValue>) -> Result<()> {
+    if let Provenance::Material { id, .. } = &event.provenance {
+        let source_identifier = format!("test-material-{}", id);
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.source_material_registry
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+            id.to_uuid(),
+            "annex",
+            source_identifier,
+            "completed",
+            "realtime"
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Fixture data for schema validation testing
@@ -369,25 +393,8 @@ pub(crate) async fn performance_dataset_with_size(
     ctx: &TestContext,
     event_count: usize,
 ) -> Result<FixtureHandle<PerformanceDatasetFixture>> {
-    let key = format!(
-        "performance_dataset_{}_{}_{}",
-        ctx.test_name(),
-        event_count,
-        uuid::Uuid::new_v4()
-    );
-    let registry = get_registry().await;
-
-    let pool = ctx.pool.clone();
-    let fixture = registry
-        .lock()
-        .await
-        .get_or_create(key.clone(), || {
-            let _pool = pool.clone();
-            async move { create_performance_dataset_fixture(&pool, event_count).await }
-        })
-        .await?;
-
-    Ok(fixture)
+    let fixture = create_performance_dataset_fixture(ctx, event_count).await?;
+    Ok(Arc::new(fixture))
 }
 
 /// Create schema validation fixture for testing validation scenarios
@@ -493,6 +500,7 @@ async fn create_user_session_fixture(
             ),
         };
 
+        ensure_material_for_event(pool, &event).await?;
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
                 .with_source(e)
@@ -608,6 +616,7 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
 
     for (event, error_msg) in invalid_events {
         // Try to insert and capture the error
+        ensure_material_for_event(pool, &event).await?;
         match pool.events().insert(event).await {
             Ok(inserted) => {
                 // If it somehow succeeded, track it for cleanup
@@ -657,9 +666,12 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
 }
 
 async fn create_performance_dataset_fixture(
-    pool: &DbPool,
+    ctx: &TestContext,
     event_count: usize,
 ) -> Result<PerformanceDatasetFixture> {
+    if FIXTURE_CONFIG.verbose {
+        eprintln!("[fixtures] creating performance dataset with {event_count} events");
+    }
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     // Use source constants from payload types
@@ -667,7 +679,6 @@ async fn create_performance_dataset_fixture(
         clipboard::ClipboardCopiedPayload, filesystem::FileCreatedPayload,
         shell::KittyCommandExecutedPayload, window::HyprlandWindowFocusedPayload,
     };
-    use sinex_core::Event;
 
     let sources = [
         FileCreatedPayload::SOURCE,
@@ -683,40 +694,34 @@ async fn create_performance_dataset_fixture(
         HyprlandWindowFocusedPayload::EVENT_TYPE,
     ];
 
-    let mut event_ids = Vec::new();
+    let mut event_ids = Vec::with_capacity(event_count);
+    let mut min_ts: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut max_ts: Option<chrono::DateTime<chrono::Utc>> = None;
 
-    // Generate events with time distribution
-    let time_range = end_time - start_time;
-    let time_step = time_range / event_count as i32;
-
-    let mut batch = Vec::new();
     for i in 0..event_count {
-        let source = &sources[i % sources.len()];
-        let event_type = &event_types[i % event_types.len()];
+        let source = sources[i % sources.len()].as_str();
+        let event_type = event_types[i % event_types.len()].as_str();
         let payload_size = [100, 500, 1000, 5000][i % 4];
+        let payload = json!({
+            "index": i,
+            "data": "x".repeat(payload_size)
+        });
 
-        let event = Event::test_event(
-            source.clone(),
-            event_type.clone(),
-            json!({
-                "index": i,
-                "data": "x".repeat(payload_size)
-            }),
-        )
-        .with_timestamp(start_time + time_step * i as i32);
-        batch.push(event);
-    }
+        let inserted = ctx.create_test_event(source, event_type, payload).await?;
 
-    // Insert in batches for performance
-    let chunk_size = FIXTURE_CONFIG.batch_insert_size;
-    for chunk in batch.chunks(chunk_size) {
-        for event in chunk {
-            let inserted = pool.events().insert(event.clone()).await.map_err(|e| {
-                SinexError::database("Failed to insert event")
-                    .with_source(e)
-                    .with_context("fixture", "user_session")
-            })?;
-            event_ids.push(*inserted.id.expect("Inserted event must have ID").as_ulid());
+        if let Some(ts) = inserted.ts_orig {
+            min_ts = Some(match min_ts {
+                Some(current) => current.min(ts),
+                None => ts,
+            });
+            max_ts = Some(match max_ts {
+                Some(current) => current.max(ts),
+                None => ts,
+            });
+        }
+
+        if let Some(id) = inserted.id {
+            event_ids.push(*id.as_ulid());
         }
     }
 
@@ -753,7 +758,7 @@ async fn create_performance_dataset_fixture(
     Ok(PerformanceDatasetFixture {
         event_count,
         event_ids,
-        time_range: (start_time, end_time),
+        time_range: (min_ts.unwrap_or(start_time), max_ts.unwrap_or(end_time)),
         sources: sources.iter().map(|s| s.to_string()).collect(),
         source_distribution,
         type_distribution,
@@ -1012,6 +1017,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
             }),
         );
 
+        ensure_material_for_event(pool, &event).await?;
         let inserted = pool.events().insert(event).await?;
         if let Some(id) = inserted.id {
             valid_events.push(*id.as_ulid());
@@ -1030,6 +1036,7 @@ async fn create_schema_validation_fixture(pool: &DbPool) -> Result<SchemaValidat
             }),
         );
 
+        ensure_material_for_event(pool, &event).await?;
         let inserted = pool.events().insert(event).await?;
         if let Some(id) = inserted.id {
             invalid_events.push(*id.as_ulid());
@@ -1080,6 +1087,7 @@ async fn create_concurrency_test_fixture(
                 }),
             );
 
+            ensure_material_for_event(pool, &event).await?;
             let inserted = pool.events().insert(event).await?;
             if let Some(id) = inserted.id {
                 let ulid = *id.as_ulid();
@@ -1309,6 +1317,7 @@ mod tests {
     use crate::sinex_test;
     use sinex_core::EnhancedRepository;
     use sinex_core::JsonValue;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1443,7 +1452,7 @@ mod tests {
     #[sinex_test]
     async fn test_performance_dataset_fixture(ctx: TestContext) -> Result<()> {
         // Create small performance dataset
-        let baseline = ctx.pool.events().count_all().await? as usize;
+        ctx.force_cleanup().await?;
         let fixture = performance_dataset_with_size(&ctx, 100).await?;
 
         assert_eq!(fixture.event_count, 100);
@@ -1454,9 +1463,34 @@ mod tests {
         let (start, end) = fixture.time_range;
         assert!(end > start);
 
-        // Events should exist
-        let count = ctx.pool.events().count_all().await? as usize;
-        assert_eq!(count - baseline, 100);
+        // Events should match the expected distribution per source
+        let uuids: Vec<uuid::Uuid> = fixture.event_ids.iter().map(|id| id.to_uuid()).collect();
+        let rows = sqlx::query!(
+            r#"
+            SELECT source, COUNT(*) as "count!: i64"
+            FROM core.events
+            WHERE id::uuid = ANY($1::uuid[])
+            GROUP BY source
+            "#,
+            &uuids
+        )
+        .fetch_all(&ctx.pool)
+        .await?;
+
+        let mut actual_distribution: HashMap<String, usize> = HashMap::new();
+        for row in rows {
+            actual_distribution.insert(row.source, row.count as usize);
+        }
+
+        for (source, expected) in &fixture.source_distribution {
+            let actual = actual_distribution.get(source).copied().unwrap_or(0);
+            assert_eq!(
+                actual, *expected,
+                "Expected {expected} events for source {source}, found {actual}"
+            );
+        }
+        let observed_total: usize = actual_distribution.values().sum();
+        assert_eq!(observed_total, fixture.event_count);
 
         Ok(())
     }
@@ -1540,6 +1574,7 @@ mod tests {
             EventType::from_static("test.started"),
             json!({}),
         );
+        ensure_material_for_event(&ctx.pool, &start_event).await?;
         let start = ctx.pool.events().insert(start_event).await?;
         event_ids.push(start.id.expect("Inserted event must have ID"));
 
@@ -1550,6 +1585,7 @@ mod tests {
                 EventType::from_static("test.started"),
                 json!({"index": i}),
             );
+            ensure_material_for_event(&ctx.pool, &middle_event).await?;
             let event = ctx.pool.events().insert(middle_event).await?;
             event_ids.push(event.id.expect("Inserted event must have ID"));
         }
@@ -1560,6 +1596,7 @@ mod tests {
             EventType::from_static("test.completed"),
             json!({}),
         );
+        ensure_material_for_event(&ctx.pool, &end_event).await?;
         let end = ctx.pool.events().insert(end_event).await?;
         event_ids.push(end.id.expect("Inserted event must have ID"));
 

@@ -64,6 +64,11 @@
       prometheusPort = 9002;
       grafanaPort = 9003;
     };
+
+    shell = {
+      asciinema.autoRecord = false;
+      kitty.enable = true;
+    };
   };
 
   # Ensure the monitored user exists (adjust to match targetUser above)

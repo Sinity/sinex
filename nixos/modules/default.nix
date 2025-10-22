@@ -20,22 +20,12 @@ let
       pkgs.sinexCli
     else
       pkgs.python3;
-  
-  # Import utility modules
-  healthChecks = import ./health-checks.nix { inherit lib; };
-  
-  # Simple config file generation (Rust handles the actual config conversion)
-  collectorConfigFile = pkgs.writeText "collector-placeholder.toml" ''
-    # Placeholder config - Sinex uses environment variables and NixOS module options directly
-    # The Rust collector reads configuration via nixos_config.rs, not TOML files
-  '';
-  
+
 in
 {
   imports = [
     # Core configuration modules
     ./database.nix
-    ./event-sources.nix
     ./blob-storage.nix
     ./monitoring.nix
     ./preflight-verification.nix
@@ -77,6 +67,67 @@ in
       type = types.str;
       default = "sinex";
       description = "System user for satellite services";
+    };
+
+    shell = mkOption {
+      type = types.submodule {
+        options = {
+          asciinema = mkOption {
+            type = types.submodule {
+              options = {
+                autoRecord = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = "Automatically start asciinema recording for interactive shells.";
+                };
+
+                recordingsPath = mkOption {
+                  type = types.str;
+                  default = "~/.local/share/asciinema";
+                  description = "Directory where automatic asciinema recordings are stored.";
+                };
+              };
+            };
+            default = {
+              autoRecord = false;
+              recordingsPath = "~/.local/share/asciinema";
+            };
+            description = "Per-shell asciinema capture settings.";
+          };
+
+          kitty = mkOption {
+            type = types.submodule {
+              options = {
+                enable = mkOption {
+                  type = types.bool;
+                  default = true;
+                  description = "Enable Kitty shell integration helpers.";
+                };
+
+                autoConfigure = mkOption {
+                  type = types.bool;
+                  default = true;
+                  description = "Automatically manage Kitty configuration for Sinex integration.";
+                };
+
+                userConfigPath = mkOption {
+                  type = types.str;
+                  default = "~/.config/kitty/kitty.conf";
+                  description = "Path to the user's Kitty configuration.";
+                };
+              };
+            };
+            default = {
+              enable = true;
+              autoConfigure = true;
+              userConfigPath = "~/.config/kitty/kitty.conf";
+            };
+            description = "Kitty-specific integration settings.";
+          };
+        };
+      };
+      default = {};
+      description = "Local shell helper configuration (asciinema, Kitty, etc.).";
     };
 
     # Simplified directories - monitoring.nix compatibility
@@ -461,9 +512,6 @@ in
       # DLQ failure storage directory
       "d ${cfg.dlq.failureStoragePath} 0755 ${cfg.database.user} ${cfg.database.user} -"
     ];
-    
-    # Place generated configuration file in standard location
-    environment.etc."sinex/collector.toml".source = collectorConfigFile;
 
     # Database setup (if enabled)
     services.postgresql = mkIf cfg.database.autoSetup {
@@ -478,22 +526,28 @@ in
     };
 
     # Terminal auto-recording for all users
-    programs.bash.promptInit = mkIf cfg.eventSources.asciinema.autoRecord ''
+    programs.bash.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
       # Automatic asciinema recording for Sinex
       if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
         export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
+        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+        fi
         mkdir -p "$ASCIINEMA_DIR"
         exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
           "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
       fi
     '';
 
-    programs.zsh.promptInit = mkIf cfg.eventSources.asciinema.autoRecord ''
+    programs.zsh.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
       # Automatic asciinema recording for Sinex
       if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
         export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="$HOME/.local/share/asciinema"
+        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+        fi
         mkdir -p "$ASCIINEMA_DIR"
         exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
           "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
@@ -505,6 +559,12 @@ in
       {
         assertion = cfg.enable -> cfg.targetUser != "";
         message = "services.sinex.targetUser must be set when Sinex is enabled";
+      }
+      {
+        assertion =
+          let userDefs = config.users.users or {};
+          in cfg.enable -> lib.hasAttr cfg.targetUser userDefs;
+        message = "services.sinex.targetUser must reference an existing users.users entry";
       }
       {
         assertion = cfg.monitoring.observabilityStack.enable -> cfg.database.autoSetup || config.services.postgresql.enable;

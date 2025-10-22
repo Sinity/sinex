@@ -11,6 +11,9 @@ Invariants Quick Reference (one-page)
 - Rebuild via replay: derived structures (KG, tags) are projections rebuildable by replay; events remain source of truth.
 - Namespacing: SINEX_ENVIRONMENT scopes DB/schema names, streams, sockets, and paths.
 
+> **Cross-reference (2025-07-24)**  
+> Interface-level implementation notes for the gateway and CLI now live in `crate/core/sinex-gateway/doc/overview.md` and `docs/architecture/UserInteraction_And_Query_Architecture.md`. Treat this document as the system-level target state.
+
 Contents
 1) Purpose and principles
 2) Architecture at a glance

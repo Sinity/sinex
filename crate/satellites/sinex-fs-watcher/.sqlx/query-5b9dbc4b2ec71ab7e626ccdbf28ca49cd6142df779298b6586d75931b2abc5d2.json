@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                annex_backend,\n                content_hash,\n                size_bytes,\n                original_filename\n            FROM core.blobs\n            WHERE id = $1::uuid::ulid\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "annex_backend",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "content_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "original_filename",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5b9dbc4b2ec71ab7e626ccdbf28ca49cd6142df779298b6586d75931b2abc5d2"
+}

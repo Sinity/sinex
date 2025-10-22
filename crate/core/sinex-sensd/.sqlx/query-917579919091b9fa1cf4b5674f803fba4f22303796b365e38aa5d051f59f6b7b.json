@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO core.processor_manifests (\n                processor_name, version, processor_type, description\n            ) VALUES (\n                $1, $2, $3, $4\n            )\n            RETURNING \n                id,\n                processor_name,\n                processor_type,\n                version,\n                description,\n                anchor_rule_version,\n                config_schema,\n                created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "processor_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "processor_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "anchor_rule_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "config_schema",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "917579919091b9fa1cf4b5674f803fba4f22303796b365e38aa5d051f59f6b7b"
+}

@@ -71,109 +71,6 @@ in
           };
         };
         
-        # Resource Monitoring
-        sinex-resource-monitor = mkIf enableMonitoring {
-          description = "Sinex Resource Monitoring";
-          serviceConfig = maintenanceServiceConfig // {
-            ExecStart = pkgs.writeShellScript "sinex-resource-monitor" ''
-              set -euo pipefail
-
-              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
-              if [ ! -x "$SINEX_CLI_BIN" ]; then
-                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
-                exit 1
-              fi
-
-              # Collect system resource metrics
-              cpu_usage=$(${pkgs.procps}/bin/top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
-              memory_usage=$(${pkgs.procps}/bin/free | grep Mem | awk '{printf "%.1f", $3/$2 * 100.0}')
-              disk_usage=$(${pkgs.coreutils}/bin/df /var/lib/sinex | tail -1 | awk '{print $5}' | sed 's/%//')
-              
-              # Report metrics
-              "$SINEX_CLI_BIN" metrics gauge sinex.system.cpu_percent "$cpu_usage"
-              "$SINEX_CLI_BIN" metrics gauge sinex.system.memory_percent "$memory_usage"
-              "$SINEX_CLI_BIN" metrics gauge sinex.system.disk_percent "$disk_usage"
-              
-              # Check for resource alerts
-              if (( $(echo "$memory_usage > 90" | ${pkgs.bc}/bin/bc -l) )); then
-                echo "WARNING: High memory usage: $memory_usage%"
-                "$SINEX_CLI_BIN" metrics increment sinex.alerts.memory_high
-              fi
-              
-              if (( disk_usage > 85 )); then
-                echo "WARNING: High disk usage: $disk_usage%"
-                "$SINEX_CLI_BIN" metrics increment sinex.alerts.disk_high
-              fi
-            '';
-          };
-        };
-        
-        # System Health Check
-        sinex-system-health = mkIf enableMonitoring {
-          description = "Sinex System Health Check";
-          serviceConfig = maintenanceServiceConfig // {
-            ExecStart = pkgs.writeShellScript "sinex-system-health" ''
-              set -euo pipefail
-              echo "Running system health check..."
-
-              SINEX_CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
-              if [ ! -x "$SINEX_CLI_BIN" ]; then
-                echo "sinex-cli not available at $SINEX_CLI_BIN" >&2
-                exit 1
-              fi
-
-              # Check core services
-              services_healthy=true
-              service_list=$(systemctl list-units --type=service 'sinex-*.service' --no-legend | awk '{print $1}')
-
-              if [ -z "$service_list" ]; then
-                echo "No Sinex services are currently loaded"
-              fi
-
-              for service in $service_list; do
-                if systemctl is-active "$service" >/dev/null 2>&1; then
-                  echo "✓ $service is active"
-                  "$SINEX_CLI_BIN" metrics gauge "sinex.service.$service.active" 1
-                else
-                  echo "✗ $service is not active"
-                  "$SINEX_CLI_BIN" metrics gauge "sinex.service.$service.active" 0
-                  services_healthy=false
-                fi
-              done
-              
-              # Check database connectivity
-              if "$SINEX_CLI_BIN" db ping --timeout 5; then
-                echo "✓ Database connectivity OK"
-                "$SINEX_CLI_BIN" metrics gauge sinex.database.reachable 1
-              else
-                echo "✗ Database connectivity failed"
-                "$SINEX_CLI_BIN" metrics gauge sinex.database.reachable 0
-                services_healthy=false
-              fi
-              
-              # Check work queue health
-              queue_depth=$("$SINEX_CLI_BIN" worker queue-depth)
-              echo "Work queue depth: $queue_depth"
-              "$SINEX_CLI_BIN" metrics gauge sinex.worker.queue_depth "$queue_depth"
-              
-              # Alert on high queue depth
-              if (( queue_depth > 1000 )); then
-                echo "WARNING: High work queue depth: $queue_depth"
-                "$SINEX_CLI_BIN" metrics increment sinex.alerts.queue_high
-              fi
-              
-              # Overall health status
-              if $services_healthy; then
-                echo "✓ System health check passed"
-                "$SINEX_CLI_BIN" metrics gauge sinex.system.healthy 1
-              else
-                echo "✗ System health check failed"
-                "$SINEX_CLI_BIN" metrics gauge sinex.system.healthy 0
-              fi
-            '';
-          };
-        };
-        
         # Git-annex Maintenance (from blob-storage.nix)
         sinex-git-annex-gc = mkIf (cfg.blobStorage.enable && cfg.blobStorage.maintenance.enableAutoGc) {
           description = "Git-annex Garbage Collection";
@@ -253,26 +150,6 @@ in
             OnCalendar = "daily";
             RandomizedDelaySec = "1h";  # Spread load
             Persistent = true;
-          };
-          wantedBy = [ "timers.target" ];
-        };
-        
-        # Resource monitoring (every minute if monitoring enabled)
-        sinex-resource-monitor = mkIf enableMonitoring {
-          description = "Sinex Resource Monitoring";
-          timerConfig = {
-            OnCalendar = "*:*:00";  # Every minute
-            AccuracySec = "10s";
-          };
-          wantedBy = [ "timers.target" ];
-        };
-        
-        # System health check (every 5 minutes if monitoring enabled)
-        sinex-system-health = mkIf enableMonitoring {
-          description = "Sinex System Health Check";
-          timerConfig = {
-            OnCalendar = "*:0/5:00";  # Every 5 minutes
-            AccuracySec = "30s";
           };
           wantedBy = [ "timers.target" ];
         };

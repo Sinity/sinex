@@ -1,6 +1,7 @@
 #![doc = include_str!("../doc/database_pool.md")]
 
 use crate::Result;
+use futures::Future;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Pool performance metrics
 static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(PoolMetrics::new);
+static OPTIONAL_EXTENSION_MISSING: Lazy<Mutex<HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Pool performance metrics for monitoring
 struct PoolMetrics {
@@ -207,7 +210,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(64);
+            .unwrap_or(12);
 
         let mut config = Self {
             size,
@@ -250,25 +253,14 @@ impl PoolConfig {
             std::env::var(name).ok().and_then(|v| v.parse().ok())
         }
 
-        let size_u32 = self.size.max(1) as u32;
-        let conn_budget = parse_env_u32("SINEX_TESTUTILS_CONN_BUDGET").unwrap_or(96);
-
-        let mut slot_default = (conn_budget / size_u32).max(1);
-        slot_default = slot_default.clamp(1, 8);
-        if slot_default < 2 {
-            slot_default = 2;
-        }
+        let conn_budget = parse_env_u32("SINEX_TESTUTILS_CONN_BUDGET").unwrap_or(48);
 
         let slot_max = parse_env_u32("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
             .map(|v| v.clamp(1, 32))
-            .unwrap_or(slot_default);
+            .unwrap_or(2);
         self.slot_max_connections = slot_max;
 
-        let admin_default = self
-            .slot_max_connections
-            .saturating_mul(2)
-            .max(2)
-            .clamp(2, 24);
+        let admin_default = self.slot_max_connections.max(1).clamp(1, 8);
         let admin_max = parse_env_u32("SINEX_TESTUTILS_ADMIN_MAX_CONNECTIONS")
             .map(|v| v.clamp(1, 32))
             .unwrap_or(admin_default);
@@ -373,7 +365,7 @@ pub struct DatabaseStats {
 }
 
 /// Cleanup task for background processing
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CleanupTask {
     lock_id: i64,
     pool: DbPool,
@@ -400,8 +392,11 @@ impl CleanupManager {
     }
 
     fn schedule_cleanup(&self, task: CleanupTask) {
-        if self.sender.send(task).is_err() {
-            eprintln!("⚠️  Cleanup manager channel closed, cannot schedule cleanup");
+        if self.sender.send(task.clone()).is_err() {
+            eprintln!("⚠️  Cleanup manager channel closed, running cleanup inline");
+            tokio::spawn(async move {
+                CleanupManager::process_cleanup_task(task).await;
+            });
         }
     }
 
@@ -1072,8 +1067,9 @@ fn advisory_lock_key(name: &str) -> i64 {
 async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
     let mut delay = Duration::from_millis(100);
     let mut last_error: Option<sqlx::Error> = None;
+    const MAX_ATTEMPTS: usize = 10;
 
-    for attempt in 0..5 {
+    for attempt in 0..MAX_ATTEMPTS {
         match tokio::time::timeout(Duration::from_secs(5), PgConnection::connect(admin_url)).await {
             Ok(Ok(conn)) => return Ok(conn),
             Ok(Err(err)) => {
@@ -1088,7 +1084,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
                     "⚠️  Admin connection refused (too many clients); retrying in {:?} (attempt {}/{})",
                     delay,
                     attempt + 1,
-                    5
+                    MAX_ATTEMPTS
                 );
             }
             Err(_) => {
@@ -1097,7 +1093,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
         }
 
         tokio::time::sleep(delay).await;
-        delay = (delay * 2).min(Duration::from_secs(1));
+        delay = (delay * 2).min(Duration::from_secs(2));
     }
 
     Err(SinexError::database(format!(
@@ -1185,7 +1181,7 @@ async fn ensure_template_database(
     .map_err(|e| SinexError::database(format!("Template advisory lock failed: {e}")))?;
 
     let slot_max_connections = slot_max_connections.max(1);
-    let template_pool_max = slot_max_connections.saturating_mul(2).max(8);
+    let template_pool_max = slot_max_connections.saturating_mul(2).max(4);
 
     let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
 
@@ -1414,6 +1410,35 @@ async fn ensure_template_database(
         .execute(&template_pool)
         .await?;
 
+        // Ensure canonical bootstrap material exists for test events
+        sqlx::query(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata
+            ) VALUES (
+                $1::text::ulid,
+                'annex',
+                'test-material-bootstrap',
+                'completed',
+                'realtime',
+                '{}'::jsonb
+            )
+            ON CONFLICT (source_identifier) DO UPDATE
+            SET id = EXCLUDED.id,
+                status = EXCLUDED.status,
+                timing_info_type = EXCLUDED.timing_info_type,
+                metadata = EXCLUDED.metadata
+            "#,
+        )
+        .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+        .execute(&template_pool)
+        .await?;
+
         // Optimize template for faster copying
         optimize_template_for_tests(&template_pool).await?;
 
@@ -1462,15 +1487,16 @@ async fn ensure_template_database(
 
 /// Check if required PostgreSQL extensions are available
 async fn check_required_extensions(pool: &DbPool) -> Result<()> {
-    let required_extensions = vec![
+    let required_extensions = [
         ("ulid", "pgx_ulid for ULID primary keys"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
+    ];
+    let optional_extensions = [
         ("pg_jsonschema", "pg_jsonschema for JSON validation"),
         ("vector", "pgvector for vector similarity search"),
     ];
 
-    let mut missing = Vec::new();
-
+    let mut missing_required = Vec::new();
     for (ext_name, description) in required_extensions {
         let available: Option<String> =
             sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
@@ -1479,15 +1505,43 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
                 .await?;
 
         if available.is_none() {
-            missing.push(format!("{ext_name} ({description})"));
+            missing_required.push(format!("{ext_name} ({description})"));
         }
     }
 
-    if !missing.is_empty() {
+    if !missing_required.is_empty() {
         return Err(SinexError::database(format!(
             "Missing required PostgreSQL extensions: {}",
-            missing.join(", ")
+            missing_required.join(", ")
         )));
+    }
+
+    let mut missing_optional = Vec::new();
+    for (ext_name, description) in optional_extensions {
+        let available: Option<String> =
+            sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
+                .bind(ext_name)
+                .fetch_optional(pool)
+                .await?;
+
+        if available.is_none() {
+            missing_optional.push((ext_name.to_string(), description.to_string()));
+        }
+    }
+
+    if !missing_optional.is_empty() {
+        let mut guard = OPTIONAL_EXTENSION_MISSING.lock();
+        for (ext_name, description) in missing_optional {
+            if guard
+                .insert(ext_name.clone(), description.clone())
+                .is_none()
+            {
+                warn!(
+                    "Optional PostgreSQL extension '{}' unavailable; related features/tests will be skipped ({})",
+                    ext_name, description
+                );
+            }
+        }
     }
 
     Ok(())
@@ -1505,6 +1559,11 @@ async fn collect_extension_versions(pool: &DbPool) -> Result<HashMap<String, Str
         map.insert(row.extname, row.extversion);
     }
     Ok(map)
+}
+
+/// Check whether an optional database extension was unavailable during setup.
+pub fn optional_extension_missing(name: &str) -> bool {
+    OPTIONAL_EXTENSION_MISSING.lock().contains_key(name)
 }
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)
@@ -1661,6 +1720,18 @@ pub async fn check_pool_health() -> Result<PoolHealthReport> {
     }
 }
 
+/// Current number of slots available in the database pool.
+pub async fn pool_slot_count() -> usize {
+    let pool_lock = POOL.lock().await;
+    pool_lock.as_ref().map(|pool| pool.slots.len()).unwrap_or(0)
+}
+
+/// Acquire a connection to the Postgres admin database with retry logic.
+pub async fn acquire_admin_connection() -> Result<PgConnection> {
+    let config = PoolConfig::default();
+    connect_admin_with_retry(&config.admin_url).await
+}
+
 /// Pool health report
 #[derive(Debug, Clone)]
 pub struct PoolHealthReport {
@@ -1692,6 +1763,28 @@ pub async fn reset_pool() -> Result<()> {
     *pool_lock = None;
 
     Ok(())
+}
+
+/// Execute a future with a temporary pool size, restoring the original configuration afterwards.
+pub async fn with_pool_size<F, Fut, T>(size: usize, f: F) -> Result<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let previous = std::env::var("SINEX_TESTUTILS_POOL_SIZE").ok();
+    std::env::set_var("SINEX_TESTUTILS_POOL_SIZE", size.to_string());
+    reset_pool().await?;
+
+    let result = f().await;
+
+    if let Some(prev) = previous {
+        std::env::set_var("SINEX_TESTUTILS_POOL_SIZE", prev);
+    } else {
+        std::env::remove_var("SINEX_TESTUTILS_POOL_SIZE");
+    }
+
+    reset_pool().await?;
+    result
 }
 
 /// Initialize pool with custom configuration (for testing)

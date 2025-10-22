@@ -38,7 +38,8 @@ fn rejects_polling_intervals_above_limit() -> color_eyre::eyre::Result<()> {
 
     assert!(config.validate().is_err());
     let error_msg = config.validate_config().unwrap_err();
-    assert!(error_msg.contains("between 1 and 3600 seconds"));
+    assert!(error_msg.contains("polling_interval_secs"));
+    assert!(error_msg.contains("between 1 and 3600"));
     Ok(())
 }
 

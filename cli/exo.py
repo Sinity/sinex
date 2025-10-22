@@ -4122,7 +4122,10 @@ def completion_generate(shell: str):
 
 
 # Register replay commands group with different name to avoid conflict
-from replay_commands import replay as replay_plan_group
+try:
+    from .replay_commands import replay as replay_plan_group
+except ImportError:
+    from replay_commands import replay as replay_plan_group
 cli.add_command(replay_plan_group, name='replay-plan')
 
 if __name__ == '__main__':

@@ -34,7 +34,10 @@
       coreServices.enable = true;
 
       eventSources = {
-        filesystem.enable = true;
+        filesystem = {
+          enable = true;
+          watchPaths = [ "/home/observer" ];
+        };
         terminal.enable = true;
         desktop.enable = true;
         system.enable = true;
@@ -44,6 +47,11 @@
         canonicalCommandSynthesizer.enable = true;
         healthAggregator.enable = true;
       };
+    };
+
+    shell = {
+      asciinema.autoRecord = false;
+      kitty.enable = true;
     };
 
     monitoring.observabilityStack = {

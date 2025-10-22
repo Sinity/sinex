@@ -40,7 +40,7 @@ blake3 = { workspace = true }
 notify = { workspace = true }
 
 # Streaming
-tokio-stream = { workspace = true }
+tokio-stream = { workspace = true, features = ["net"] }
 async-stream = "0.3"
 tempfile = { workspace = true }
 

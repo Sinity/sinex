@@ -1,23 +1,24 @@
-# Sinex Services Crate
+# sinex-services Overview
 
-The services layer exposes higher-level workflows on top of the raw database
-primitives in `sinex-core`. Each module provides a cohesive API that teams can
-call from gateways, satellites, or automation suites without re-implementing
-business logic.
+The services crate packages higher-level workflows on top of the repositories
+exposed by `sinex-core`. Gateway handlers, satellites, and automation jobs rely
+on these modules to coordinate multi-step operations without duplicating SQL or
+business rules.
 
-- `analytics` aggregates events across time ranges and sources to power the
-  operational dashboards and health reports documented in
-  `docs/architecture/SystemOperations_And_Integrity_Architecture.md`.
-- `content` manages large binary assets, performing metadata extraction,
-  storage routing, and access control checks before delegating to the blob
-  backends described in `docs/architecture/Core_Architecture.md`.
-- `pkm` curates knowledge graph entities and relations.
-- `search` wraps the indexing and query flow, standardising request/response
-  contracts for gateways.
+## Modules
 
-When contributing new service modules:
+- [`analytics`](./analytics.md) – rollups for dashboards and telemetry (`event_count_by_source`,
+  `event_count_by_type`, `events_over_time`, `top_commands`, `activity_heatmap`).
+- [`content`](./content.md) – blob storage helpers backed by the annex manager
+  (`store_content`, `retrieve_content`, `get_content_metadata`, `verify_content`).
+- [`pkm`](./pkm.md) – personal knowledge management utilities (`create_note`,
+  `create_entities_from_source_material`, `link_entities`).
+- [`search`](./search.md) – parameterised event search over Postgres (`search_events`).
 
-1. Extend this directory with `<module>.md` explaining the external contract,
-   primary flows, and dependencies.
-2. Reference any cross-cutting design assets under `docs/` so rustdoc readers
-   land on the broader system narrative.
+Each module owns its own documentation describing contracts, error reporting,
+and invariants. When adding a new service:
+
+1. Create `doc/<module>.md` detailing the API surface and dependencies.
+2. Keep `include_str!` pointers up to date so `cargo doc` surfaces the narrative.
+3. Link to cross-cutting architecture references under `docs/` when behaviour
+   spans multiple components.

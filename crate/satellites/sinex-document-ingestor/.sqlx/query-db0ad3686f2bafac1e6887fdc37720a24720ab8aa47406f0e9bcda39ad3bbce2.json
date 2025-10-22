@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO raw.sensor_jobs (\n                id, sensor_type, target_uri, config, priority, status\n            ) VALUES (\n                $1::ulid, $2, $3, $4, $5, 'active'\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ulid",
+            "kind": "Simple"
+          }
+        },
+        "Text",
+        "Text",
+        "Jsonb",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "db0ad3686f2bafac1e6887fdc37720a24720ab8aa47406f0e9bcda39ad3bbce2"
+}

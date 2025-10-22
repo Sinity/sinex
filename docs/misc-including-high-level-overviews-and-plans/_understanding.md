@@ -2,6 +2,9 @@
 
 *Last Updated: 2025-01-21*
 
+> **Historical notice (2025-07-24)**  
+> References to Redis Streams or pre-JetStream ingestion represent the architecture at the time of writing. The live system and current plans are documented in `docs/way.md` and crate-local docs; treat Redis guidance as legacy context.
+
 ## Executive Summary
 
 Sinex is a revolutionary personal exocortex system that transcends traditional data capture by implementing a "sentient archive" - a system that not only captures but understands and participates in the user's digital experience. Through its satellite constellation architecture and deep philosophical principles, Sinex creates an external augmentation of human cognition.
@@ -101,12 +104,17 @@ services.sinex = {
     satellite = {
         enable = true;
         eventSources = {
-            filesystem.enable = true;
+            filesystem = {
+                enable = true;
+                watchPaths = [ "~/Workspace" ];
+            };
             terminal.enable = true;
             desktop.enable = true;
             system.enable = true;
         };
     };
+
+    shell.kitty.enable = true;
 
     security.level = "strict";
     preflightVerification.enable = true;

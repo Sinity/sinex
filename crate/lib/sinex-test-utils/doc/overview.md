@@ -99,6 +99,31 @@ async fn test_with_logging(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 }
 ```
 
+### JetStream / NATS Harness
+
+Need to exercise the real message bus in a test? Spin up an ephemeral JetStream-enabled server
+with `EphemeralNats`:
+
+```rust
+use sinex_test_utils::EphemeralNats;
+
+#[sinex_test]
+async fn test_stream_roundtrip() -> color_eyre::Result<()> {
+    // Launch a scoped nats-server (looks at $NATS_SERVER_BIN if you need a custom binary)
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let jetstream = async_nats::jetstream::new(client.clone());
+
+    // Normal test logic – create streams, publish, consume…
+    // ...
+
+    Ok(())
+} // server is torn down automatically when EphemeralNats is dropped
+```
+
+By default the helper picks an open localhost port and stores state in a temp directory. Override
+the binary path with `NATS_SERVER_BIN=/path/to/nats-server` when you need a custom build.
+
 # Core Concepts
 
 ## TestContext – Single Entry Point

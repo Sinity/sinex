@@ -30,10 +30,12 @@ environment variables such as `DATABASE_URL` that the dev shell provides.
 | Location | What lives here | Notes |
 | --- | --- | --- |
 | `crate/*/<crate>/tests/` | Crate-owned unit, integration, and property tests | Prefer putting new coverage beside the code it exercises |
-| `tests/unit/`, `tests/integration/`, … | Cross-crate or workspace-wide scenarios | Gradually shrinking as coverage migrates into crates |
-| `tests/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) | See `tests/nixos-vm/README.md` for runner details |
-| `tests/performance/` | Throughput/latency checks that touch multiple services | Optional in CI; document dataset sizes before enabling |
-| `tests/security/` | Multi-service hardening scenarios | Crate-specific security tests should sit with the crate |
+| `crate/lib/sinex-core/tests/{unit,integration,performance,system,adversarial}` | Core data-path suites and heavy scenarios | Formerly in `tests/`; moved to keep focus with `sinex-core` |
+| `crate/lib/sinex-satellite-sdk/tests/{integration,property,system}` | Satellite SDK lifecycle, checkpoint, and annex coverage | Includes property regressions that only touch the SDK |
+| `crate/lib/sinex-test-utils/tests/` | Harness demonstrations, fixtures, and helper examples | Includes the migrated `macro_conversion` / `rstest` demos |
+| `tests/e2e/` | NixOS module assertions and VM harness support | Hosts the Rust integration test plus shared Nix fixtures |
+| `tests/e2e/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) | See `tests/e2e/nixos-vm/README.md` for runner details |
+| `crate/lib/sinex-core/tests/security/`, `crate/satellites/*/tests/security/` | Hardening suites for core invariants and satellite sandboxes | Security coverage now lives beside the component it protects |
 
 When in doubt, default to the crate’s own `tests/` directory—workspace-level
 tests are reserved for scenarios that truly span multiple crates or binaries.
@@ -51,8 +53,8 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
 - **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
   rather than re-creating bespoke data builders.
 - **Property tests:** place proptest suites alongside the crate they fuzz (see
-  below). Capture any new failing seeds in the crate’s
-  `tests/property/.proptest-regressions/` directory.
+  below). Capture any new failing seeds in that crate’s
+  `tests/property/*.proptest-regressions` files.
 
 ## Property Testing Guidelines
 
@@ -99,7 +101,7 @@ Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
   `TestContext`, fixtures, assertions, timing utilities, and the database pool.
 - `crate/lib/sinex-test-utils/doc/testing_quality_overview.md` – QA strategy,
   Nextest configuration, and CI expectations.
-- `tests/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
+- `tests/e2e/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
   commands.
 - `docs/documentation-guidelines.md` – documentation checklist (ensure `just
   check` and `just test` pass after moving or adding tests).

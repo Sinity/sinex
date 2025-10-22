@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                time_bucket($1::interval, ts_ingest) as \"bucket!\",\n                COUNT(*) as \"count!\"\n            FROM core.events\n            GROUP BY time_bucket($1::interval, ts_ingest)\n            ORDER BY COUNT(*) DESC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bucket!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Interval",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "bd9fe3e7bb8c3dcb8ea3ce90a6223f8db9148a0658ad847bc78ef4eb9296213c"
+}

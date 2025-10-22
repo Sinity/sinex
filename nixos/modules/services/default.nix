@@ -12,16 +12,6 @@ with lib;
   ];
   
   options.services.sinex.serviceManagement = {
-    consolidatedMode = mkOption {
-      type = types.bool;
-      default = true;
-      description = ''
-        Enable consolidated service management mode.
-        This replaces the old scattered service definitions with a unified approach.
-        Set to false to use legacy service definitions (not recommended).
-      '';
-    };
-    
     serviceGroups = mkOption {
       type = types.submodule {
         options = {
@@ -56,17 +46,13 @@ with lib;
     {
       assertions = [
         {
-          assertion = cfg.serviceManagement.consolidatedMode -> (cfg.targetUser != null);
-          message = "services.sinex.targetUser must be set when using consolidated service management";
+          assertion = cfg.targetUser != null;
+          message = "services.sinex.targetUser must be set for the Sinex deployment";
         }
         {
           assertion = cfg.serviceManagement.serviceGroups.maintenance ->
                      (cfg.database.autoSetup || config.services.postgresql.enable);
           message = "Database must be managed or explicitly enabled for maintenance services";
-        }
-        {
-          assertion = cfg.serviceManagement.consolidatedMode;
-          message = "Legacy Sinex service definitions have been removed; consolidatedMode must remain true.";
         }
       ];
     }

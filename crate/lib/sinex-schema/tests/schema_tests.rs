@@ -5,7 +5,7 @@
 
 use sea_orm_migration::prelude::*;
 use sinex_schema::schema::*;
-use sinex_test_utils::TestContext;
+use sinex_test_utils::prelude::*;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 
@@ -194,19 +194,8 @@ mod constraint_tests {
             .unwrap();
 
         let event_id = sinex_schema::ulid::Ulid::new();
-        let material_id = sinex_schema::ulid::Ulid::new();
+        let material_id = ctx.ensure_schema_material(Some("/test/path")).await?;
         let _source_event_id = sinex_schema::ulid::Ulid::new();
-
-        // First insert a source material
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type, metadata) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime",
-            serde_json::json!({})
-        ).execute(pool).await.unwrap();
 
         // Test 1: Valid case with source_material_id only
         sqlx::query!(
@@ -278,7 +267,7 @@ mod constraint_tests {
             .await
             .unwrap();
 
-        let material_id = sinex_schema::ulid::Ulid::new();
+        let material_id = ctx.ensure_schema_material(None).await?;
 
         // Test source length constraint
         let event_id = sinex_schema::ulid::Ulid::new();
@@ -379,29 +368,10 @@ mod index_tests {
             let _ = sqlx::query(&sql).execute(pool).await; // ignore if exists
         }
 
-        // Insert test data
-        let material_id = sinex_schema::ulid::Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type, metadata) VALUES ($1::uuid::ulid, $2, $3, $4, $5, '{}'::jsonb)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
-
         for i in 0..100 {
-            let event_id = sinex_schema::ulid::Ulid::new();
-            sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
-                event_id.as_uuid(),
-                "test-source",
-                "test-event",
-                "test-host",
-                serde_json::json!({"index": i}),
-                chrono::Utc::now(),
-                material_id.as_uuid()
-            ).execute(pool).await.unwrap();
+            ctx.create_test_event("test-source", "test-event", serde_json::json!({"index": i}))
+                .await
+                .unwrap();
         }
 
         // Test that queries can use the indexes (check execution plan)

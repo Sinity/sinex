@@ -1,0 +1,15 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8ae76863cc8f33975fbc22884ac8073bc61476189d7f2d5771ffdd9909932b0d # shrinks to message_count = 1
+cc a398add5a44fc3aa00a1285f07868e4fd5dbc519caf82d221210ef5d9a135275 # shrinks to batch_count = 1, batch_size = 19
+cc b3cfa848c0f8788a944c0c73099554b69eb799bbabb330695eb005174852e832 # shrinks to processed = [0]
+cc 89f399d05a2dd1897828b56cc44ed1e8d011ccdbef35464282aed11ceead5aba # shrinks to batch_count = 2, batch_size = 17
+cc ba3d1008ad023966d8c32662334dfbe324bb3c7e81ab1343e13ee504d7d22610 # shrinks to batch_count = 3, batch_size = 16
+cc 284d05b2c57f11434be181505bd2fa1e401a8a6c07bfb5fcffeccdb41d4c5817 # shrinks to batch_count = 2, batch_size = 7
+cc dcce2e47de43d756b31c230bec88a13432964eb4c27196a9e50e9c2de9facb78 # shrinks to batch_count = 3, batch_size = 10
+cc 7ef7e7e7acb5e212e06ce44b8878ee1aae754c81a85a505881de4b7122370373 # shrinks to batch_count = 3, batch_size = 9
+cc 93fb2dc4bcacad61e2e6b9e9896a9c9725dd59f1268b4f06a73534409ddcf38e # shrinks to batch_count = 4, batch_size = 19

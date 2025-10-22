@@ -7,8 +7,54 @@ use chrono::Utc;
 use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::prelude::*;
 use sqlx::PgPool;
+use std::str::FromStr;
+
+#[derive(Debug)]
+struct MaterialFixture {
+    id: Ulid,
+}
+
+fn unique_source_identifier() -> String {
+    format!("test-material-{}", Ulid::new())
+}
+
+async fn insert_sample_material(ctx: &TestContext) -> MaterialFixture {
+    let core_id = Id::<SourceMaterial>::new();
+    let source_identifier = unique_source_identifier();
+
+    ctx.ensure_source_material(core_id, Some(&source_identifier))
+        .await
+        .unwrap();
+
+    let schema_ulid = Ulid::from_str(&core_id.to_string()).unwrap();
+    let material_uuid = schema_ulid.as_uuid();
+
+    let exists = sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM raw.source_material_registry WHERE id = $1::uuid::ulid",
+    )
+    .bind(material_uuid)
+    .fetch_optional(&ctx.pool)
+    .await
+    .unwrap();
+
+    if exists.is_none() {
+        sqlx::query!(
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type, metadata) VALUES ($1::uuid::ulid, $2, $3, $4, $5, '{}'::jsonb) ON CONFLICT (source_identifier) DO NOTHING",
+            material_uuid,
+            "annex",
+            &source_identifier,
+            "completed",
+            "realtime"
+        )
+        .execute(&ctx.pool)
+        .await
+        .unwrap();
+    }
+
+    MaterialFixture { id: schema_ulid }
+}
 #[cfg(test)]
 mod constraint_validation_tests {
     use super::*;
@@ -16,6 +62,7 @@ mod constraint_validation_tests {
     type Result<T> = color_eyre::eyre::Result<T>;
 
     async fn setup_test_tables(pool: &PgPool) {
+        // Ensure we start from a clean slate in the reusable database
         // Create all necessary tables for constraint testing
         sqlx::query(
             &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
@@ -64,15 +111,9 @@ mod constraint_validation_tests {
         setup_test_tables(pool).await;
 
         // Insert required dependencies
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
+        let material_id = Id::<SourceMaterial>::from_uuid(material.id.as_uuid());
+        ctx.ensure_source_material(material_id, None).await.unwrap();
 
         // Test Case 1: Valid - source_material_id only
         let event_id1 = Ulid::new();
@@ -84,7 +125,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({"test": "data"}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(
             result.is_ok(),
@@ -118,7 +159,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({"invalid": "both_provenance"}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             &[event_id1.as_uuid()][..]
         ).execute(pool).await;
         assert!(
@@ -147,15 +188,9 @@ mod constraint_validation_tests {
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
+        let material_id = Id::<SourceMaterial>::from_uuid(material.id.as_uuid());
+        ctx.ensure_source_material(material_id, None).await.unwrap();
 
         // Test Case 1: Empty source should fail
         let event_id1 = Ulid::new();
@@ -167,7 +202,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty source");
 
@@ -181,7 +216,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only source");
 
@@ -195,7 +230,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject empty event_type");
 
@@ -209,7 +244,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_err(), "Should reject whitespace-only event_type");
 
@@ -223,7 +258,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid strings");
         Ok(())
@@ -235,15 +270,7 @@ mod constraint_validation_tests {
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Test valid offset_kind values
         let valid_kinds = ["byte", "line", "rowid", "logical"];
@@ -258,7 +285,7 @@ mod constraint_validation_tests {
                 "test-host",
                 serde_json::json!({"kind": kind}),
                 Utc::now(),
-                material_id.as_uuid(),
+                material.id.as_uuid(),
                 *kind
             ).execute(pool).await;
             assert!(result.is_ok(), "Should accept valid offset_kind: {}", kind);
@@ -284,7 +311,7 @@ mod constraint_validation_tests {
                 "test-host",
                 serde_json::json!({"kind": kind}),
                 Utc::now(),
-                material_id.as_uuid(),
+                material.id.as_uuid(),
                 *kind
             ).execute(pool).await;
             assert!(
@@ -303,15 +330,7 @@ mod constraint_validation_tests {
         setup_test_tables(pool).await;
 
         // Test Case 1: Valid foreign key reference
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         let event_id = Ulid::new();
         let result = sqlx::query!(
@@ -322,7 +341,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept valid foreign key reference");
 
@@ -349,7 +368,7 @@ mod constraint_validation_tests {
         // Currently our schema doesn't define CASCADE behavior, so we test the default RESTRICT
         let delete_result = sqlx::query!(
             "DELETE FROM raw.source_material_registry WHERE id = $1::uuid::ulid",
-            material_id.as_uuid()
+            material.id.as_uuid()
         )
         .execute(pool)
         .await;
@@ -367,15 +386,7 @@ mod constraint_validation_tests {
         setup_test_tables(pool).await;
 
         // Create a source material and initial event
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Create indexes that enforce unique constraints
         for index_stmt in Events::create_indexes() {
@@ -395,7 +406,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             anchor_byte
         ).execute(pool).await.unwrap();
 
@@ -410,7 +421,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             anchor_byte
         ).execute(pool).await;
 
@@ -429,7 +440,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             anchor_byte + 1
         ).execute(pool).await;
         assert!(result.is_ok(), "Should accept different anchor_byte");
@@ -442,15 +453,7 @@ mod constraint_validation_tests {
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Test missing required fields
         let event_id = Ulid::new();
@@ -464,7 +467,7 @@ mod constraint_validation_tests {
         .bind("test-host")
         .bind(serde_json::json!({}))
         .bind(Utc::now())
-        .bind(material_id.as_uuid())
+        .bind(material.id.as_uuid())
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing source");
 
@@ -477,7 +480,7 @@ mod constraint_validation_tests {
         .bind("test-host")
         .bind(serde_json::json!({}))
         .bind(Utc::now())
-        .bind(material_id.as_uuid())
+        .bind(material.id.as_uuid())
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing event_type");
 
@@ -490,7 +493,7 @@ mod constraint_validation_tests {
         .bind("test-event")
         .bind("test-host")
         .bind(Utc::now())
-        .bind(material_id.as_uuid())
+        .bind(material.id.as_uuid())
         .execute(pool).await;
         assert!(result.is_err(), "Should reject missing payload");
         Ok(())
@@ -502,18 +505,7 @@ mod constraint_validation_tests {
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        )
-        .execute(pool)
-        .await
-        .unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Test valid JSON payloads
         let valid_payloads = vec![
@@ -534,7 +526,7 @@ mod constraint_validation_tests {
                 "test-host",
                 payload,
                 Utc::now(),
-                material_id.as_uuid()
+                material.id.as_uuid()
             )
             .execute(pool)
             .await;
@@ -555,15 +547,7 @@ mod constraint_validation_tests {
         setup_test_tables(pool).await;
 
         // Create initial event for referencing
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         let source_event_id = Ulid::new();
         sqlx::query!(
@@ -574,7 +558,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await.unwrap();
 
         // Test valid ULID arrays
@@ -602,7 +586,7 @@ mod constraint_validation_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid()
+            material.id.as_uuid()
         ).execute(pool).await.unwrap();
 
         let result = sqlx::query!(
@@ -656,15 +640,7 @@ mod performance_constraint_tests {
             .await
             .unwrap();
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Insert many events to test constraint performance under load
         let start = std::time::Instant::now();
@@ -679,7 +655,7 @@ mod performance_constraint_tests {
                 "test-host",
                 serde_json::json!({"index": i}),
                 Utc::now(),
-                material_id.as_uuid(),
+                material.id.as_uuid(),
                 i as i64
             ).execute(pool).await.unwrap();
         }
@@ -719,15 +695,7 @@ mod performance_constraint_tests {
         .await
         .unwrap();
 
-        let material_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) VALUES ($1::uuid::ulid, $2, $3, $4, $5)",
-            material_id.as_uuid(),
-            "annex",
-            "/test/path",
-            "completed",
-            "realtime"
-        ).execute(pool).await.unwrap();
+        let material = insert_sample_material(&ctx).await;
 
         // Test that constraints work correctly with indexes present
         let event_id1 = Ulid::new();
@@ -739,7 +707,7 @@ mod performance_constraint_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             42
         ).execute(pool).await.unwrap();
 
@@ -767,7 +735,7 @@ mod performance_constraint_tests {
             "test-host",
             serde_json::json!({}),
             Utc::now(),
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             42
         ).execute(pool).await?;
         assert_eq!(
@@ -778,7 +746,7 @@ mod performance_constraint_tests {
 
         let duplicate_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM core.events WHERE source_material_id = $1::uuid::ulid AND anchor_byte = $2",
-            material_id.as_uuid(),
+            material.id.as_uuid(),
             42
         )
         .fetch_one(pool)

@@ -2,6 +2,9 @@
 
 This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream and the transactional outbox pattern.
 
+> **Accuracy Notice (2025-07-24)**  
+> References to `docs/TARGET_final.md` and other legacy plans point to files that were removed during documentation consolidation. Treat those links as historical context only. The authoritative ingestion/JetStream plan now lives in `docs/way.md`. Update any downstream documents or tooling that still expect the old path.
+
 ## Goals
 - Natural backpressure without arbitrary channel sizes.
 - Preserve Postgres as the single source of truth for events.

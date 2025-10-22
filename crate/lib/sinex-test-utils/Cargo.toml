@@ -47,6 +47,7 @@ bon = { workspace = true }
 # Sinex dependencies
 sinex-core = { path = "../sinex-core", features = ["testing"] }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-ingestd = { path = "../../core/sinex-ingestd" }
 # Internal macro crate (implementation detail)
 sinex-test-utils-macros = { path = "macros" }
 

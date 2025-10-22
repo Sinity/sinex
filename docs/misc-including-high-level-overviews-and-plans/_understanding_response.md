@@ -4,6 +4,9 @@ The agent's final report is **remarkably accurate**. It has correctly identified
 
 Here is my assessment of the agent's understanding, framed as a response that clarifies the points of confusion and confirms its core findings.
 
+> **Historical notice (2025-07-24)**  
+> This commentary references the Redis-based architecture that preceded the JetStream migration. Use `docs/way.md` and the crate-local docs for the current implementation plan.
+
 ---
 
 ### **Critique and Clarification of the Agent's Codebase Understanding**
