@@ -249,6 +249,9 @@ pub use deployment_scenario_utils::{
     ValidationExpectation, ValidationStep, ValidationType,
 };
 pub use nats::EphemeralNats;
+pub use satellite_management_utils::{
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+};
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 

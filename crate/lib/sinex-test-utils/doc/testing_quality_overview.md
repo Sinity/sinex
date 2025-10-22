@@ -19,10 +19,9 @@ usage, see:
 | `crate/lib/sinex-core/tests/integration/` | Core repository and schema workflows                     | Former workspace suites now colocated with the crate    |
 | `crate/lib/sinex-core/tests/{system,performance,adversarial}/` | Heavy end-to-end, load, and chaos coverage            | Uses real services; slower (~minutes)                   |
 | `crate/lib/sinex-satellite-sdk/tests/{integration,property,system}/` | Satellite lifecycle and annex validation        | Property regressions live beside the SDK helpers        |
-| `tests/integration/`                      | Cross-crate workflows and legacy harness glue            | Trim as coverage migrates into crate-owned suites       |
-| `tests/property/`                         | Workspace-level fuzzing that still spans multiple crates | Commit new `.proptest-regressions` seeds                |
-| `tests/examples/`                         | Documentation and usage demonstrations                   | Great starting points for new helper patterns           |
-| `tests/nixos-vm/`                         | Full VM deployment and chaos scenarios                   | Optional in CI; document dataset sizes                  |
+| `crate/lib/sinex-test-utils/tests/`       | Harness demonstrations, fixtures, and helper examples    | Includes the migrated `macro_conversion` / `rstest` demos|
+| `tests/e2e/`                              | NixOS module assertions and VM harness support           | Hosts the Rust integration test plus shared Nix assets  |
+| `tests/e2e/nixos-vm/`                     | Full VM deployment and chaos scenarios                   | Optional in CI; document dataset sizes                  |
 
 `TestContext` is the single entry point for database access, fixture creation,
 timing utilities, and assertion helpers. Favour it over one-off utilities when

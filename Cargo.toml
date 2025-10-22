@@ -23,7 +23,8 @@ members = [
   "crate/satellites/sinex-terminal-command-canonicalizer",
   "crate/satellites/sinex-health-aggregator",
   "crate/satellites/sinex-document-ingestor",
-  
+  "tests/e2e",
+
   # Automaton crates
   # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",

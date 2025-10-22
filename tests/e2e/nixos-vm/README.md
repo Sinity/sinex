@@ -38,10 +38,10 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 ./test/nixos-vm/run-vm-tests.sh -c performance
 
 # Debug mode (keeps VM on failure)
-./tests/nixos-vm/run-vm-tests.sh -d basic
+./tests/e2e/nixos-vm/run-vm-tests.sh -d basic
 
 # Custom timeout and output directory
-./tests/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
+./tests/e2e/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
 ```
 
 ## Test Structure

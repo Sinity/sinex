@@ -10,6 +10,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Configuration
 TEST_RESULTS_DIR="${TEST_RESULTS_DIR:-./test-results}"
 KEEP_FAILED_VMS="${KEEP_FAILED_VMS:-false}"
@@ -98,18 +100,18 @@ validate_infrastructure() {
     
     # Check syntax of individual test files
     local test_files=(
-        "tests/nixos-vm/test-scenarios/basic-flow.nix"
-        "tests/nixos-vm/preflight_deployment_test.nix"
-        "tests/nixos-vm/test-scenarios/maintenance.nix"
-        "tests/nixos-vm/test-scenarios/satellite-matrix.nix"
-        "tests/nixos-vm/test-scenarios/multi-source.nix"
-        "tests/nixos-vm/test-scenarios/performance.nix"
+        "${SCRIPT_DIR}/test-scenarios/basic-flow.nix"
+        "${SCRIPT_DIR}/preflight_deployment_test.nix"
+        "${SCRIPT_DIR}/test-scenarios/maintenance.nix"
+        "${SCRIPT_DIR}/test-scenarios/satellite-matrix.nix"
+        "${SCRIPT_DIR}/test-scenarios/multi-source.nix"
+        "${SCRIPT_DIR}/test-scenarios/performance.nix"
     )
 
     local common_files=(
-        "tests/nixos-vm/common/test-base.nix"
-        "tests/nixos-vm/common/test-helpers.nix"
-        "tests/nixos-vm/common/health-checks.nix"
+        "${SCRIPT_DIR}/common/test-base.nix"
+        "${SCRIPT_DIR}/common/test-helpers.nix"
+        "${SCRIPT_DIR}/common/health-checks.nix"
     )
     
     # Check test files syntax

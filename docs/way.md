@@ -84,7 +84,7 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ## 2. JetStream Harness & Local Tooling
 
-- Use the NixOS VM tests (`tests/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `just db-reset` / `just migrate` then run `just ingestd` + a local NATS (`nix run nixpkgs#nats-server` or container) until a dedicated `just` recipe lands.
+- Use the NixOS VM tests (`tests/e2e/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `just db-reset` / `just migrate` then run `just ingestd` + a local NATS (`nix run nixpkgs#nats-server` or container) until a dedicated `just` recipe lands.
 - Add reusable test fixtures in `sinex-test-utils` for publishing slices/events to embedded nats (`async_nats::Server::run`) so unit/integration tests can exercise JetStream behavior without spawning external services.
 - Update CI to spin up Postgres + NATS (GitHub Actions service containers or Nix shells) before running `just test`.
 

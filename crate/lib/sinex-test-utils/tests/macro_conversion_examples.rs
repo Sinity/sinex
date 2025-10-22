@@ -1,5 +1,5 @@
 //! Example conversions showing how to modernize tests with macros
-//! 
+//!
 //! This file demonstrates before/after examples of converting verbose
 //! test implementations to use the powerful test macro system.
 
@@ -14,21 +14,29 @@ use sinex_test_utils::test_macros::*;
 // BEFORE: Verbose manual implementation (15 lines)
 #[sinex_test]
 async fn test_file_created_event_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let event = EventFactory::new("fs")
-        .create_event("file.created", json!({"path": "/test/file.txt", "size": 1024}));
-    
+    let event = EventFactory::new("fs").create_event(
+        "file.created",
+        json!({"path": "/test/file.txt", "size": 1024}),
+    );
+
     let inserted_id = sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None)
         .await?
         .id;
-    
-    let retrieved = sqlx::query!("SELECT * FROM core.events WHERE id = $1", inserted_id.to_uuid())
-        .fetch_one(ctx.pool())
-        .await?;
-    
+
+    let retrieved = sqlx::query!(
+        "SELECT * FROM core.events WHERE id = $1",
+        inserted_id.to_uuid()
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
     assert_eq!(retrieved.source, "fs");
     assert_eq!(retrieved.event_type, "file.created");
-    assert_eq!(retrieved.payload.get("path").unwrap().as_str().unwrap(), "/test/file.txt");
-    
+    assert_eq!(
+        retrieved.payload.get("path").unwrap().as_str().unwrap(),
+        "/test/file.txt"
+    );
+
     Ok(())
 }
 
@@ -49,30 +57,33 @@ test_event_insertion!(
 async fn test_bulk_import_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event_count = 100;
     let mut handles = vec![];
-    
+
     for i in 0..event_count {
         let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
-            let event = EventFactory::new("import")
-                .create_event("item.imported", json!({"index": i, "data": format!("item_{}", i)}));
+            let event = EventFactory::new("import").create_event(
+                "item.imported",
+                json!({"index": i, "data": format!("item_{}", i)}),
+            );
             sinex_core::db::insert_event_with_validator(&pool, &event, None).await
         });
         handles.push(handle);
     }
-    
+
     let results: Vec<_> = futures::future::try_join_all(handles).await?;
     let successful = results.iter().filter(|r| r.is_ok()).count();
-    
+
     assert_eq!(successful, event_count);
-    
+
     // Verify all events exist
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'import'")
-        .fetch_one(ctx.pool())
-        .await?
-        .unwrap_or(0);
-    
+    let count: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'import'")
+            .fetch_one(ctx.pool())
+            .await?
+            .unwrap_or(0);
+
     assert!(count >= event_count as i64);
-    
+
     Ok(())
 }
 
@@ -83,10 +94,11 @@ test_batch_events!(
     "item.imported",
     100,
     |pool, events| async move {
-        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'import'")
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(0);
+        let count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'import'")
+                .fetch_one(pool)
+                .await?
+                .unwrap_or(0);
         assert!(count >= 100);
         Ok(())
     }
@@ -100,29 +112,29 @@ test_batch_events!(
 #[sinex_test]
 async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use sinex_satellite_sdk::CheckpointManager;
-    
+
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool().clone(),
         "test_automaton",
         "default_group",
         "test_consumer",
     );
-    
+
     // Initial state
     let mut checkpoint = checkpoint_manager.load_checkpoint().await?;
     checkpoint.processed_count = 0;
     checkpoint_manager.save_checkpoint(&checkpoint).await?;
-    
+
     // Process some events
     checkpoint.processed_count = 50;
     checkpoint.set_last_processed_id(Some("event_50".to_string()));
     checkpoint_manager.save_checkpoint(&checkpoint).await?;
-    
+
     // Verify
     let loaded = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(loaded.processed_count, 50);
     assert_eq!(loaded.last_processed_id(), Some("event_50"));
-    
+
     Ok(())
 }
 
@@ -130,8 +142,8 @@ async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Resu
 test_checkpoint_flow!(
     test_automaton_progress_new,
     "test_automaton",
-    0,    // initial count
-    50    // updated count
+    0,  // initial count
+    50  // updated count
 );
 
 // =============================================================================
@@ -145,7 +157,7 @@ async fn test_concurrent_queries_old(ctx: TestContext) -> color_eyre::eyre::Resu
     let queries_per_worker = 10;
     let pool = Arc::new(ctx.pool().clone());
     let mut handles = vec![];
-    
+
     for worker_id in 0..worker_count {
         let pool_clone = pool.clone();
         let handle = tokio::spawn(async move {
@@ -162,9 +174,9 @@ async fn test_concurrent_queries_old(ctx: TestContext) -> color_eyre::eyre::Resu
         });
         handles.push(handle);
     }
-    
+
     let all_results = futures::future::try_join_all(handles).await?;
-    
+
     // Verify all workers completed successfully
     assert_eq!(all_results.len(), worker_count);
     for (worker_id, worker_results) in all_results.iter().enumerate() {
@@ -174,7 +186,7 @@ async fn test_concurrent_queries_old(ctx: TestContext) -> color_eyre::eyre::Resu
             assert_eq!(result, (worker_id + query_id) as i32);
         }
     }
-    
+
     Ok(())
 }
 
@@ -213,39 +225,38 @@ test_concurrent_operations!(
 #[sinex_test]
 async fn test_event_time_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::{Duration, Utc};
-    
+
     let now = Utc::now();
     let events_to_insert = 20;
-    
+
     // Insert events across time range
     for i in 0..events_to_insert {
-        let event = EventFactory::new("timed")
-            .create_event("test.event", json!({"index": i}));
+        let event = EventFactory::new("timed").create_event("test.event", json!({"index": i}));
         let time_offset = Duration::hours(i as i64 - 10); // -10 to +9 hours
-        // Would need custom insertion with timestamp here...
+                                                          // Would need custom insertion with timestamp here...
         sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?;
     }
-    
+
     // Query specific range
     let start = now - Duration::hours(5);
     let end = now + Duration::hours(5);
-    
+
     let events = get_events_in_time_range(ctx.pool(), start, end).await?;
-    
+
     // Should get roughly half the events
     assert!(events.len() >= 8 && events.len() <= 12);
-    
+
     Ok(())
 }
 
 // AFTER: Declarative time-based testing (8 lines)
 test_time_range_query!(
     test_event_time_filtering_new,
-    20,                               // total events
-    chrono::Duration::hours(1),       // spacing between events
-    chrono::Duration::hours(-5),      // range start offset
-    chrono::Duration::hours(5),       // range end offset
-    10                                // expected events in range
+    20,                          // total events
+    chrono::Duration::hours(1),  // spacing between events
+    chrono::Duration::hours(-5), // range start offset
+    chrono::Duration::hours(5),  // range end offset
+    10                           // expected events in range
 );
 
 // =============================================================================
@@ -256,46 +267,61 @@ test_time_range_query!(
 #[sinex_test]
 async fn test_redis_event_streaming_old(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use redis::{cmd, AsyncCommands};
-    
+
     let redis_client = redis::Client::open("redis://localhost:6379")?;
     let mut conn = redis_client.get_async_connection().await?;
-    
+
     let stream_key = "test:stream";
     let consumer_group = "test-group";
-    
+
     // Cleanup
     let _: Result<i32, _> = conn.del(stream_key).await;
-    
+
     // Create consumer group
     match cmd("XGROUP")
-        .arg("CREATE").arg(stream_key).arg(consumer_group).arg("0").arg("MKSTREAM")
-        .query_async::<_, ()>(&mut conn).await {
-        Ok(_) => {},
-        Err(e) if e.to_string().contains("BUSYGROUP") => {},
+        .arg("CREATE")
+        .arg(stream_key)
+        .arg(consumer_group)
+        .arg("0")
+        .arg("MKSTREAM")
+        .query_async::<_, ()>(&mut conn)
+        .await
+    {
+        Ok(_) => {}
+        Err(e) if e.to_string().contains("BUSYGROUP") => {}
         Err(e) => return Err(e.into()),
     }
-    
+
     // Add messages
     for i in 0..10 {
-        let _: String = conn.xadd(stream_key, "*", &[
-            ("index", i.to_string()),
-            ("data", format!("message_{}", i)),
-        ]).await?;
+        let _: String = conn
+            .xadd(
+                stream_key,
+                "*",
+                &[("index", i.to_string()), ("data", format!("message_{}", i))],
+            )
+            .await?;
     }
-    
+
     // Read messages
     let result = cmd("XREADGROUP")
-        .arg("GROUP").arg(consumer_group).arg("consumer1")
-        .arg("COUNT").arg(10)
-        .arg("STREAMS").arg(stream_key).arg(">")
-        .query_async::<_, redis::streams::StreamReadReply>(&mut conn).await?;
-    
+        .arg("GROUP")
+        .arg(consumer_group)
+        .arg("consumer1")
+        .arg("COUNT")
+        .arg(10)
+        .arg("STREAMS")
+        .arg(stream_key)
+        .arg(">")
+        .query_async::<_, redis::streams::StreamReadReply>(&mut conn)
+        .await?;
+
     assert_eq!(result.keys.len(), 1);
     assert_eq!(result.keys[0].ids.len(), 10);
-    
+
     // Cleanup
     let _: Result<i32, _> = conn.del(stream_key).await;
-    
+
     Ok(())
 }
 
@@ -331,29 +357,29 @@ async fn test_event_schema_enforcement_old(ctx: TestContext) -> color_eyre::eyre
         "required": ["user_id", "action"],
         "additionalProperties": false
     });
-    
+
     // Register schema (would need actual registration code)
     // ...
-    
+
     // Test valid payload
     let valid_payload = json!({
         "user_id": "550e8400-e29b-41d4-a716-446655440000",
         "action": "login",
         "timestamp": "2025-01-01T12:00:00Z"
     });
-    
+
     // This should pass validation
     // ... validation code ...
-    
+
     // Test invalid payload
     let invalid_payload = json!({
         "user_id": "not-a-uuid",
         "action": "invalid_action"
     });
-    
+
     // This should fail validation
     // ... validation code ...
-    
+
     Ok(())
 }
 
@@ -392,26 +418,25 @@ test_schema_validation!(
 async fn test_source_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let sources = ["fs", "terminal", "desktop"];
     let events_per_source = 5;
-    
+
     // Insert events from multiple sources
     for source in &sources {
         for i in 0..events_per_source {
-            let event = EventFactory::new(source)
-                .create_event("test.event", json!({"index": i}));
+            let event = EventFactory::new(source).create_event("test.event", json!({"index": i}));
             sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?;
         }
     }
-    
+
     // Query filtered events
     let fs_events = sqlx::query!("SELECT * FROM core.events WHERE source = 'fs'")
         .fetch_all(ctx.pool())
         .await?;
-    
+
     assert_eq!(fs_events.len(), events_per_source);
     for event in &fs_events {
         assert_eq!(event.source, "fs");
     }
-    
+
     Ok(())
 }
 
@@ -419,9 +444,9 @@ async fn test_source_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result
 test_event_filter!(
     test_source_filtering_new,
     &["fs", "terminal", "desktop"],
-    5,      // events per source
-    "fs",   // filter source
-    5       // expected count
+    5,    // events per source
+    "fs", // filter source
+    5     // expected count
 );
 
 // =============================================================================
@@ -435,23 +460,23 @@ async fn test_event_type_validation_old(ctx: TestContext) -> color_eyre::eyre::R
     let event1 = EventFactory::new("test").create_event("valid.event.type", json!({}));
     let result1 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event1, None).await;
     assert!(result1.is_ok());
-    
+
     // Test case 2: Empty event type
     let event2 = EventFactory::new("test").create_event("", json!({}));
     let result2 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event2, None).await;
     assert!(result2.is_err());
-    
+
     // Test case 3: Invalid characters
     let event3 = EventFactory::new("test").create_event("invalid@type!", json!({}));
     let result3 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event3, None).await;
     assert!(result3.is_err());
-    
+
     // Test case 4: Too long
     let long_type = "a".repeat(256);
     let event4 = EventFactory::new("test").create_event(&long_type, json!({}));
     let result4 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event4, None).await;
     assert!(result4.is_err());
-    
+
     Ok(())
 }
 
@@ -480,10 +505,14 @@ parameterized_test!(
 #[sinex_test]
 async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert event
-    let event = EventFactory::new("workflow")
-        .create_event("task.created", json!({"task_id": "123", "priority": "high"}));
-    let event_id = sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?.id;
-    
+    let event = EventFactory::new("workflow").create_event(
+        "task.created",
+        json!({"task_id": "123", "priority": "high"}),
+    );
+    let event_id = sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None)
+        .await?
+        .id;
+
     // Simulate processor checkpoint
     let checkpoint_id = Ulid::new();
     sqlx::query!(
@@ -494,13 +523,20 @@ async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::R
         event_id.to_string(),
         1i64
     ).execute(ctx.pool()).await?;
-    
+
     // Verify flow completion
-    let checkpoint = sqlx::query!("SELECT * FROM core.processor_checkpoints WHERE id = $1", checkpoint_id.to_uuid())
-        .fetch_one(ctx.pool()).await?;
-    
-    assert_eq!(checkpoint.last_processed_id.as_deref(), Some(&event_id.to_string()));
-    
+    let checkpoint = sqlx::query!(
+        "SELECT * FROM core.processor_checkpoints WHERE id = $1",
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert_eq!(
+        checkpoint.last_processed_id.as_deref(),
+        Some(&event_id.to_string())
+    );
+
     Ok(())
 }
 
@@ -516,14 +552,14 @@ test_event_flow!(
 // Migration Guide Summary
 // =============================================================================
 
-/// This module demonstrates the power of test macros in reducing boilerplate
-/// and improving test clarity. Key benefits:
-/// 
-/// 1. **Code Reduction**: 50-75% fewer lines for common patterns
-/// 2. **Consistency**: All tests follow the same patterns
-/// 3. **Maintainability**: Changes to test infrastructure are centralized
-/// 4. **Readability**: Tests express intent, not implementation
-/// 5. **Error Prevention**: Less manual code = fewer bugs
-/// 
-/// When writing new tests, always check if an existing macro fits your use case
-/// before writing verbose implementations.
+// This module demonstrates the power of test macros in reducing boilerplate
+// and improving test clarity. Key benefits:
+//
+// 1. **Code Reduction**: 50-75% fewer lines for common patterns
+// 2. **Consistency**: All tests follow the same patterns
+// 3. **Maintainability**: Changes to test infrastructure are centralized
+// 4. **Readability**: Tests express intent, not implementation
+// 5. **Error Prevention**: Less manual code = fewer bugs
+//
+// When writing new tests, always check if an existing macro fits your use case
+// before writing verbose implementations.

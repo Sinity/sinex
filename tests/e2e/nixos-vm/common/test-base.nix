@@ -17,7 +17,7 @@ in
   imports = [
     ./test-helpers.nix
     ./health-checks.nix
-    ../../../nixos  # Import Sinex NixOS module
+    ../../../../nixos  # Import Sinex NixOS module
   ];
 
   # Basic Sinex configuration

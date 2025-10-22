@@ -269,7 +269,7 @@ pkgs.nixosTest {
     { config, pkgs, lib, ... }:
     {
       imports = [
-        ../../../nixos
+        ../../../../nixos
       ];
 
       services.sinex = {

@@ -19,13 +19,15 @@ async fn test_event_creation_parameterized(
     #[case] payload: Value,
 ) -> Result<()> {
     let ctx = TestContext::new().await?;
-    
-    let event = ctx.create_test_event(source, event_type, payload.clone()).await?;
-    
+
+    let event = ctx
+        .create_test_event(source, event_type, payload.clone())
+        .await?;
+
     assert_eq!(event.source.as_str(), source);
     assert_eq!(event.event_type.as_str(), event_type);
     assert_eq!(event.payload, payload);
-    
+
     Ok(())
 }
 
@@ -38,22 +40,19 @@ async fn test_with_fixtures(
     test_paths: Vec<Utf8PathBuf>,
 ) -> Result<()> {
     let ctx = TestContext::new().await?;
-    
+
     // Create events for each source and path combination
     for source in &test_sources {
         for path in &test_paths {
-            ctx.create_test_event(
-                *source,
-                "test.fixture",
-                json!({"path": path.as_str()})
-            ).await?;
+            ctx.create_test_event(*source, "test.fixture", json!({"path": path.as_str()}))
+                .await?;
         }
     }
-    
+
     // Verify all were created
     let count = ctx.pool.events().count().await?;
     assert_eq!(count, (test_sources.len() * test_paths.len()) as i64);
-    
+
     Ok(())
 }
 
@@ -62,22 +61,24 @@ async fn test_with_fixtures(
 #[sinex_test]
 async fn test_snapshot_testing(ctx: TestContext) -> Result<()> {
     // Create a complex event
-    let event = ctx.create_test_event(
-        "fs-watcher",
-        "file.modified",
-        json!({
-            "path": "/home/user/important.doc",
-            "size": 2048576,
-            "permissions": "0o644"
-        })
-    ).await?;
-    
+    let event = ctx
+        .create_test_event(
+            "fs-watcher",
+            "file.modified",
+            json!({
+                "path": "/home/user/important.doc",
+                "size": 2048576,
+                "permissions": "0o644"
+            }),
+        )
+        .await?;
+
     // Snapshot the entire event with automatic redactions
     ctx.snapshot_event(&event, Some("filesystem_event"));
-    
+
     // Snapshot just the payload
     ctx.snapshot(&event.payload, Some("filesystem_payload"));
-    
+
     // JSON snapshot with custom redactions
     ctx.snapshot_json(
         &event,
@@ -87,11 +88,11 @@ async fn test_snapshot_testing(ctx: TestContext) -> Result<()> {
             (".ingestor_version", "[version]"),
         ],
     );
-    
+
     // Debug snapshot for non-serializable types
     let complex_struct = (event.id, event.source.clone());
     ctx.snapshot_debug(&complex_struct, Some("complex_debug"));
-    
+
     Ok(())
 }
 
@@ -102,27 +103,25 @@ async fn test_snapshot_testing(ctx: TestContext) -> Result<()> {
 async fn test_with_tracing(ctx: TestContext) -> Result<()> {
     // Enable tracing for this test
     let _guard = ctx.with_tracing("debug");
-    
+
     // Do some operations that generate logs
     tracing::info!("Starting test operations");
-    
-    let event = ctx.create_test_event(
-        "tracing-test",
-        "test.logged",
-        json!({})
-    ).await?;
-    
+
+    let event = ctx
+        .create_test_event("tracing-test", "test.logged", json!({}))
+        .await?;
+
     tracing::debug!("Created event with ID: {:?}", event.id);
-    
+
     // Verify logs were captured
     ctx.assert_logged("Starting test operations")?;
     ctx.assert_logged("Created event")?;
     ctx.assert_no_errors_logged()?;
-    
+
     // Get all captured logs
     let logs = ctx.captured_logs();
     assert!(logs.len() >= 2);
-    
+
     Ok(())
 }
 
@@ -132,13 +131,17 @@ async fn test_with_tracing(ctx: TestContext) -> Result<()> {
 async fn test_similar_assertions(ctx: TestContext) -> Result<()> {
     let payload1 = json!({"data": [1, 2, 3, 4, 5]});
     let payload2 = json!({"data": [1, 2, 3, 4, 5]});
-    
-    let event1 = ctx.create_test_event("test", "similar.test", payload1.clone()).await?;
-    let event2 = ctx.create_test_event("test", "similar.test", payload2.clone()).await?;
-    
+
+    let event1 = ctx
+        .create_test_event("test", "similar.test", payload1.clone())
+        .await?;
+    let event2 = ctx
+        .create_test_event("test", "similar.test", payload2.clone())
+        .await?;
+
     // Use similar_asserts for better diff output
     ctx.assert_similar(&event1.payload, &event2.payload, "Payloads should match");
-    
+
     // For JSON values specifically
     let json1 = json!({
         "name": "test",
@@ -147,7 +150,7 @@ async fn test_similar_assertions(ctx: TestContext) -> Result<()> {
             "value": 42
         }
     });
-    
+
     let json2 = json!({
         "name": "test",
         "items": [1, 2, 3],
@@ -155,9 +158,9 @@ async fn test_similar_assertions(ctx: TestContext) -> Result<()> {
             "value": 42
         }
     });
-    
+
     ctx.assert_json_similar(&json1, &json2, "JSON structures should match")?;
-    
+
     Ok(())
 }
 
@@ -175,28 +178,30 @@ async fn test_modern_infrastructure_combined(
 ) -> Result<()> {
     let ctx = TestContext::new().await?;
     let _guard = ctx.with_tracing("info");
-    
+
     tracing::info!("Testing {} operation", operation);
-    
+
     // Create event based on operation
     let event_type = format!("file.{}", operation);
-    let event = ctx.create_test_event(
-        "fs-watcher",
-        &event_type,
-        json!({
-            "path": "/tmp/test.txt"
-        })
-    ).await?;
-    
+    let event = ctx
+        .create_test_event(
+            "fs-watcher",
+            &event_type,
+            json!({
+                "path": "/tmp/test.txt"
+            }),
+        )
+        .await?;
+
     // Verify event type
     assert_eq!(event.event_type.as_str(), expected_type);
-    
+
     // Snapshot the event
     ctx.snapshot_event(&event, Some(&format!("{}_event", operation)));
-    
+
     // Verify logging
     ctx.assert_logged(&format!("Testing {} operation", operation))?;
-    
+
     Ok(())
 }
 
@@ -205,25 +210,27 @@ async fn test_modern_infrastructure_combined(
 #[sinex_test]
 async fn test_property_based_with_snapshots(ctx: TestContext) -> Result<()> {
     use proptest::prelude::*;
-    
+
     // Generate test cases
     let test_cases = vec![
         ("short", "x".repeat(10)),
         ("medium", "x".repeat(100)),
         ("long", "x".repeat(1000)),
     ];
-    
+
     for (name, content) in test_cases {
-        let event = ctx.create_test_event(
-            "property-test",
-            "test.content",
-            json!({
-                "name": name,
-                "content": content,
-                "length": content.len()
-            })
-        ).await?;
-        
+        let event = ctx
+            .create_test_event(
+                "property-test",
+                "test.content",
+                json!({
+                    "name": name,
+                    "content": content,
+                    "length": content.len()
+                }),
+            )
+            .await?;
+
         // Snapshot each case
         ctx.snapshot_json(
             &event.payload,
@@ -231,7 +238,7 @@ async fn test_property_based_with_snapshots(ctx: TestContext) -> Result<()> {
             vec![(".content", "[content]")], // Redact actual content
         );
     }
-    
+
     Ok(())
 }
 
@@ -239,17 +246,15 @@ async fn test_property_based_with_snapshots(ctx: TestContext) -> Result<()> {
 
 #[rstest]
 #[sinex_test]
-async fn test_advanced_fixtures(
-    #[future] test_context_with_tracing: TestContext,
-) -> Result<()> {
+async fn test_advanced_fixtures(#[future] test_context_with_tracing: TestContext) -> Result<()> {
     let ctx = test_context_with_tracing.await;
-    
+
     // The context already has tracing enabled
     tracing::info!("This will be captured automatically");
-    
+
     // Create some test data
     let dataset = ctx.fixtures().performance().large_dataset().await?;
-    
+
     // Snapshot the dataset summary
     let summary = json!({
         "event_count": dataset.event_count,
@@ -259,20 +264,8 @@ async fn test_advanced_fixtures(
             "end": dataset.end_time.to_rfc3339(),
         }
     });
-    
-    ctx.snapshot(&summary, Some("dataset_summary"));
-    
-    Ok(())
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    // This ensures all examples compile and can run
-    #[sinex_test]
-fn examples_compile() -> color_eyre::eyre::Result<()> {
-        // The examples above serve as both documentation and tests
-    }
+    ctx.snapshot(&summary, Some("dataset_summary"));
+
     Ok(())
 }

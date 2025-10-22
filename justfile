@@ -64,7 +64,7 @@ test-all:
 
 # Run VM tests
 test-vm:
-    ./tests/nixos-vm/run-vm-tests.sh -c smoke
+    ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke
 
 # === Database ===
 
