@@ -282,6 +282,14 @@ impl IngestService {
             }
         }
 
+        // Start JetStream consumer task
+        if let Some(ref nats_client) = self.nats_client {
+            if let Some(ref pool) = self.db_pool {
+                self.start_jetstream_consumer_task(nats_client.clone(), pool.clone())
+                    .await;
+            }
+        }
+
         // Stats logging task with panic recovery
         let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -427,6 +435,32 @@ impl IngestService {
                         }
                         break;
                     }
+                }
+            }
+        });
+    }
+
+    /// Start the JetStream consumer task
+    async fn start_jetstream_consumer_task(&self, nats_client: NatsClient, pool: PgPool) {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let validator = self.validator.clone();
+
+        tokio::spawn(async move {
+            let consumer = crate::JetStreamConsumer::new(
+                nats_client,
+                pool.clone(),
+                Arc::new(validator.read().await.clone()),
+            );
+
+            tokio::select! {
+                result = consumer.run() => {
+                    match result {
+                        Ok(()) => info!("JetStream consumer completed"),
+                        Err(e) => error!("JetStream consumer failed: {}", e),
+                    }
+                }
+                _ = shutdown_signal(&shutdown_flag) => {
+                    info!("JetStream consumer shutting down");
                 }
             }
         });

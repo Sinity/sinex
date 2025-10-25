@@ -4245,6 +4245,7 @@ name = "sinex-satellite-sdk"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
  "blake3",
  "bon",
