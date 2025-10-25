@@ -8,6 +8,7 @@
 pub mod config;
 pub mod figment_config;
 pub mod jetstream_consumer;
+pub mod material_assembler;
 pub mod prelude;
 pub mod schema_sync;
 pub mod service;
@@ -16,6 +17,7 @@ pub mod validator;
 pub use config::IngestdConfig;
 pub use figment_config::IngestdFigmentConfig;
 pub use jetstream_consumer::JetStreamConsumer;
+pub use material_assembler::MaterialAssembler;
 pub use schema_sync::SyncResult;
 pub use service::{IngestService, SubjectCache};
 pub use validator::{

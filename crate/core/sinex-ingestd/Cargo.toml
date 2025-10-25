@@ -61,6 +61,7 @@ url = { workspace = true }
 # Cryptography
 sha2.workspace = true
 hex.workspace = true
+blake3.workspace = true
 
 # System
 sd-notify.workspace = true

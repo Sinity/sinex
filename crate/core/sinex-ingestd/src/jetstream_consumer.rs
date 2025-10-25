@@ -40,6 +40,7 @@ struct DlqEntry {
 pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
+    #[allow(dead_code)]
     validator: Arc<EventValidator>,
     env: SinexEnvironment,
     stats: ConsumerStats,

@@ -7,7 +7,7 @@
 use async_nats::Client as NatsClient;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use sinex_core::{
     db::{DbPool, DbPoolExt},
@@ -15,7 +15,6 @@ use sinex_core::{
     types::Ulid,
     Id, SourceMaterialRecord,
 };
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -46,6 +45,7 @@ impl Default for RotationPolicy {
 
 /// Material rotation state (salvaged from sensd)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum RotationState {
     Normal {
         material_id: Ulid,
