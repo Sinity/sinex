@@ -11,6 +11,7 @@ pub use sinex_macros::{
     SatelliteProcessor,
 };
 
+pub mod acquisition_manager;
 pub mod annex;
 pub mod checkpoint;
 pub mod cli;
@@ -39,6 +40,9 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
+pub use acquisition_manager::{
+    AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
+};
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
