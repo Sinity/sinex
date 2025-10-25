@@ -74,3 +74,5 @@ Tags (planned)
 - Hierarchical dot-scoped tags (e.g., `project.sinex.docs`, `status.in-progress`, `topic.rust.async`).
 - Polymorphic tagging across events/entities/blobs; unique per (tag, kind, id).
 - Aliases for discoverability and simple UI properties (color/icon) as metadata.
+
+This taxonomy is summarised for quick reference in `docs/misc-including-high-level-overviews-and-plans/_data_models_event_taxonomy_analysis.md`. Keep both artefacts in sync when event schemas evolve.

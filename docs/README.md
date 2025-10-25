@@ -1,32 +1,50 @@
 Sinex Documentation Index
 
-Use this index to locate the current sources of truth. “Historical” and “vision” artifacts are background reading only; organisation, invariants, and operational behaviour must come from the documents below.
+Use this index to locate the current sources of truth. Historical essays and
+exploratory brainstorming live in `docs/historical/` unless they are promoted
+into the curated list below.
 
-Architecture & Design
-- `docs/architecture/Core_Architecture.md` – end-to-end flow, invariants, and data substrate.
-- `docs/architecture/SystemOperations_And_Integrity_Architecture.md` – operating model, observability, recovery.
-- `docs/architecture/security-architecture.md` – current security posture and open work.
-- `docs/architecture/event-taxonomy.md` – canonical event families and payload minima.
-- `docs/way.md` – JetStream ingestion plan (authoritative).
+## Core Architecture
 
-Crate-Level References
-- `crate/lib/sinex-core/doc/overview.md` plus the adjacent deep dives – repositories, error handling, and shared types.
-- `crate/lib/sinex-satellite-sdk/doc/overview.md` – satellite/automaton lifecycle, processor runner, Stage-as-You-Go.
-- `crate/lib/sinex-schema/doc/overview.md` & `crate/lib/sinex-schema/doc/ulid.md` – schema source of truth and ULID integration.
-- `crate/lib/sinex-services/doc/README.md` – service layer APIs (analytics, content, PKM, search).
-- Each crate under `crate/*/*/doc/` owns its specific deep dives; consult those before adding material to `docs/`.
+- `docs/way.md` – JetStream refactor playbook and ingestion canon. Treat this as
+  the authoritative flow until it says otherwise.
+- `docs/architecture/Core_Architecture.md` – end-to-end system shape and data
+  substrate.
+- `docs/architecture/provenance.md` – sensor/ingestor boundaries,
+  Stage-as-you-go execution, and provenance expectations.
+- `docs/security.md` – live security posture, open gaps, and contributor
+  guardrails (pairs with the broader architecture note below).
+- `docs/architecture/security-architecture.md` – threat model and defence
+  layers; update alongside the security posture doc.
 
-Operations & Tooling
-- `nixos/README.md` – NixOS deployment guide.
-- `cli/README.md` & `cli/DESIGN.md` – gateway RPC integration and CLI philosophy.
-- `docs/documentation-guidelines.md` – how to add or relocate documentation.
-- `TESTING.md` and `crate/lib/sinex-test-utils/doc/testing_quality_overview.md` – testing expectations and utilities.
+## Implementation References
 
-Roadmap & Vision
-- Forward-looking plans: `docs/roadmap/`.
-- Speculative/vision work: `docs/vision/`.
-- Historical or exploratory analyses remain under `docs/misc-including-high-level-overviews-and-plans/`.
+- Each crate under `crate/**/doc/` documents its domain (core types, satellite
+  SDK, schema, services, test utils). Prefer crate-local docs for implementation
+  detail before expanding this index.
+- `TESTING.md` and `crate/lib/sinex-test-utils/doc/testing_quality_overview.md`
+  define testing contracts.
+- `docs/documentation-guidelines.md` covers authoring conventions.
 
-Need something else?
-- Prefer crate-local docs when you need implementation detail.
-- If a link is stale or a description diverges from the code, add an inline note and open an issue/PR—the goal is to keep canonical explanations beside the implementation.
+## Vision & Roadmap
+
+- `docs/vision/manifesto.md` – consolidated principles and strategic
+  trajectory (supersedes scattered “vision” documents).
+- `docs/vision/*.md` – individual explorations; heed the operational notes at
+  the top of each file for currency.
+
+## Host / Deployment Notes
+
+Host-specific documentation (NixOS layout, secrets, deployment topology) lives
+in the system configuration repository: `/realm/sinnix/docs/{structure,target,breakthrough}.md`.
+Keep those files authoritative for the `sinnix` host and avoid duplicating them
+here.
+
+## Contributing to Documentation
+
+- Keep canonical explanations beside the implementation when possible (e.g.,
+  crate README for crate-specific behaviour).
+- Update this index whenever a new top-level doc is introduced or a pointer is
+  retired.
+- If you need context that lives in historical archives, port only the
+  verifiable, evergreen portions into the curated docs above.

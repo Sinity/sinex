@@ -5,6 +5,9 @@ Status: canonical
 
 Sinex implements defense-in-depth security with multiple layers of protection for data at rest, in transit, and during processing. While some security features are planned but not implemented, the architecture provides a foundation for comprehensive data protection.
 
+Coordinate changes here with `docs/security.md` (live posture) and
+`docs/way.md` (JetStream pipeline expectations).
+
 ## Current Security Implementation
 
 ### Process Isolation
@@ -16,11 +19,12 @@ Sinex implements defense-in-depth security with multiple layers of protection fo
 - Resource limits via `MemoryMax` and `CPUQuota`
 
 ### Access Control
-✅ **Unix permissions and PostgreSQL roles**:
-- Satellite services run as dedicated `sinex` user
-- Database access via local peer authentication
-- Unix socket permissions for IPC security
-- Separate PostgreSQL roles for different access levels
+⚠️ **Partial – needs hardening**:
+- Systemd units run as the dedicated `sinex` user with local peer auth.
+- All services currently share the same PostgreSQL role; role separation and
+  scoped credentials remain outstanding work.
+- Unix socket permissions protect local IPC, but there is no authn/z layer for
+  RPC or JetStream subjects yet.
 
 ### Input Validation
 ✅ **Multi-layer validation**:
@@ -66,9 +70,11 @@ Current approach may be sufficient as:
 ### Trust Boundaries
 1. **User ↔ System**: Full trust (single-user system)
 2. **Satellites ↔ ingestd**: Unix socket permissions
-3. **ingestd ↔ Database**: PostgreSQL role separation
+3. **ingestd ↔ Database**: currently a single PostgreSQL role (risk; see
+   implementation priorities)
 4. **Automata ↔ NATS JetStream**: Durable consumer isolation
-5. **External APIs**: API keys from environment
+5. **External APIs**: API keys from environment (rotate via agenix once
+   integrated)
 
 ### Data Classification
 1. **Public**: System metrics, non-sensitive events
@@ -182,3 +188,5 @@ Threat modeling is documented internally and will be consolidated into this docu
   
 Note: Threat modeling is tracked in internal docs and tickets; consolidate into this document in future iterations.
 - Original Vision Document security requirements
+
+For an up-to-date checklist of implemented controls and open gaps, see [Security & Privacy Posture](../security.md).

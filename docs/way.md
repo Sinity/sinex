@@ -151,16 +151,105 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ## 5. Testing & Verification
 
-- Unit tests for new SDK primitives (`sinex-satellite-sdk/tests/...`).
-- ingestd integration tests: fixture publishes slices/events → ingestd archives → confirmation seen.
-- VM tests updated to start NATS and verify event flow via JetStream.
-- Property tests for idempotent replays, slice replays after ingestd restarts, DLQ handling, lease failover.
-- Observability checks: stream lag metrics, ack wait, Stage-as-You-Go rotation stats.
-- Acceptance criteria before deleting sensd/gRPC:
-  - ingestd archives from JetStream and survives restart (materials + events).
-  - Satellites publish exclusively via JetStream, with replay/regression coverage.
-  - Automata consume confirmed streams via `StreamProcessorRunner`.
-  - DLQ coverage: injected unrecoverable error arrives in `events.dlq`.
+### Testing Strategy
+
+Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
+- 64-slot database pool for parallel execution
+- `EphemeralNats` harness for JetStream testing
+- `#[sinex_test]` macro with 30s timeout
+- `TestContext` fixtures with automatic cleanup
+- proptest for property-based testing
+
+### Critical Test Gaps (from analysis in `docs/testing-gap-analysis.md`)
+
+**Phase 1 Blockers:**
+- Events consumer loop (ingestd → JetStream → DB)
+- NatsPublisher SDK integration
+- Confirmation flow end-to-end
+- DLQ routing on validation failure
+- Idempotency via Nats-Msg-Id headers
+
+**Phase 2 Blockers:**
+- StreamProcessorRunner confirmation buffering
+- Automaton consumption from JetStream
+- DLQ manual retry mechanism
+
+**Phase 3 Blockers:**
+- MaterialAssembler state management (out-of-order slices)
+- AcquisitionManager hash verification
+- Restart resilience (rebuild state from stream)
+- git-annex integration
+
+**Phase 4 Blockers:**
+- Leader election and failover
+- NATS KV lease management
+
+### Test Organization
+
+**Unit tests:** Per-component in `crate/*/tests/`
+- ingestd: consumer loop, batch insert, schema validation
+- SDK: NatsPublisher, AcquisitionManager, StreamProcessorRunner
+- Satellites: event emission, material capture
+
+**Integration tests:** Cross-component flows in `tests/integration/`
+- Publish → ingestd → DB → confirmation
+- Material slices → assembler → annex → ledger
+- Automaton: event subscription → processing → synthesis
+
+**Property tests:** Invariants using proptest
+- Idempotency: N publishes → 1 DB row
+- Hash integrity: hash(slices) == hash(material)
+- Ledger continuity: offset_end[i] == offset_start[i+1]
+- Provenance XOR: exactly one of {material_id, source_event_ids}
+- Ordering: events processed by (ts_orig, id)
+
+**VM tests:** Full system in `tests/e2e/nixos-vm/`
+- jetstream-e2e.nix: satellite → NATS → ingestd → DB → confirmation
+- Validates NixOS deployment config
+- Runs nightly (too slow for every commit)
+
+**Performance benchmarks:** In `crate/*/benches/`
+- Throughput: ≥5K events/sec sustained
+- Latency: P95 <100ms for batch insert
+- Memory: <500MB for 100K events
+
+### Acceptance Criteria Per Phase
+
+**Phase 1:** Events backbone functional
+- [ ] Consumer pulls from events.raw, persists to DB, publishes confirmation
+- [ ] NatsPublisher in SDK, one satellite migrated (fs-watcher)
+- [ ] E2E test: publish → persist → confirm <5s
+- [ ] Property test: idempotency verified
+- [ ] Coverage: ≥85% for consumer code
+
+**Phase 2:** Confirmation-aware consumption
+- [ ] StreamProcessorRunner buffers until confirmation
+- [ ] DLQ infrastructure routes errors
+- [ ] Property test: ordering preserved
+- [ ] Coverage: ≥80%
+
+**Phase 3:** Source material slices
+- [ ] AcquisitionManager: begin/append/finalize
+- [ ] MaterialAssembler: out-of-order slices, hash verification
+- [ ] Restart test: ingestd recovers in-flight materials
+- [ ] Property tests: hash invariance, ledger continuity
+- [ ] Coverage: ≥85%
+
+**Phase 4:** Coordination & control
+- [ ] Leader election among 3 instances
+- [ ] Failover <30s on crash
+- [ ] NATS KV buckets functional
+
+**Phase 5:** Cleanup
+- [ ] sensd removed
+- [ ] All existing tests still pass (regression)
+- [ ] Coverage: ≥90%
+
+### References
+
+- **Test patterns:** `docs/TEST_PATTERNS.md` - reusable fixtures, assertions, best practices
+- **Gap analysis:** `docs/testing-gap-analysis.md` - detailed scenarios for each gap
+- **Coverage report:** `docs/TEST_INFRASTRUCTURE_ANALYSIS.md` - current state, 176 files, 60K LOC
 
 ---
 

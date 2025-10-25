@@ -24,6 +24,7 @@ pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod lifecycle;
+pub mod nats_publisher;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
@@ -49,6 +50,7 @@ pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
+pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use replay::ReplayMode;
 pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
