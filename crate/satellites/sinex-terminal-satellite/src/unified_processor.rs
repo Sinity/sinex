@@ -28,7 +28,50 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
-use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
+// Sensd integration removed - temporary stubs for compilation
+// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SensdIntegrationConfig {
+    // Stub config for sensd functionality to be migrated
+}
+
+pub struct SensdTerminalProcessor {
+    // Stub processor for sensd functionality to be migrated
+}
+
+impl SensdTerminalProcessor {
+    pub async fn new(
+        _config: SensdIntegrationConfig,
+        _sender: mpsc::Sender<sinex_core::db::models::Event<sinex_core::JsonValue>>,
+    ) -> color_eyre::eyre::Result<Self> {
+        Ok(Self {})
+    }
+
+    pub async fn monitor_jobs(&self) -> color_eyre::eyre::Result<()> {
+        // Stub method for sensd functionality to be migrated
+        Ok(())
+    }
+
+    pub async fn submit_atuin_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
+        // Stub method for sensd functionality to be migrated
+        Ok(())
+    }
+
+    pub async fn submit_history_file_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
+        // Stub method for sensd functionality to be migrated
+        Ok(())
+    }
+
+    pub async fn submit_recording_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
+        // Stub method for sensd functionality to be migrated
+        Ok(())
+    }
+
+    pub async fn submit_kitty_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
+        // Stub method for sensd functionality to be migrated
+        Ok(())
+    }
+}
 
 // Test module removed or relocated; keep core tests within this file
 

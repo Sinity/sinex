@@ -5,7 +5,7 @@
 //! Document ingestor that consumes `MaterialSliceStream` from sensd.
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
@@ -65,12 +65,16 @@ impl Default for DocumentIngestorConfig {
 
 // TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
 // MaterialSlice was removed with sensd - temporary stub for compilation
+
 #[derive(Debug, Clone)]
 pub struct MaterialSlice {
-    pub offset: u64,
-    pub length: u64,
-    pub hash: String,
+    pub material_id: sinex_core::types::Ulid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+    pub ts_capture_start: DateTime<Utc>,
+    pub ts_capture_end: DateTime<Utc>,
     pub data: Vec<u8>,
+    pub metadata: JsonValue,
 }
 
 /// Document processor that consumes MaterialSliceStream from sensd

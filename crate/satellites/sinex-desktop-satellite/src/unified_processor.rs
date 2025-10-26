@@ -207,6 +207,11 @@ impl DesktopProcessor {
 
         if self.context.is_some() {
             if let Some(ref db_pool) = self.db_pool {
+                // TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
+                // Sensd job submission removed - desktop monitoring needs to be migrated
+                // to use AcquisitionManager for material capture
+
+                /* REMOVED - sensd integration
                 // Create sensd job submitter
                 let submitter = crate::sensd_job_submitter::DesktopSensdSubmitter::new(
                     db_pool.clone(),
@@ -241,6 +246,7 @@ impl DesktopProcessor {
                         .await
                         .map_err(|e| SatelliteError::Processing(e.to_string()))?;
                 }
+                */
 
                 // Store monitoring started event as source material
                 let monitoring_data = serde_json::json!({

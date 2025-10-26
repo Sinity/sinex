@@ -1,36 +1,54 @@
 # JetStream Migration Status
 
 ## Completed
-✅ Test compilation errors fixed (131/136 tests passing)
+
+### Phase 1 - Events Backbone (DONE)
+✅ JetStream consumer: pulls from events.raw.*, persists to DB
+✅ Confirmation publishing: events.confirmations.* after DB commit
+✅ UNNEST batch insert optimization (≥5K events/sec target)
+✅ DLQ routing for validation failures
+✅ Stream bootstrap (events_raw, events_confirmations, events_dlq)
 ✅ EventTransport abstraction (Grpc + Nats variants)
-✅ StreamProcessorContext updated for EventTransport
-✅ ProcessorCli --nats-url flag added
-✅ NixOS satellite configuration updated for NATS
-✅ NatsPublisher awaits JetStream PublishAck (double-await pattern)
-✅ All satellites configured to use --nats-url by default
+✅ NatsPublisher with double-await pattern
+✅ --nats-url CLI flag across all satellites
+✅ NixOS satellite configuration uses NATS by default
 
-## Critical Issues Found
+### Phase 3 - Source Material Slices (DONE)
+✅ MaterialAssembler fully implemented and integrated into ingestd
+✅ Three separate consumers (begin, slices, end)
+✅ Out-of-order slice handling with buffering
+✅ Hash verification
+✅ Temp file management and git-annex integration
 
-### 1. Confirmation Architecture NOT Implemented
-The current implementation only waits for JetStream PublishAck (publish confirmation),
-but does NOT implement the post-commit confirmation flow from docs/way.md:
+### Phase 5 - Cleanup (IN PROGRESS)
+✅ sensd crate deleted (crate/core/sinex-sensd)
+✅ sensd removed from workspace Cargo.toml
+✅ sensd integration modules deleted from satellites
+⚠️ Satellites need MaterialSlice migration to AcquisitionManager
+   - fs-watcher, document-ingestor, desktop, terminal have stub MaterialSlice types
+   - Full migration to AcquisitionManager needed (Phase 6 work)
 
-**Required Flow:**
-```
-Satellite → events.raw.* → ingestd consumer → Postgres (commit) → 
-events.confirmations.<event_id> → Automata/consumers
-```
+## Remaining Work
 
-**What's Missing:**
-- ingestd events consumer does NOT publish to events.confirmations after DB commit
-- StreamProcessorRunner does NOT buffer provisional events awaiting confirmation
-- No confirmation stream configured in JetStream bootstrap
+### Phase 2 - Confirmation-Aware Consumption (OPTIONAL - For JetStream-consuming automata)
+❌ StreamProcessorRunner confirmation buffering - only needed when automata switch from DB polling to JetStream subscription
+❌ Automaton migration to JetStream subscription (currently query DB directly, which still works)
 
-### 2. sensd Removed ✅
-Entire crate deleted, removed from workspace, integration modules removed.
+### Phase 6 - Satellite Material Capture Migration
+❌ Migrate fs-watcher to use AcquisitionManager
+❌ Migrate document-ingestor to use AcquisitionManager
+❌ Migrate terminal-satellite to use AcquisitionManager
+❌ Migrate desktop-satellite to use AcquisitionManager
+❌ Remove MaterialSlice stubs once migration complete
 
-### 3. Integration Tests Missing
-No E2E test for: publish → ingestd persist → confirmation → consumer receives
+### Testing
+❌ Write E2E integration test (satellite → NATS → ingestd → DB → confirmation)
+❌ Write comprehensive events consumer integration tests
+❌ Property tests for idempotency, ordering, hash integrity
+
+### Documentation
+❌ Update way.md to mark completed phases
+❌ Remove remaining sensd references from docs
 
 ## Next Steps (Priority Order)
 
