@@ -37,6 +37,7 @@ pub mod replay_metrics;
 pub mod replay_progress;
 pub mod sensd_client;
 pub mod sensor_guard;
+pub mod sensors;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
@@ -60,6 +61,7 @@ pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use replay::ReplayMode;
 pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
+pub use sensors::{AppendStreamConfig, AppendStreamSensor};
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
