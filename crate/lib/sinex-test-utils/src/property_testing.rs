@@ -602,7 +602,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "Database cleanup issue with operation_id RLS policy - pre-existing issue"]
     #[sinex_test]
     async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
         let _runner = proptest::test_runner::TestRunner::deterministic();

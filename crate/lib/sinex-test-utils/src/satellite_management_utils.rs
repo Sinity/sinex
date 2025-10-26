@@ -270,7 +270,7 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
+    #[ignore = "Infrastructure test: IngestService::new() hangs indefinitely - requires investigation of NATS/ingestd initialization"]
     #[sinex_test]
     async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
@@ -295,7 +295,7 @@ mod tests {
         Ok(())
     }
 
-    #[ignore]
+    #[ignore = "Infrastructure test: IngestService::new() hangs indefinitely - requires investigation of NATS/ingestd initialization"]
     #[sinex_test]
     async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
