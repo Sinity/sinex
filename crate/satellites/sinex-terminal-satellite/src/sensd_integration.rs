@@ -1,7 +1,11 @@
-//! Integration with sensd for terminal data acquisition
+//! **DEPRECATED**: Legacy integration with sensd for terminal data acquisition
 //!
-//! This module refactors the terminal satellite to use sensd's MaterialSliceStream
-//! instead of directly creating events from terminal sources.
+//! This module is deprecated in favor of the JetStream-first architecture where
+//! satellites publish directly to NATS using the `NatsPublisher` and `AcquisitionManager`.
+//!
+//! Modern satellites should use the `processor_main!` macro with `--nats-url` flag.
+//!
+//! This code is kept for backward compatibility but will be removed in a future version.
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};

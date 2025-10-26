@@ -43,8 +43,20 @@ impl NatsPublisher {
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
 
-        js.publish_with_headers(subject, headers, serde_json::to_vec(&payload)?.into())
+        // Publish to JetStream and wait for acknowledgment
+        // First await: send the publish request
+        // Second await: wait for PublishAck confirmation from JetStream
+        let ack = js
+            .publish_with_headers(subject, headers, serde_json::to_vec(&payload)?.into())
+            .await?
             .await?;
+
+        tracing::debug!(
+            event_id = %event_id,
+            sequence = ack.sequence,
+            stream = %ack.stream,
+            "Event published to JetStream"
+        );
 
         Ok(())
     }

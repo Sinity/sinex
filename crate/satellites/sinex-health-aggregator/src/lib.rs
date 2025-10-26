@@ -604,7 +604,7 @@ impl StatefulStreamProcessor for HealthAggregator {
 
         // Get database pool and ingest client from context
         self.db_pool = Some(ctx.db_pool.clone());
-        self.ingest_client = Some(ctx.ingest_client.clone());
+        self.ingest_client = Some(ctx.ingest_client()?.clone());
         self.context = Some(ctx);
         self.config = config;
 
