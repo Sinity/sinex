@@ -4260,6 +4260,7 @@ dependencies = [
  "gethostname 0.4.3",
  "humantime-serde",
  "nix 0.28.0",
+ "notify",
  "parking_lot",
  "proptest",
  "prost",

@@ -55,6 +55,7 @@ nix = { version = "0.28", features = ["fs", "resource"] }
 url = "2.5"
 which = "6.0"
 urlencoding = "2.1"
+notify = { workspace = true }
 
 # Local dependencies
 sinex-core = { path = "../sinex-core" }
