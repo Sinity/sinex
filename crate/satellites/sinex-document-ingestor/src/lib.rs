@@ -63,8 +63,15 @@ impl Default for DocumentIngestorConfig {
     }
 }
 
-// Use shared MaterialSlice from sensd crate
-use sinex_sensd::material_stream::MaterialSlice;
+// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
+// MaterialSlice was removed with sensd - temporary stub for compilation
+#[derive(Debug, Clone)]
+pub struct MaterialSlice {
+    pub offset: u64,
+    pub length: u64,
+    pub hash: String,
+    pub data: Vec<u8>,
+}
 
 /// Document processor that consumes MaterialSliceStream from sensd
 pub struct DocumentProcessor {

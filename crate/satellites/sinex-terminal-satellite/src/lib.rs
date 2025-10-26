@@ -5,7 +5,8 @@
 
 //! Terminal satellite that streams command history via the shared processor pattern.
 
-pub mod sensd_integration;
+// Sensd integration - REMOVED (migrating to AcquisitionManager)
+// pub mod sensd_integration;
 pub mod shell_detection;
 
 // New unified processor module

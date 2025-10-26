@@ -26,8 +26,8 @@ events.confirmations.<event_id> → Automata/consumers
 - StreamProcessorRunner does NOT buffer provisional events awaiting confirmation
 - No confirmation stream configured in JetStream bootstrap
 
-### 2. sensd Not Removed
-Code was only marked deprecated, not removed. User explicitly requested full removal.
+### 2. sensd Removed ✅
+Entire crate deleted, removed from workspace, integration modules removed.
 
 ### 3. Integration Tests Missing
 No E2E test for: publish → ingestd persist → confirmation → consumer receives
