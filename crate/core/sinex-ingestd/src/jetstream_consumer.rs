@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_core::{db::DbPool, environment::SinexEnvironment, JsonValue};
+use sqlx::Row;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -305,37 +306,80 @@ impl JetStreamConsumer {
         &self,
         batch: &[(RawEvent, jetstream::Message)],
     ) -> IngestdResult<Vec<String>> {
-        let mut persisted_ids = Vec::new();
-
-        // For now, use individual inserts
-        // TODO: Optimize with UNNEST for bulk insert
-        for (event, _) in batch {
-            let ts_orig: DateTime<Utc> = event
-                .ts_orig
-                .parse()
-                .map_err(|e| SinexError::parse(format!("Invalid timestamp: {}", e)))?;
-
-            let result = sqlx::query(
-                r#"
-                INSERT INTO core.events (id, source, event_type, ts_orig, host, payload)
-                VALUES (CAST($1 AS ULID), $2, $3, $4, $5, $6)
-                ON CONFLICT (id) DO NOTHING
-                RETURNING (id)::text
-                "#,
-            )
-            .bind(&event.id)
-            .bind(&event.source)
-            .bind(&event.event_type)
-            .bind(ts_orig)
-            .bind(&event.host)
-            .bind(&event.payload)
-            .fetch_optional(&self.pool)
-            .await?;
-
-            if result.is_some() {
-                persisted_ids.push(event.id.clone());
-            }
+        if batch.is_empty() {
+            return Ok(Vec::new());
         }
+
+        // Parse timestamps first to fail fast on invalid data
+        let parsed_events: Result<Vec<_>, SinexError> = batch
+            .iter()
+            .map(|(event, _)| {
+                let ts_orig: DateTime<Utc> = event
+                    .ts_orig
+                    .parse()
+                    .map_err(|e| SinexError::parse(format!("Invalid timestamp: {}", e)))?;
+                Ok((event, ts_orig))
+            })
+            .collect();
+        let parsed_events = parsed_events?;
+
+        // Extract arrays for UNNEST
+        let ids: Vec<&str> = parsed_events.iter().map(|(e, _)| e.id.as_str()).collect();
+        let sources: Vec<&str> = parsed_events
+            .iter()
+            .map(|(e, _)| e.source.as_str())
+            .collect();
+        let event_types: Vec<&str> = parsed_events
+            .iter()
+            .map(|(e, _)| e.event_type.as_str())
+            .collect();
+        let ts_origs: Vec<DateTime<Utc>> = parsed_events.iter().map(|(_, ts)| *ts).collect();
+        let hosts: Vec<&str> = parsed_events.iter().map(|(e, _)| e.host.as_str()).collect();
+        let payloads: Vec<&JsonValue> = parsed_events.iter().map(|(e, _)| &e.payload).collect();
+
+        // Bulk insert using UNNEST for optimal performance
+        let rows = sqlx::query(
+            r#"
+            INSERT INTO core.events (id, source, event_type, ts_orig, host, payload)
+            SELECT
+                CAST(id AS ULID),
+                source,
+                event_type,
+                ts_orig,
+                host,
+                payload
+            FROM UNNEST(
+                $1::text[],
+                $2::text[],
+                $3::text[],
+                $4::timestamptz[],
+                $5::text[],
+                $6::jsonb[]
+            ) AS t(id, source, event_type, ts_orig, host, payload)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING (id)::text
+            "#,
+        )
+        .bind(&ids)
+        .bind(&sources)
+        .bind(&event_types)
+        .bind(&ts_origs)
+        .bind(&hosts)
+        .bind(&payloads)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Extract persisted IDs from RETURNING clause
+        let persisted_ids: Vec<String> = rows
+            .into_iter()
+            .map(|row| row.get::<String, _>(0))
+            .collect();
+
+        debug!(
+            batch_size = batch.len(),
+            persisted_count = persisted_ids.len(),
+            "Batch persisted using UNNEST"
+        );
 
         Ok(persisted_ids)
     }
