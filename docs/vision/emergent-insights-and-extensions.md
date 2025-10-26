@@ -1,5 +1,9 @@
 # Emergent Insights and Speculative Extensions for Sinex
 
+> **Operational note (2025-10-23)**  
+> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+
+
 *Generated: 2025-01-23*  
 *Mode: High variance exploration of uncharted possibilities*  
 *Warning: Contains speculative ideas, thought experiments, and creative leaps*

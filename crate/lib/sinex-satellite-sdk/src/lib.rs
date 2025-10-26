@@ -11,6 +11,7 @@ pub use sinex_macros::{
     SatelliteProcessor,
 };
 
+pub mod acquisition_manager;
 pub mod annex;
 pub mod checkpoint;
 pub mod cli;
@@ -23,7 +24,9 @@ pub mod figment_config;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
+pub mod job_manager;
 pub mod lifecycle;
+pub mod nats_publisher;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
@@ -34,10 +37,14 @@ pub mod replay_metrics;
 pub mod replay_progress;
 pub mod sensd_client;
 pub mod sensor_guard;
+pub mod sensors;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
+pub use acquisition_manager::{
+    AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
+};
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
@@ -48,10 +55,16 @@ pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
+pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, SensorType};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
+pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use replay::ReplayMode;
 pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
+pub use sensors::{
+    AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
+    ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,
+};
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,

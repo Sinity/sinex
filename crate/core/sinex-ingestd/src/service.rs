@@ -282,6 +282,22 @@ impl IngestService {
             }
         }
 
+        // Start JetStream consumer task
+        if let Some(ref nats_client) = self.nats_client {
+            if let Some(ref pool) = self.db_pool {
+                self.start_jetstream_consumer_task(nats_client.clone(), pool.clone())
+                    .await;
+            }
+        }
+
+        // Start MaterialAssembler task
+        if let Some(ref nats_client) = self.nats_client {
+            if let Some(ref pool) = self.db_pool {
+                self.start_material_assembler_task(nats_client.clone(), pool.clone())
+                    .await;
+            }
+        }
+
         // Stats logging task with panic recovery
         let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -427,6 +443,58 @@ impl IngestService {
                         }
                         break;
                     }
+                }
+            }
+        });
+    }
+
+    /// Start the JetStream consumer task
+    async fn start_jetstream_consumer_task(&self, nats_client: NatsClient, pool: PgPool) {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let validator = self.validator.clone();
+
+        tokio::spawn(async move {
+            let consumer = crate::JetStreamConsumer::new(
+                nats_client,
+                pool.clone(),
+                Arc::new(validator.read().await.clone()),
+            );
+
+            tokio::select! {
+                result = consumer.run() => {
+                    match result {
+                        Ok(()) => info!("JetStream consumer completed"),
+                        Err(e) => error!("JetStream consumer failed: {}", e),
+                    }
+                }
+                _ = shutdown_signal(&shutdown_flag) => {
+                    info!("JetStream consumer shutting down");
+                }
+            }
+        });
+    }
+
+    /// Start the MaterialAssembler task
+    async fn start_material_assembler_task(&self, nats_client: NatsClient, pool: PgPool) {
+        let shutdown_flag = self.shutdown_flag.clone();
+
+        tokio::spawn(async move {
+            // TODO: Make annex_path configurable via IngestdConfig
+            let annex_path = std::env::var("SINEX_ANNEX_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::env::temp_dir().join("sinex-annex"));
+
+            let assembler = crate::MaterialAssembler::new(nats_client, pool, annex_path);
+
+            tokio::select! {
+                result = assembler.run() => {
+                    match result {
+                        Ok(()) => info!("MaterialAssembler completed"),
+                        Err(e) => error!("MaterialAssembler failed: {}", e),
+                    }
+                }
+                _ = shutdown_signal(&shutdown_flag) => {
+                    info!("MaterialAssembler shutting down");
                 }
             }
         });

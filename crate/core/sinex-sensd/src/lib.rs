@@ -3,7 +3,21 @@
 #![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
 #![allow(unexpected_cfgs, unused_imports, unused_variables, dead_code)]
 
-//! Core modules for source material acquisition and temporal ledger management.
+//! **DEPRECATED**: Legacy sensor management daemon
+//!
+//! This crate is deprecated in favor of the JetStream-first architecture where satellites
+//! publish source material and events directly to NATS using `sinex-satellite-sdk`'s
+//! `NatsPublisher` and `AcquisitionManager`.
+//!
+//! Modern deployments should:
+//! - Use satellites with `--nats-url` flag to publish directly to NATS
+//! - Use `sinex-ingestd` as the universal archiver consuming from JetStream
+//! - Avoid gRPC ingestion path which is legacy/fallback only
+//!
+//! This crate is kept for backward compatibility and migration purposes but will be
+//! removed in a future version.
+//!
+//! Core modules for source material acquisition and temporal ledger management (LEGACY).
 
 pub mod config;
 pub mod grpc_server;

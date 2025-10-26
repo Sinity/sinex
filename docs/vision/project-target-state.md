@@ -1,3 +1,7 @@
+> **Status:** Target architecture specification (aligned with `docs/way.md`)
+> **Last Updated:** 2025-10-24
+> This document describes the END-STATE architecture after JetStream migration (way.md Phases 1-5) completes.
+
 
 Invariants Quick Reference (one-page)
 - Single-writer ingest: Satellites → ingestd → Postgres (commit) → publish to NATS (post-commit); no direct satellite writes to DB/bus for canonical events.
@@ -29,7 +33,7 @@ Contents
 12) Inclusion Rule
 13) Appendices
     A) Natural Keys Registry (consolidated)
-    B) sensd material lifecycle and recovery
+    B) Material lifecycle and recovery
     C) Recommended indexes and invariants (readable form)
     D) Processor Contracts (succinct checklists)
     F) Event Families Canon (canonical names and minimal payload fields)
@@ -49,20 +53,20 @@ Core principles:
 
 2) Architecture at a glance
 Roles:
-- Sensing (sensd): acquires Source Material (files, sockets, APIs, DBs), manages rotation, writes temporal ledger.
-- Ingestors: consume slices of Source Material; emit first‑order events with external provenance.
-- Automata: deterministic synthesizers producing higher‑order events from event history.
+- Satellites: capture Source Material using AcquisitionManager (Stage-as-You-Go), publish slices/events directly to NATS JetStream.
+- Ingestd: JetStream consumer that archives materials into git-annex, persists events to Postgres, publishes confirmations.
+- Automata: deterministic synthesizers producing higher‑order events from confirmed event streams.
 - Agents: stochastic processors producing proposals/insights with strict provenance.
 - Gateway + CLI (exo): command/response; replay/archival operations; curation flows; replay planner lives here and is non‑mutating.
 - Explore (TUI/Web): timeline, provenance overlays, replay preview, source explorer, curation queue.
 
 Data plane:
 - Postgres (archive and serving store: core.events, raw.* registries, audit). Timescale/pgvector may be used; not required by doctrine.
-- Speed layer: NATS JetStream (current). Invariant is “post‑commit durable publish”; implementation can change without altering this property.
-- Content‑addressed store for large artifacts (e.g., git‑annex for blobs; git for text where applicable).
+- Speed layer: NATS JetStream. Invariant is "post‑commit durable publish"; implementation can change without altering this property.
+- Content‑addressed store for large artifacts (git‑annex for blobs; git for text where applicable).
 
-Ingest discipline:
-- Satellite → ingestd → Postgres (commit) → publish to NATS → Automata/agents consume. Satellites never write canonical events directly to DB or bus.
+Ingest discipline (JetStream-first):
+- Satellites → NATS JetStream → ingestd consumer → Postgres (commit) → confirmations published to NATS → Automata consume. Satellites publish slices/events directly; ingestd is the single writer to canonical tables.
 - ingestd validation cache (fail‑closed): ingestd maintains an in‑memory cache of active schemas keyed by (source, event_type). Events with unknown/inactive schema or violated provenance XOR are rejected before insert (fail‑closed). Database JSON Schema CHECK/trigger is a safety net; app‑side validation is authoritative. Ingest path remains: validate → batch insert → commit → post‑commit publish to NATS.
 - Gateway request/response durability: Gateway may fast‑path responses to the client for UX, but all api.response.* must be persisted as events via ingestd (post‑commit property preserved). Failures are emitted as explicit error events.
 - Single‑writer enforcement (dev/CI): satellites must not link the canonical bus/DB write client for canonical events; integration tests assert canonical events only appear after DB commit (post‑commit publish).
@@ -93,26 +97,32 @@ Constraints and invariants (readable form):
 Projections:
 - Use replay semantics to reconstruct derived state. Knowledge graph and tags are event‑native and materialized as projections when needed.
 
-4) Sensing (sensd) and stage‑as‑you‑go
+4) Material Acquisition (Stage-as-You-Go)
 Concept:
-- sensd centralizes acquisition. It creates in‑flight Source Material registry rows, writes bytes to canonical storage, updates temporal ledger per slice, rotates/finalizes materials with statuses (sensing → completed|recovered_partial|failed). Zero‑gap invariant: open the next before finalizing current for continuous streams; recovered_partial is used only for crash recovery.
+- Satellites own material acquisition using AcquisitionManager from SDK. Each satellite creates Source Material registry rows, publishes slices to JetStream, computes hashes, and writes temporal ledger entries. Ingestd assembles slices into git-annex and finalizes materials. Zero‑gap invariant: open the next before finalizing current for continuous streams; recovered_partial is used only for crash recovery.
 
-Jobs and state (backing tables contract):
-- raw.sensor_jobs (contract): job_id ULID PK, sensor_type TEXT, target_uri TEXT, source_identifier TEXT, acquisition_mode JSONB, parameters JSONB, owner TEXT, resource_limits JSONB, status TEXT, priority INT, created_at, updated_at.
-- raw.sensor_states (contract): job_id ULID FK, current_position JSONB, last_successful_acquisition TIMESTAMPTZ, error_count INT, throughput JSONB, updated_at TIMESTAMPTZ.
-- These records are the single source of truth for sensing configuration, ownership, and progress metrics. Jobs encode pattern/fetch/cursor; states track last positions and metrics.
+AcquisitionManager API (in satellites):
+- `begin(MaterialKind, source_identifier)`: Creates in-flight registry row, publishes source_material.begin to JetStream, returns SourceMaterialHandle.
+- `handle.append(bytes)`: Publishes slice to source_material.slices.<material_id>, updates ledger, computes incremental hash.
+- `handle.finalize()`: Publishes source_material.end with final hash, closes material.
 
-Pattern catalog (declarative configs stored in raw.sensor_jobs.config):
-- append_stream (logs, sockets, JSONL)
-- batched_pull (API pagination; cursor/ETag)
-- replace_snapshot (CSV/SQLite snapshotting)
-- multi_file and tree_watch (filesystem drops and trees)
-- db_snapshot and db_wal (DB backup API and WAL frames; WAL later with robust tests)
-- rolling_window and changefeed (where the source supports it)
+MaterialAssembler (in ingestd):
+- Subscribes to source_material.* subjects
+- Maintains per-material state (temp file, next offset, slice count)
+- On source_material.end: verifies hash, moves to git-annex, updates registry status (sensing → completed), writes ledger
+- On hash mismatch: routes to events.dlq, marks material as failed
+
+Acquisition patterns (implemented by satellites):
+- append_stream (logs, sockets, JSONL) - continuous streaming
+- batched_pull (API pagination; cursor/ETag) - paginated fetch
+- replace_snapshot (CSV/SQLite snapshotting) - full snapshots
+- tree_watch (filesystem drops and trees) - directory monitoring
+- db_snapshot (DB backup API) - database snapshots
 
 Operational outputs:
 - raw.source_material_registry: identity, status, rotation policy, timing info, host/user, metadata.
 - raw.temporal_ledger: per‑slice capture times and offsets (append‑only).
+- core.blobs: git-annex metadata (hash, size, path).
 
 5) Ingester SDK and unified stream
 Unified stream API:
@@ -219,10 +229,10 @@ A) Natural Keys Registry (consolidated)
 - ld.delta audit: (target_note_id, patch_hash, model_id/version, event_ts_bucket).
 - screen_recording_manual: (host, blob_sha256).
 
-B) sensd material lifecycle and recovery
+B) Material lifecycle and recovery
 - Statuses: sensing → completed | recovered_partial | failed.
-- Zero‑gap invariant for continuous materials: next material staged before finalizing current.
-- Recovery: orphaned in‑flight segments are finalized as recovered_partial; replay can close gaps using historical slices; ledger continuity remains append‑only.
+- Zero‑gap invariant for continuous materials: satellite stages next material before finalizing current.
+- Recovery: ingestd MaterialAssembler rebuilds state from JetStream on restart; orphaned in‑flight segments are finalized as recovered_partial; replay can close gaps using historical slices from JetStream; ledger continuity remains append‑only.
 
 C) Recommended indexes and invariants (readable form)
 - core.events: BTREE(material_id, anchor_byte) WHERE material_id IS NOT NULL.
@@ -234,16 +244,23 @@ C) Recommended indexes and invariants (readable form)
 
 D) Processor Contracts (succinct checklists)
 
-sensd (Sensing)
-- [ ] Create in‑flight Source Material registry row before emission by dependents
-- [ ] Append bytes to canonical storage; compute offsets deterministically
-- [ ] Write temporal ledger per slice (ts_capture, precision, source_type, confidence? for inferred); append‑only
+Satellite (Material Acquisition via AcquisitionManager)
+- [ ] Use AcquisitionManager to begin material (creates registry row, publishes source_material.begin)
+- [ ] Publish slices to source_material.slices.<material_id> with headers (Nats-Msg-Id, Slice-Index, Offset, Chunk-Hash)
+- [ ] Write temporal ledger entries for each slice (ts_capture, precision, source_type); append‑only
 - [ ] Enforce zero‑gap for continuous materials (stage next before finalize current)
-- [ ] Retry/backoff: maintain exponential backoff parameters and max_retries in sensor state; mark job failed after exhaustion and emit sensor.error/backoff_exhausted events
-- [ ] Rotate/finalize with statuses: sensing → completed | recovered_partial | failed
-- [ ] Emit diagnostics for backpressure/gaps; recovery finalization for orphaned segments
+- [ ] Finalize with source_material.end (includes final hash, total slices, total bytes)
+- [ ] Emit diagnostics for acquisition errors, backpressure
 
-Ingestor
+Ingestd (MaterialAssembler)
+- [ ] Subscribe to source_material.* subjects with durable consumer
+- [ ] Maintain per-material state (temp file, offset tracking, slice count)
+- [ ] Assemble slices in order (handle out-of-order delivery)
+- [ ] On source_material.end: verify hash, move to git-annex, update registry (status=completed), write final ledger entries
+- [ ] On hash mismatch: route to events.dlq, mark material failed
+- [ ] Rebuild assembler state from JetStream on restart
+
+Ingestor (Event Processing)
 - [ ] Consume MaterialSliceStream; deterministic slicing; anchor rule id/version recorded (processor_manifests)
 - [ ] Compute ts_orig from ledger/intrinsic; set time_quality
 - [ ] Populate external provenance (material_id, offset_kind, offsets, anchor_byte)

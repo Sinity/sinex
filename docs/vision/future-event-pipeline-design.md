@@ -1,5 +1,9 @@
 # Future Event Pipeline Design
 
+> **Operational note (2025-10-23)**  
+> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+
+
 *Created: 2025-01-21*
 
 This document preserves the valuable concepts from the pipeline.rs implementation and outlines how a future event processing pipeline could enhance Sinex after the core provenance infrastructure is complete.

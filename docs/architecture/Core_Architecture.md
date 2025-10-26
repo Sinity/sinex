@@ -38,3 +38,5 @@ Schema & Taxonomy
 Implementation Guides
 - Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/doc/overview.md`
 - Gateway/CLI: see repository README and `./cli/exo.py`
+
+See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

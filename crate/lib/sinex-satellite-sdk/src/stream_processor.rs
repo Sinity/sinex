@@ -363,8 +363,8 @@ pub struct StreamProcessorContext {
     /// Database connection pool
     pub db_pool: PgPool,
 
-    /// Ingest client for sending events
-    pub ingest_client: IngestClient,
+    /// Event transport mechanism (gRPC or NATS)
+    pub transport: crate::event_processor::EventTransport,
 
     /// Checkpoint manager for state persistence
     pub checkpoint_manager: CheckpointManager,
@@ -416,6 +416,20 @@ impl StreamProcessorContext {
             .map_err(|_| SatelliteError::General(eyre!("Event channel closed")));
 
         result
+    }
+
+    /// Get the IngestClient from the transport (for backward compatibility)
+    ///
+    /// Returns the IngestClient if using gRPC transport, otherwise returns an error.
+    /// This method is provided for backward compatibility with satellites that haven't
+    /// been migrated to use the EventTransport abstraction directly.
+    pub fn ingest_client(&self) -> SatelliteResult<&IngestClient> {
+        match &self.transport {
+            crate::event_processor::EventTransport::Grpc(client) => Ok(client),
+            crate::event_processor::EventTransport::Nats(_) => Err(SatelliteError::Processing(
+                "IngestClient not available when using NATS transport".to_string(),
+            )),
+        }
     }
 
     /// Send multiple events through the event channel
@@ -766,6 +780,9 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
+        // Create event transport (default to gRPC)
+        let transport = EventTransport::Grpc(ingest_client);
+
         // Create context with empty legacy config
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
@@ -773,7 +790,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             work_dir,
             dry_run,
             db_pool,
-            ingest_client: ingest_client.clone(),
+            transport: transport.clone(),
             checkpoint_manager,
             config: HashMap::new(), // Empty legacy config
             event_sender,
@@ -781,9 +798,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Initialize the processor with typed config
         self.processor.initialize(context, config).await?;
-
-        // Create event transport (default to gRPC)
-        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -815,6 +829,21 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
+        let transport = EventTransport::Grpc(ingest_client);
+        self.initialize_with_transport(service_name, config, db_pool, transport, work_dir, dry_run)
+            .await
+    }
+
+    /// Initialize the processor with a specific transport (gRPC or NATS)
+    pub async fn initialize_with_transport(
+        &mut self,
+        service_name: String,
+        config: HashMap<String, serde_json::Value>,
+        db_pool: PgPool,
+        transport: EventTransport,
+        work_dir: std::path::PathBuf,
+        dry_run: bool,
+    ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
@@ -836,6 +865,12 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
+        // Determine transport type for logging
+        let transport_type = match &transport {
+            EventTransport::Grpc(_) => "gRPC",
+            EventTransport::Nats(_) => "NATS",
+        };
+
         // Create context
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
@@ -843,7 +878,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             work_dir,
             dry_run,
             db_pool,
-            ingest_client: ingest_client.clone(),
+            transport: transport.clone(),
             checkpoint_manager,
             config,
             event_sender,
@@ -851,9 +886,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Initialize the processor with legacy config conversion
         self.processor.initialize_legacy(context).await?;
-
-        // Create event transport (default to gRPC)
-        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -868,7 +900,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             service = %service_name,
             processor = %self.processor.processor_name(),
             processor_type = ?self.processor.processor_type(),
-            transport = "gRPC",
+            transport = transport_type,
             "Stream processor initialized"
         );
 
@@ -906,10 +938,12 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create dummy ingest client (not used with NATS)
-        let ingest_client = IngestClient::new("/dev/null").await.map_err(|e| {
-            SatelliteError::Configuration(format!("Failed to create dummy ingest client: {}", e))
-        })?;
+        // Create ingest client for gRPC transport
+        let ingest_client = IngestClient::new(&socket_path)
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
+
+        let transport = EventTransport::Grpc(ingest_client);
 
         // Create context with empty legacy config
         let context = StreamProcessorContext {
@@ -918,7 +952,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             work_dir,
             dry_run,
             db_pool,
-            ingest_client,
+            transport: transport.clone(),
             checkpoint_manager,
             config: HashMap::new(), // Empty legacy config
             event_sender,
@@ -926,13 +960,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Initialize the processor with typed config
         self.processor.initialize(context, config).await?;
-
-        // Create ingest client for gRPC transport
-        let ingest_client = IngestClient::new(&socket_path)
-            .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
-
-        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -986,10 +1013,12 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Create dummy ingest client (not used with NATS)
-        let ingest_client = IngestClient::new("/dev/null").await.map_err(|e| {
-            SatelliteError::Configuration(format!("Failed to create dummy ingest client: {}", e))
-        })?;
+        // Create ingest client for gRPC transport
+        let ingest_client = IngestClient::new(&socket_path)
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
+
+        let transport = EventTransport::Grpc(ingest_client);
 
         // Create context
         let context = StreamProcessorContext {
@@ -998,7 +1027,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             work_dir,
             dry_run,
             db_pool,
-            ingest_client,
+            transport: transport.clone(),
             checkpoint_manager,
             config,
             event_sender,
@@ -1006,13 +1035,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Initialize the processor with legacy config conversion
         self.processor.initialize_legacy(context).await?;
-
-        // Create ingest client for gRPC transport
-        let ingest_client = IngestClient::new(&socket_path)
-            .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
-
-        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();

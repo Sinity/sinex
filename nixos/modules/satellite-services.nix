@@ -162,12 +162,11 @@ let
                 after = lib.unique ([ "nats.service" ] ++ ingestDependencies ++ (sourceConfig.after or []));
                 requires = lib.unique ([ "nats.service" ] ++ ingestDependencies ++ (sourceConfig.requires or []));
                 wants = (sourceConfig.wants or []) ++ ingestDependencies;
-                execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service" + 
+                execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --nats-url ${cfg.satellite.nats.servers} --verbose 1 service" +
                   (if combinedExtraArgs != "" then " ${combinedExtraArgs}" else "");
                 environment = [
                   "RUST_LOG=${cfg.satellite.logLevel}"
                   "DATABASE_URL=${cfg.satellite.database.url}"
-                  "SINEX_NATS_SERVERS=${cfg.satellite.nats.servers}"
                 ] ++ sourceConfig.environment;
                 memoryLimit = sourceConfig.memoryLimit;
                 serviceConfigOverrides = sourceConfig.serviceConfigOverrides or {};
@@ -187,10 +186,9 @@ let
             description = "${automatonConfig.description} Automaton";
             after = [ "postgresql.service" "nats.service" ];
             requires = [ "postgresql.service" "nats.service" ];
-            execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service";
+            execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --nats-url ${cfg.satellite.nats.servers} --verbose 1 service";
             environment = [
               "DATABASE_URL=${cfg.satellite.database.url}"
-              "SINEX_NATS_SERVERS=${cfg.satellite.nats.servers}"
               "RUST_LOG=${cfg.satellite.logLevel}"
             ] ++ automatonConfig.environment;
             memoryLimit = automatonConfig.memoryLimit;
