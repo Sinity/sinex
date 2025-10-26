@@ -1,15 +1,4 @@
 //! Example of using the modern test infrastructure with rstest, insta, and tracing-test
-//!
-//! NOTE: These tests are currently disabled because they depend on snapshot testing methods
-//! (snapshot_event, snapshot, SnapshotTestHelper) that are not yet implemented in TestContext.
-//! The examples are preserved here as documentation for future implementation.
-
-// TODO: Implement snapshot testing methods in TestContext:
-// - ctx.snapshot_event(&event, name)
-// - ctx.snapshot(&value, name)
-// - SnapshotTestHelper::new()
-//
-// Once implemented, enable the "snapshot-testing" feature to uncomment these tests.
 
 #![allow(dead_code, unused_imports)]
 
@@ -19,8 +8,6 @@ use rstest::*;
 use sinex_test_utils::prelude::*;
 use tracing_test::traced_test;
 
-// All tests below are disabled until snapshot testing infrastructure is implemented
-#[cfg(feature = "snapshot-testing")]
 mod snapshot_tests {
     use super::*;
 
@@ -233,4 +220,4 @@ mod snapshot_tests {
             }
         }
     }
-} // End of snapshot_tests module (disabled until snapshot infrastructure is implemented)
+}

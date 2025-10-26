@@ -1639,6 +1639,15 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
             });
 
         // Clean up any test data that might have snuck in
+        // Set operation_id for RLS policies
+        if let Err(e) =
+            sqlx::query("SELECT set_config('sinex.operation_id', 'template-setup', false)")
+                .execute(pool)
+                .await
+        {
+            eprintln!("⚠️  Could not set operation_id: {e}");
+        }
+
         sqlx::query("DELETE FROM core.events WHERE source LIKE 'test_%'")
             .execute(pool)
             .await
@@ -1646,6 +1655,9 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
                 eprintln!("⚠️  Could not clean test data");
                 Default::default()
             });
+
+        // Reset operation_id
+        let _ = sqlx::query("RESET sinex.operation_id").execute(pool).await;
 
         // Relax strict FKs that make synthetic test IDs cumbersome
         let _ = sqlx::query(

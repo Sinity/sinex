@@ -1,3 +1,22 @@
+# Obsolete Code Removal - COMPLETED
+
+**Status**: All items below have been completed or are no longer relevant.
+
+## Completed Actions (2025-10-26)
+
+### Disabled Test Files - REMOVED
+- ✅ `tests/modern_test_example.rs.disabled` - Deleted (obsolete)
+- ✅ `tests/streamlined_api_demo.rs.disabled` - Deleted (obsolete)
+
+### Test Infrastructure - IMPLEMENTED
+- ✅ Snapshot testing fully implemented via insta integration
+- ✅ RLS policy / operation_id issues resolved
+- ✅ TestContext enhanced with ensure_clean() and with_operation_id()
+
+---
+
+# Original Notes (Historical)
+
 # Obsolete Code to Remove
 
 ## Files to Delete Entirely

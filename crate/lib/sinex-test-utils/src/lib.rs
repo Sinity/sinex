@@ -36,6 +36,7 @@ mod path_validation;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
+pub mod snapshot_helper;
 mod test_context;
 #[macro_use]
 mod test_macros;
@@ -139,6 +140,9 @@ pub mod prelude {
     pub use crate::path_validation::{
         create_test_temp_dir, create_test_temp_file, remove_test_dir, validate_test_path,
     };
+
+    // Snapshot testing utilities
+    pub use crate::snapshot_helper::SnapshotTestHelper;
 
     // JSON handling - essential for tests
     pub use serde_json::{json, Value};

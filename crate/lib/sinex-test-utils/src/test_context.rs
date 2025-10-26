@@ -282,6 +282,21 @@ impl TestContext {
             .map_err(|e| color_eyre::eyre::eyre!(e))
     }
 
+    /// Ensure database is in clean state before starting test
+    ///
+    /// This verifies that the database is empty and ready for use.
+    /// If not clean, attempts cleanup and verification.
+    pub async fn ensure_clean(&self) -> Result<()> {
+        match crate::db_common::verify_clean_state(&self.pool).await {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                self.force_cleanup().await?;
+                crate::db_common::verify_clean_state(&self.pool).await?;
+                Ok(())
+            }
+        }
+    }
+
     /// Create and insert a test event
     pub async fn create_test_event<S, T>(
         &self,
@@ -495,6 +510,43 @@ impl TestContext {
             color_eyre::eyre::bail!("{}: {:?} != {:?}", msg, left, right);
         }
         Ok(())
+    }
+
+    /// Create a snapshot of a value using insta
+    pub fn snapshot<T: serde::Serialize>(&self, value: &T, name: Option<&str>) {
+        let mut settings = insta::Settings::clone_current();
+        settings.set_snapshot_path("../snapshots");
+        settings.set_prepend_module_to_snapshot(false);
+
+        if let Some(name) = name {
+            settings.bind(|| {
+                insta::assert_json_snapshot!(name, value);
+            });
+        } else {
+            settings.bind(|| {
+                insta::assert_json_snapshot!(value);
+            });
+        }
+    }
+
+    /// Create a snapshot of an event with automatic redactions
+    pub fn snapshot_event(&self, event: &Event<JsonValue>, name: Option<&str>) {
+        let mut settings = insta::Settings::clone_current();
+        settings.set_snapshot_path("../snapshots");
+        settings.add_redaction(".id", "[event-id]");
+        settings.add_redaction(".ts_ingest", "[timestamp]");
+        settings.add_redaction(".ts_orig", "[timestamp]");
+        settings.add_redaction(".host", "[hostname]");
+
+        if let Some(name) = name {
+            settings.bind(|| {
+                insta::assert_json_snapshot!(name, event);
+            });
+        } else {
+            settings.bind(|| {
+                insta::assert_json_snapshot!(event);
+            });
+        }
     }
 }
 
