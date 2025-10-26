@@ -61,7 +61,10 @@ pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use replay::ReplayMode;
 pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
-pub use sensors::{AppendStreamConfig, AppendStreamSensor, TreeWatchConfig, TreeWatchSensor};
+pub use sensors::{
+    AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
+    ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,
+};
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
