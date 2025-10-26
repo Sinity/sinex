@@ -172,14 +172,15 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::network(format!("Failed to create begin stream: {}", e)))?;
 
-        // source_material.slices stream (large, short retention)
+        // source_material.slices stream - operational buffer for material assembly
+        // 7 days retention to allow for delayed assembly and replay
         self.js
             .get_or_create_stream(jetstream::stream::Config {
                 name: self.env.nats_subject("source_material_slices"),
                 subjects: vec![self.env.nats_subject("source_material.slices.>")],
                 storage: jetstream::stream::StorageType::File,
-                max_age: tokio::time::Duration::from_secs(24 * 60 * 60), // 1 day
-                max_message_size: 512 * 1024,                            // 512KB max slice size
+                max_age: tokio::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days (operational buffer)
+                max_message_size: 512 * 1024,                                // 512KB max slice size
                 ..Default::default()
             })
             .await

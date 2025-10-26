@@ -84,7 +84,8 @@ impl JetStreamConsumer {
     async fn bootstrap_streams(&self) -> IngestdResult<()> {
         info!("Bootstrapping JetStream streams");
 
-        // Events stream
+        // Events stream - durable event log for automata replay
+        // 90 days retention to support full operational history replay
         let events_stream = self.env.nats_subject("events_raw");
         self.js
             .get_or_create_stream(jetstream::stream::Config {
@@ -92,14 +93,15 @@ impl JetStreamConsumer {
                 subjects: vec![self.env.nats_subject("events.raw.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
-                max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
+                max_age: Duration::from_secs(90 * 24 * 60 * 60), // 90 days (operational history)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
             .await
             .map_err(|e| SinexError::network(format!("Failed to create events stream: {}", e)))?;
 
-        // Confirmations stream with compaction
+        // Confirmations stream with compaction - only keep latest per event
+        // Short retention since confirmations are ephemeral operational state
         let confirmations_stream = self.env.nats_subject("events_confirmations");
         self.js
             .get_or_create_stream(jetstream::stream::Config {
@@ -107,7 +109,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.env.nats_subject("events.confirmations.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
-                max_age: Duration::from_secs(24 * 60 * 60), // 1 day
+                max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days (operational buffer)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
