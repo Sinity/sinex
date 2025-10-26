@@ -270,8 +270,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
     #[ignore]
+    #[sinex_test]
     async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
 
@@ -295,8 +295,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
     #[ignore]
+    #[sinex_test]
     async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
 
