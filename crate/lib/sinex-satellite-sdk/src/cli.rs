@@ -25,6 +25,10 @@ pub struct ProcessorCli {
     #[arg(long, default_value = "/tmp/sinex-ingestd.sock", value_parser = validate_socket_path)]
     pub ingest_socket_path: SanitizedPath,
 
+    /// NATS server URL (if specified, uses direct NATS instead of gRPC)
+    #[arg(long, env = "NATS_URL")]
+    pub nats_url: Option<String>,
+
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
@@ -513,21 +517,39 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Always use gRPC to enforce single-writer principle through ingestd
-                info!("Using gRPC for event publishing");
+                // Determine transport based on configuration
+                let transport = if let Some(nats_url) = args.nats_url {
+                    info!(nats_url = %nats_url, "Using NATS for event publishing");
 
-                // Create ingest client
-                let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
-                    .await
-                    .context("Failed to create ingest client")?;
+                    // Connect to NATS
+                    let nats_client = async_nats::connect(&nats_url)
+                        .await
+                        .context("Failed to connect to NATS")?;
 
-                // Initialize runner
+                    // Create NATS publisher
+                    let nats_publisher = crate::nats_publisher::NatsPublisher::new(nats_client);
+
+                    crate::event_processor::EventTransport::Nats(std::sync::Arc::new(
+                        nats_publisher,
+                    ))
+                } else {
+                    info!("Using gRPC for event publishing");
+
+                    // Create ingest client
+                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
+                        .await
+                        .context("Failed to create ingest client")?;
+
+                    crate::event_processor::EventTransport::Grpc(ingest_client)
+                };
+
+                // Initialize runner with transport
                 runner
-                    .initialize(
+                    .initialize_with_transport(
                         service_name.clone(),
                         processor_config,
                         db_pool.clone(),
-                        ingest_client,
+                        transport,
                         std::path::PathBuf::from(work_dir.as_str()),
                         dry_run,
                     )
@@ -629,20 +651,38 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Initialize runner with gRPC by default (always for dry runs, optional NATS bypass)
-                info!("Using gRPC for event publishing");
+                // Determine transport based on configuration
+                let transport = if let Some(nats_url) = args.nats_url {
+                    info!(nats_url = %nats_url, "Using NATS for event publishing");
 
-                let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
-                    .await
-                    .context("Failed to create ingest client")?;
+                    // Connect to NATS
+                    let nats_client = async_nats::connect(&nats_url)
+                        .await
+                        .context("Failed to connect to NATS")?;
 
-                // Initialize runner
+                    // Create NATS publisher
+                    let nats_publisher = crate::nats_publisher::NatsPublisher::new(nats_client);
+
+                    crate::event_processor::EventTransport::Nats(std::sync::Arc::new(
+                        nats_publisher,
+                    ))
+                } else {
+                    info!("Using gRPC for event publishing");
+
+                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
+                        .await
+                        .context("Failed to create ingest client")?;
+
+                    crate::event_processor::EventTransport::Grpc(ingest_client)
+                };
+
+                // Initialize runner with transport
                 runner
-                    .initialize(
+                    .initialize_with_transport(
                         service_name,
                         processor_config,
                         db_pool,
-                        ingest_client,
+                        transport,
                         std::path::PathBuf::from(work_dir.as_str()),
                         dry_run,
                     )

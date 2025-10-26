@@ -517,7 +517,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
         let (event_sender, mut event_receiver) = mpsc::channel(1000);
 
         // Clone ingest_client before storing context
-        let ingest_client = ctx.ingest_client.clone();
+        let ingest_client = ctx.ingest_client()?.clone();
 
         // Store configuration and resources
         self.config = config;

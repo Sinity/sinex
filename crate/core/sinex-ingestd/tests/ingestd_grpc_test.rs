@@ -619,7 +619,7 @@ async fn test_grpc_database_integration(ctx: TestContext) -> Result<()> {
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event.id.unwrap())
+            .get_by_id(event.id.as_ref().unwrap().clone())
             .await?
             .expect("Event should exist in database");
 

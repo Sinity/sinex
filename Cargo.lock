@@ -4171,6 +4171,7 @@ version = "0.4.2"
 dependencies = [
  "ahash",
  "async-nats",
+ "blake3",
  "bon",
  "camino",
  "chrono",
@@ -4245,6 +4246,7 @@ name = "sinex-satellite-sdk"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
  "blake3",
  "bon",
@@ -4258,6 +4260,7 @@ dependencies = [
  "gethostname 0.4.3",
  "humantime-serde",
  "nix 0.28.0",
+ "notify",
  "parking_lot",
  "proptest",
  "prost",

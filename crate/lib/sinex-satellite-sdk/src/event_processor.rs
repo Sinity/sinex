@@ -1,8 +1,9 @@
-//! Event processor that handles batching and sending events to ingestd over gRPC.
+//! Event processor that handles batching and sending events.
 
-use crate::{grpc_client::IngestClient, SatelliteResult};
+use crate::{grpc_client::IngestClient, nats_publisher::NatsPublisher, SatelliteResult};
 use sinex_core::db::models::Event;
 use sinex_core::JsonValue;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -10,10 +11,21 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 /// Event transport mechanism
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum EventTransport {
     /// gRPC to ingestd (which then publishes to NATS)
     Grpc(IngestClient),
+    /// Direct NATS JetStream publishing
+    Nats(Arc<NatsPublisher>),
+}
+
+impl std::fmt::Debug for EventTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventTransport::Grpc(_) => write!(f, "EventTransport::Grpc"),
+            EventTransport::Nats(_) => write!(f, "EventTransport::Nats"),
+        }
+    }
 }
 
 /// Configuration for event processing
@@ -141,6 +153,7 @@ impl EventProcessor {
         while retry_count <= self.config.max_retries && !success {
             success = match &mut self.transport {
                 EventTransport::Grpc(client) => Self::send_batch_grpc(client, &batch).await,
+                EventTransport::Nats(publisher) => Self::send_batch_nats(publisher, &batch).await,
             };
 
             if !success && self.config.retry_on_failure && retry_count < self.config.max_retries {
@@ -223,6 +236,34 @@ impl EventProcessor {
                 error!(error = %e, "Failed to send batch via gRPC");
                 false
             }
+        }
+    }
+
+    /// Send batch via NATS JetStream
+    async fn send_batch_nats(publisher: &NatsPublisher, events: &[Event<JsonValue>]) -> bool {
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for event in events {
+            match publisher.publish(event).await {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    error!(event_id = ?event.id, error = %e, "Failed to publish event");
+                    failure_count += 1;
+                }
+            }
+        }
+
+        if failure_count == 0 {
+            debug!(published = success_count, "Batch sent via NATS");
+            true
+        } else {
+            error!(
+                published = success_count,
+                failed = failure_count,
+                "Batch processing failed"
+            );
+            false
         }
     }
 }

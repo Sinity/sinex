@@ -499,7 +499,11 @@ mod tests {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
             socket_path: "/tmp/drop-test.sock".to_string(),
+            stream_name: "test-stream".to_string(),
             process: None,
+            service: None,
+            join_handle: None,
+            _work_dir: None,
         };
 
         drop(handle); // Should not panic

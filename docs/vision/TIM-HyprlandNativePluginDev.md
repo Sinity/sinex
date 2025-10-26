@@ -1,5 +1,9 @@
 # TIM-HyprlandNativePluginDev: Hyprland Native C++ Plugin Development
 
+> **Operational note (2025-10-23)**  
+> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+
+
 *   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path (historical)
 *   **Original UG Context:** Section 4.2
 

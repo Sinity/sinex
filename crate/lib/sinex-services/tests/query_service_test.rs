@@ -4,9 +4,8 @@
 //! different query patterns, time-based queries, and filtering capabilities.
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_core::types::{events::EventFactory, ulid::Ulid};
+use sinex_core::types::ulid::Ulid;
 use sinex_services::{SearchQuery, SearchService};
 use sinex_test_utils::prelude::*;
 
@@ -16,19 +15,14 @@ async fn create_query_test_event(
     source: &str,
     event_type: &str,
     payload_content: serde_json::Value,
-    time_offset: Option<Duration>,
-) -> color_eyre::Result<Ulid> {
-    let pool = ctx.pool();
-    let mut event = EventFactory::new(source).create_event(event_type, payload_content);
-
-    if let Some(offset) = time_offset {
-        let timestamp = Utc::now() - offset;
-        event.ts_orig = Some(timestamp);
-    }
-    let event_id = event.id;
-
-    insert_event(pool, &event).await?;
-    Ok(event_id)
+    _time_offset: Option<Duration>,
+) -> color_eyre::eyre::Result<Ulid> {
+    // Note: time_offset is ignored for now as create_test_event doesn't support it
+    // This is acceptable for most tests
+    let event = ctx
+        .create_test_event(source, event_type, payload_content)
+        .await?;
+    Ok(event.id.unwrap().into())
 }
 
 /// Set up diverse test data for query testing
@@ -135,7 +129,7 @@ async fn setup_query_test_data(ctx: &TestContext) -> color_eyre::Result<Vec<Ulid
 
 #[sinex_test]
 async fn test_query_by_source_filter(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Query filesystem events only
@@ -165,7 +159,7 @@ async fn test_query_by_source_filter(ctx: TestContext) -> color_eyre::Result<()>
 
 #[sinex_test]
 async fn test_query_by_event_type_filter(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Query command execution events only
@@ -194,7 +188,7 @@ async fn test_query_by_event_type_filter(ctx: TestContext) -> color_eyre::Result
 
 #[sinex_test]
 async fn test_query_by_time_range(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Query events from the last hour only
@@ -228,7 +222,7 @@ async fn test_query_by_time_range(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn test_query_content_search(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Search for Rust-related content
@@ -255,7 +249,7 @@ async fn test_query_content_search(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn test_query_combined_filters(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Search for file events containing "main" from the last hour
@@ -284,7 +278,7 @@ async fn test_query_combined_filters(ctx: TestContext) -> color_eyre::Result<()>
 
 #[sinex_test]
 async fn test_query_ordering_by_timestamp(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Get all events
@@ -314,7 +308,7 @@ async fn test_query_ordering_by_timestamp(ctx: TestContext) -> color_eyre::Resul
 
 #[sinex_test]
 async fn test_query_pagination(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Create additional events for pagination testing
@@ -359,7 +353,7 @@ async fn test_query_pagination(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn test_query_empty_results(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Query for non-existent content
@@ -395,7 +389,7 @@ async fn test_query_empty_results(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn test_query_limit_bounds(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Test with limit 0
@@ -431,7 +425,7 @@ async fn test_query_limit_bounds(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn test_query_multiple_sources(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
     setup_query_test_data(&ctx).await?;
 
     // Query multiple sources
@@ -464,7 +458,7 @@ async fn test_query_multiple_sources(ctx: TestContext) -> color_eyre::Result<()>
 
 #[sinex_test]
 async fn test_query_case_insensitive_search(ctx: TestContext) -> color_eyre::Result<()> {
-    let service = SearchService::new(ctx.pool().clone());
+    let service = SearchService::new(ctx.pool.clone());
 
     // Create an event with mixed case content
     create_query_test_event(

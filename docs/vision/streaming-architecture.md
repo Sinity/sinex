@@ -1,5 +1,9 @@
 # Streaming Architecture & Backpressure
 
+> **Operational note (2025-10-23)**  
+> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+
+
 This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream and the transactional outbox pattern.
 
 > **Accuracy Notice (2025-07-24)**  
