@@ -271,7 +271,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "Infrastructure test: IngestService shutdown hangs - service.shutdown() does not complete"]
     #[sinex_test]
     async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
@@ -296,7 +295,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "Infrastructure test: IngestService shutdown hangs - service.shutdown() does not complete"]
     #[sinex_test]
     async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;

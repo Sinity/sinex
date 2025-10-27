@@ -334,10 +334,14 @@ impl IngestService {
             warn!("Failed to notify systemd ready state: {}", e);
         }
 
-        // Serve gRPC requests
+        // Serve gRPC requests with graceful shutdown
+        let shutdown_signal_flag = self.shutdown_flag.clone();
         Server::builder()
             .add_service(IngestServiceServer::new(grpc_service))
-            .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
+            .serve_with_incoming_shutdown(
+                tokio_stream::wrappers::UnixListenerStream::new(listener),
+                shutdown_signal(&shutdown_signal_flag),
+            )
             .await
             .map_err(|e| {
                 SinexError::service(format!("gRPC server error: {e}"))

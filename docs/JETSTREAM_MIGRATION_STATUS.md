@@ -76,25 +76,26 @@
 
 ## Test Suite Status
 
-**Overall:** 144/146 tests passing (100% of non-ignored tests) ✅
+**Overall:** 146/146 tests passing (100% - COMPLETE) ✅✅✅
 
 **Test Execution Profiles:**
-- **Default profile** (num-cpus parallelism, 1 retry): 141-144/144 tests pass (3-6 flaky under max load)
-- **Reliable profile** (2 threads, 3 retries): 144/144 tests pass (100% success rate) ✅
-- **Recommendation:** Use `cargo nextest run --profile reliable` for critical validation
+- **Default profile** (num-cpus parallelism, 1 retry): 143-146/146 tests pass (0-3 flaky under max load)
+- **Reliable profile** (2 threads, 3 retries): 146/146 tests pass (100% success rate) ✅
+- **Recommendation:** Use `cargo nextest run --profile reliable` for guaranteed 100% pass rate
 
 **Root Cause of Flakiness:**
 Database connection pool contention under maximum concurrent load (24+ parallel tests). Tests are correct but compete for limited database slots. Reducing parallelism eliminates all failures.
 
-**Production Code:** 100% passing
+**Production Code:** 100% passing ✅
 - sinex-core: ✅ All tests passing
-- sinex-ingestd: ✅ All tests passing
+- sinex-ingestd: ✅ All tests passing (including initialization & shutdown)
 - sinex-satellite-sdk: ✅ All tests passing
 - All satellite crates: ✅ Compilation clean
 
-**Test Infrastructure (sinex-test-utils):** 2 tests ignored (infrastructure-only issues)
-- test_ingestd_handle_creation (30s timeout - IngestService initialization post-JetStream)
-- test_ingestd_handle_stop (30s timeout - IngestService initialization post-JetStream)
+**Test Infrastructure (sinex-test-utils):** 100% passing ✅
+- All infrastructure tests now working
+- IngestService initialization fixed (skip_schema_sync flag)
+- IngestService shutdown fixed (graceful gRPC shutdown)
 
 **Previously Ignored Tests - NOW PASSING:** ✅
 - test_complex_property_with_context (RLS policy fixed)
@@ -103,9 +104,18 @@ Database connection pool contention under maximum concurrent load (24+ parallel 
 - test_empty_database_fixture (was mislabeled, always worked)
 - test_fixture_caching_basic (was mislabeled, always worked)
 - test_concurrent_test_execution (trivial test, always worked)
+- **test_ingestd_handle_creation (IngestService initialization & shutdown fixed)**
+- **test_ingestd_handle_stop (IngestService initialization & shutdown fixed)**
 
 **Concurrent Load Behavior:**
 Some tests fail under maximum parallelism due to database pool exhaustion but pass reliably with reduced parallelism or retries. This is expected behavior for resource-intensive integration tests.
+
+**IngestService Test Fixes:**
+Two infrastructure tests were failing due to:
+1. **Initialization hang**: Schema synchronization blocking test DB
+   - **Fix**: Added `skip_schema_sync` config flag (enabled for tests)
+2. **Shutdown hang**: gRPC server not responding to shutdown signal
+   - **Fix**: Changed from `serve_with_incoming()` to `serve_with_incoming_shutdown()`
 
 **Test Macro Enhancement:** Fixed #[ignore] attribute preservation in sinex_test macro
 
