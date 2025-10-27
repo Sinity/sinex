@@ -40,11 +40,14 @@
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
 use crate::db_common::verify_clean_state;
+use crate::nats::EphemeralNats;
 use crate::timing_utils::TimingUtils;
+use async_nats::Client as NatsClient;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Ulid};
 
 use sinex_core::DbPoolExt;
@@ -71,6 +74,9 @@ pub struct TestContext {
     captured_logs: Arc<Mutex<Vec<String>>>,
     baseline_events: i64,
     _tracing_enabled: bool,
+    nats: Option<Arc<EphemeralNats>>,
+    nats_client: Option<NatsClient>,
+    env: SinexEnvironment,
 }
 
 impl TestContext {
@@ -173,7 +179,41 @@ impl TestContext {
             captured_logs: Arc::new(Mutex::new(Vec::new())),
             baseline_events,
             _tracing_enabled: false,
+            nats: None,
+            nats_client: None,
+            env: SinexEnvironment::new("dev")?,
         })
+    }
+
+    /// Enable NATS/JetStream infrastructure for this test context
+    ///
+    /// This starts an ephemeral NATS server with JetStream enabled
+    /// and connects a client to it. Required for JetStream integration tests.
+    pub async fn with_nats(mut self) -> Result<Self> {
+        let nats = EphemeralNats::start().await?;
+        let client = nats.connect().await?;
+        self.nats_client = Some(client);
+        self.nats = Some(Arc::new(nats));
+        Ok(self)
+    }
+
+    /// Get the NATS client for this test context
+    ///
+    /// Panics if NATS was not enabled via `with_nats()`
+    pub fn nats_client(&self) -> NatsClient {
+        self.nats_client
+            .clone()
+            .expect("NATS not initialized - call with_nats() first")
+    }
+
+    /// Get the Sinex environment for this test context
+    pub fn env(&self) -> &SinexEnvironment {
+        &self.env
+    }
+
+    /// Get the NATS server URL if NATS is enabled
+    pub fn nats_url(&self) -> Option<String> {
+        self.nats.as_ref().map(|n| n.client_url().to_string())
     }
 
     /// Initialize tracing for tests (static method for use without context)
