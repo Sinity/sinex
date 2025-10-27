@@ -16,7 +16,9 @@ pub mod annex;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
+pub mod confirmation_handler;
 pub mod coordination;
+pub mod dlq_retry;
 pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
@@ -24,7 +26,9 @@ pub mod figment_config;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
+pub mod jetstream_consumer;
 pub mod job_manager;
+pub mod lease_manager;
 pub mod lifecycle;
 pub mod nats_publisher;
 #[cfg(feature = "preflight")]
@@ -52,10 +56,17 @@ pub use cli::{
     SourceState,
 };
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
+pub use confirmation_handler::{
+    ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
+    ProvisionalEvent, ProvisionalEventHandler,
+};
 pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
+pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};
 pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
+pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, SensorType};
+pub use lease_manager::{LeaseManager, LeaseManagerConfig, LeaseStatus};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};

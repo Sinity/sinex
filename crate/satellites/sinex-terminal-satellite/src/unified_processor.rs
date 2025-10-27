@@ -1,7 +1,7 @@
 //! Unified terminal processor implementing StatefulStreamProcessor
 //!
-//! This module implements the terminal satellite processor using sensd for source material capture.
-//! All terminal data flows through sensd sensors before being converted to events.
+//! This module implements the terminal satellite processor using AcquisitionManager
+//! for source material capture and JetStream for event publishing.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -10,11 +10,13 @@ use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
 use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer},
     checkpoint::CheckpointManager,
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         MissingItem, SourceState,
     },
+    nats_publisher::NatsPublisher,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -28,48 +30,21 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
-// Sensd integration removed - temporary stubs for compilation
-// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SensdIntegrationConfig {
-    // Stub config for sensd functionality to be migrated
+/// Material capture configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialCaptureConfig {
+    /// Slice size in bytes for material streaming
+    pub slice_size: usize,
+    /// Whether to enable material capture
+    pub enabled: bool,
 }
 
-pub struct SensdTerminalProcessor {
-    // Stub processor for sensd functionality to be migrated
-}
-
-impl SensdTerminalProcessor {
-    pub async fn new(
-        _config: SensdIntegrationConfig,
-        _sender: mpsc::Sender<sinex_core::db::models::Event<sinex_core::JsonValue>>,
-    ) -> color_eyre::eyre::Result<Self> {
-        Ok(Self {})
-    }
-
-    pub async fn monitor_jobs(&self) -> color_eyre::eyre::Result<()> {
-        // Stub method for sensd functionality to be migrated
-        Ok(())
-    }
-
-    pub async fn submit_atuin_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
-        // Stub method for sensd functionality to be migrated
-        Ok(())
-    }
-
-    pub async fn submit_history_file_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
-        // Stub method for sensd functionality to be migrated
-        Ok(())
-    }
-
-    pub async fn submit_recording_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
-        // Stub method for sensd functionality to be migrated
-        Ok(())
-    }
-
-    pub async fn submit_kitty_job(&self, _path: &str) -> color_eyre::eyre::Result<()> {
-        // Stub method for sensd functionality to be migrated
-        Ok(())
+impl Default for MaterialCaptureConfig {
+    fn default() -> Self {
+        Self {
+            slice_size: 512 * 1024,
+            enabled: true,
+        }
     }
 }
 
@@ -128,8 +103,8 @@ pub struct TerminalConfig {
     ))]
     pub scanner_max_file_size_mb: u64,
 
-    /// sensd integration configuration
-    pub sensd_config: SensdIntegrationConfig,
+    /// Material capture configuration
+    pub material_capture: MaterialCaptureConfig,
 }
 
 impl Default for TerminalConfig {
@@ -163,7 +138,7 @@ impl Default for TerminalConfig {
             .batch_size(100)
             .scanner_batch_size(1000)
             .scanner_max_file_size_mb(100)
-            .sensd_config(SensdIntegrationConfig::default())
+            .material_capture(MaterialCaptureConfig::default())
             .build()
     }
 }
@@ -226,8 +201,17 @@ pub struct TerminalState {
     /// Recent activity summary
     pub recent_activity: Vec<String>,
 
-    /// sensd job statuses
-    pub sensd_jobs: Vec<SensdJobStatus>,
+    /// Material capture statuses
+    pub material_captures: Vec<MaterialCaptureStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
+pub struct MaterialCaptureStatus {
+    pub material_id: String,
+    pub source_identifier: String,
+    pub started_at: DateTime<Utc>,
+    pub status: String,
+    pub bytes_captured: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
@@ -255,19 +239,9 @@ pub struct AtuinStatus {
     pub last_entry_timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
-pub struct SensdJobStatus {
-    pub job_id: String,
-    pub sensor_type: String,
-    pub target_uri: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub material_id: Option<String>,
-}
-
 /// Unified terminal processor implementing StatefulStreamProcessor
 ///
-/// Uses sensd for all terminal data capture instead of direct event creation.
+/// Uses AcquisitionManager for source material capture and JetStream for event publishing.
 pub struct TerminalProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
@@ -275,8 +249,11 @@ pub struct TerminalProcessor {
     /// Terminal monitoring configuration
     config: TerminalConfig,
 
-    /// sensd integration processor
-    sensd_processor: Option<Arc<SensdTerminalProcessor>>,
+    /// Acquisition manager for material capture
+    acquisition_manager: Option<Arc<AcquisitionManager>>,
+
+    /// NATS publisher for events
+    nats_publisher: Option<Arc<NatsPublisher>>,
 
     /// Detected shell information
     shell_info: Option<crate::shell_detection::ShellInfo>,
@@ -290,6 +267,9 @@ pub struct TerminalProcessor {
     /// Event channel for processing events
     event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     event_receiver: Option<mpsc::Receiver<Event<JsonValue>>>,
+
+    /// Active material captures
+    material_captures: Arc<tokio::sync::RwLock<HashMap<String, MaterialCaptureStatus>>>,
 }
 
 impl TerminalProcessor {
@@ -298,12 +278,14 @@ impl TerminalProcessor {
         Self {
             context: None,
             config: TerminalConfig::default(),
-            sensd_processor: None,
+            acquisition_manager: None,
+            nats_publisher: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
             event_sender: None,
             event_receiver: None,
+            material_captures: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -312,12 +294,14 @@ impl TerminalProcessor {
         Self {
             context: None,
             config,
-            sensd_processor: None,
+            acquisition_manager: None,
+            nats_publisher: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
             event_sender: None,
             event_receiver: None,
+            material_captures: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 

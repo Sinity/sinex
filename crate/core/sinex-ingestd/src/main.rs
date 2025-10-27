@@ -35,9 +35,9 @@ struct Args {
     #[arg(long, env = "SINEX_NATS_URL", default_value = "nats://localhost:4222")]
     nats_url: String,
 
-    /// Unix Domain Socket path for gRPC server
+    /// Unix Domain Socket path for gRPC server (DEPRECATED - gRPC removed, using JetStream)
     #[arg(long, default_value = "/run/sinex/ingest.sock", value_parser = validate_socket_path)]
-    socket_path: SanitizedPath,
+    socket_path: Option<SanitizedPath>,
 
     /// Database connection pool size
     #[arg(long, default_value = "50")]
@@ -79,15 +79,21 @@ async fn main() -> Result<()> {
     info!("Starting Sinex Ingestion Daemon");
 
     // Load configuration from environment and command line arguments
+    let socket_path = args
+        .socket_path
+        .map(|p| p.into_string())
+        .unwrap_or_else(|| "/run/sinex/ingest.sock".to_string());
     let config = IngestdConfig::from_args(
         args.database_url,
         args.nats_url,
-        args.socket_path.into_string(),
+        socket_path,
         args.pool_size,
         args.batch_size,
         args.batch_timeout_secs,
         args.dry_run,
     );
+
+    info!("NOTE: gRPC ingestion path has been removed. All ingestion now via JetStream.");
 
     if args.validate_config {
         config.validate_and_exit().await;
