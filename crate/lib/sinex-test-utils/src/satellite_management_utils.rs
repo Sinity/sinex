@@ -106,6 +106,7 @@ pub async fn start_test_ingestd_with_config(
         .batch_size(1)
         .batch_timeout_secs(1)
         .validate_schemas(false)
+        .skip_schema_sync(true)
         .work_dir(work_dir)
         .nats_stream_name(format!("sinex_test_events_{}", Ulid::new()))
         .build();
@@ -270,7 +271,7 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "Infrastructure test: IngestService::new() hangs indefinitely - requires investigation of NATS/ingestd initialization"]
+    #[ignore = "Infrastructure test: IngestService shutdown hangs - service.shutdown() does not complete"]
     #[sinex_test]
     async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;
@@ -295,7 +296,7 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "Infrastructure test: IngestService::new() hangs indefinitely - requires investigation of NATS/ingestd initialization"]
+    #[ignore = "Infrastructure test: IngestService shutdown hangs - service.shutdown() does not complete"]
     #[sinex_test]
     async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
         use crate::nats::EphemeralNats;

@@ -58,6 +58,10 @@ pub struct IngestdConfig {
     #[builder(default = true)]
     pub validate_schemas: bool,
 
+    /// Skip schema synchronization on startup (useful for tests)
+    #[builder(default = false)]
+    pub skip_schema_sync: bool,
+
     /// Working directory for temporary files
     #[serde(deserialize_with = "deserialize_validated_utf8_path")]
     #[validate(custom(function = "validate_work_dir", message = "Invalid work directory"))]
@@ -249,6 +253,7 @@ impl Default for IngestdConfig {
             batch_timeout_secs: 5,
             dry_run: false,
             validate_schemas: true,
+            skip_schema_sync: false,
             work_dir: default_work_dir(),
             max_message_size: 16 * 1024 * 1024,
             nats_stream_name: default_nats_stream_name(),

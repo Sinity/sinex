@@ -184,7 +184,7 @@ impl IngestService {
         // Initialize event validator
         let validator = if let Some(ref pool) = db_pool {
             // First, synchronize schemas from codebase to database
-            if !config.dry_run {
+            if !config.dry_run && !config.skip_schema_sync {
                 match crate::schema_sync::synchronize_schemas(pool).await {
                     Ok(sync_result) => {
                         info!(
@@ -222,7 +222,7 @@ impl IngestService {
             subject_cache: Arc::new(SubjectCache::new()),
         };
 
-        info!("Ingestion service initialized");
+        info!("Ingestion service initialized successfully");
         Ok(service)
     }
 
