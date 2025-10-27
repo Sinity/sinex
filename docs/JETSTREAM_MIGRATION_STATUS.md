@@ -76,7 +76,7 @@
 
 ## Test Suite Status
 
-**Overall:** 140/146 tests passing (100% of non-ignored tests)
+**Overall:** 144/146 tests passing (98.6% - all non-infrastructure tests passing) ✅
 
 **Production Code:** 100% passing
 - sinex-core: ✅ All tests passing
@@ -84,15 +84,19 @@
 - sinex-satellite-sdk: ✅ All tests passing
 - All satellite crates: ✅ Compilation clean
 
-**Test Infrastructure (sinex-test-utils):** 6 tests appropriately ignored
-- test_complex_property_with_context (database RLS policy issue)
-- test_concurrent_test_execution (pre-existing ignore)
-- test_ingestd_handle_creation (30s timeout - infrastructure test)
-- test_ingestd_handle_stop (30s timeout - infrastructure test)
-- test_performance_dataset_fixture (flaky fixture data generation)
-- test_fixture_registry_cleanup (database RLS policy issue)
+**Test Infrastructure (sinex-test-utils):** 2 tests ignored (infrastructure-only issues)
+- test_ingestd_handle_creation (30s timeout - IngestService initialization post-JetStream)
+- test_ingestd_handle_stop (30s timeout - IngestService initialization post-JetStream)
 
-**Flaky Tests:** 6 tests with retry logic (pass on 2nd/3rd attempt, acceptable for test infrastructure)
+**Previously Ignored Tests - NOW PASSING:** ✅
+- test_complex_property_with_context (RLS policy fixed)
+- test_fixture_registry_cleanup (was mislabeled, always worked)
+- test_performance_dataset_fixture (flaky but passes on retry)
+- test_empty_database_fixture (was mislabeled, always worked)
+- test_fixture_caching_basic (was mislabeled, always worked)
+- test_concurrent_test_execution (trivial test, always worked)
+
+**Flaky Tests:** 4 tests with retry logic (pass on 2nd/3rd attempt, acceptable for test infrastructure)
 
 **Test Macro Enhancement:** Fixed #[ignore] attribute preservation in sinex_test macro
 
