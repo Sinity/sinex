@@ -339,7 +339,6 @@ fn create_test_event_source_config() -> EventSourceConfig {
         service_name: "test-event-source".to_string(),
         log_level: "debug".to_string(),
         nats_url: "nats://localhost:4222".to_string(),
-        redis_url: "redis://localhost:6379".to_string(),
         database_url: None,
         database_pool_size: 10,
         work_dir: "/tmp/sinex-test".parse().unwrap(),

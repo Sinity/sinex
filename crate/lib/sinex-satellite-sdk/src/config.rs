@@ -20,7 +20,6 @@
 //!
 //! - `SINEX_LOG_LEVEL`: Log level (trace, debug, info, warn, error)
 //! - `NATS_URL`: NATS server URL for event ingestion
-//! - `SINEX_REDIS_URL`: Redis connection URL
 //! - `DATABASE_URL`: PostgreSQL database connection string
 //! - `SINEX_DB_POOL_SIZE`: Database connection pool size
 //! - `SINEX_WORK_DIR`: Working directory for temporary files
@@ -88,17 +87,6 @@ pub struct SatelliteConfig {
     #[validate(url(message = "Invalid NATS URL"))]
     #[builder(default = default_nats_url())]
     pub nats_url: String,
-
-    /// Redis connection URL for message bus.
-    ///
-    /// Used by automata to consume events from Redis Streams.
-    /// Format: `redis://hostname:port[/db]`
-    ///
-    /// Default: `redis://localhost:6379` (see `default_redis_url()`)
-    #[serde(default = "default_redis_url")]
-    #[validate(url(message = "Invalid Redis URL"))]
-    #[builder(default = default_redis_url())]
-    pub redis_url: String,
 
     /// Database URL for direct database access (automata only).
     ///
@@ -259,7 +247,6 @@ impl SatelliteConfig {
             service_name: service_name.to_string(),
             log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
             nats_url: env_var_or_default("NATS_URL", default_nats_url),
-            redis_url: env_var_or_default("SINEX_REDIS_URL", default_redis_url),
             database_url: std::env::var("DATABASE_URL").ok(),
             database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
                 .ok()
@@ -340,10 +327,6 @@ fn default_log_level() -> String {
 
 fn default_nats_url() -> String {
     "nats://localhost:4222".to_string()
-}
-
-fn default_redis_url() -> String {
-    "redis://localhost:6379".to_string()
 }
 
 fn default_pool_size() -> u32 {
