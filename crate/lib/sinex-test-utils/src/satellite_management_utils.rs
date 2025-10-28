@@ -112,8 +112,22 @@ pub async fn start_test_ingestd_with_config(
     let mut service_runner = service.clone();
     let join_handle = tokio::spawn(async move { service_runner.run().await });
 
-    // Give service a moment to initialize (NATS connection, DB pool, etc.)
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Verify service is ready by checking NATS stream exists
+    let nats_client = async_nats::connect(&config.nats_url)
+        .await
+        .map_err(|e| SinexError::network(format!("Failed to connect to NATS: {e}")))?;
+    let jetstream = async_nats::jetstream::new(nats_client);
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match jetstream.get_stream(&ingest_config.nats_stream_name).await {
+                Ok(_) => break,
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+            }
+        }
+    })
+    .await
+    .map_err(|_| SinexError::service("ingestd stream did not become ready"))?;
 
     Ok(TestIngestdHandle {
         stream_name: ingest_config.nats_stream_name,
