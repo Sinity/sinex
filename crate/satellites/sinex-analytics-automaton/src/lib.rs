@@ -160,3 +160,6 @@ impl AnalyticsAutomaton {
         Ok(query)
     }
 }
+
+/// Type alias for compatibility with processor_main! macro
+pub type AnalyticsProcessor = AnalyticsAutomaton;
