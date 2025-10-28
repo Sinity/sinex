@@ -306,158 +306,11 @@ impl TerminalProcessor {
     }
 
     /// Initialize sensd processor and submit terminal monitoring jobs
-    async fn initialize_sensd_integration(&mut self) -> SatelliteResult<()> {
-        info!("Initializing sensd integration for terminal monitoring");
-
-        // Create event channel for communication between sensd processor and this processor
-        let (sender, receiver) = mpsc::channel(1000);
-        self.event_sender = Some(sender.clone());
-        self.event_receiver = Some(receiver);
-
-        // Create sensd processor
-        let sensd_processor = SensdTerminalProcessor::new(self.config.sensd_config.clone(), sender)
-            .await
-            .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!(
-                    "Failed to create sensd processor: {}",
-                    e
-                ))
-            })?;
-
-        let sensd_processor = Arc::new(sensd_processor);
-
-        // Submit monitoring jobs for enabled sources
-        if self
-            .config
-            .enabled_sources
-            .get("atuin")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref atuin_path) = self.config.atuin_db_path {
-                if atuin_path.as_path().exists() {
-                    info!("Submitting Atuin monitoring job: {}", atuin_path.as_str());
-                    sensd_processor
-                        .submit_atuin_job(atuin_path.as_str())
-                        .await
-                        .map_err(|e| {
-                            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                                "Failed to submit Atuin job: {}",
-                                e
-                            ))
-                        })?;
-                } else {
-                    warn!("Atuin database not found: {}", atuin_path.as_str());
-                }
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("history")
-            .copied()
-            .unwrap_or(false)
-        {
-            for history_file in &self.config.history_files {
-                if history_file.exists() {
-                    info!(
-                        "Submitting history file monitoring job: {}",
-                        history_file.as_str()
-                    );
-                    sensd_processor
-                        .submit_history_file_job(history_file.as_str())
-                        .await
-                        .map_err(|e| {
-                            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                                "Failed to submit history file job: {}",
-                                e
-                            ))
-                        })?;
-                }
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("recording")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref recordings_dir) = self.config.recording_output_dir {
-                info!(
-                    "Submitting recording monitoring job: {}",
-                    recordings_dir.as_str()
-                );
-                sensd_processor
-                    .submit_recording_job(recordings_dir.as_str())
-                    .await
-                    .map_err(|e| {
-                        sinex_satellite_sdk::SatelliteError::Processing(format!(
-                            "Failed to submit recording job: {}",
-                            e
-                        ))
-                    })?;
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("kitty")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref socket_path) = self.config.kitty_socket_path {
-                info!("Submitting Kitty monitoring job: {}", socket_path.as_str());
-                sensd_processor
-                    .submit_kitty_job(socket_path.as_str())
-                    .await
-                    .map_err(|e| {
-                        sinex_satellite_sdk::SatelliteError::Processing(format!(
-                            "Failed to submit Kitty job: {}",
-                            e
-                        ))
-                    })?;
-            }
-        }
-
-        self.sensd_processor = Some(sensd_processor);
-        info!("sensd integration initialized successfully");
-        Ok(())
-    }
-
-    /// Start sensd job monitoring
-    async fn start_sensd_monitoring(&self) -> SatelliteResult<()> {
-        if let Some(ref processor) = self.sensd_processor {
-            info!("Starting sensd job monitoring");
-
-            // Start the job monitoring task in background with panic safety
-            let monitor_processor = processor.clone();
-            let monitor_handle = tokio::spawn(async move {
-                if let Err(e) = monitor_processor.monitor_jobs().await {
-                    warn!("sensd job monitoring error: {}", e);
-                }
-            });
-
-            // Spawn a watchdog to detect if the monitor task panics
-            tokio::spawn(async move {
-                if let Err(e) = monitor_handle.await {
-                    error!("sensd job monitoring task panicked: {:?}", e);
-                }
-            });
-        }
-
-        Ok(())
-    }
-
     /// Take a snapshot of current terminal state
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
         let mut enabled_sources = Vec::with_capacity(8);
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
-        let sensd_jobs = Vec::new();
 
         // Check enabled sources
         for (source, enabled) in &self.config.enabled_sources {
@@ -487,10 +340,8 @@ impl TerminalProcessor {
             history_file_status,
             atuin_status,
             shell_info: self.shell_info.clone(),
-            recent_activity: vec![
-                "Terminal processor snapshot taken (sensd-integrated)".to_string()
-            ],
-            sensd_jobs,
+            recent_activity: vec!["Terminal processor snapshot taken".to_string()],
+            material_captures: vec![],
         };
 
         self.last_state = Some(state.clone());
@@ -720,8 +571,8 @@ impl StatefulStreamProcessor for TerminalProcessor {
             "Terminal processor configuration"
         );
 
-        // Initialize sensd integration
-        self.initialize_sensd_integration().await?;
+        // TODO: sensd integration removed - terminal monitoring currently disabled
+        // self.initialize_sensd_integration().await?;
 
         self.context = Some(ctx);
         Ok(())
@@ -765,10 +616,10 @@ impl StatefulStreamProcessor for TerminalProcessor {
             }
 
             TimeHorizon::Continuous => {
-                // Start continuous monitoring via sensd
-                self.start_sensd_monitoring().await?;
-                successful_targets.push("sensd_continuous_monitoring".to_string());
-                events_processed = 0; // Continuous monitoring doesn't count discrete events
+                // TODO: Continuous monitoring disabled - sensd integration removed
+                // self.start_sensd_monitoring().await?;
+                successful_targets.push("continuous_monitoring_disabled".to_string());
+                events_processed = 0; // Continuous monitoring not implemented
             }
         }
 

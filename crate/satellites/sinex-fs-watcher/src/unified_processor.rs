@@ -632,7 +632,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         // Initialize stage-as-you-go context
         self.stage_context = Some(StageAsYouGoContext::new(
             ctx.db_pool.clone(),
-            ctx.ingest_client()?.clone(),
+            ctx.event_sender.clone(),
         ));
 
         // Set up default watch paths if none specified

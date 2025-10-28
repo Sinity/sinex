@@ -23,7 +23,6 @@ pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
 pub mod figment_config;
-pub mod grpc_client;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod jetstream_consumer;
@@ -62,7 +61,6 @@ pub use confirmation_handler::{
 };
 pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};
-pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, SensorType};
@@ -168,11 +166,6 @@ pub struct SatelliteArgs {
     pub dry_run: bool,
 }
 
-// Re-export generated gRPC types
-pub mod proto {
-    tonic::include_proto!("sinex.ingest");
-}
-
 // Re-export commonly used types from dependencies
 pub use sinex_core::types::error::SinexError;
 pub use sinex_core::types::ulid::Ulid;
@@ -256,12 +249,6 @@ pub enum SatelliteError {
     #[error("Configuration parsing error: {0}")]
     Configuration(String),
 
-    #[error("gRPC communication error: {0}")]
-    Grpc(Box<tonic::Status>),
-
-    #[error("gRPC transport error: {0}")]
-    GrpcTransport(Box<tonic::transport::Error>),
-
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -293,18 +280,6 @@ pub enum SatelliteError {
     NotImplemented(String),
 }
 
-impl From<tonic::Status> for SatelliteError {
-    fn from(e: tonic::Status) -> Self {
-        SatelliteError::Grpc(Box::new(e))
-    }
-}
-
-impl From<tonic::transport::Error> for SatelliteError {
-    fn from(e: tonic::transport::Error) -> Self {
-        SatelliteError::GrpcTransport(Box::new(e))
-    }
-}
-
 impl From<SatelliteError> for sinex_core::error::SinexError {
     fn from(e: SatelliteError) -> Self {
         match e {
@@ -313,10 +288,6 @@ impl From<SatelliteError> for sinex_core::error::SinexError {
             }
             SatelliteError::Configuration(_) => {
                 sinex_core::error::SinexError::configuration(e.to_string())
-            }
-            SatelliteError::Grpc(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            SatelliteError::GrpcTransport(_) => {
-                sinex_core::error::SinexError::unknown(e.to_string())
             }
             SatelliteError::Database(_) => sinex_core::error::SinexError::database(e.to_string()),
             SatelliteError::Serialization(_) => {

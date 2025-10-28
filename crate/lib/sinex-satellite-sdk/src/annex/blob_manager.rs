@@ -23,7 +23,7 @@ use std::time::Instant;
 use tracing::{debug, info};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
-use crate::grpc_client::IngestClient;
+use tokio::sync::mpsc;
 
 // Re-export Blob type for compatibility
 pub use sinex_core::Blob as BlobMetadata;
@@ -32,20 +32,20 @@ pub use sinex_core::Blob as BlobMetadata;
 pub struct BlobManager {
     annex: GitAnnex,
     db_pool: DbPool,
-    ingest_client: IngestClient,
+    event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
 }
 
 impl BlobManager {
     pub fn new(
         annex_config: AnnexConfig,
         db_pool: DbPool,
-        ingest_client: IngestClient,
+        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> Result<Self> {
         let annex = GitAnnex::new(annex_config)?;
         Ok(BlobManager {
             annex,
             db_pool,
-            ingest_client,
+            event_sender,
         })
     }
 
@@ -127,11 +127,9 @@ impl BlobManager {
         let material_id = self.ensure_material_for_blob(blob).await?;
         let event = Self::create_blob_event(event_type, payload, material_id);
 
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&event)
-            .await
-            .map_err(|e| eyre!("Failed to emit {event_type} event via ingestd: {}", e))?;
+        self.event_sender
+            .send(event)
+            .map_err(|_| eyre!("Failed to emit {event_type} event: event channel closed"))?;
         Ok(())
     }
 
@@ -554,11 +552,9 @@ impl BlobManager {
             material_id,
         );
 
-        let mut client = self.ingest_client.clone();
-        client
-            .ingest_event(&new_event)
-            .await
-            .map_err(|e| eyre!("Failed to emit blob storage statistics via ingestd: {}", e))?;
+        self.event_sender
+            .send(new_event)
+            .map_err(|_| eyre!("Failed to emit blob storage statistics: event channel closed"))?;
 
         Ok(())
     }

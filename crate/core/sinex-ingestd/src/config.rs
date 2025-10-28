@@ -131,27 +131,6 @@ impl IngestdConfig {
                 .with_operation("config.validate_connection_strings")
         })?;
 
-        // Additional runtime validation - create directories if needed
-        // Using atomic create_dir_all to avoid TOCTOU race conditions
-        if let Some(parent) = Utf8PathBuf::from(&self.socket_path).parent() {
-            match tokio::fs::create_dir_all(parent).await {
-                Ok(()) => {
-                    debug!("Ensured socket directory exists: {}", parent.as_str());
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Directory already exists, this is fine
-                    debug!("Socket directory already exists: {}", parent.as_str());
-                }
-                Err(e) => {
-                    return Err(SinexError::configuration(format!(
-                        "Cannot create socket directory {}: {}",
-                        parent.as_str(),
-                        e
-                    )));
-                }
-            }
-        }
-
         // Ensure work directory exists using atomic create_dir_all
         match tokio::fs::create_dir_all(&self.work_dir).await {
             Ok(()) => {

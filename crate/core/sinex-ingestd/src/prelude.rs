@@ -27,6 +27,3 @@ pub use crate::SyncResult;
 
 // Error handling
 pub use crate::{IngestdResult, SinexError};
-
-// gRPC types
-pub use crate::proto;
