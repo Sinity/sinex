@@ -1,7 +1,7 @@
 //! Unified terminal processor implementing StatefulStreamProcessor
 //!
-//! This module implements the terminal satellite processor using sensd for source material capture.
-//! All terminal data flows through sensd sensors before being converted to events.
+//! This module implements the terminal satellite processor using AcquisitionManager
+//! for source material capture and JetStream for event publishing.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -10,11 +10,13 @@ use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
 use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer},
     checkpoint::CheckpointManager,
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         MissingItem, SourceState,
     },
+    nats_publisher::NatsPublisher,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -28,7 +30,23 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
 
-use crate::sensd_integration::{SensdIntegrationConfig, SensdTerminalProcessor};
+/// Material capture configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialCaptureConfig {
+    /// Slice size in bytes for material streaming
+    pub slice_size: usize,
+    /// Whether to enable material capture
+    pub enabled: bool,
+}
+
+impl Default for MaterialCaptureConfig {
+    fn default() -> Self {
+        Self {
+            slice_size: 512 * 1024,
+            enabled: true,
+        }
+    }
+}
 
 // Test module removed or relocated; keep core tests within this file
 
@@ -85,8 +103,8 @@ pub struct TerminalConfig {
     ))]
     pub scanner_max_file_size_mb: u64,
 
-    /// sensd integration configuration
-    pub sensd_config: SensdIntegrationConfig,
+    /// Material capture configuration
+    pub material_capture: MaterialCaptureConfig,
 }
 
 impl Default for TerminalConfig {
@@ -120,7 +138,7 @@ impl Default for TerminalConfig {
             .batch_size(100)
             .scanner_batch_size(1000)
             .scanner_max_file_size_mb(100)
-            .sensd_config(SensdIntegrationConfig::default())
+            .material_capture(MaterialCaptureConfig::default())
             .build()
     }
 }
@@ -183,8 +201,17 @@ pub struct TerminalState {
     /// Recent activity summary
     pub recent_activity: Vec<String>,
 
-    /// sensd job statuses
-    pub sensd_jobs: Vec<SensdJobStatus>,
+    /// Material capture statuses
+    pub material_captures: Vec<MaterialCaptureStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
+pub struct MaterialCaptureStatus {
+    pub material_id: String,
+    pub source_identifier: String,
+    pub started_at: DateTime<Utc>,
+    pub status: String,
+    pub bytes_captured: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
@@ -212,19 +239,9 @@ pub struct AtuinStatus {
     pub last_entry_timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
-pub struct SensdJobStatus {
-    pub job_id: String,
-    pub sensor_type: String,
-    pub target_uri: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub material_id: Option<String>,
-}
-
 /// Unified terminal processor implementing StatefulStreamProcessor
 ///
-/// Uses sensd for all terminal data capture instead of direct event creation.
+/// Uses AcquisitionManager for source material capture and JetStream for event publishing.
 pub struct TerminalProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
@@ -232,8 +249,11 @@ pub struct TerminalProcessor {
     /// Terminal monitoring configuration
     config: TerminalConfig,
 
-    /// sensd integration processor
-    sensd_processor: Option<Arc<SensdTerminalProcessor>>,
+    /// Acquisition manager for material capture
+    acquisition_manager: Option<Arc<AcquisitionManager>>,
+
+    /// NATS publisher for events
+    nats_publisher: Option<Arc<NatsPublisher>>,
 
     /// Detected shell information
     shell_info: Option<crate::shell_detection::ShellInfo>,
@@ -247,6 +267,9 @@ pub struct TerminalProcessor {
     /// Event channel for processing events
     event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     event_receiver: Option<mpsc::Receiver<Event<JsonValue>>>,
+
+    /// Active material captures
+    material_captures: Arc<tokio::sync::RwLock<HashMap<String, MaterialCaptureStatus>>>,
 }
 
 impl TerminalProcessor {
@@ -255,12 +278,14 @@ impl TerminalProcessor {
         Self {
             context: None,
             config: TerminalConfig::default(),
-            sensd_processor: None,
+            acquisition_manager: None,
+            nats_publisher: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
             event_sender: None,
             event_receiver: None,
+            material_captures: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -269,168 +294,23 @@ impl TerminalProcessor {
         Self {
             context: None,
             config,
-            sensd_processor: None,
+            acquisition_manager: None,
+            nats_publisher: None,
             shell_info: None,
             last_state: None,
             checkpoint_manager: None,
             event_sender: None,
             event_receiver: None,
+            material_captures: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
     /// Initialize sensd processor and submit terminal monitoring jobs
-    async fn initialize_sensd_integration(&mut self) -> SatelliteResult<()> {
-        info!("Initializing sensd integration for terminal monitoring");
-
-        // Create event channel for communication between sensd processor and this processor
-        let (sender, receiver) = mpsc::channel(1000);
-        self.event_sender = Some(sender.clone());
-        self.event_receiver = Some(receiver);
-
-        // Create sensd processor
-        let sensd_processor = SensdTerminalProcessor::new(self.config.sensd_config.clone(), sender)
-            .await
-            .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!(
-                    "Failed to create sensd processor: {}",
-                    e
-                ))
-            })?;
-
-        let sensd_processor = Arc::new(sensd_processor);
-
-        // Submit monitoring jobs for enabled sources
-        if self
-            .config
-            .enabled_sources
-            .get("atuin")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref atuin_path) = self.config.atuin_db_path {
-                if atuin_path.as_path().exists() {
-                    info!("Submitting Atuin monitoring job: {}", atuin_path.as_str());
-                    sensd_processor
-                        .submit_atuin_job(atuin_path.as_str())
-                        .await
-                        .map_err(|e| {
-                            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                                "Failed to submit Atuin job: {}",
-                                e
-                            ))
-                        })?;
-                } else {
-                    warn!("Atuin database not found: {}", atuin_path.as_str());
-                }
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("history")
-            .copied()
-            .unwrap_or(false)
-        {
-            for history_file in &self.config.history_files {
-                if history_file.exists() {
-                    info!(
-                        "Submitting history file monitoring job: {}",
-                        history_file.as_str()
-                    );
-                    sensd_processor
-                        .submit_history_file_job(history_file.as_str())
-                        .await
-                        .map_err(|e| {
-                            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                                "Failed to submit history file job: {}",
-                                e
-                            ))
-                        })?;
-                }
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("recording")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref recordings_dir) = self.config.recording_output_dir {
-                info!(
-                    "Submitting recording monitoring job: {}",
-                    recordings_dir.as_str()
-                );
-                sensd_processor
-                    .submit_recording_job(recordings_dir.as_str())
-                    .await
-                    .map_err(|e| {
-                        sinex_satellite_sdk::SatelliteError::Processing(format!(
-                            "Failed to submit recording job: {}",
-                            e
-                        ))
-                    })?;
-            }
-        }
-
-        if self
-            .config
-            .enabled_sources
-            .get("kitty")
-            .copied()
-            .unwrap_or(false)
-        {
-            if let Some(ref socket_path) = self.config.kitty_socket_path {
-                info!("Submitting Kitty monitoring job: {}", socket_path.as_str());
-                sensd_processor
-                    .submit_kitty_job(socket_path.as_str())
-                    .await
-                    .map_err(|e| {
-                        sinex_satellite_sdk::SatelliteError::Processing(format!(
-                            "Failed to submit Kitty job: {}",
-                            e
-                        ))
-                    })?;
-            }
-        }
-
-        self.sensd_processor = Some(sensd_processor);
-        info!("sensd integration initialized successfully");
-        Ok(())
-    }
-
-    /// Start sensd job monitoring
-    async fn start_sensd_monitoring(&self) -> SatelliteResult<()> {
-        if let Some(ref processor) = self.sensd_processor {
-            info!("Starting sensd job monitoring");
-
-            // Start the job monitoring task in background with panic safety
-            let monitor_processor = processor.clone();
-            let monitor_handle = tokio::spawn(async move {
-                if let Err(e) = monitor_processor.monitor_jobs().await {
-                    warn!("sensd job monitoring error: {}", e);
-                }
-            });
-
-            // Spawn a watchdog to detect if the monitor task panics
-            tokio::spawn(async move {
-                if let Err(e) = monitor_handle.await {
-                    error!("sensd job monitoring task panicked: {:?}", e);
-                }
-            });
-        }
-
-        Ok(())
-    }
-
     /// Take a snapshot of current terminal state
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
         let mut enabled_sources = Vec::with_capacity(8);
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
-        let sensd_jobs = Vec::new();
 
         // Check enabled sources
         for (source, enabled) in &self.config.enabled_sources {
@@ -460,10 +340,8 @@ impl TerminalProcessor {
             history_file_status,
             atuin_status,
             shell_info: self.shell_info.clone(),
-            recent_activity: vec![
-                "Terminal processor snapshot taken (sensd-integrated)".to_string()
-            ],
-            sensd_jobs,
+            recent_activity: vec!["Terminal processor snapshot taken".to_string()],
+            material_captures: vec![],
         };
 
         self.last_state = Some(state.clone());
@@ -693,8 +571,8 @@ impl StatefulStreamProcessor for TerminalProcessor {
             "Terminal processor configuration"
         );
 
-        // Initialize sensd integration
-        self.initialize_sensd_integration().await?;
+        // TODO: sensd integration removed - terminal monitoring currently disabled
+        // self.initialize_sensd_integration().await?;
 
         self.context = Some(ctx);
         Ok(())
@@ -738,10 +616,10 @@ impl StatefulStreamProcessor for TerminalProcessor {
             }
 
             TimeHorizon::Continuous => {
-                // Start continuous monitoring via sensd
-                self.start_sensd_monitoring().await?;
-                successful_targets.push("sensd_continuous_monitoring".to_string());
-                events_processed = 0; // Continuous monitoring doesn't count discrete events
+                // TODO: Continuous monitoring disabled - sensd integration removed
+                // self.start_sensd_monitoring().await?;
+                successful_targets.push("continuous_monitoring_disabled".to_string());
+                events_processed = 0; // Continuous monitoring not implemented
             }
         }
 

@@ -1,3 +1,12 @@
+//! Test macros for snapshot testing and assertions
+//!
+//! # Snapshot Macros
+//!
+//! - `snapshot!` - Unified macro for creating snapshots
+//! - `assert_event_snapshot!` - Snapshot an event with automatic redactions
+//! - `assert_payload_snapshot!` - Snapshot just the payload
+//! - `assert_debug_event_snapshot!` - Debug snapshot (includes all fields)
+
 // Test Macros - TestContext Integration Helpers
 
 // Re-export rstest macros for convenience
@@ -53,5 +62,59 @@ macro_rules! assert_debug_snapshot {
         settings.bind(|| {
             insta::assert_debug_snapshot!($value);
         });
+    }};
+}
+
+// Snapshot macro for events with automatic redactions
+#[macro_export]
+macro_rules! assert_event_snapshot {
+    ($event:expr) => {{
+        insta::assert_json_snapshot!($event, {
+            ".id" => "[event-id]",
+            ".ts_ingest" => "[timestamp]",
+            ".host" => "[hostname]",
+        })
+    }};
+    ($event:expr, $name:expr) => {{
+        insta::assert_json_snapshot!($name, $event, {
+            ".id" => "[event-id]",
+            ".ts_ingest" => "[timestamp]",
+            ".host" => "[hostname]",
+        })
+    }};
+}
+
+// Snapshot macro for event payloads only
+#[macro_export]
+macro_rules! assert_payload_snapshot {
+    ($event:expr) => {{
+        insta::assert_json_snapshot!(&$event.payload)
+    }};
+    ($event:expr, $name:expr) => {{
+        insta::assert_json_snapshot!($name, &$event.payload)
+    }};
+}
+
+// Debug snapshot macro for events (includes all fields)
+#[macro_export]
+macro_rules! assert_debug_event_snapshot {
+    ($event:expr) => {{
+        insta::assert_debug_snapshot!($event)
+    }};
+    ($event:expr, $name:expr) => {{
+        insta::assert_debug_snapshot!($name, $event)
+    }};
+}
+
+/// Unified snapshot macro that auto-detects type
+#[macro_export]
+macro_rules! snapshot {
+    // Event with name
+    ($event:expr, $name:expr) => {{
+        $crate::assert_event_snapshot!($event, $name)
+    }};
+    // Event without name
+    ($event:expr) => {{
+        $crate::assert_event_snapshot!($event)
     }};
 }

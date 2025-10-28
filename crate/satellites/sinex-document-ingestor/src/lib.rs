@@ -5,7 +5,7 @@
 //! Document ingestor that consumes `MaterialSliceStream` from sensd.
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
@@ -63,15 +63,26 @@ impl Default for DocumentIngestorConfig {
     }
 }
 
-// Use shared MaterialSlice from sensd crate
-use sinex_sensd::material_stream::MaterialSlice;
+// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
+// MaterialSlice was removed with sensd - temporary stub for compilation
+
+#[derive(Debug, Clone)]
+pub struct MaterialSlice {
+    pub material_id: sinex_core::types::Ulid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+    pub ts_capture_start: DateTime<Utc>,
+    pub ts_capture_end: DateTime<Utc>,
+    pub data: Vec<u8>,
+    pub metadata: JsonValue,
+}
 
 /// Document processor that consumes MaterialSliceStream from sensd
 pub struct DocumentProcessor {
     context: Option<StreamProcessorContext>,
     config: DocumentIngestorConfig,
     db_pool: Option<PgPool>,
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
 }
 
 impl DocumentProcessor {
@@ -184,7 +195,7 @@ impl DocumentProcessor {
 
             // Send events
             for event in events {
-                if let Err(e) = event_sender.send(event).await {
+                if let Err(e) = event_sender.send(event) {
                     error!("Failed to send event: {}", e);
                 } else {
                     events_generated += 1;
@@ -513,25 +524,14 @@ impl StatefulStreamProcessor for DocumentProcessor {
             .await
             .map_err(|e| SatelliteError::General(eyre!("Failed to connect to database: {}", e)))?;
 
-        // Create event channel
-        let (event_sender, mut event_receiver) = mpsc::channel(1000);
-
-        // Clone ingest_client before storing context
-        let ingest_client = ctx.ingest_client()?.clone();
+        // Use the context's event sender directly
+        let event_sender = ctx.event_sender.clone();
 
         // Store configuration and resources
         self.config = config;
         self.db_pool = Some(db_pool);
         self.event_sender = Some(event_sender);
         self.context = Some(ctx);
-        tokio::spawn(async move {
-            let mut client = ingest_client;
-            while let Some(event) = event_receiver.recv().await {
-                if let Err(e) = client.ingest_event(&event).await {
-                    error!("Failed to emit event to ingestd: {}", e);
-                }
-            }
-        });
 
         info!("Document ingestor initialized with sensd integration");
         Ok(())

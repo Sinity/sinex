@@ -35,11 +35,6 @@ pub struct IngestdConfig {
     #[builder(default = String::from("nats://localhost:4222"))]
     pub nats_url: String,
 
-    /// Unix Domain Socket path for gRPC server
-    #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
-    #[builder(default = default_socket_path())]
-    pub socket_path: String,
-
     /// Batch size for database writes
     #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
     #[builder(default = 1000)]
@@ -57,6 +52,10 @@ pub struct IngestdConfig {
     /// Enable schema validation
     #[builder(default = true)]
     pub validate_schemas: bool,
+
+    /// Skip schema synchronization on startup (useful for tests)
+    #[builder(default = false)]
+    pub skip_schema_sync: bool,
 
     /// Working directory for temporary files
     #[serde(deserialize_with = "deserialize_validated_utf8_path")]
@@ -89,7 +88,6 @@ impl IngestdConfig {
     pub fn from_args(
         database_url: Option<String>,
         nats_url: String,
-        socket_path: String,
         pool_size: u32,
         batch_size: usize,
         batch_timeout_secs: u64,
@@ -97,7 +95,6 @@ impl IngestdConfig {
     ) -> Self {
         let builder = Self::builder()
             .nats_url(nats_url)
-            .socket_path(socket_path)
             .database_pool_size(pool_size)
             .batch_size(batch_size)
             .batch_timeout_secs(batch_timeout_secs)
@@ -133,27 +130,6 @@ impl IngestdConfig {
             SinexError::configuration(format!("Validation failed: {e}"))
                 .with_operation("config.validate_connection_strings")
         })?;
-
-        // Additional runtime validation - create directories if needed
-        // Using atomic create_dir_all to avoid TOCTOU race conditions
-        if let Some(parent) = Utf8PathBuf::from(&self.socket_path).parent() {
-            match tokio::fs::create_dir_all(parent).await {
-                Ok(()) => {
-                    debug!("Ensured socket directory exists: {}", parent.as_str());
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Directory already exists, this is fine
-                    debug!("Socket directory already exists: {}", parent.as_str());
-                }
-                Err(e) => {
-                    return Err(SinexError::configuration(format!(
-                        "Cannot create socket directory {}: {}",
-                        parent.as_str(),
-                        e
-                    )));
-                }
-            }
-        }
 
         // Ensure work directory exists using atomic create_dir_all
         match tokio::fs::create_dir_all(&self.work_dir).await {
@@ -244,11 +220,11 @@ impl Default for IngestdConfig {
             database_url: default_database_url(),
             database_pool_size: 50,
             nats_url: "nats://localhost:4222".to_string(),
-            socket_path: default_socket_path(),
             batch_size: 1000,
             batch_timeout_secs: 5,
             dry_run: false,
             validate_schemas: true,
+            skip_schema_sync: false,
             work_dir: default_work_dir(),
             max_message_size: 16 * 1024 * 1024,
             nats_stream_name: default_nats_stream_name(),
@@ -288,14 +264,6 @@ fn default_work_dir() -> Utf8PathBuf {
     }
 }
 
-/// Default socket path with environment namespacing
-fn default_socket_path() -> String {
-    let env = environment();
-    env.socket_path("/run/sinex/ingest.sock")
-        .to_string_lossy()
-        .to_string()
-}
-
 /// Default NATS stream name with environment namespacing
 fn default_nats_stream_name() -> String {
     let env = environment();
@@ -315,14 +283,6 @@ fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
         }
         Err(_) => Err(validator::ValidationError::new("invalid_url")),
     }
-}
-
-fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
-
-    validate_path(path)
-        .map(|_| ())
-        .map_err(|_| validator::ValidationError::new("invalid_socket_path"))
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {

@@ -140,18 +140,23 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Check if function is async or sync
     let is_async = input.sig.asyncness.is_some();
 
-    // Check for rstest integration:
+    // Check for rstest integration and preserve important attributes:
     // 1. Look for #[case] attributes on the function
     // 2. Look for #[case] attributes on parameters
+    // 3. Preserve #[ignore] and #[should_panic] attributes
     let mut case_attrs = Vec::new();
     let mut other_attrs = Vec::new();
+    let mut test_attrs = Vec::new(); // For #[ignore], #[should_panic], etc.
     let mut has_rstest_cases = false;
 
-    // Separate #[case] attributes from others
+    // Separate #[case] attributes from others, preserve test attributes
     for attr in &input.attrs {
         if attr.path().is_ident("case") {
             has_rstest_cases = true;
             case_attrs.push(attr.clone());
+        } else if attr.path().is_ident("ignore") || attr.path().is_ident("should_panic") {
+            test_attrs.push(attr.clone());
+            other_attrs.push(attr.clone());
         } else {
             other_attrs.push(attr.clone());
         }
@@ -327,6 +332,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = if !is_async {
         // Sync test handling
         quote! {
+            #(#test_attrs)*
             #[test]
             #fn_vis fn #fn_name() -> color_eyre::eyre::Result<()> {
                 use std::thread;
@@ -387,6 +393,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         if has_proptest {
             // Database test with proptest support
             quote! {
+                #(#test_attrs)*
                 #[tokio::test]
                 #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
                     // Note: TestContext must be in scope
@@ -468,6 +475,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         } else {
             // Regular database test using universal pool system with proper cleanup
             quote! {
+                #(#test_attrs)*
                 #[tokio::test]
                 #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
                     // Note: TestContext must be in scope
@@ -534,6 +542,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         // Simple test - just timeout wrapper
         quote! {
+            #(#test_attrs)*
             #[tokio::test]
             #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
                 let test_name = stringify!(#fn_name);

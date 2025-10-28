@@ -3,7 +3,6 @@
 use crate::{
     checkpoint::CheckpointManager,
     event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport},
-    grpc_client::IngestClient,
     SatelliteError, SatelliteResult,
 };
 use async_trait::async_trait;
@@ -418,20 +417,6 @@ impl StreamProcessorContext {
         result
     }
 
-    /// Get the IngestClient from the transport (for backward compatibility)
-    ///
-    /// Returns the IngestClient if using gRPC transport, otherwise returns an error.
-    /// This method is provided for backward compatibility with satellites that haven't
-    /// been migrated to use the EventTransport abstraction directly.
-    pub fn ingest_client(&self) -> SatelliteResult<&IngestClient> {
-        match &self.transport {
-            crate::event_processor::EventTransport::Grpc(client) => Ok(client),
-            crate::event_processor::EventTransport::Nats(_) => Err(SatelliteError::Processing(
-                "IngestClient not available when using NATS transport".to_string(),
-            )),
-        }
-    }
-
     /// Send multiple events through the event channel
     pub async fn emit_events(&self, events: Vec<Event<JsonValue>>) -> SatelliteResult<()> {
         for event in events {
@@ -749,92 +734,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         }
     }
 
-    /// Initialize the processor with typed configuration
-    pub async fn initialize_with_config(
-        &mut self,
-        service_name: String,
-        config: T::Config,
-        db_pool: PgPool,
-        ingest_client: IngestClient,
-        work_dir: std::path::PathBuf,
-        dry_run: bool,
-    ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
-
-        // Create shutdown channels
-        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let (processor_shutdown_sender, processor_shutdown_receiver) =
-            tokio::sync::oneshot::channel();
-        self.shutdown_receiver = Some(shutdown_receiver);
-        self.event_processor_shutdown = Some(processor_shutdown_sender);
-
-        // Get hostname
-        let host = gethostname::gethostname().to_string_lossy().to_string();
-
-        // Initialize checkpoint manager
-        let checkpoint_manager = CheckpointManager::new(
-            db_pool.clone(),
-            service_name.clone(),
-            "default".to_string(), // Default consumer group
-            format!("{}-{}", host, std::process::id()), // Unique consumer name
-        );
-
-        // Create event transport (default to gRPC)
-        let transport = EventTransport::Grpc(ingest_client);
-
-        // Create context with empty legacy config
-        let context = StreamProcessorContext {
-            service_name: service_name.clone(),
-            host,
-            work_dir,
-            dry_run,
-            db_pool,
-            transport: transport.clone(),
-            checkpoint_manager,
-            config: HashMap::new(), // Empty legacy config
-            event_sender,
-        };
-
-        // Initialize the processor with typed config
-        self.processor.initialize(context, config).await?;
-
-        // Spawn event processor
-        let processor_config = EventProcessorConfig::default();
-        self.event_processor_handle = Some(spawn_event_processor(
-            transport,
-            processor_config,
-            event_receiver,
-            processor_shutdown_receiver,
-        ));
-
-        info!(
-            service = %service_name,
-            processor = %self.processor.processor_name(),
-            processor_type = ?self.processor.processor_type(),
-            transport = "gRPC",
-            "Stream processor initialized with typed config"
-        );
-
-        Ok(())
-    }
-
-    /// Initialize the processor with configuration (legacy)
-    pub async fn initialize(
-        &mut self,
-        service_name: String,
-        config: HashMap<String, serde_json::Value>,
-        db_pool: PgPool,
-        ingest_client: IngestClient,
-        work_dir: std::path::PathBuf,
-        dry_run: bool,
-    ) -> SatelliteResult<()> {
-        let transport = EventTransport::Grpc(ingest_client);
-        self.initialize_with_transport(service_name, config, db_pool, transport, work_dir, dry_run)
-            .await
-    }
-
-    /// Initialize the processor with a specific transport (gRPC or NATS)
+    /// Initialize the processor with a specific transport
     pub async fn initialize_with_transport(
         &mut self,
         service_name: String,
@@ -865,11 +765,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
-        // Determine transport type for logging
-        let transport_type = match &transport {
-            EventTransport::Grpc(_) => "gRPC",
-            EventTransport::Nats(_) => "NATS",
-        };
+        // NATS is the only transport
+        let transport_type = "NATS";
 
         // Create context
         let context = StreamProcessorContext {
@@ -902,156 +799,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             processor_type = ?self.processor.processor_type(),
             transport = transport_type,
             "Stream processor initialized"
-        );
-
-        Ok(())
-    }
-
-    /// Initialize the processor with gRPC transport and typed configuration
-    pub async fn initialize_with_grpc_config(
-        &mut self,
-        service_name: String,
-        config: T::Config,
-        db_pool: PgPool,
-        socket_path: String,
-        work_dir: std::path::PathBuf,
-        dry_run: bool,
-    ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
-
-        // Create shutdown channels
-        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let (processor_shutdown_sender, processor_shutdown_receiver) =
-            tokio::sync::oneshot::channel();
-        self.shutdown_receiver = Some(shutdown_receiver);
-        self.event_processor_shutdown = Some(processor_shutdown_sender);
-
-        // Get hostname
-        let host = gethostname::gethostname().to_string_lossy().to_string();
-
-        // Initialize checkpoint manager
-        let checkpoint_manager = CheckpointManager::new(
-            db_pool.clone(),
-            service_name.clone(),
-            "default".to_string(), // Default consumer group
-            format!("{}-{}", host, std::process::id()), // Unique consumer name
-        );
-
-        // Create ingest client for gRPC transport
-        let ingest_client = IngestClient::new(&socket_path)
-            .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
-
-        let transport = EventTransport::Grpc(ingest_client);
-
-        // Create context with empty legacy config
-        let context = StreamProcessorContext {
-            service_name: service_name.clone(),
-            host,
-            work_dir,
-            dry_run,
-            db_pool,
-            transport: transport.clone(),
-            checkpoint_manager,
-            config: HashMap::new(), // Empty legacy config
-            event_sender,
-        };
-
-        // Initialize the processor with typed config
-        self.processor.initialize(context, config).await?;
-
-        // Spawn event processor
-        let processor_config = EventProcessorConfig::default();
-        self.event_processor_handle = Some(spawn_event_processor(
-            transport,
-            processor_config,
-            event_receiver,
-            processor_shutdown_receiver,
-        ));
-
-        info!(
-            service = %service_name,
-            processor = %self.processor.processor_name(),
-            processor_type = ?self.processor.processor_type(),
-            transport = "gRPC",
-            socket_path = &socket_path,
-            "Stream processor initialized with gRPC transport"
-        );
-
-        Ok(())
-    }
-
-    /// Initialize the processor with gRPC transport (legacy)
-    pub async fn initialize_with_grpc_legacy(
-        &mut self,
-        service_name: String,
-        config: HashMap<String, serde_json::Value>,
-        db_pool: PgPool,
-        socket_path: String,
-        work_dir: std::path::PathBuf,
-        dry_run: bool,
-    ) -> SatelliteResult<()> {
-        // Create bounded event channel (capacity: 10000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
-
-        // Create shutdown channels
-        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let (processor_shutdown_sender, processor_shutdown_receiver) =
-            tokio::sync::oneshot::channel();
-        self.shutdown_receiver = Some(shutdown_receiver);
-        self.event_processor_shutdown = Some(processor_shutdown_sender);
-
-        // Get hostname
-        let host = gethostname::gethostname().to_string_lossy().to_string();
-
-        // Initialize checkpoint manager
-        let checkpoint_manager = CheckpointManager::new(
-            db_pool.clone(),
-            service_name.clone(),
-            "default".to_string(), // Default consumer group
-            format!("{}-{}", host, std::process::id()), // Unique consumer name
-        );
-
-        // Create ingest client for gRPC transport
-        let ingest_client = IngestClient::new(&socket_path)
-            .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
-
-        let transport = EventTransport::Grpc(ingest_client);
-
-        // Create context
-        let context = StreamProcessorContext {
-            service_name: service_name.clone(),
-            host,
-            work_dir,
-            dry_run,
-            db_pool,
-            transport: transport.clone(),
-            checkpoint_manager,
-            config,
-            event_sender,
-        };
-
-        // Initialize the processor with legacy config conversion
-        self.processor.initialize_legacy(context).await?;
-
-        // Spawn event processor
-        let processor_config = EventProcessorConfig::default();
-        self.event_processor_handle = Some(spawn_event_processor(
-            transport,
-            processor_config,
-            event_receiver,
-            processor_shutdown_receiver,
-        ));
-
-        info!(
-            service = %service_name,
-            processor = %self.processor.processor_name(),
-            processor_type = ?self.processor.processor_type(),
-            transport = "gRPC",
-            socket_path = &socket_path,
-            "Stream processor initialized with gRPC transport"
         );
 
         Ok(())

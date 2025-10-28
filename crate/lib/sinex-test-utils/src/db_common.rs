@@ -254,6 +254,8 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         .await?;
 
     // Ensure no stale bootstrap records remain from prior runs
+    // This DELETE needs operation_id for RLS policy
+    let operation_guard2 = OperationIdGuard::apply(&mut conn, "bootstrap-cleanup").await?;
     sqlx::query(
         r#"
         DELETE FROM core.events
@@ -268,6 +270,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
     .execute(conn.as_mut())
     .await?;
+    operation_guard2.restore(&mut conn).await?;
 
     sqlx::query(
         r#"
@@ -297,6 +300,8 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     .execute(conn.as_mut())
     .await?;
 
+    // This DELETE also needs operation_id for RLS policy
+    let operation_guard3 = OperationIdGuard::apply(&mut conn, "bootstrap-cleanup-final").await?;
     sqlx::query(
         r#"
         DELETE FROM raw.source_material_registry
@@ -309,6 +314,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     .bind("test-material-bootstrap")
     .execute(conn.as_mut())
     .await?;
+    operation_guard3.restore(&mut conn).await?;
 
     sqlx::query("RESET sinex.operation_id")
         .execute(conn.as_mut())
@@ -318,7 +324,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     Ok(())
 }
 
-async fn with_operation_id<F, Fut, T>(
+pub async fn with_operation_id<F, Fut, T>(
     conn: &mut PoolConnection<Postgres>,
     operation_id: &str,
     f: F,

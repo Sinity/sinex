@@ -6,7 +6,7 @@ use sinex_core::{
     db::create_pool,
     types::{domain::SanitizedPath, error::SinexError},
 };
-use sinex_satellite_sdk::{annex::BlobManager, IngestClient};
+use sinex_satellite_sdk::annex::BlobManager;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
 // (no mpsc channel needed here)
@@ -47,18 +47,9 @@ impl ServiceContainer {
                 .with_source(e.to_string())
         })?;
 
-        // Create IngestClient for BlobManager (required for proper event routing)
-        let ingest_client = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
-            IngestClient::new(&ingest_socket).await.map_err(|e| {
-                SinexError::service("Failed to create ingest client for blob manager")
-                    .with_source(e.to_string())
-            })?
-        } else {
-            return Err(SinexError::configuration(
-                "SINEX_INGEST_SOCKET environment variable not set - required for blob manager",
-            )
-            .into());
-        };
+        // Create event channel for BlobManager
+        let (event_sender, _event_receiver) = tokio::sync::mpsc::unbounded_channel();
+        // TODO: Connect event_receiver to proper event processing pipeline
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,
@@ -66,7 +57,7 @@ impl ServiceContainer {
             large_files: None,
         };
         let blob_manager = Arc::new(
-            BlobManager::new(annex_config, pool.clone(), ingest_client.clone()).map_err(|e| {
+            BlobManager::new(annex_config, pool.clone(), event_sender).map_err(|e| {
                 SinexError::service("Failed to create blob manager").with_source(e.to_string())
             })?,
         );

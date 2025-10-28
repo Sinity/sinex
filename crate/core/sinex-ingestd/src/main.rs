@@ -1,8 +1,6 @@
 use clap::Parser;
 use color_eyre::eyre::Result;
-use sinex_core::SanitizedPath;
 use sinex_ingestd::{IngestService, IngestdConfig};
-use std::str::FromStr;
 use tracing::{error, info};
 
 #[cfg(not(target_env = "msvc"))]
@@ -11,14 +9,6 @@ use mimalloc::MiMalloc;
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
-
-/// Validate and parse socket path for ingestd gRPC server
-pub fn validate_socket_path(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Socket path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -34,10 +24,6 @@ struct Args {
     /// NATS URL for message bus
     #[arg(long, env = "SINEX_NATS_URL", default_value = "nats://localhost:4222")]
     nats_url: String,
-
-    /// Unix Domain Socket path for gRPC server
-    #[arg(long, default_value = "/run/sinex/ingest.sock", value_parser = validate_socket_path)]
-    socket_path: SanitizedPath,
 
     /// Database connection pool size
     #[arg(long, default_value = "50")]
@@ -82,7 +68,6 @@ async fn main() -> Result<()> {
     let config = IngestdConfig::from_args(
         args.database_url,
         args.nats_url,
-        args.socket_path.into_string(),
         args.pool_size,
         args.batch_size,
         args.batch_timeout_secs,

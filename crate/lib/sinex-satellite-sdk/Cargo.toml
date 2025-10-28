@@ -27,10 +27,6 @@ sqlx.workspace = true
 # NATS for message bus (replaces Redis)
 async-nats.workspace = true
 
-# gRPC for communication with ingestd
-tonic = "0.11"
-prost = "0.12"
-
 # Time and IDs
 chrono.workspace = true
 uuid.workspace = true
@@ -62,10 +58,6 @@ sinex-core = { path = "../sinex-core" }
 sinex-macros = { path = "../sinex-macros", optional = true }
 # Removed sinex-preflight - now part of this crate
 # Removed sinex-nats - now part of this crate
-
-[build-dependencies]
-tonic-build = "0.11"
-chrono = "0.4"
 
 [features]
 default = []

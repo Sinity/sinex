@@ -1,6 +1,6 @@
 #![doc = include_str!("../doc/stage_as_you_go.md")]
 
-use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
+use crate::{SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
 use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
@@ -8,6 +8,7 @@ use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::{ulid::Ulid, Id};
 use sinex_core::{DbPoolExt, JsonValue};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
@@ -15,15 +16,15 @@ use tracing::{debug, info};
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
     db_pool: PgPool,
-    ingest_client: Arc<Mutex<IngestClient>>,
+    event_sender: Arc<Mutex<mpsc::UnboundedSender<Event<JsonValue>>>>,
 }
 
 impl StageAsYouGoContext {
     /// Create a new Stage-as-You-Go context
-    pub fn new(db_pool: PgPool, ingest_client: IngestClient) -> Self {
+    pub fn new(db_pool: PgPool, event_sender: mpsc::UnboundedSender<Event<JsonValue>>) -> Self {
         Self {
             db_pool,
-            ingest_client: Arc::new(Mutex::new(ingest_client)),
+            event_sender: Arc::new(Mutex::new(event_sender)),
         }
     }
 
@@ -67,7 +68,7 @@ impl StageAsYouGoContext {
         source_material_id: Ulid,
         offset_start: Option<i64>,
         offset_end: Option<i64>,
-    ) -> SatelliteResult<String> {
+    ) -> SatelliteResult<Ulid> {
         // Attach source material provenance to the event
         event.provenance = sinex_core::Provenance::Material {
             id: source_material_id.into(),
@@ -85,9 +86,18 @@ impl StageAsYouGoContext {
             );
         }
 
-        // Send event via ingest client
-        let mut client = self.ingest_client.lock().await;
-        let event_id = client.ingest_event(&event).await?;
+        // Send event via event channel
+        let event_id: Ulid = *event
+            .id
+            .as_ref()
+            .ok_or_else(|| SatelliteError::Processing("Event must have an ID".to_string()))?
+            .as_ulid();
+
+        self.event_sender
+            .lock()
+            .await
+            .send(event)
+            .map_err(|_| SatelliteError::Processing("Event channel closed".to_string()))?;
 
         debug!(
             event_id = %event_id,
@@ -266,7 +276,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                 )
                 .await?;
 
-            event_ids.push(event_id);
+            event_ids.push(event_id.to_string());
         }
 
         // Step 3: Finalize source material with complete details

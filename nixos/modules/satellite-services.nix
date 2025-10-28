@@ -90,7 +90,7 @@ let
           description = "Ingestion Hub";
           after = [ "postgresql.service" "nats.service" ];
           requires = [ "postgresql.service" "nats.service" ];
-          execStart = "${cfg.package}/bin/sinex-ingestd --socket-path /run/sinex/ingest.sock --nats-url ${cfg.satellite.nats.servers} --batch-size ${toString cfg.satellite.ingestd.batchSize} --log-level ${cfg.satellite.logLevel}";
+          execStart = "${cfg.package}/bin/sinex-ingestd --nats-url ${cfg.satellite.nats.servers} --batch-size ${toString cfg.satellite.ingestd.batchSize} --log-level ${cfg.satellite.logLevel}";
           environment = [
             "DATABASE_URL=${cfg.satellite.database.url}"
             "RUST_LOG=${cfg.satellite.logLevel}"
@@ -98,15 +98,6 @@ let
           memoryLimit = "1G";
           cpuQuota = "100%";
           tasksMax = 200;
-          serviceConfigOverrides = {
-            # Need to create the socket directory
-            ExecStartPre = pkgs.writeShellScript "ingestd-pre-start" ''
-              mkdir -p /run/sinex
-              chown ${cfg.satelliteUser}:${cfg.satelliteUser} /run/sinex
-            '';
-            # Allow socket creation
-            ReadWritePaths = [ "/run/sinex" ];
-          };
         };
 
         # API Gateway (sinex-gateway)
