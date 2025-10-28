@@ -338,7 +338,7 @@ fn create_test_event_source_config() -> EventSourceConfig {
     let base_config = SatelliteConfig {
         service_name: "test-event-source".to_string(),
         log_level: "debug".to_string(),
-        ingest_socket_path: "/run/sinex/ingest.sock".to_string(),
+        nats_url: "nats://localhost:4222".to_string(),
         redis_url: "redis://localhost:6379".to_string(),
         database_url: None,
         database_pool_size: 10,
