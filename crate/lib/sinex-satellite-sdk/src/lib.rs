@@ -13,6 +13,7 @@ pub use sinex_macros::{
 
 pub mod acquisition_manager;
 pub mod annex;
+pub mod automaton_event_handler;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
@@ -48,6 +49,7 @@ pub mod version;
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
 };
+pub use automaton_event_handler::AutomatonEventHandler;
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,

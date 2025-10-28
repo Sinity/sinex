@@ -14,6 +14,11 @@ impl NatsPublisher {
         Self { nats_client, env }
     }
 
+    /// Get the underlying NATS client
+    pub fn nats_client(&self) -> &async_nats::Client {
+        &self.nats_client
+    }
+
     pub async fn publish(
         &self,
         event: &Event,

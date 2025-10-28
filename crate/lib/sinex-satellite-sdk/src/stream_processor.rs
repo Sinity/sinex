@@ -14,6 +14,7 @@ use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::JsonValue;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -377,6 +378,12 @@ pub struct StreamProcessorContext {
 
     /// Event sender channel for scan operations
     pub event_sender: EventSender,
+
+    /// Lease manager for leader election (automata only)
+    pub lease_manager: Option<Arc<crate::LeaseManager>>,
+
+    /// Confirmation buffer for provisional events (automata only)
+    pub confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
 }
 
 impl std::fmt::Debug for StreamProcessorContext {
@@ -720,6 +727,9 @@ pub struct StreamProcessorRunner<T: StatefulStreamProcessor> {
     shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
     event_processor_handle: Option<tokio::task::JoinHandle<SatelliteResult<()>>>,
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    lease_manager: Option<Arc<crate::LeaseManager>>,
+    confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
+    processing_model: crate::ProcessingModel,
 }
 
 impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
@@ -731,6 +741,9 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             shutdown_receiver: None,
             event_processor_handle: None,
             event_processor_shutdown: None,
+            lease_manager: None,
+            confirmation_buffer: None,
+            processing_model: crate::ProcessingModel::StatelessWorker,
         }
     }
 
@@ -768,7 +781,52 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // NATS is the only transport
         let transport_type = "NATS";
 
-        // Create context
+        // Set up LeaseManager and ConfirmationBuffer for Automatons BEFORE creating context
+        let processor_type = self.processor.processor_type();
+        let (lease_manager_opt, confirmation_buffer_opt) =
+            if matches!(processor_type, ProcessorType::Automaton) {
+                // Extract NATS client from transport
+                if let EventTransport::Nats(nats_publisher) = &transport {
+                    let nats_client = nats_publisher.nats_client().clone();
+                    let env = sinex_core::environment().clone();
+
+                    // Create LeaseManager for leader election
+                    let lease_config = crate::LeaseManagerConfig {
+                        processor_name: service_name.clone(),
+                        instance_id: format!(
+                            "{}-{}",
+                            gethostname::gethostname().to_string_lossy(),
+                            std::process::id()
+                        ),
+                        lease_ttl: std::time::Duration::from_secs(30),
+                        renewal_interval: std::time::Duration::from_secs(10),
+                    };
+                    let lease_manager =
+                        Arc::new(crate::LeaseManager::new(nats_client, env, lease_config));
+
+                    // Create ConfirmationBuffer with 60s timeout
+                    let confirmation_buffer = Arc::new(crate::ConfirmationBuffer::new(
+                        std::time::Duration::from_secs(60),
+                    ));
+
+                    self.processing_model = crate::ProcessingModel::LeaderStandby;
+                    info!(
+                        "Automaton configured with LeaderStandby model and confirmation buffering"
+                    );
+
+                    (Some(lease_manager), Some(confirmation_buffer))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
+        // Store in runner
+        self.lease_manager = lease_manager_opt.clone();
+        self.confirmation_buffer = confirmation_buffer_opt.clone();
+
+        // Create context with LeaseManager and ConfirmationBuffer
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
             host,
@@ -779,6 +837,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config,
             event_sender,
+            lease_manager: lease_manager_opt,
+            confirmation_buffer: confirmation_buffer_opt,
         };
 
         // Initialize the processor with legacy config conversion
@@ -943,6 +1003,18 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     async fn run_automaton_continuous_mode(&mut self) -> SatelliteResult<()> {
         info!("Starting automaton continuous mode");
 
+        // Start LeaseManager if configured (for LeaderStandby model)
+        if let Some(lease_manager) = &self.lease_manager {
+            info!("Starting lease manager for leader election");
+            lease_manager.start().await?;
+
+            // Wait for initial lease acquisition
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let status = lease_manager.status().await;
+            info!(?status, "Lease manager started with initial status");
+        }
+
         // Get current checkpoint to resume from previous state if available
         let current_checkpoint = self.processor.current_checkpoint().await?;
 
@@ -950,6 +1022,18 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // They consume events from message queues or databases
         if self.processor.capabilities().supports_continuous {
             info!("Starting continuous event processing for automaton");
+
+            // Check lease status before processing (for LeaderStandby model)
+            if self.processing_model == crate::ProcessingModel::LeaderStandby {
+                if let Some(lease_manager) = &self.lease_manager {
+                    let status = lease_manager.status().await;
+                    if status != crate::LeaseStatus::Leader {
+                        info!(?status, "Not leader, skipping processing");
+                        return Ok(());
+                    }
+                    info!("Confirmed as leader, proceeding with processing");
+                }
+            }
 
             // Use Continuous time horizon for automata
             // The processor's scan method should handle NATS/database consumption internally
@@ -1019,6 +1103,13 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     /// Graceful shutdown
     pub async fn shutdown(&mut self) -> SatelliteResult<()> {
         info!("Shutting down stream processor runner");
+
+        // Stop LeaseManager if running
+        if let Some(lease_manager) = &self.lease_manager {
+            info!("Stopping lease manager");
+            lease_manager.stop().await;
+        }
+
         self.processor.shutdown().await
     }
 }
