@@ -16,7 +16,6 @@ use tokio::task::JoinHandle;
 /// Configuration for test ingestd instance
 #[derive(Debug, Clone)]
 pub struct TestIngestdConfig {
-    pub socket_path: String,
     pub nats_url: String,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
@@ -25,7 +24,6 @@ pub struct TestIngestdConfig {
 impl Default for TestIngestdConfig {
     fn default() -> Self {
         Self {
-            socket_path: "/tmp/test-ingestd.sock".to_string(),
             nats_url: "nats://127.0.0.1:4222".to_string(),
             database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
             work_dir: None,
@@ -35,7 +33,6 @@ impl Default for TestIngestdConfig {
 
 /// Handle for a test ingestd process
 pub struct TestIngestdHandle {
-    pub socket_path: String,
     pub stream_name: String,
     process: Option<Child>,
     service: Option<IngestService>,
@@ -115,20 +112,10 @@ pub async fn start_test_ingestd_with_config(
     let mut service_runner = service.clone();
     let join_handle = tokio::spawn(async move { service_runner.run().await });
 
-    // Wait for socket to become available
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if tokio::fs::metadata(&config.socket_path).await.is_ok() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .map_err(|_| SinexError::service("ingestd socket did not become ready"))?;
+    // Give service a moment to initialize (NATS connection, DB pool, etc.)
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     Ok(TestIngestdHandle {
-        socket_path: config.socket_path,
         stream_name: ingest_config.nats_stream_name,
         process: None,
         service: Some(service),
@@ -239,10 +226,9 @@ impl SatelliteOrchestrator {
 }
 
 /// Create a test satellite configuration
-pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> serde_json::Value {
+pub fn build_test_satellite_config(service_name: &str) -> serde_json::Value {
     serde_json::json!({
         "name": service_name,
-        "socket_path": socket_path,
         "batch_size": 10,
         "batch_timeout_ms": 100,
     })
@@ -260,7 +246,6 @@ mod tests {
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
         let config = TestIngestdConfig::default();
 
-        assert_eq!(config.socket_path, "/tmp/test-ingestd.sock");
         assert_eq!(config.nats_url, "nats://127.0.0.1:4222");
         assert_eq!(
             config.database_url,
@@ -275,20 +260,18 @@ mod tests {
         use crate::nats::EphemeralNats;
 
         let nats = EphemeralNats::start().await?;
-        let socket_dir = tempfile::tempdir()
-            .map_err(|e| SinexError::service(format!("failed to create temp socket dir: {e}")))?;
-        let socket_path = socket_dir.path().join("custom-test.sock");
+        let work_dir = tempfile::tempdir()
+            .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            socket_path: socket_path.to_string_lossy().into(),
             nats_url: format!("nats://{}", nats.client_url()),
             database_url: ctx.database_url().to_string(),
-            work_dir: Some(socket_dir.path().to_path_buf()),
+            work_dir: Some(work_dir.path().to_path_buf()),
         };
 
         let mut handle = start_test_ingestd_with_config(config.clone()).await?;
 
-        assert_eq!(handle.socket_path, config.socket_path);
+        assert!(!handle.stream_name.is_empty());
         handle.stop().await?;
 
         Ok(())
@@ -299,15 +282,13 @@ mod tests {
         use crate::nats::EphemeralNats;
 
         let nats = EphemeralNats::start().await?;
-        let socket_dir = tempfile::tempdir()
-            .map_err(|e| SinexError::service(format!("failed to create temp socket dir: {e}")))?;
-        let socket_path = socket_dir.path().join("stop-test.sock");
+        let work_dir = tempfile::tempdir()
+            .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            socket_path: socket_path.to_string_lossy().into(),
             nats_url: format!("nats://{}", nats.client_url()),
             database_url: ctx.database_url().to_string(),
-            work_dir: Some(socket_dir.path().to_path_buf()),
+            work_dir: Some(work_dir.path().to_path_buf()),
         };
         let mut handle = start_test_ingestd_with_config(config).await?;
 
@@ -451,10 +432,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_satellite_config_builder(_ctx: TestContext) -> Result<()> {
-        let config = build_test_satellite_config("test-service", "/tmp/test.sock");
+        let config = build_test_satellite_config("test-service");
 
         assert_eq!(config["name"], "test-service");
-        assert_eq!(config["socket_path"], "/tmp/test.sock");
         assert_eq!(config["batch_size"], 10);
         assert_eq!(config["batch_timeout_ms"], 100);
 
@@ -498,7 +478,6 @@ mod tests {
     fn test_ingestd_handle_drop() -> color_eyre::eyre::Result<()> {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
-            socket_path: "/tmp/drop-test.sock".to_string(),
             stream_name: "test-stream".to_string(),
             process: None,
             service: None,
