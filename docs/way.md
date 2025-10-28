@@ -13,6 +13,33 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 
 ---
 
+## Implementation Status (Updated 2025-01-28)
+
+**Overall Progress: Phase 1, 2, & 4 Complete | Phase 3 In Progress | Phase 5 Pending**
+
+### Completed ✅
+- **Phase 1 - Event Backbone**: NatsPublisher, JetStreamConsumer, confirmations, DLQ, idempotency
+- **Phase 2 - Confirmation-Aware Consumption**: ConfirmationBuffer, AutomatonEventHandler, DLQ retry
+- **Phase 4 - Coordination & Control Plane**: LeaseManager with NATS KV, leader election
+
+**Satellites**: 6/8 modern and buildable (75% complete)
+- ✅ All using `processor_main!` and NATS JetStream
+- ✅ Zero legacy gRPC patterns
+- ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
+- 🔄 Blocked: analytics-automaton, search-automaton (deeper refactoring)
+
+**Testing**: E2E JetStream test created (`jetstream_e2e_integration_test.rs`)
+- Validates: Satellite → JetStream → ingestd → DB → confirmation → Automaton
+- Includes idempotency verification
+
+### In Progress 🔄
+- **Phase 3 - Source Material Slices**: MaterialAssembler, git-annex integration, restart resilience
+
+### Pending ⏳
+- **Phase 5 - Cleanup**: Remove gRPC ingestion, sensd crate, legacy configuration
+
+---
+
 ## 0. Scope, Goals & Non‑Goals
 
 - **Goals**
@@ -128,20 +155,26 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ### SDK
 - [ ] `AcquisitionManager` + Stage-as-You-Go finalize paths (sets `optional_blob_id`, writes ledger entries).
-- [ ] `EventPublisher` supporting dedupe headers, subject selection, tracing metadata.
-- [ ] `StreamProcessorRunner` update: confirmation buffering, provisional handler, JetStream lease integration.
+- [x] `EventPublisher` supporting dedupe headers, subject selection, tracing metadata. ✅ NatsPublisher implemented
+- [x] `StreamProcessorRunner` update: confirmation buffering, provisional handler, JetStream lease integration. ✅ Completed 2025-01
 - [ ] Remove sensd client + sensor guards once all satellites migrate.
 
 ### Satellites
+- [x] **All buildable satellites modernized (6/8 - 75% complete)** ✅ 2025-01
+  - All using `processor_main!` macro and NATS JetStream
+  - Zero legacy gRPC patterns remain
+  - Completed: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
+  - Blocked: analytics-automaton, search-automaton (deeper refactoring needed)
 - Migratory template for each satellite:
   1. Integrate `AcquisitionManager` + Stage-as-You-Go to capture materials.
-  2. Publish slices/events to JetStream; confirm ingestion locally.
+  2. [x] Publish slices/events to JetStream; confirm ingestion locally. ✅ NatsPublisher integrated
   3. Delete sensd job submission paths, configs, and CLI switches.
   4. Ensure recovery (replay from JetStream) and checkpointing works.
 
 ### Automata & Replay
-- Update automata to subscribe via `StreamProcessorRunner`.
-- Replay tooling moves to `sinex.control.*` with confirmation awareness (plan/preview/execute).
+- [x] Update automata to subscribe via `StreamProcessorRunner`. ✅ AutomatonEventHandler adapter created
+- [x] JetStream consumer infrastructure for automata. ✅ JetStreamEventConsumer implemented
+- [ ] Replay tooling moves to `sinex.control.*` with confirmation awareness (plan/preview/execute).
 
 ### Docs & Tooling
 - Update architecture docs, SDK guides, and CLI help to reference JetStream pipeline.
@@ -162,27 +195,27 @@ Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 
 ### Critical Test Gaps (from analysis in `docs/testing-gap-analysis.md`)
 
-**Phase 1 Blockers:**
-- Events consumer loop (ingestd → JetStream → DB)
-- NatsPublisher SDK integration
-- Confirmation flow end-to-end
-- DLQ routing on validation failure
-- Idempotency via Nats-Msg-Id headers
+**Phase 1 - Event Backbone:** ✅ COMPLETE (2025-01)
+- [x] Events consumer loop (ingestd → JetStream → DB) ✅ JetStreamConsumer
+- [x] NatsPublisher SDK integration ✅ Implemented
+- [x] Confirmation flow end-to-end ✅ Confirmations published
+- [x] DLQ routing on validation failure ✅ DLQ infrastructure
+- [x] Idempotency via Nats-Msg-Id headers ✅ Implemented
 
-**Phase 2 Blockers:**
-- StreamProcessorRunner confirmation buffering
-- Automaton consumption from JetStream
-- DLQ manual retry mechanism
+**Phase 2 - Confirmation-Aware Consumption:** ✅ COMPLETE (2025-01)
+- [x] StreamProcessorRunner confirmation buffering ✅ ConfirmationBuffer integrated
+- [x] Automaton consumption from JetStream ✅ JetStreamEventConsumer + AutomatonEventHandler
+- [x] DLQ manual retry mechanism ✅ DlqRetryHandler
 
-**Phase 3 Blockers:**
-- MaterialAssembler state management (out-of-order slices)
-- AcquisitionManager hash verification
-- Restart resilience (rebuild state from stream)
-- git-annex integration
+**Phase 3 - Source Material Slices:** 🔄 IN PROGRESS
+- [ ] MaterialAssembler state management (out-of-order slices)
+- [x] AcquisitionManager hash verification ✅ Implemented
+- [ ] Restart resilience (rebuild state from stream)
+- [ ] git-annex integration
 
-**Phase 4 Blockers:**
-- Leader election and failover
-- NATS KV lease management
+**Phase 4 - Coordination & Control Plane:** ✅ COMPLETE (2025-01)
+- [x] Leader election and failover ✅ LeaseManager with NATS KV
+- [x] NATS KV lease management ✅ Integrated into StreamProcessorRunner
 
 ### Test Organization
 

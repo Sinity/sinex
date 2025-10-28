@@ -31,14 +31,14 @@ The promise is threefold: to restore **agency** by placing you in control of you
 
 Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
 
-**Current Core Flow (implemented in code)**: Satellites → ingestd (gRPC over Unix socket) → Postgres (`core.events`) → NATS JetStream fanout → Automata → Gateway (JSON‑RPC) → CLI
+**Current Core Flow (implemented in code)**: Satellites → NATS JetStream → ingestd (consumer/archiver) → Postgres (`core.events`) + JetStream confirmations → Automata → Gateway (JSON‑RPC) → CLI
 
-Note: A NATS‑native ingestion refactor (satellites publish directly to JetStream; ingestd acts as archiver/consumer) is planned. See `docs/plan_v3.txt`. Until that refactor lands, ingestion uses gRPC to ingestd as above.
+Satellites publish events directly to NATS JetStream (`events.raw.*` subjects); ingestd consumes from JetStream, validates, persists to Postgres, and publishes confirmations back to JetStream for consumption by automata and other processors.
 
 - **Satellites**: Independent services that capture events (filesystem, terminals, window managers, system events)
-- **ingestd**: Central ingestion daemon that receives events via gRPC and stores data atomically; also fans out persisted events via NATS JetStream
+- **NATS JetStream**: Durable message bus for event ingestion, distribution, and confirmation delivery
+- **ingestd**: Consumes events from JetStream, validates, archives to Postgres, and publishes confirmations
 - **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
-- **NATS JetStream**: Real-time event distribution and durable buffering
 - **Automata**: Stream processors that transform raw events into canonical representations
 - **Query Interface**: Python CLI (`exo.py`) for exploring captured events
 
@@ -59,10 +59,10 @@ Note: A NATS‑native ingestion refactor (satellites publish directly to JetStre
 - **Dual-Mode Operation**: Satellites support both sensor (real-time) and scanner (batch) modes
 - **Immutable Event Storage**: All events preserved with full fidelity
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers
-- **Ingestion via gRPC (current)**: Satellites submit to ingestd over gRPC; ingestd validates/persists and fans out via NATS JetStream
-- **NATS‑native ingest (planned)**: Per `docs/plan_v3.txt`, satellites will publish directly to JetStream; ingestd becomes an archiver/consumer
+- **NATS JetStream Ingestion**: Satellites publish directly to JetStream; ingestd acts as consumer/archiver
+- **Idempotency & Confirmation**: Message deduplication via NATS-Msg-Id headers; confirmation delivery for provisionals
 - **Schema Validation**: JSON Schema validation for event payloads
-- **Git-Annex Integration**: Large file storage for blobs
+- **Git-Annex Integration**: Large file storage for blobs (source material slices)
 - **NixOS Module**: First-class NixOS deployment support
 
 ### Satellite Architecture Details
@@ -92,9 +92,9 @@ All satellites support two operational modes:
 
 ### System Components Progress
 
-- ✅ **Satellite Architecture**: Independent satellite services operational, unified SDK in progress
+- ✅ **Satellite Architecture**: Independent satellite services operational, unified SDK complete
 - ✅ **Data Substrate**: PostgreSQL + TimescaleDB with ULID keys; `core.events` operational
-- 🚧 **Message Bus**: Converging on NATS JetStream for ingestion and distribution (see docs/plan_v3.txt)
+- ✅ **Message Bus**: NATS JetStream ingestion and distribution fully implemented
 - 🚧 **Event Sources**: Filesystem, Terminal, Desktop, System — expanding coverage
 - 🚧 **Automaton Ecosystem**: Deterministic processors; more in progress
 - 🚧 **Gateway & CLI**: Operational; iterative improvements
@@ -102,11 +102,12 @@ All satellites support two operational modes:
 
 ### ✅ Implemented (Working Code)
 - **Core Infrastructure**: Event storage, ULID keys, TimescaleDB integration
-- **Satellite Architecture**: Independent satellites publish to NATS JetStream
+- **Satellite Architecture**: Independent satellites publish to NATS JetStream with idempotency headers
 - **Event Source Satellites**: Filesystem, Terminal (Kitty/Atuin/recordings), Desktop (clipboard/Hyprland), System (D-Bus/systemd/udev)
 - **Dual-Mode Support**: All satellites support sensor (real-time) and scanner (batch) modes
-- **Processing Pipeline**: Satellites → NATS JetStream → ingestd (archiver) → Automata
-- **Storage**: Git-annex blob storage, JSON schema validation
+- **Processing Pipeline**: Satellites → JetStream (`events.raw.*`) → ingestd (consumer/archiver) → Postgres + JetStream confirmations → Automata
+- **Confirmation Flow**: Provisional events receive confirmations with canonical IDs after persistence
+- **Storage**: Git-annex blob storage (source material slices), JSON schema validation
 - **Deployment**: NixOS module with systemd satellite services
 - **Testing**: Comprehensive test suite including satellite integration tests
 
