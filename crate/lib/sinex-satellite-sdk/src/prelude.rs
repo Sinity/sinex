@@ -22,9 +22,6 @@ pub use crate::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 pub use crate::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use crate::{SatelliteInstance, SatelliteVersion};
 
-// gRPC client types
-pub use crate::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
-
 // Lifecycle management
 pub use crate::{LifecycleManager, ProcessorMode, ProcessorRunner, ServiceStatus};
 

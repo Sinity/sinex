@@ -21,7 +21,6 @@ mod common {
         cli::{
             CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
         },
-        grpc_client::IngestClient,
         stream_processor::{
             Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
             StreamProcessorContext, TimeHorizon,
@@ -106,7 +105,7 @@ pub enum HealthStatus {
 pub struct HealthAggregator {
     context: Option<StreamProcessorContext>,
     config: HealthAggregatorConfig,
-    ingest_client: Option<IngestClient>,
+    event_sender: Option<tokio::sync::mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     component_health: HashMap<String, ComponentHealth>,
 }
@@ -116,7 +115,7 @@ impl HealthAggregator {
         Self {
             context: None,
             config: HealthAggregatorConfig::default(),
-            ingest_client: None,
+            event_sender: None,
             db_pool: None,
             component_health: HashMap::new(),
         }
@@ -128,10 +127,10 @@ impl HealthAggregator {
             .db_pool
             .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let mut ingest_client = self
-            .ingest_client
+        let event_sender = self
+            .event_sender
             .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Ingest client not initialized"))?
+            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?
             .clone();
 
         // Query recent health events
@@ -153,7 +152,7 @@ impl HealthAggregator {
                     .generate_component_health_report(component_name, health)
                     .await
                 {
-                    if let Err(e) = ingest_client.ingest_event(&health_report).await {
+                    if let Err(e) = event_sender.send(health_report) {
                         warn!(
                             "Failed to send component health report for {}: {}",
                             component_name, e
@@ -168,7 +167,7 @@ impl HealthAggregator {
         // Generate system-wide health status if enabled
         if self.config.enable_system_health_status {
             if let Ok(system_health) = self.generate_system_health_status().await {
-                if let Err(e) = ingest_client.ingest_event(&system_health).await {
+                if let Err(e) = event_sender.send(system_health) {
                     warn!("Failed to send system health status: {}", e);
                 } else {
                     events_processed += 1;
@@ -179,7 +178,7 @@ impl HealthAggregator {
         // Generate health alerts for unhealthy components
         let alert_events = self.generate_health_alerts().await?;
         for alert_event in alert_events {
-            if let Err(e) = ingest_client.ingest_event(&alert_event).await {
+            if let Err(e) = event_sender.send(alert_event) {
                 warn!("Failed to send health alert: {}", e);
             } else {
                 events_processed += 1;
@@ -602,9 +601,9 @@ impl StatefulStreamProcessor for HealthAggregator {
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
 
-        // Get database pool and ingest client from context
+        // Get database pool and event sender from context
         self.db_pool = Some(ctx.db_pool.clone());
-        self.ingest_client = Some(ctx.ingest_client()?.clone());
+        self.event_sender = Some(ctx.event_sender.clone());
         self.context = Some(ctx);
         self.config = config;
 

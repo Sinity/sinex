@@ -209,19 +209,24 @@ impl SatelliteInstance {
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the satellite version is invalid
 pub fn satellite_version() -> crate::SatelliteResult<Version> {
-    Version::from_str(env!("SATELLITE_VERSION")).map_err(|e| {
-        crate::SatelliteError::Configuration(format!("Invalid satellite version: {}", e))
-    })
+    Version::from_str(option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
+        .map_err(|e| {
+            crate::SatelliteError::Configuration(format!("Invalid satellite version: {}", e))
+        })
 }
 
 /// Get full version string with build metadata
 pub fn satellite_full_version() -> String {
-    env!("SATELLITE_FULL_VERSION").to_string()
+    option_env!("SATELLITE_FULL_VERSION")
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string()
 }
 
 /// Get git commit hash (8 characters)
 pub fn satellite_commit_hash() -> String {
-    env!("SATELLITE_COMMIT_HASH").to_string()
+    option_env!("SATELLITE_COMMIT_HASH")
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Get git commit count (used as patch version)
@@ -229,19 +234,24 @@ pub fn satellite_commit_hash() -> String {
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the commit count is invalid
 pub fn satellite_commit_count() -> crate::SatelliteResult<u32> {
-    env!("SATELLITE_COMMIT_COUNT")
+    option_env!("SATELLITE_COMMIT_COUNT")
+        .unwrap_or("0")
         .parse()
         .map_err(|e| crate::SatelliteError::Configuration(format!("Invalid commit count: {}", e)))
 }
 
 /// Get git branch name
 pub fn satellite_branch() -> String {
-    env!("SATELLITE_BRANCH").to_string()
+    option_env!("SATELLITE_BRANCH")
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Get build timestamp
 pub fn satellite_build_timestamp() -> String {
-    env!("SATELLITE_BUILD_TIMESTAMP").to_string()
+    option_env!("SATELLITE_BUILD_TIMESTAMP")
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Check if working directory was dirty during build
@@ -249,7 +259,8 @@ pub fn satellite_build_timestamp() -> String {
 /// # Errors
 /// Returns `SatelliteError::Configuration` if the dirty flag is invalid
 pub fn satellite_is_dirty() -> crate::SatelliteResult<bool> {
-    env!("SATELLITE_IS_DIRTY")
+    option_env!("SATELLITE_IS_DIRTY")
+        .unwrap_or("false")
         .parse()
         .map_err(|e| crate::SatelliteError::Configuration(format!("Invalid dirty flag: {}", e)))
 }

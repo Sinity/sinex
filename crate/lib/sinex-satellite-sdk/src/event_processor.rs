@@ -1,6 +1,6 @@
 //! Event processor that handles batching and sending events.
 
-use crate::{grpc_client::IngestClient, nats_publisher::NatsPublisher, SatelliteResult};
+use crate::{nats_publisher::NatsPublisher, SatelliteResult};
 use sinex_core::db::models::Event;
 use sinex_core::JsonValue;
 use std::sync::Arc;
@@ -13,8 +13,6 @@ use tracing::{debug, error, info, warn};
 /// Event transport mechanism
 #[derive(Clone)]
 pub enum EventTransport {
-    /// gRPC to ingestd (which then publishes to NATS)
-    Grpc(IngestClient),
     /// Direct NATS JetStream publishing
     Nats(Arc<NatsPublisher>),
 }
@@ -22,7 +20,6 @@ pub enum EventTransport {
 impl std::fmt::Debug for EventTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventTransport::Grpc(_) => write!(f, "EventTransport::Grpc"),
             EventTransport::Nats(_) => write!(f, "EventTransport::Nats"),
         }
     }
@@ -152,7 +149,6 @@ impl EventProcessor {
 
         while retry_count <= self.config.max_retries && !success {
             success = match &mut self.transport {
-                EventTransport::Grpc(client) => Self::send_batch_grpc(client, &batch).await,
                 EventTransport::Nats(publisher) => Self::send_batch_nats(publisher, &batch).await,
             };
 
@@ -209,34 +205,6 @@ impl EventProcessor {
             dead_letter_path
         );
         Ok(())
-    }
-
-    /// Send batch via gRPC
-    async fn send_batch_grpc(client: &mut IngestClient, events: &[Event<JsonValue>]) -> bool {
-        match client.ingest_batch(events).await {
-            Ok(result) => {
-                if result.success {
-                    debug!(
-                        processed = result.processed_count,
-                        failed = result.failed_count,
-                        "Batch sent via gRPC"
-                    );
-                    true
-                } else {
-                    error!(
-                        processed = result.processed_count,
-                        failed = result.failed_count,
-                        error = ?result.error,
-                        "Batch processing failed"
-                    );
-                    false
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to send batch via gRPC");
-                false
-            }
-        }
     }
 
     /// Send batch via NATS JetStream

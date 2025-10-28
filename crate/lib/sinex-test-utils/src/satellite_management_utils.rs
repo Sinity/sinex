@@ -102,10 +102,10 @@ pub async fn start_test_ingestd_with_config(
     let ingest_config = IngestdConfig::builder()
         .database_url(config.database_url.clone())
         .nats_url(config.nats_url.clone())
-        .socket_path(config.socket_path.clone())
         .batch_size(1)
         .batch_timeout_secs(1)
         .validate_schemas(false)
+        .skip_schema_sync(true)
         .work_dir(work_dir)
         .nats_stream_name(format!("sinex_test_events_{}", Ulid::new()))
         .build();

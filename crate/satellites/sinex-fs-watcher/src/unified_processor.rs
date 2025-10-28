@@ -38,8 +38,19 @@ use validator::{Validate, ValidationError};
 
 // Test module removed or relocated; keep core tests within this file
 
-// Use shared MaterialSlice from sensd crate
-use sinex_sensd::material_stream::MaterialSlice;
+// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
+// MaterialSlice was removed with sensd - temporary stub for compilation
+
+#[derive(Debug, Clone)]
+pub struct MaterialSlice {
+    pub material_id: sinex_core::types::Ulid,
+    pub offset_start: i64,
+    pub offset_end: i64,
+    pub ts_capture_start: DateTime<Utc>,
+    pub ts_capture_end: DateTime<Utc>,
+    pub data: Vec<u8>,
+    pub metadata: JsonValue,
+}
 
 /// Filesystem monitoring configuration for sensd integration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -621,7 +632,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         // Initialize stage-as-you-go context
         self.stage_context = Some(StageAsYouGoContext::new(
             ctx.db_pool.clone(),
-            ctx.ingest_client()?.clone(),
+            ctx.event_sender.clone(),
         ));
 
         // Set up default watch paths if none specified

@@ -1,6 +1,5 @@
 use camino::Utf8PathBuf;
-use sinex_terminal_satellite::unified_processor::TerminalConfig;
-use sinex_terminal_satellite::SensdIntegrationConfig;
+use sinex_terminal_satellite::unified_processor::{SensdIntegrationConfig, TerminalConfig};
 use sinex_test_utils::sinex_test;
 use std::collections::HashMap;
 use validator::Validate;

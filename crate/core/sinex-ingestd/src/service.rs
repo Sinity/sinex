@@ -3,16 +3,7 @@
 //! Main ingestion service implementation.
 
 // Local crate imports
-use crate::{
-    config::IngestdConfig,
-    proto::{
-        ingest_service_server::{IngestService as IngestServiceTrait, IngestServiceServer},
-        BatchResponse, EventBatch, HealthRequest, HealthResponse, IngestResponse,
-        RawEvent as ProtoEvent,
-    },
-    validator::EventValidator,
-    IngestdResult, SinexError,
-};
+use crate::{config::IngestdConfig, validator::EventValidator, IngestdResult, SinexError};
 
 // External crates
 use ahash::AHashMap;
@@ -31,7 +22,6 @@ use sinex_core::{
     JsonValue, OffsetKind,
 };
 use sqlx::PgPool;
-use tonic::{transport::Server, Request, Response, Status};
 
 // Standard library and common crates
 use std::{
@@ -43,7 +33,6 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    net::UnixListener,
     sync::{Mutex, RwLock},
     time::{interval, Duration},
 };
@@ -184,7 +173,7 @@ impl IngestService {
         // Initialize event validator
         let validator = if let Some(ref pool) = db_pool {
             // First, synchronize schemas from codebase to database
-            if !config.dry_run {
+            if !config.dry_run && !config.skip_schema_sync {
                 match crate::schema_sync::synchronize_schemas(pool).await {
                     Ok(sync_result) => {
                         info!(
@@ -222,53 +211,13 @@ impl IngestService {
             subject_cache: Arc::new(SubjectCache::new()),
         };
 
-        info!("Ingestion service initialized");
+        info!("Ingestion service initialized successfully");
         Ok(service)
     }
 
     /// Run the ingestion service
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
-
-        // Ensure socket directory exists
-        if let Some(parent) = std::path::Path::new(&self.config.socket_path).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-
-        // Remove existing socket file (use direct remove_file to avoid TOCTOU)
-        // This is atomic and handles non-existent files gracefully
-        match tokio::fs::remove_file(&self.config.socket_path).await {
-            Ok(()) => {
-                debug!("Removed existing socket file: {}", self.config.socket_path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!("Socket file does not exist: {}", self.config.socket_path);
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to remove socket file {}: {}",
-                    self.config.socket_path, e
-                );
-                // Continue anyway - bind will fail if socket is in use
-            }
-        }
-
-        // Create Unix Domain Socket listener
-        let listener = UnixListener::bind(&self.config.socket_path)?;
-        info!("Listening on Unix socket: {}", self.config.socket_path);
-
-        // Set socket permissions (readable/writable by group)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o660);
-            tokio::fs::set_permissions(&self.config.socket_path, perms).await?;
-        }
-
-        // Create gRPC service
-        let grpc_service = IngestServiceImpl {
-            service: self.clone(),
-        };
 
         // Start background tasks
         let stats = self.stats.clone();
@@ -334,16 +283,8 @@ impl IngestService {
             warn!("Failed to notify systemd ready state: {}", e);
         }
 
-        // Serve gRPC requests
-        Server::builder()
-            .add_service(IngestServiceServer::new(grpc_service))
-            .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
-            .await
-            .map_err(|e| {
-                SinexError::service(format!("gRPC server error: {e}"))
-                    .with_operation("service.start_grpc_server")
-                    .with_context("socket_path", self.config.socket_path.clone())
-            })?;
+        // Wait for shutdown signal
+        shutdown_signal(&self.shutdown_flag).await;
 
         info!("Ingestion service stopped");
         Ok(())
@@ -934,22 +875,6 @@ impl IngestService {
         )
         .await;
 
-        // Clean up socket file (using direct remove_file to avoid TOCTOU)
-        match tokio::fs::remove_file(&self.config.socket_path).await {
-            Ok(()) => {
-                debug!(
-                    "Removed socket file during shutdown: {}",
-                    self.config.socket_path
-                );
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!("Socket file already removed: {}", self.config.socket_path);
-            }
-            Err(e) => {
-                warn!("Failed to remove socket file during shutdown: {}", e);
-            }
-        }
-
         // Close database connections
         if let Some(pool) = &self.db_pool {
             pool.close().await;
@@ -974,273 +899,6 @@ impl Clone for IngestService {
             last_flush: self.last_flush.clone(),
             subject_cache: self.subject_cache.clone(),
         }
-    }
-}
-
-/// gRPC service implementation
-#[derive(Clone)]
-struct IngestServiceImpl {
-    service: IngestService,
-}
-
-#[tonic::async_trait]
-impl IngestServiceTrait for IngestServiceImpl {
-    #[instrument(skip(self, request))]
-    async fn ingest_event(
-        &self,
-        request: Request<ProtoEvent>,
-    ) -> Result<Response<IngestResponse>, Status> {
-        let proto_event = request.into_inner();
-
-        // Convert proto event to RawEvent
-        let raw_event = match self.proto_to_event(proto_event).await {
-            Ok(event) => event,
-            Err(e) => {
-                self.service
-                    .stats
-                    .validation_errors
-                    .fetch_add(1, Ordering::Relaxed);
-                return Ok(Response::new(IngestResponse {
-                    success: false,
-                    error: Some(format!("Event conversion failed: {e}")),
-                    event_id: None,
-                }));
-            }
-        };
-
-        // Validate event
-        let validation_result = {
-            let validator = self.service.validator.read().await;
-            match validator.validate_event(&raw_event) {
-                Ok(v) => v,
-                Err(e) => return Err(crate::sinex_error_to_status(*e)),
-            }
-        };
-
-        if !validation_result.should_accept() {
-            self.service
-                .stats
-                .validation_errors
-                .fetch_add(1, Ordering::Relaxed);
-            return Ok(Response::new(IngestResponse {
-                success: false,
-                error: validation_result.error_message(),
-                event_id: None,
-            }));
-        }
-
-        let event_id = raw_event
-            .id
-            .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".into());
-
-        // Add to buffer
-        if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
-            error!("Failed to add event to buffer: {}", e);
-            return Ok(Response::new(IngestResponse {
-                success: false,
-                error: Some(format!("Internal error: {e}")),
-                event_id: None,
-            }));
-        }
-
-        self.service
-            .stats
-            .events_received
-            .fetch_add(1, Ordering::Relaxed);
-
-        Ok(Response::new(IngestResponse {
-            success: true,
-            error: None,
-            event_id: Some(event_id),
-        }))
-    }
-
-    #[instrument(skip(self, request))]
-    async fn ingest_batch(
-        &self,
-        request: Request<EventBatch>,
-    ) -> Result<Response<BatchResponse>, Status> {
-        let batch = request.into_inner();
-        let event_count = batch.events.len();
-
-        if event_count == 0 {
-            return Ok(Response::new(BatchResponse {
-                success: true,
-                error: None,
-                event_ids: vec![],
-                processed_count: 0,
-                failed_count: 0,
-            }));
-        }
-
-        // Process events in parallel batches for better async performance
-        let mut event_ids = Vec::with_capacity(event_count);
-        let mut processed_count = 0;
-        let mut failed_count = 0;
-
-        // Process up to 20 events concurrently to balance throughput and resource usage
-        let batch_size = std::cmp::min(event_count, 20);
-
-        for chunk in batch.events.chunks(batch_size) {
-            // Convert all proto events to raw events concurrently
-            let conversion_futures: Vec<_> = chunk
-                .iter()
-                .map(|proto_event| self.proto_to_event(proto_event.clone()))
-                .collect();
-
-            let conversion_results = futures::future::join_all(conversion_futures).await;
-
-            // Validate all successfully converted events concurrently
-            let mut validation_futures = Vec::new();
-            let mut raw_events = Vec::new();
-
-            for result in conversion_results {
-                match result {
-                    Ok(raw_event) => {
-                        raw_events.push(raw_event.clone());
-                        let validator = self.service.validator.clone();
-                        validation_futures.push(async move {
-                            let validator_guard = validator.read().await;
-                            validator_guard.validate_event(&raw_event)
-                        });
-                    }
-                    Err(e) => {
-                        warn!("Failed to convert proto event: {}", e);
-                        failed_count += 1;
-                        self.service
-                            .stats
-                            .validation_errors
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-            }
-
-            if !validation_futures.is_empty() {
-                let validation_results = futures::future::join_all(validation_futures).await;
-
-                // Process validation results and add valid events to buffer
-                for (raw_event, validation_result) in
-                    raw_events.into_iter().zip(validation_results.into_iter())
-                {
-                    match validation_result {
-                        Ok(result) if result.should_accept() => {
-                            let event_id = raw_event
-                                .id
-                                .as_ref()
-                                .map(|id| id.to_string())
-                                .unwrap_or_else(|| "unknown".into());
-                            event_ids.push(event_id);
-
-                            if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
-                                error!("Failed to add event to buffer: {}", e);
-                                failed_count += 1;
-                            } else {
-                                processed_count += 1;
-                            }
-                        }
-                        Ok(_) => {
-                            failed_count += 1;
-                            self.service
-                                .stats
-                                .validation_errors
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            error!("Failed to validate event: {}", e);
-                            failed_count += 1;
-                            self.service
-                                .stats
-                                .validation_errors
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
-        }
-
-        self.service
-            .stats
-            .events_received
-            .fetch_add(processed_count, Ordering::Relaxed);
-
-        Ok(Response::new(BatchResponse {
-            success: failed_count == 0,
-            error: if failed_count > 0 {
-                Some(format!("{failed_count} events failed validation"))
-            } else {
-                None
-            },
-            event_ids,
-            processed_count: processed_count as u32,
-            failed_count: failed_count as u32,
-        }))
-    }
-
-    async fn health(
-        &self,
-        _request: Request<HealthRequest>,
-    ) -> Result<Response<HealthResponse>, Status> {
-        let healthy = !self.service.shutdown_flag.load(Ordering::Relaxed);
-
-        Ok(Response::new(HealthResponse {
-            healthy,
-            status: if healthy {
-                "healthy".to_string()
-            } else {
-                "shutting down".to_string()
-            },
-            message: None,
-        }))
-    }
-}
-
-impl IngestServiceImpl {
-    /// Convert protobuf event to RawEvent
-    async fn proto_to_event(&self, proto: ProtoEvent) -> IngestdResult<Event<JsonValue>> {
-        // Validate and parse JSON payload
-        let payload = sinex_core::types::validate_json(&proto.payload).map_err(|e| {
-            SinexError::validation(format!("Invalid JSON payload: {e}"))
-                .with_operation("service.parse_json_payload")
-        })?;
-
-        let _blob_id = proto
-            .blob_id
-            .map(|blob_id_str| {
-                Ulid::from_str(&blob_id_str).map_err(|e| {
-                    SinexError::validation(format!("Invalid blob ID: {e}"))
-                        .with_operation("service.parse_blob_id")
-                })
-            })
-            .transpose()?;
-
-        // Look up schema ID from our in-memory cache
-        let source = EventSource::new(proto.source);
-        let event_type = EventType::new(proto.event_type);
-        let schema_id = {
-            let validator = self.service.validator.read().await;
-            validator
-                .get_schema_id(&source, &event_type)
-                .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
-        };
-
-        // Create a dynamic event; provenance is required by type system.
-        // Use a synthesized provenance with a bootstrap parent to satisfy invariants.
-        let mut event = Event::create(
-            source.clone(),
-            event_type.clone(),
-            payload,
-            Provenance::from_synthesis_safe(EventId::new(), vec![]),
-        )
-        .with_host(HostName::new(proto.host))
-        .with_ingestor_version(INGESTOR_VERSION);
-
-        if let Some(id) = schema_id {
-            event = event.with_schema_id(id);
-        }
-
-        Ok(event)
     }
 }
 

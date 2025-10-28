@@ -32,10 +32,6 @@ sqlx.workspace = true
 # NATS for message bus
 async-nats.workspace = true
 
-# gRPC
-tonic.workspace = true
-prost.workspace = true
-
 # Configuration
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
@@ -72,6 +68,3 @@ sinex-core = { path = "../../lib/sinex-core", features = [] }
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
-
-[build-dependencies]
-tonic-build.workspace = true
