@@ -13,6 +13,7 @@ pub use sinex_macros::{
 
 pub mod acquisition_manager;
 pub mod annex;
+pub mod automaton_event_handler;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
@@ -48,6 +49,7 @@ pub mod version;
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
 };
+pub use automaton_event_handler::AutomatonEventHandler;
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
@@ -110,7 +112,7 @@ impl VersionInfo {
 /// Common CLI arguments for satellite services.
 ///
 /// This structure provides standardized command-line arguments that all
-/// satellite services can use. It includes common parameters for gRPC
+/// satellite services can use. It includes common parameters for NATS
 /// communication, batching, and operational modes.
 ///
 /// # Examples
@@ -125,19 +127,16 @@ impl VersionInfo {
 /// // Use in service configuration
 /// let config = SatelliteConfig {
 ///     service_name: args.service_name.clone(),
-///     ingest_socket_path: args.ingest_socket_path.clone(),
+///     nats_url: args.nats_url.clone(),
 ///     dry_run: args.dry_run,
 ///     // ... other fields
 /// };
 /// ```
 #[derive(clap::Parser, Debug, Clone)]
 pub struct SatelliteArgs {
-    /// Socket path for ingestd communication.
-    ///
-    /// Unix Domain Socket path where ingestd listens for gRPC connections.
-    /// This socket is used by ingestors to submit events for processing.
-    #[arg(long, default_value = "/tmp/sinex-ingestd.sock")]
-    pub ingest_socket_path: String,
+    /// NATS server URL for event ingestion
+    #[arg(long, env = "NATS_URL", default_value = "nats://localhost:4222")]
+    pub nats_url: String,
 
     /// Service name for identification
     #[arg(long, default_value = "satellite")]

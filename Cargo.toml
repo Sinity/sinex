@@ -25,11 +25,13 @@ members = [
   "tests/e2e",
 
   # Automaton crates
+  # Note: Type aliases added but compilation errors remain - needs refactoring
+  # "crate/satellites/sinex-analytics-automaton",
+  # "crate/satellites/sinex-search-automaton",
+
   # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",
-  # "crate/satellites/sinex-analytics-automaton",
   # "crate/satellites/sinex-pkm-automaton",
-  # "crate/satellites/sinex-search-automaton",
   
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members

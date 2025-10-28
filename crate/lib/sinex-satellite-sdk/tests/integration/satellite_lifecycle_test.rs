@@ -351,7 +351,7 @@ async fn test_satellite_configuration_lifecycle(ctx: TestContext) -> Result<()> 
         assert!(!config.base.service_name.is_empty(), "Service name should not be empty");
         assert!(config.batch_size > 0, "Batch size should be positive");
         assert!(config.batch_timeout_secs > 0, "Batch timeout should be positive");
-        assert!(!config.base.ingest_socket_path.is_empty(), "Socket path should be specified");
+        assert!(!config.base.nats_url.is_empty(), "NATS URL should be specified");
         
         // Test configuration with satellite instance
         let version = SatelliteVersion::parse(&format!("1.0.{}", i)).unwrap();
@@ -527,8 +527,7 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
         base: SatelliteConfig {
             service_name: service_name.to_string(),
             log_level: "info".to_string(),
-            ingest_socket_path: "/run/sinex/ingest.sock".to_string(),
-            redis_url: "redis://localhost:6379".to_string(),
+            nats_url: "nats://localhost:4222".to_string(),
             database_url: None,
             database_pool_size: 5,
             work_dir: Utf8PathBuf::from("/tmp/sinex-minimal"),
@@ -550,8 +549,7 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
         base: SatelliteConfig {
             service_name: service_name.to_string(),
             log_level: "debug".to_string(),
-            ingest_socket_path: "/run/sinex/ingest.sock".to_string(),
-            redis_url: "redis://localhost:6379".to_string(),
+            nats_url: "nats://localhost:4222".to_string(),
             database_url: Some("postgresql:///sinex_test".to_string()),
             database_pool_size: 10,
             work_dir: Utf8PathBuf::from("/tmp/sinex-standard"),
@@ -575,8 +573,7 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
         base: SatelliteConfig {
             service_name: service_name.to_string(),
             log_level: "trace".to_string(),
-            ingest_socket_path: "/run/sinex/ingest.sock".to_string(),
-            redis_url: "redis://localhost:6379".to_string(),
+            nats_url: "nats://localhost:4222".to_string(),
             database_url: Some("postgresql:///sinex_dev".to_string()),
             database_pool_size: 20,
             work_dir: Utf8PathBuf::from("/tmp/sinex-enhanced"),

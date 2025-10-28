@@ -21,13 +21,9 @@ use tracing::info;
     version
 )]
 pub struct ProcessorCli {
-    /// Socket path for ingestd communication
-    #[arg(long, default_value = "/tmp/sinex-ingestd.sock", value_parser = validate_socket_path)]
-    pub ingest_socket_path: SanitizedPath,
-
-    /// NATS server URL (if specified, uses direct NATS instead of gRPC)
-    #[arg(long, env = "NATS_URL")]
-    pub nats_url: Option<String>,
+    /// NATS server URL for event ingestion
+    #[arg(long, env = "NATS_URL", default_value = "nats://localhost:4222")]
+    pub nats_url: String,
 
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
@@ -158,14 +154,6 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
             .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
     }
-}
-
-/// Validate and parse socket path argument
-pub fn validate_socket_path(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Socket path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
 }
 
 /// Validate and parse working directory argument
@@ -516,26 +504,20 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Determine transport based on configuration
-                let transport = if let Some(nats_url) = args.nats_url {
-                    info!(nats_url = %nats_url, "Using NATS for event publishing");
+                // Create NATS transport for event publishing
+                info!(nats_url = %args.nats_url, "Using NATS for event publishing");
 
-                    // Connect to NATS
-                    let nats_client = async_nats::connect(&nats_url)
-                        .await
-                        .context("Failed to connect to NATS")?;
+                // Connect to NATS
+                let nats_client = async_nats::connect(&args.nats_url)
+                    .await
+                    .context("Failed to connect to NATS")?;
 
-                    // Create NATS publisher
-                    let nats_publisher = crate::nats_publisher::NatsPublisher::new(nats_client);
+                // Create NATS publisher
+                let nats_publisher = crate::nats_publisher::NatsPublisher::new(nats_client);
 
-                    crate::event_processor::EventTransport::Nats(std::sync::Arc::new(
-                        nats_publisher,
-                    ))
-                } else {
-                    return Err(eyre::eyre!(
-                        "NATS URL is required. Use --nats-url or set NATS_URL environment variable. gRPC is no longer supported."
-                    ));
-                };
+                let transport = crate::event_processor::EventTransport::Nats(std::sync::Arc::new(
+                    nats_publisher,
+                ));
 
                 // Initialize runner with transport
                 runner
@@ -645,17 +627,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // NATS URL is required
-                let nats_url = args.nats_url.ok_or_else(|| {
-                    eyre::eyre!(
-                        "NATS URL is required. Use --nats-url or set NATS_URL environment variable"
-                    )
-                })?;
-
-                info!(nats_url = %nats_url, "Using NATS for event publishing");
+                // Create NATS transport for event publishing
+                info!(nats_url = %args.nats_url, "Using NATS for event publishing");
 
                 // Connect to NATS
-                let nats_client = async_nats::connect(&nats_url)
+                let nats_client = async_nats::connect(&args.nats_url)
                     .await
                     .context("Failed to connect to NATS")?;
 

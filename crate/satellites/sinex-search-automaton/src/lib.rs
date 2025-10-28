@@ -849,3 +849,6 @@ impl ExplorationProvider for SearchAutomaton {
         Ok(())
     }
 }
+
+/// Type alias for compatibility with processor_main! macro
+pub type SearchProcessor = SearchAutomaton;

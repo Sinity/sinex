@@ -19,8 +19,7 @@
 //! # Environment Variables
 //!
 //! - `SINEX_LOG_LEVEL`: Log level (trace, debug, info, warn, error)
-//! - `SINEX_INGEST_SOCKET`: Unix socket path for ingestd communication
-//! - `SINEX_REDIS_URL`: Redis connection URL
+//! - `NATS_URL`: NATS server URL for event ingestion
 //! - `DATABASE_URL`: PostgreSQL database connection string
 //! - `SINEX_DB_POOL_SIZE`: Database connection pool size
 //! - `SINEX_WORK_DIR`: Working directory for temporary files
@@ -78,27 +77,16 @@ pub struct SatelliteConfig {
     #[builder(default = default_log_level())]
     pub log_level: String,
 
-    /// Path to Unix Domain Socket for gRPC communication with ingestd.
+    /// NATS server URL for event ingestion.
     ///
-    /// This socket is used by ingestors to send events to the ingestd service.
-    /// The path must be accessible by the satellite service process.
+    /// Used by satellites to publish events to NATS JetStream.
+    /// Format: `nats://hostname:port`
     ///
-    /// Default: `/run/sinex/ingest.sock` (see `default_ingest_socket()`)
-    #[serde(default = "default_ingest_socket")]
-    #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
-    #[builder(default = default_ingest_socket())]
-    pub ingest_socket_path: String,
-
-    /// Redis connection URL for message bus.
-    ///
-    /// Used by automata to consume events from Redis Streams.
-    /// Format: `redis://hostname:port[/db]`
-    ///
-    /// Default: `redis://localhost:6379` (see `default_redis_url()`)
-    #[serde(default = "default_redis_url")]
-    #[validate(url(message = "Invalid Redis URL"))]
-    #[builder(default = default_redis_url())]
-    pub redis_url: String,
+    /// Default: `nats://localhost:4222` (see `default_nats_url()`)
+    #[serde(default = "default_nats_url")]
+    #[validate(url(message = "Invalid NATS URL"))]
+    #[builder(default = default_nats_url())]
+    pub nats_url: String,
 
     /// Database URL for direct database access (automata only).
     ///
@@ -258,8 +246,7 @@ impl SatelliteConfig {
         Self {
             service_name: service_name.to_string(),
             log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
-            ingest_socket_path: env_var_or_default("SINEX_INGEST_SOCKET", default_ingest_socket),
-            redis_url: env_var_or_default("SINEX_REDIS_URL", default_redis_url),
+            nats_url: env_var_or_default("NATS_URL", default_nats_url),
             database_url: std::env::var("DATABASE_URL").ok(),
             database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
                 .ok()
@@ -338,12 +325,8 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
-fn default_ingest_socket() -> String {
-    "/run/sinex/ingest.sock".to_string()
-}
-
-fn default_redis_url() -> String {
-    "redis://localhost:6379".to_string()
+fn default_nats_url() -> String {
+    "nats://localhost:4222".to_string()
 }
 
 fn default_pool_size() -> u32 {
@@ -396,15 +379,6 @@ fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
         "trace" | "debug" | "info" | "warn" | "error" => Ok(()),
         _ => Err(validator::ValidationError::new("invalid_log_level")),
     }
-}
-
-fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
-
-    validate_path(path).map(|_| ()).map_err(|_| {
-        validator::ValidationError::new("invalid_socket_path")
-            .with_message(format!("Socket path '{}' is not valid", path).into())
-    })
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
