@@ -21,13 +21,13 @@ use tracing::info;
     version
 )]
 pub struct ProcessorCli {
-    /// Socket path for ingestd communication
+    /// Socket path for ingestd communication (DEPRECATED: unused, satellites use NATS)
     #[arg(long, default_value = "/tmp/sinex-ingestd.sock", value_parser = validate_socket_path)]
     pub ingest_socket_path: SanitizedPath,
 
-    /// NATS server URL (if specified, uses direct NATS instead of gRPC)
-    #[arg(long, env = "NATS_URL")]
-    pub nats_url: Option<String>,
+    /// NATS server URL for event ingestion
+    #[arg(long, env = "NATS_URL", default_value = "nats://localhost:4222")]
+    pub nats_url: String,
 
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
