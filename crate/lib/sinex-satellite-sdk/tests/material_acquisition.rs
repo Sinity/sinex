@@ -1,5 +1,6 @@
-use sinex_core::db::DbPoolExt;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::Id;
+use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
 use sinex_satellite_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
@@ -13,13 +14,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let nats_client = nats.connect().await?;
 
     // Start ingestd (includes MaterialAssembler)
-    let socket_dir = tempfile::tempdir()?;
-    let socket_path = socket_dir
-        .path()
-        .join(format!("material-ingest-{}.sock", Ulid::new()));
-
     let ingest_config = TestIngestdConfig {
-        socket_path: socket_path.to_string_lossy().into(),
         nats_url: format!("nats://{}", nats.client_url()),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
@@ -82,13 +77,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
-    let socket_dir = tempfile::tempdir()?;
-    let socket_path = socket_dir
-        .path()
-        .join(format!("material-ooo-{}.sock", Ulid::new()));
-
     let ingest_config = TestIngestdConfig {
-        socket_path: socket_path.to_string_lossy().into(),
         nats_url: format!("nats://{}", nats.client_url()),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
@@ -187,19 +176,80 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     Ok(())
 }
 
+/// Ensure material assembly resumes correctly after ingestd restart
+#[sinex_test]
+async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
+
+    let work_dir = tempfile::tempdir()?;
+    let work_dir_path = work_dir.path().to_path_buf();
+
+    let config = TestIngestdConfig {
+        nats_url: format!("nats://{}", nats.client_url()),
+        database_url: ctx.database_url().to_string(),
+        work_dir: Some(work_dir_path),
+    };
+
+    let mut ingest_handle = start_test_ingestd_with_config(config.clone()).await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let rotation_policy = RotationPolicy::default();
+    let manager = AcquisitionManager::new(
+        nats_client.clone(),
+        ctx.pool.clone(),
+        rotation_policy,
+        "restart-test".to_string(),
+        "/restart".to_string(),
+    );
+
+    let mut handle = manager.begin_material("restart-session").await?;
+    let material_id = handle.material_id;
+
+    manager.append_slice(&mut handle, b"first-chunk").await?;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    ingest_handle.stop().await?;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut ingest_handle = start_test_ingestd_with_config(config).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    manager.append_slice(&mut handle, b"second-chunk").await?;
+    manager.finalize(handle, "restart completed").await?;
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let record = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_ulid(material_id))
+        .await?
+        .expect("material should exist after restart");
+
+    assert_eq!(record.status.as_str(), "completed");
+    let expected_size = (b"first-chunk".len() + b"second-chunk".len()) as i64;
+
+    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+        ulid_to_uuid(material_id)
+    )
+    .fetch_optional(&ctx.pool)
+    .await?;
+
+    assert_eq!(ledger_bytes.unwrap_or_default(), expected_size);
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Test material rotation based on size
 #[sinex_test]
 async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
-    let socket_dir = tempfile::tempdir()?;
-    let socket_path = socket_dir
-        .path()
-        .join(format!("material-rot-{}.sock", Ulid::new()));
-
     let ingest_config = TestIngestdConfig {
-        socket_path: socket_path.to_string_lossy().into(),
         nats_url: format!("nats://{}", nats.client_url()),
         database_url: ctx.database_url().to_string(),
         work_dir: None,

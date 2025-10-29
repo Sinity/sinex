@@ -44,17 +44,24 @@ use crate::nats::EphemeralNats;
 use crate::timing_utils::TimingUtils;
 use async_nats::Client as NatsClient;
 use color_eyre::eyre::Result;
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Ulid};
 
 use sinex_core::DbPoolExt;
+use std::collections::HashSet;
+use std::mem;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::runtime::Handle;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::warn;
+use uuid::Uuid;
 
 const BOOTSTRAP_MATERIAL_ID: &str = "014D2PF2DBSQQZXQ5TK1V58CGG";
 const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
@@ -64,13 +71,34 @@ const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
 /// This struct provides access to an isolated database and test-specific
 /// utilities without wrapping production APIs. Tests should use the pool
 /// field directly to access repositories and production Event creation APIs.
+#[derive(Clone, Debug)]
+struct CreatedEventInfo {
+    event_id: Ulid,
+    material_id: Option<Ulid>,
+}
+
+static CLEANUP_HANDLES: Lazy<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
+    Lazy::new(|| AsyncMutex::new(Vec::new()));
+
+async fn await_pending_cleanups() {
+    let mut handles = CLEANUP_HANDLES.lock().await;
+    let pending = mem::take(&mut *handles);
+    drop(handles);
+
+    for handle in pending {
+        if let Err(err) = handle.await {
+            warn!("Background cleanup task failed: {}", err);
+        }
+    }
+}
+
 pub struct TestContext {
     /// Direct access to the database pool - use this for repositories
     pub pool: DbPool,
     db: TestDatabase,
     test_name: String,
     start_time: Instant,
-    created_events: Arc<Mutex<Vec<Ulid>>>,
+    created_events: Arc<Mutex<Vec<CreatedEventInfo>>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
     baseline_events: i64,
     _tracing_enabled: bool,
@@ -133,6 +161,8 @@ impl TestContext {
     pub async fn with_name(test_name: &str) -> Result<Self> {
         let db = acquire_test_database().await?;
         let pool = db.pool().clone();
+
+        await_pending_cleanups().await;
 
         if let Ok(bootstrap_ulid) = Ulid::from_str(BOOTSTRAP_MATERIAL_ID) {
             let bootstrap_id = Id::<SourceMaterial>::from_ulid(bootstrap_ulid);
@@ -295,12 +325,14 @@ impl TestContext {
             source_identifier
         };
 
-        sqlx::query!(
+        let update_result = sqlx::query!(
             r#"
-                INSERT INTO raw.source_material_registry 
-                    (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (id) DO NOTHING
+                UPDATE raw.source_material_registry
+                SET id = $1::uuid::ulid,
+                    material_kind = $2,
+                    status = $4,
+                    timing_info_type = $5
+                WHERE source_identifier = $3
             "#,
             material_ulid_uuid,
             "annex",
@@ -310,6 +342,28 @@ impl TestContext {
         )
         .execute(&self.pool)
         .await?;
+
+        if update_result.rows_affected() == 0 {
+            sqlx::query!(
+                r#"
+                    INSERT INTO raw.source_material_registry 
+                        (id, material_kind, source_identifier, status, timing_info_type)
+                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                    ON CONFLICT (id) DO UPDATE
+                    SET material_kind = EXCLUDED.material_kind,
+                        status = EXCLUDED.status,
+                        timing_info_type = EXCLUDED.timing_info_type,
+                        source_identifier = EXCLUDED.source_identifier
+                "#,
+                material_ulid_uuid,
+                "annex",
+                identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -350,13 +404,27 @@ impl TestContext {
     {
         let mut sanitized_payload = payload;
         Self::sanitize_payload(&mut sanitized_payload);
-        let event =
+
+        let mut event =
             Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
 
-        // Ensure a matching source material exists for the test material ID to satisfy FK
+        // Replace the default bootstrap material with a unique identifier per event
+        let material_id = Id::<SourceMaterial>::new();
+        event.provenance = Provenance::from_material(material_id, 0, None, None);
+
+        // Ensure a matching source material exists for the new ID to satisfy FK
+        self.ensure_material_entry(&material_id).await?;
+
         let inserted = self.insert_with_provenance(event).await?;
-        if let Some(id) = &inserted.id {
-            self.created_events.lock().push(id.clone().into());
+        if let Some(event_id) = &inserted.id {
+            let material_id = match &inserted.provenance {
+                Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
+                _ => None,
+            };
+            self.created_events.lock().push(CreatedEventInfo {
+                event_id: event_id.as_ulid().clone(),
+                material_id,
+            });
         }
         Ok(inserted)
     }
@@ -376,12 +444,14 @@ impl TestContext {
             }
         });
 
-        sqlx::query!(
+        let update_result = sqlx::query!(
             r#"
-                INSERT INTO raw.source_material_registry 
-                    (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (id) DO NOTHING
+                UPDATE raw.source_material_registry
+                SET id = $1::uuid::ulid,
+                    material_kind = $2,
+                    status = $4,
+                    timing_info_type = $5
+                WHERE source_identifier = $3
             "#,
             material_ulid_uuid,
             "annex",
@@ -391,6 +461,28 @@ impl TestContext {
         )
         .execute(&self.pool)
         .await?;
+
+        if update_result.rows_affected() == 0 {
+            sqlx::query!(
+                r#"
+                    INSERT INTO raw.source_material_registry 
+                        (id, material_kind, source_identifier, status, timing_info_type)
+                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                    ON CONFLICT (id) DO UPDATE
+                    SET material_kind = EXCLUDED.material_kind,
+                        status = EXCLUDED.status,
+                        timing_info_type = EXCLUDED.timing_info_type,
+                        source_identifier = EXCLUDED.source_identifier
+                "#,
+                material_ulid_uuid,
+                "annex",
+                identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -447,8 +539,15 @@ impl TestContext {
                 self.ensure_material_entry(id).await?;
             }
             let inserted = self.pool.events().insert(event.clone()).await?;
-            if let Some(id) = inserted.id {
-                self.created_events.lock().push(id.into());
+            if let Some(event_id) = inserted.id {
+                let material_id = match &inserted.provenance {
+                    Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
+                    _ => None,
+                };
+                self.created_events.lock().push(CreatedEventInfo {
+                    event_id: event_id.as_ulid().clone(),
+                    material_id,
+                });
             }
         }
         Ok(())
@@ -590,9 +689,82 @@ impl TestContext {
     }
 }
 
+async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -> Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+
+    let event_ids: Vec<Uuid> = records
+        .iter()
+        .map(|info| ulid_to_uuid(info.event_id))
+        .collect();
+
+    if !event_ids.is_empty() {
+        sqlx::query!(
+            "DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])",
+            &event_ids
+        )
+        .execute(&pool)
+        .await?;
+    }
+
+    let material_set: HashSet<Uuid> = records
+        .iter()
+        .filter_map(|info| info.material_id.map(ulid_to_uuid))
+        .collect();
+    let material_ids: Vec<Uuid> = material_set.into_iter().collect();
+
+    if !material_ids.is_empty() {
+        sqlx::query!(
+            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
+            &material_ids
+        )
+        .execute(&pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
 /// Cleanup implementation for TestContext
 impl Drop for TestContext {
     fn drop(&mut self) {
+        let pool = self.pool.clone();
+        let records = {
+            let mut guard = self.created_events.lock();
+            guard.drain(..).collect::<Vec<_>>()
+        };
+
+        if !records.is_empty() {
+            if let Ok(handle) = Handle::try_current() {
+                let cleanup_pool = pool.clone();
+                let cleanup_records = records.clone();
+                let mut join_handle = Some(handle.spawn(async move {
+                    if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
+                        warn!("TestContext cleanup failed: {}", err);
+                    }
+                }));
+
+                if let Ok(mut guard) = CLEANUP_HANDLES.try_lock() {
+                    if let Some(join) = join_handle.take() {
+                        guard.push(join);
+                    }
+                }
+
+                if let Some(join) = join_handle {
+                    handle.spawn(async move {
+                        if let Err(err) = join.await {
+                            warn!("Detached cleanup task failed: {}", err);
+                        }
+                    });
+                }
+            } else if let Err(err) =
+                futures::executor::block_on(cleanup_created_records(pool.clone(), records))
+            {
+                warn!("TestContext cleanup failed without runtime: {}", err);
+            }
+        }
+
         let duration = self.start_time.elapsed();
         if duration > Duration::from_secs(5) {
             eprintln!(

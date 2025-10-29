@@ -13,7 +13,9 @@ pub mod shell_detection;
 pub mod unified_processor;
 
 // Re-export the new unified processor as the primary interface
-pub use unified_processor::{TerminalProcessor, TerminalState};
+pub use unified_processor::{
+    HistorySourceConfig, TerminalConfig, TerminalProcessor, TerminalState,
+};
 
 // Re-export sensd integration - REMOVED
 // pub use sensd_integration::{

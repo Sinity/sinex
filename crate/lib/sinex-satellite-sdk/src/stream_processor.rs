@@ -2,16 +2,19 @@
 
 use crate::{
     checkpoint::CheckpointManager,
+    confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
     event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport},
+    jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     SatelliteError, SatelliteResult,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::{Event, EventId};
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::ulid::Ulid;
+use sinex_core::types::Ulid;
 use sinex_core::JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +34,29 @@ pub struct ProcessingStats {
     pub duration: std::time::Duration,
     /// Any errors encountered
     pub errors: Vec<String>,
+}
+
+#[derive(Clone)]
+struct RunnerConfirmedEventHandler {
+    sender: mpsc::UnboundedSender<ProvisionalEvent>,
+}
+
+impl RunnerConfirmedEventHandler {
+    fn new(sender: mpsc::UnboundedSender<ProvisionalEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+#[async_trait]
+impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
+    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> SatelliteResult<()> {
+        self.sender.send(event.clone()).map_err(|err| {
+            SatelliteError::Processing(format!(
+                "Failed to forward confirmed event to automaton: {}",
+                err
+            ))
+        })
+    }
 }
 
 impl Default for ProcessingStats {
@@ -670,6 +696,9 @@ pub struct ProcessorCapabilities {
 
     /// Supports concurrent processing
     pub supports_concurrent: bool,
+
+    /// Processor manages its own continuous loop (runner skips JetStream bridge)
+    pub manages_own_continuous_loop: bool,
 }
 
 impl Default for ProcessorCapabilities {
@@ -681,6 +710,7 @@ impl Default for ProcessorCapabilities {
             supports_interactive: false,
             max_scan_size: None,
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 }
@@ -729,7 +759,10 @@ pub struct StreamProcessorRunner<T: StatefulStreamProcessor> {
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     lease_manager: Option<Arc<crate::LeaseManager>>,
     confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
-    processing_model: crate::ProcessingModel,
+    processing_model: ProcessingModel,
+    db_pool: Option<PgPool>,
+    transport: Option<EventTransport>,
+    service_name: Option<String>,
 }
 
 impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
@@ -743,7 +776,10 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             event_processor_shutdown: None,
             lease_manager: None,
             confirmation_buffer: None,
-            processing_model: crate::ProcessingModel::StatelessWorker,
+            processing_model: ProcessingModel::StatelessWorker,
+            db_pool: None,
+            transport: None,
+            service_name: None,
         }
     }
 
@@ -759,6 +795,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 10000 for high-throughput event processing)
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
+        let stored_event_sender = event_sender.clone();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -769,13 +806,19 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
+        let consumer_name = format!("{}-{}", host, std::process::id());
+        let work_dir_clone = work_dir.clone();
+        let config_clone = config.clone();
+        let db_pool_clone_for_runner = db_pool.clone();
+        let transport_for_context = transport.clone();
+        let transport_clone_for_runner = transport.clone();
 
         // Initialize checkpoint manager
         let checkpoint_manager = CheckpointManager::new(
             db_pool.clone(),
             service_name.clone(),
             "default".to_string(), // Default consumer group
-            format!("{}-{}", host, std::process::id()), // Unique consumer name
+            consumer_name.clone(), // Unique consumer name
         );
 
         // NATS is the only transport
@@ -785,38 +828,35 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let processor_type = self.processor.processor_type();
         let (lease_manager_opt, confirmation_buffer_opt) =
             if matches!(processor_type, ProcessorType::Automaton) {
-                // Extract NATS client from transport
-                if let EventTransport::Nats(nats_publisher) = &transport {
-                    let nats_client = nats_publisher.nats_client().clone();
-                    let env = sinex_core::environment().clone();
+                match &transport {
+                    EventTransport::Nats(nats_publisher) => {
+                        let nats_client = nats_publisher.nats_client().clone();
+                        let env = sinex_core::environment().clone();
 
-                    // Create LeaseManager for leader election
-                    let lease_config = crate::LeaseManagerConfig {
-                        processor_name: service_name.clone(),
-                        instance_id: format!(
-                            "{}-{}",
-                            gethostname::gethostname().to_string_lossy(),
-                            std::process::id()
-                        ),
-                        lease_ttl: std::time::Duration::from_secs(30),
-                        renewal_interval: std::time::Duration::from_secs(10),
-                    };
-                    let lease_manager =
-                        Arc::new(crate::LeaseManager::new(nats_client, env, lease_config));
+                        let lease_config = crate::LeaseManagerConfig {
+                            processor_name: service_name.clone(),
+                            instance_id: format!(
+                                "{}-{}",
+                                gethostname::gethostname().to_string_lossy(),
+                                std::process::id()
+                            ),
+                            lease_ttl: std::time::Duration::from_secs(30),
+                            renewal_interval: std::time::Duration::from_secs(10),
+                        };
+                        let lease_manager =
+                            Arc::new(crate::LeaseManager::new(nats_client, env, lease_config));
 
-                    // Create ConfirmationBuffer with 60s timeout
-                    let confirmation_buffer = Arc::new(crate::ConfirmationBuffer::new(
-                        std::time::Duration::from_secs(60),
-                    ));
+                        let confirmation_buffer = Arc::new(crate::ConfirmationBuffer::new(
+                            std::time::Duration::from_secs(60),
+                        ));
 
-                    self.processing_model = crate::ProcessingModel::LeaderStandby;
-                    info!(
+                        self.processing_model = ProcessingModel::LeaderStandby;
+                        info!(
                         "Automaton configured with LeaderStandby model and confirmation buffering"
                     );
 
-                    (Some(lease_manager), Some(confirmation_buffer))
-                } else {
-                    (None, None)
+                        (Some(lease_manager), Some(confirmation_buffer))
+                    }
                 }
             } else {
                 (None, None)
@@ -829,11 +869,11 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create context with LeaseManager and ConfirmationBuffer
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
-            host,
+            host: host.clone(),
             work_dir,
             dry_run,
             db_pool,
-            transport: transport.clone(),
+            transport: transport_for_context,
             checkpoint_manager,
             config,
             event_sender,
@@ -843,6 +883,31 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Initialize the processor with legacy config conversion
         self.processor.initialize_legacy(context).await?;
+
+        self.db_pool = Some(db_pool_clone_for_runner.clone());
+        self.transport = Some(transport_clone_for_runner.clone());
+        self.service_name = Some(service_name.clone());
+
+        let stored_checkpoint_manager = CheckpointManager::new(
+            db_pool_clone_for_runner.clone(),
+            service_name.clone(),
+            "default".to_string(),
+            consumer_name,
+        );
+
+        self.context = Some(StreamProcessorContext {
+            service_name: service_name.clone(),
+            host: host.clone(),
+            work_dir: work_dir_clone,
+            dry_run,
+            db_pool: db_pool_clone_for_runner,
+            transport: transport_clone_for_runner,
+            checkpoint_manager: stored_checkpoint_manager,
+            config: config_clone,
+            event_sender: stored_event_sender,
+            lease_manager: self.lease_manager.clone(),
+            confirmation_buffer: self.confirmation_buffer.clone(),
+        });
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -1017,14 +1082,15 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Get current checkpoint to resume from previous state if available
         let current_checkpoint = self.processor.current_checkpoint().await?;
+        let capabilities = self.processor.capabilities();
 
         // Automata primarily process events in continuous mode
         // They consume events from message queues or databases
-        if self.processor.capabilities().supports_continuous {
+        if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
 
             // Check lease status before processing (for LeaderStandby model)
-            if self.processing_model == crate::ProcessingModel::LeaderStandby {
+            if self.processing_model == ProcessingModel::LeaderStandby {
                 if let Some(lease_manager) = &self.lease_manager {
                     let status = lease_manager.status().await;
                     if status != crate::LeaseStatus::Leader {
@@ -1035,21 +1101,23 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 }
             }
 
-            // Use Continuous time horizon for automata
-            // The processor's scan method should handle NATS/database consumption internally
-            let _continuous_report = self
-                .processor
-                .scan(
-                    current_checkpoint,
-                    TimeHorizon::Continuous,
-                    ScanArgs::default(),
-                )
-                .await?;
+            if capabilities.manages_own_continuous_loop {
+                let _continuous_report = self
+                    .processor
+                    .scan(
+                        current_checkpoint,
+                        TimeHorizon::Continuous,
+                        ScanArgs::default(),
+                    )
+                    .await?;
+            } else {
+                self.run_automaton_event_bridge(current_checkpoint).await?;
+            }
 
             info!("Automaton continuous processing completed");
         } else {
             // Automata can also run in batch mode for historical processing
-            if self.processor.capabilities().supports_historical {
+            if capabilities.supports_historical {
                 info!("Running automaton in historical batch mode");
 
                 // Process all historical events up to now
@@ -1071,6 +1139,119 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         }
 
         Ok(())
+    }
+
+    async fn run_automaton_event_bridge(&mut self, from: Checkpoint) -> SatelliteResult<()> {
+        let db_pool = self.db_pool.clone().ok_or_else(|| {
+            SatelliteError::Lifecycle("Runner database pool not initialized".to_string())
+        })?;
+
+        let transport = self.transport.clone().ok_or_else(|| {
+            SatelliteError::Lifecycle("Runner transport not initialized".to_string())
+        })?;
+
+        let service_name = self
+            .service_name
+            .clone()
+            .unwrap_or_else(|| self.processor.processor_name().to_string());
+
+        let (sender, mut receiver) = mpsc::unbounded_channel::<ProvisionalEvent>();
+        let handler = Arc::new(RunnerConfirmedEventHandler::new(sender));
+
+        let env = sinex_core::environment().clone();
+
+        let nats_client = match &transport {
+            EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+        };
+
+        let consumer_config = JetStreamEventConsumerConfig {
+            processing_model: self.processing_model,
+            batch_size: 128,
+            confirmation_timeout: std::time::Duration::from_secs(60),
+            consumer_name: format!("{}-automaton", service_name.replace('.', "_")),
+            enable_provisional_processing: false,
+        };
+
+        let consumer = Arc::new(JetStreamEventConsumer::new(
+            nats_client,
+            env,
+            consumer_config,
+            handler,
+            None,
+        ));
+
+        let consumer_runner = consumer.clone();
+        let consumer_handle = tokio::spawn(async move {
+            if let Err(err) = consumer_runner.run().await {
+                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
+            }
+        });
+
+        if !matches!(from, Checkpoint::None) && self.processor.capabilities().supports_historical {
+            info!("Processing historical backlog before entering continuous mode");
+            let _ = self
+                .processor
+                .scan(
+                    from,
+                    TimeHorizon::Historical {
+                        end_time: Utc::now(),
+                    },
+                    ScanArgs::default(),
+                )
+                .await?;
+        }
+
+        let mut processed_events = 0u64;
+
+        while let Some(provisional) = receiver.recv().await {
+            let event_id = EventId::from_ulid(provisional.event_id);
+
+            match Self::fetch_persisted_event(&db_pool, &event_id).await? {
+                Some(event) => match self.processor.process_event_batch(vec![event]).await {
+                    Ok(stats) => {
+                        processed_events += stats.processed as u64;
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "Automaton batch processing failed");
+                    }
+                },
+                None => {
+                    warn!(
+                        "Confirmed event {:?} missing from database; skipping",
+                        event_id
+                    );
+                }
+            }
+        }
+
+        info!(
+            processed_events,
+            "JetStream confirmed event channel closed; stopping automaton bridge"
+        );
+
+        consumer.stop().await;
+
+        if let Err(err) = consumer_handle.await {
+            warn!(error = %err, "Failed to join automaton consumer task");
+        }
+
+        Ok(())
+    }
+
+    async fn fetch_persisted_event(
+        pool: &PgPool,
+        event_id: &EventId,
+    ) -> SatelliteResult<Option<Event<JsonValue>>> {
+        let event_id_str = event_id.to_string();
+        pool.events()
+            .get_by_id(event_id.clone())
+            .await
+            .map_err(|err| {
+                SatelliteError::Processing(format!(
+                    "Failed to load confirmed event {} from database: {}",
+                    event_id_str, err
+                ))
+            })
     }
     // }
 

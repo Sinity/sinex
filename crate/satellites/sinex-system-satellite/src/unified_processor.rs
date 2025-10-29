@@ -607,6 +607,7 @@ impl StatefulStreamProcessor for SystemProcessor {
             supports_interactive: false,
             max_scan_size: Some(10000), // Reasonable limit for system events
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 

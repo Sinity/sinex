@@ -39,8 +39,6 @@ pub mod replay;
 pub mod replay_control;
 pub mod replay_metrics;
 pub mod replay_progress;
-pub mod sensd_client;
-pub mod sensor_guard;
 pub mod sensors;
 pub mod stage_as_you_go;
 pub mod stream_processor;
@@ -71,7 +69,6 @@ pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use nats_publisher::NatsPublisher;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use replay::ReplayMode;
-pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
 pub use sensors::{
     AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
     ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,

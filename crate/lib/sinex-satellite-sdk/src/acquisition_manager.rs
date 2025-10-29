@@ -4,7 +4,7 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
-use async_nats::Client as NatsClient;
+use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 /// Rotation policy configuration (salvaged from sensd)
@@ -116,6 +117,56 @@ struct LedgerEntry {
 }
 
 impl AcquisitionManager {
+    /// Ensure JetStream streams required for material capture exist.
+    pub async fn bootstrap_streams(nats_client: &NatsClient) -> Result<()> {
+        let env = sinex_core::environment().clone();
+        let js = jetstream::new(nats_client.clone());
+
+        let mut attempt = 0;
+        loop {
+            match Self::ensure_streams_once(&js, &env).await {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    attempt += 1;
+                    if attempt >= 5 {
+                        return Err(err);
+                    }
+                    sleep(std::time::Duration::from_millis(100 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    async fn ensure_streams_once(js: &jetstream::Context, env: &SinexEnvironment) -> Result<()> {
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            subjects: vec![env.nats_subject("source_material.begin")],
+            storage: jetstream::stream::StorageType::File,
+            ..Default::default()
+        })
+        .await?;
+
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            subjects: vec![env.nats_subject("source_material.slices.>")],
+            storage: jetstream::stream::StorageType::File,
+            max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60),
+            max_message_size: 512 * 1024,
+            ..Default::default()
+        })
+        .await?;
+
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_END"),
+            subjects: vec![env.nats_subject("source_material.end")],
+            storage: jetstream::stream::StorageType::File,
+            ..Default::default()
+        })
+        .await?;
+
+        Ok(())
+    }
+
     /// Create new acquisition manager
     pub fn new(
         nats_client: NatsClient,
@@ -316,9 +367,9 @@ impl AcquisitionManager {
             offset_end: handle.bytes_written,
             offset_kind: "byte".to_string(),
             ts_capture: handle.started_at,
-            precision: "millisecond".to_string(),
-            clock: "system".to_string(),
-            source_type: self.source_type.clone(),
+            precision: "bounded".to_string(),
+            clock: "wall".to_string(),
+            source_type: "realtime_capture".to_string(),
         })
         .await?;
 

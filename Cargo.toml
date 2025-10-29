@@ -134,11 +134,6 @@ indexmap = "2.0"
 # Retry logic
 tokio-retry = "0.3"
 
-# gRPC and protocol buffers
-tonic = "0.11"
-prost = "0.12"
-tonic-build = "0.11"
-
 # Message bus
 async-nats = "0.33"
 

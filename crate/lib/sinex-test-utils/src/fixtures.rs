@@ -203,12 +203,14 @@ pub struct PayloadSizeStats {
 async fn ensure_material_for_event(pool: &DbPool, event: &Event<JsonValue>) -> Result<()> {
     if let Provenance::Material { id, .. } = &event.provenance {
         let source_identifier = format!("test-material-{}", id);
-        sqlx::query!(
+        let update_result = sqlx::query!(
             r#"
-                INSERT INTO raw.source_material_registry
-                    (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (id) DO NOTHING
+                UPDATE raw.source_material_registry
+                SET id = $1::uuid::ulid,
+                    material_kind = $2,
+                    status = $4,
+                    timing_info_type = $5
+                WHERE source_identifier = $3
             "#,
             id.to_uuid(),
             "annex",
@@ -218,6 +220,28 @@ async fn ensure_material_for_event(pool: &DbPool, event: &Event<JsonValue>) -> R
         )
         .execute(pool)
         .await?;
+
+        if update_result.rows_affected() == 0 {
+            sqlx::query!(
+                r#"
+                    INSERT INTO raw.source_material_registry
+                        (id, material_kind, source_identifier, status, timing_info_type)
+                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                    ON CONFLICT (id) DO UPDATE
+                    SET material_kind = EXCLUDED.material_kind,
+                        status = EXCLUDED.status,
+                        timing_info_type = EXCLUDED.timing_info_type,
+                        source_identifier = EXCLUDED.source_identifier
+                "#,
+                id.to_uuid(),
+                "annex",
+                source_identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(pool)
+            .await?;
+        }
     }
 
     Ok(())

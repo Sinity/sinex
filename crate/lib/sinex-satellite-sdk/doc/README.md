@@ -8,4 +8,3 @@ Markdown references embedded in rustdoc:
 - `coordination.md` – heartbeat/upgrade recovery flows.
 - `preflight.md` – satellite preflight verification categories and usage.
 - `annex.md` – annex subsystem architecture and workflows.
-- `grpc_client.md` – ingestd gRPC client usage patterns and retries.

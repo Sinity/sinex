@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use sinex_satellite_sdk::prelude::*;
-use sinex_satellite_sdk::{
-    MaterialConsumer, ProcessorMode, ProcessorRunner, ProcessorRunnerConfig,
-};
+use sinex_satellite_sdk::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 use sinex_test_utils::TestContext;
 use std::collections::HashMap;
 
@@ -61,17 +59,6 @@ impl StatefulStreamProcessor for MockProcessor {
 
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         Ok(Checkpoint::None)
-    }
-}
-
-#[async_trait]
-impl MaterialConsumer for MockProcessor {
-    async fn process_material_slice(
-        &self,
-        _material_id: Ulid,
-        _slice_data: &[u8],
-    ) -> Result<Vec<Event<JsonValue>>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(vec![])
     }
 }
 

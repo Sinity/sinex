@@ -386,6 +386,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             supports_interactive: false,
             max_scan_size: Some(10000), // Limit for large directories
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 

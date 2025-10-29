@@ -638,6 +638,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
             supports_interactive: false,
             max_scan_size: Some(1000), // Limit for batch job submission
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 

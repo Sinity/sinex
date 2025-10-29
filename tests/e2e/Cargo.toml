@@ -18,3 +18,4 @@ sinex-ingestd = { path = "../../crate/core/sinex-ingestd" }
 sinex-satellite-sdk = { path = "../../crate/lib/sinex-satellite-sdk" }
 sinex-services = { path = "../../crate/lib/sinex-services" }
 sinex-gateway = { path = "../../crate/core/sinex-gateway" }
+async-nats.workspace = true

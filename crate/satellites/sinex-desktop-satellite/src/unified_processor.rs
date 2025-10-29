@@ -649,6 +649,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
             supports_interactive: false,
             max_scan_size: Some(1000), // Limited number of desktop events
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 

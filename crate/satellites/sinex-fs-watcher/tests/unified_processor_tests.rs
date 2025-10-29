@@ -9,6 +9,7 @@ async fn processor_initialization(ctx: TestContext) -> color_eyre::eyre::Result<
         follow_symlinks: false,
         batch_size: 50,
         processing_interval_ms: 500,
+        max_capture_bytes: 1024 * 1024,
     };
 
     let processor = FilesystemProcessor::with_config(config.clone());
@@ -30,6 +31,7 @@ async fn config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         follow_symlinks: false,
         batch_size: 100,
         processing_interval_ms: 1000,
+        max_capture_bytes: 1024 * 1024,
     };
     assert!(valid_config.validate_config().is_ok());
 

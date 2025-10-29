@@ -8,7 +8,6 @@
 //!
 //! // Instead of:
 //! // use sinex_satellite_sdk::{StatefulStreamProcessor, CheckpointManager, SatelliteCoordination};
-//! // use sinex_satellite_sdk::{IngestClient, BatchResult, HealthStatus};
 //! // use sinex_satellite_sdk::{SatelliteConfig, TimeHorizon, Checkpoint};
 //! ```
 

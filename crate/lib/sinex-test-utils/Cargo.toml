@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 bench = ["dep:divan", "dep:hostname", "dep:num_cpus", "dep:sysinfo"]
 slow-tests = []
+rstest-preview = []
 
 [dependencies]
 camino = { workspace = true }
@@ -56,7 +57,6 @@ gethostname = "0.4"
 ahash = { workspace = true }
 rand = "0.8"
 tempfile = "3.0"
-tonic = "0.11"
 fastrand = "2.0"
 jsonschema = "0.17"
 tokio-stream = { version = "0.1", features = ["net"] }

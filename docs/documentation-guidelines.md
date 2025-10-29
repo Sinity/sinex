@@ -24,7 +24,7 @@ rustdoc.
 2. Add `doc/README.md` describing the crate’s responsibility, major entry points,
    and its relationships to the rest of the system.
 3. Write one Markdown file per deep dive (e.g. `doc/replay_state_machine.md`,
-   `doc/grpc_client.md`). Co-locate diagrams or assets alongside.
+   `doc/jetstream_pipeline.md`). Co-locate diagrams or assets alongside.
 4. Keep narrow, tactical notes (field explanations, algorithm details) inside
    the Markdown file. The corresponding `.rs` file should only retain a short
    pointer such as `//! See crate::doc::replay_state_machine`.

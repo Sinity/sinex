@@ -71,17 +71,10 @@ impl SecurityValidator {
 
 #### Service Layer Security (PARTIALLY IMPLEMENTED)
 
-**Unix Domain Socket Communication**:
+**JetStream Transport Hardening**:
 ```rust
-// From sinex-satellite-sdk/src/grpc_client.rs
-pub async fn new(socket_path: &str) -> SatelliteResult<Self> {
-    let channel = Endpoint::try_from("http://[::]:50051")?
-        .connect_with_connector(tower::service_fn(move |_: Uri| {
-            tokio::net::UnixStream::connect(socket_path_owned.clone())
-        }))
-        .await?;
-    // No TLS, no authentication
-}
+// gRPC ingestion was removed; satellites publish directly to JetStream.
+// Security posture now relies on NATS credentials, stream ACLs, and DLQ audit flows.
 ```
 
 **Systemd Hardening** (`nixos/modules/satellite-services.nix`):
@@ -329,18 +322,11 @@ CREATE TABLE api_keys (
 
 ### 5.2 Short-term Security Hardening (Month 1)
 
-1. **Implement TLS for all services**:
+1. **Rotate JetStream credentials & enforce NATS TLS**:
 ```rust
-// Update grpc_client.rs
-pub async fn new_with_tls(socket_path: &str, cert_path: &str) -> Result<Self> {
-    let tls = ClientTlsConfig::new()
-        .ca_certificate(Certificate::from_pem(cert));
-    
-    let channel = Endpoint::try_from("https://[::]:50051")?
-        .tls_config(tls)?
-        .connect()
-        .await?;
-}
+// Configure sinex_satellite_sdk::config::EventSourceConfig
+// to inject NATS credentials + TLS settings via environment.
+// Enforce credential rotation through Vault-backed secrets.
 ```
 
 2. **Add authentication middleware**:
