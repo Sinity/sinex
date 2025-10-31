@@ -656,21 +656,36 @@ impl DatabasePool {
                             }
 
                             if !needs_recreate {
-                                match sqlx::query_scalar::<_, bool>(
+                                let events_has_blobs = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                                      WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
                                 )
                                 .fetch_one(&db_pool)
-                                .await
-                                {
-                                    Ok(true) => {}
-                                    Ok(false) => {
+                                .await;
+
+                                let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
+                                    "SELECT COUNT(*) = 2 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
+                                       AND column_name IN ('checkpoint_version', 'created_at')",
+                                )
+                                .fetch_one(&db_pool)
+                                .await;
+
+                                match (events_has_blobs, checkpoints_has_metadata) {
+                                    (Ok(true), Ok(true)) => {}
+                                    (Ok(false), _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing core.events.associated_blob_ids; recreating"
                                         );
                                     }
-                                    Err(err) => {
+                                    (_, Ok(false)) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Database {name} missing core.processor_checkpoints metadata columns; recreating"
+                                        );
+                                    }
+                                    (Err(err), _) | (_, Err(err)) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Failed to inspect columns in {name} ({err}); recreating"
@@ -1225,25 +1240,39 @@ async fn ensure_template_database(
                                 };
 
                                 if version_matches_default {
-                                    match sqlx::query_scalar::<_, bool>(
+                                    let events_has_blobs = sqlx::query_scalar::<_, bool>(
                                         "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                                          WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
                                     )
                                     .fetch_one(&pool)
-                                    .await
-                                    {
-                                        Ok(true) => {
+                                    .await;
+
+                                    let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
+                                        "SELECT COUNT(*) = 2 FROM information_schema.columns \
+                                         WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
+                                           AND column_name IN ('checkpoint_version', 'created_at')",
+                                    )
+                                    .fetch_one(&pool)
+                                    .await;
+
+                                    match (events_has_blobs, checkpoints_has_metadata) {
+                                        (Ok(true), Ok(true)) => {
                                             eprintln!(
                                                 "✅ Template database {template_name} reused (migrations unchanged)"
                                             );
                                             reuse_allowed = true;
                                         }
-                                        Ok(false) => {
+                                        (Ok(false), _) => {
                                             eprintln!(
                                                 "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
                                             );
                                         }
-                                        Err(err) => {
+                                        (_, Ok(false)) => {
+                                            eprintln!(
+                                                "♻️  Template {template_name} missing core.processor_checkpoints metadata columns; recreating"
+                                            );
+                                        }
+                                        (Err(err), _) | (_, Err(err)) => {
                                             eprintln!(
                                                 "⚠️  Failed to inspect template schema ({err}); forcing recreation"
                                             );

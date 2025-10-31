@@ -9,7 +9,7 @@ use sinex_core::{
     environment::environment,
     types::{deserialize_validated_utf8_path, validate_path},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use validator::Validate;
 
 /// Configuration for the ingestion daemon
@@ -81,6 +81,24 @@ pub struct IngestdConfig {
     #[validate(length(min = 1, message = "NATS consumer name cannot be empty"))]
     #[builder(default = String::from("ingestd"))]
     pub nats_consumer_name: String,
+
+    /// git-annex repository path for assembled materials
+    #[serde(deserialize_with = "deserialize_validated_utf8_path")]
+    #[validate(custom(
+        function = "validate_annex_path",
+        message = "Invalid annex repository path"
+    ))]
+    #[builder(default = default_annex_repo_path())]
+    pub annex_repo_path: Utf8PathBuf,
+
+    /// Directory used to persist in-flight assembler state between restarts
+    #[serde(deserialize_with = "deserialize_validated_utf8_path")]
+    #[validate(custom(
+        function = "validate_state_dir",
+        message = "Invalid assembler state directory"
+    ))]
+    #[builder(default = default_assembler_state_dir())]
+    pub assembler_state_dir: Utf8PathBuf,
 }
 
 impl IngestdConfig {
@@ -92,6 +110,8 @@ impl IngestdConfig {
         batch_size: usize,
         batch_timeout_secs: u64,
         dry_run: bool,
+        annex_repo_path: Option<String>,
+        assembler_state_dir: Option<String>,
     ) -> Self {
         let builder = Self::builder()
             .nats_url(nats_url)
@@ -103,7 +123,17 @@ impl IngestdConfig {
         let db_url = database_url.unwrap_or_else(default_database_url);
         let builder = builder.database_url(db_url);
 
-        builder.build()
+        let mut config = builder.build();
+
+        if let Some(path) = annex_repo_path {
+            config.annex_repo_path = Utf8PathBuf::from(path);
+        }
+
+        if let Some(path) = assembler_state_dir {
+            config.assembler_state_dir = Utf8PathBuf::from(path);
+        }
+
+        config
     }
 
     /// Validate configuration and exit with appropriate status code
@@ -147,6 +177,21 @@ impl IngestdConfig {
                     e
                 )));
             }
+        }
+
+        if tokio::fs::metadata(&self.annex_repo_path).await.is_err() {
+            warn!(
+                path = %self.annex_repo_path,
+                "Annex repository path does not exist; git-annex will attempt initialization"
+            );
+        }
+
+        if let Err(e) = tokio::fs::create_dir_all(&self.assembler_state_dir).await {
+            return Err(SinexError::configuration(format!(
+                "Cannot create assembler state directory {}: {}",
+                self.assembler_state_dir.as_str(),
+                e
+            )));
         }
 
         // Test database connection
@@ -229,6 +274,8 @@ impl Default for IngestdConfig {
             max_message_size: 16 * 1024 * 1024,
             nats_stream_name: default_nats_stream_name(),
             nats_consumer_name: format!("ingestd-{}", env.name()),
+            annex_repo_path: default_annex_repo_path(),
+            assembler_state_dir: default_assembler_state_dir(),
         }
     }
 }
@@ -291,4 +338,38 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
     validate_path(path.as_str())
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_work_dir"))
+}
+
+fn default_annex_repo_path() -> Utf8PathBuf {
+    use sinex_core::types::validate_path;
+
+    if let Ok(path) = std::env::var("SINEX_ANNEX_PATH") {
+        if let Ok(validated) = validate_path(&path) {
+            return validated;
+        }
+    }
+
+    let annex = default_work_dir().join("annex");
+    validate_path(annex.as_str()).unwrap_or(annex)
+}
+
+fn default_assembler_state_dir() -> Utf8PathBuf {
+    use sinex_core::types::validate_path;
+
+    let state_dir = default_work_dir().join("assembler_state");
+    validate_path(state_dir.as_str()).unwrap_or(state_dir)
+}
+
+fn validate_annex_path(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
+    use sinex_core::types::validate_path;
+    validate_path(path.as_str())
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_annex_path"))
+}
+
+fn validate_state_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
+    use sinex_core::types::validate_path;
+    validate_path(path.as_str())
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_state_dir"))
 }

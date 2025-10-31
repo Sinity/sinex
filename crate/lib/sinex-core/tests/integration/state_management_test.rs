@@ -248,7 +248,7 @@ async fn test_cross_service_state_tracking(ctx: TestContext) -> Result<()> {
         // Create checkpoint with some state
         let checkpoint = CheckpointInput::new(processor_name.clone())
             .with_last_processed_ts(Utc::now())
-            .with_state_data(json!({
+            .with_checkpoint_data(json!({
                 "service_type": service_type,
                 "last_health_check": Utc::now(),
                 "processed_events": 0
@@ -428,7 +428,7 @@ async fn test_checkpoint_processor_correlation(ctx: TestContext) -> Result<()> {
     for (timestamp, processed_count, state) in checkpoints_data {
         let checkpoint = CheckpointInput::new(processor_name.clone())
             .with_last_processed_ts(timestamp)
-            .with_state_data(state.clone());
+            .with_checkpoint_data(state.clone());
 
         let saved_checkpoint = state_repo.save_checkpoint(checkpoint).await?;
 
@@ -460,8 +460,8 @@ async fn test_checkpoint_processor_correlation(ctx: TestContext) -> Result<()> {
 
     assert_eq!(final_checkpoint.checkpoint_version, 4); // Updated 4 times
 
-    if let Some(state_data) = &final_checkpoint.state_data {
-        assert_eq!(state_data["status"], "complete");
+    if let Some(checkpoint_data) = &final_checkpoint.checkpoint_data {
+        assert_eq!(checkpoint_data["status"], "complete");
     }
 
     // Verify checkpoint update operations were logged

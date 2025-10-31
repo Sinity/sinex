@@ -12,6 +12,7 @@ use serde_json::json;
 use sinex_core::db::models::{Checkpoint, Event};
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::{Id, Ulid};
+use sinex_core::EventSearchFilters;
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -67,7 +68,7 @@ async fn test_id_database_integration_type_safety(
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event_id)
+        .get_by_id(event_id.clone())
         .await?
         .expect("Event should exist");
 
@@ -102,7 +103,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> color_eyre::eyre::R
     }
 
     // Verify all IDs are unique
-    let id_set: HashSet<_> = event_ids.iter().collect();
+    let id_set: HashSet<_> = event_ids.iter().cloned().collect();
     assert_eq!(id_set.len(), 5, "All IDs should be unique");
 
     // Verify we can use the IDs to query events
@@ -110,13 +111,13 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> color_eyre::eyre::R
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(*event_id)
+            .get_by_id(event_id.clone())
             .await?
             .expect("Event should exist");
 
         assert_eq!(
             retrieved.id.expect("Retrieved event should have ID"),
-            *event_id
+            event_id.clone()
         );
     }
 
@@ -155,13 +156,16 @@ async fn test_event_source_type_safety(ctx: TestContext) -> color_eyre::eyre::Re
     assert_eq!(event2.source.as_str(), "dynamic-test-source");
 
     // Verify we can query by source
-    let static_events = ctx.pool.events().by_source("test-source").fetch().await?;
+    let static_events = ctx
+        .pool
+        .events()
+        .get_by_source(&static_source, None, None)
+        .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .by_source("dynamic-test-source")
-        .fetch()
+        .get_by_source(&dynamic_source, None, None)
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -198,9 +202,17 @@ async fn test_event_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()
     assert_eq!(event2.event_type.as_str(), "dynamic.test");
 
     // Verify type-based queries work
-    let static_events = ctx.pool.events().by_type("static.test").fetch().await?;
+    let static_events = ctx
+        .pool
+        .events()
+        .get_by_event_type(&static_type, None, None)
+        .await?;
 
-    let dynamic_events = ctx.pool.events().by_type("dynamic.test").fetch().await?;
+    let dynamic_events = ctx
+        .pool
+        .events()
+        .get_by_event_type(&dynamic_type, None, None)
+        .await?;
 
     assert_eq!(static_events.len(), 1);
     assert_eq!(dynamic_events.len(), 1);
@@ -330,7 +342,7 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> color_eyre::
 #[sinex_test]
 async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create test data
-    let events = vec![
+    let _events = vec![
         ctx.create_test_event("repo-test", "query.safety", json!({"index": 1}))
             .await?,
         ctx.create_test_event("repo-test", "query.safety", json!({"index": 2}))
@@ -340,7 +352,12 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre
     ];
 
     // Test source-based queries return correct types
-    let repo_events = ctx.pool.events().by_source("repo-test").fetch().await?;
+    let repo_source = EventSource::from_static("repo-test");
+    let repo_events = ctx
+        .pool
+        .events()
+        .get_by_source(&repo_source, None, None)
+        .await?;
 
     assert_eq!(repo_events.len(), 2);
     for event in &repo_events {
@@ -349,7 +366,12 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre
     }
 
     // Test type-based queries
-    let safety_events = ctx.pool.events().by_type("query.safety").fetch().await?;
+    let repo_event_type = EventType::from_static("query.safety");
+    let safety_events = ctx
+        .pool
+        .events()
+        .get_by_event_type(&repo_event_type, None, None)
+        .await?;
 
     assert_eq!(safety_events.len(), 3);
     for event in &safety_events {
@@ -357,13 +379,12 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre
     }
 
     // Test combined queries
-    let specific_events = ctx
-        .pool
-        .events()
-        .by_source("repo-test")
-        .by_type("query.safety")
-        .fetch()
-        .await?;
+    let filters = EventSearchFilters {
+        source: Some(EventSource::from_static("repo-test")),
+        event_type: Some(EventType::from_static("query.safety")),
+        ..Default::default()
+    };
+    let specific_events = ctx.pool.events().search(filters).await?;
 
     assert_eq!(specific_events.len(), 2);
 
@@ -387,7 +408,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> color_eyre::e
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event_id)
+        .get_by_id(event_id.clone())
         .await?
         .expect("Event should exist");
 
@@ -433,16 +454,21 @@ async fn test_event_creation_pipeline_type_safety(
     // New events have no ID until inserted
 
     // 4. Insert into database
-    let inserted_id = ctx.pool.events().insert_single(&event).await?;
+    let inserted = ctx.pool.events().insert(event.clone()).await?;
+    let inserted_id = inserted
+        .id
+        .clone()
+        .expect("Inserted event should have an ID");
 
     // 5. Verify ID type preservation happens in storage
-    assert!(Into::<Ulid>::into(inserted_id).to_uuid() != uuid::Uuid::nil());
+    let inserted_ulid: Ulid = inserted_id.clone().into();
+    assert_ne!(inserted_ulid.to_uuid(), uuid::Uuid::nil());
 
     // 6. Query back using repository pattern
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(inserted_id)
+        .get_by_id(inserted_id.clone())
         .await?
         .expect("Event should exist");
 
@@ -495,7 +521,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
     assert_eq!(results.len(), 4);
 
     // Verify all IDs are unique (type safety maintained under concurrency)
-    let ids: HashSet<_> = results.iter().map(|(_, _, id)| id).collect();
+    let ids: HashSet<_> = results.iter().map(|(_, _, id)| id.to_string()).collect();
     assert_eq!(ids.len(), 4, "All IDs should be unique");
 
     // Verify we can query all events back with correct types
@@ -503,7 +529,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(id)
+            .get_by_id(id.clone())
             .await?
             .expect("Event should exist");
 

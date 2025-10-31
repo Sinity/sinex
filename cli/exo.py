@@ -581,7 +581,7 @@ def processor_list(type: Optional[str], status: Optional[str]):
             query_parts = [
                 "SELECT processor_name, processor_type, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
-                "FROM sinex_schemas.processor_manifests"
+                "FROM core.processor_manifests"
             ]
             params = []
             where_conditions = []
@@ -654,7 +654,7 @@ def processor_status(processor_name: str):
         with conn.cursor() as cur:
             # Get processor manifest
             cur.execute("""
-                SELECT * FROM sinex_schemas.processor_manifests
+                SELECT * FROM core.processor_manifests
                 WHERE processor_name = %s
             """, (processor_name,))
             processor = cur.fetchone()
@@ -667,10 +667,10 @@ def processor_status(processor_name: str):
             checkpoints = []
             if processor['processor_type'] == 'automaton':
                 cur.execute("""
-                    SELECT automaton_name, last_processed_id, processed_count, 
-                           last_activity, state_data
-                    FROM core.automaton_checkpoints
-                    WHERE automaton_name = %s
+                    SELECT processor_name, consumer_group, consumer_name,
+                           last_processed_id, processed_count, last_activity, checkpoint_data
+                    FROM core.processor_checkpoints
+                    WHERE processor_name = %s
                     ORDER BY last_activity DESC
                 """, (processor_name,))
                 checkpoints = cur.fetchall()
@@ -692,11 +692,14 @@ def processor_status(processor_name: str):
             if checkpoints:
                 console.print("\n[bold]Checkpoints:[/bold]")
                 for checkpoint in checkpoints:
-                    console.print(f"  Last processed: {checkpoint['last_processed_id'] or 'None'}")
-                    console.print(f"  Processed count: {checkpoint['processed_count']}")
-                    console.print(f"  Last activity: {checkpoint['last_activity']}")
-                    if checkpoint['state_data']:
-                        console.print(f"  State: {checkpoint['state_data']}")
+                    console.print(
+                        f"  Consumer: {checkpoint['consumer_group']}/{checkpoint['consumer_name']}"
+                    )
+                    console.print(f"    Last processed: {checkpoint['last_processed_id'] or 'None'}")
+                    console.print(f"    Processed count: {checkpoint['processed_count']}")
+                    console.print(f"    Last activity: {checkpoint['last_activity']}")
+                    if checkpoint['checkpoint_data']:
+                        console.print(f"    State: {checkpoint['checkpoint_data']}")
             
             console.print(f"\nRegistered: {processor['registered_at']}")
             console.print(f"Last seen: {processor['last_seen']}")
@@ -713,7 +716,7 @@ def automaton_list(status: Optional[str]):
             query_parts = [
                 "SELECT processor_name, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
-                "FROM sinex_schemas.processor_manifests "
+                "FROM core.processor_manifests "
                 "WHERE processor_type = 'automaton'"
             ]
             params = []
@@ -774,7 +777,7 @@ def automaton_status(automaton_name: str):
         with conn.cursor() as cur:
             # Get automaton manifest
             cur.execute("""
-                SELECT * FROM sinex_schemas.processor_manifests
+                SELECT * FROM core.processor_manifests
                 WHERE processor_name = %s AND processor_type = 'automaton'
             """, (automaton_name,))
             automaton = cur.fetchone()
@@ -3141,16 +3144,18 @@ def explore_source_state(ctx, satellite: str, verbose: bool):
         
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                # Get automaton checkpoint for this satellite
+                # Get checkpoints for this satellite's processor(s)
                 cur.execute("""
                     SELECT 
-                        automaton_name,
+                        processor_name,
+                        consumer_group,
+                        consumer_name,
                         last_processed_id,
                         processed_count,
                         last_activity,
-                        state_data
-                    FROM core.automaton_checkpoints
-                    WHERE automaton_name LIKE %s
+                        checkpoint_data
+                    FROM core.processor_checkpoints
+                    WHERE processor_name LIKE %s
                     ORDER BY last_activity DESC
                 """, [f"%{satellite}%"])
                 
@@ -3163,13 +3168,16 @@ def explore_source_state(ctx, satellite: str, verbose: bool):
                 console.print(f"\n[bold]Checkpoint Status:[/bold]")
                 
                 for checkpoint in checkpoints:
-                    console.print(f"  [cyan]{checkpoint['automaton_name']}[/cyan]")
+                    console.print(
+                        f"  [cyan]{checkpoint['processor_name']}[/cyan] :: "
+                        f"{checkpoint['consumer_group']}/{checkpoint['consumer_name']}"
+                    )
                     console.print(f"    Last processed: {checkpoint['last_processed_id'] or 'None'}")
                     console.print(f"    Processed count: {checkpoint['processed_count']}")
                     console.print(f"    Last activity: {checkpoint['last_activity']}")
-                    
-                    if verbose and checkpoint['state_data']:
-                        console.print(f"    State data: {JSON(checkpoint['state_data'])}")
+
+                    if verbose and checkpoint['checkpoint_data']:
+                        console.print(f"    State: {JSON(checkpoint['checkpoint_data'])}")
                     
                     console.print()
                 

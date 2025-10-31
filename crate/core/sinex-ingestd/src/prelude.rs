@@ -12,7 +12,7 @@
 //! ```
 
 // Core service
-pub use crate::{IngestService, IngestdConfig, SubjectCache};
+pub use crate::{IngestService, IngestdConfig};
 
 // Configuration
 pub use crate::IngestdFigmentConfig;

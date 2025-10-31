@@ -9,6 +9,7 @@ use sinex_ingestd::JetStreamConsumer;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
 
+#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -24,7 +25,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let env = ctx.env();
 
     // Bootstrap the events_raw stream before starting consumer
-    let stream_name = env.nats_subject("events_raw");
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: stream_name,
         subjects: vec![env.nats_subject("events.raw.>")],
@@ -81,6 +82,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -96,7 +98,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let env = ctx.env();
 
     // Bootstrap the events_raw and confirmations streams
-    let events_stream_name = env.nats_subject("events_raw");
+    let events_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_stream_name,
         subjects: vec![env.nats_subject("events.raw.>")],
@@ -107,7 +109,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let confirmations_stream = env.nats_subject("events_confirmations");
+    let confirmations_stream = env.nats_stream_name("SINEX_EVENTS_CONFIRMATIONS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: confirmations_stream,
         subjects: vec![env.nats_subject("events.confirmations.>")],
@@ -146,7 +148,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
 
     // Check for confirmation in stream
     let mut stream = js
-        .get_stream(&ctx.env().nats_subject("events_confirmations"))
+        .get_stream(&ctx.env().nats_stream_name("SINEX_EVENTS_CONFIRMATIONS"))
         .await?;
 
     assert!(

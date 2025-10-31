@@ -23,7 +23,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
     let processor_name = format!("test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', '1.0.0', 'Test automaton for checkpoint validation')",
         processor_name
     )
@@ -47,8 +47,8 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 5, NOW(), '{"processed": 5}'::jsonb)
+            (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 5, NOW(), '{"processed": 5}'::jsonb)
         "#,
         processor_name,
         checkpoint_ulid.to_string()
@@ -87,7 +87,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
     .execute(&pool)
     .await?;
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         processor_name
     )
     .execute(&pool)
@@ -107,7 +107,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
     let processor_name = format!("gap_test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', '1.0.0', 'Gap detection test automaton')",
         processor_name
     )
@@ -131,8 +131,8 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb)
         "#,
         processor_name,
         last_batch1_ulid.to_string()
@@ -236,7 +236,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
     .execute(&pool)
     .await?;
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         processor_name
     )
     .execute(&pool)
@@ -335,7 +335,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
     let processor_name = format!("stale_test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', '1.0.0', 'Stale checkpoint test automaton')",
         processor_name
     )
@@ -351,8 +351,8 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb)
         "#,
         processor_name,
         event.id.to_string()
@@ -408,7 +408,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
     .execute(&pool)
     .await?;
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         processor_name
     )
     .execute(&pool)
@@ -433,7 +433,7 @@ async fn test_cross_automaton_checkpoint_validation(
 
     for name in &processor_names {
         sqlx::query!(
-            "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+            "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
              VALUES ($1, 'automaton', '1.0.0', 'Cross-validation test automaton')",
             name
         )
@@ -464,8 +464,8 @@ async fn test_cross_automaton_checkpoint_validation(
         sqlx::query(&format!(
             r#"
             INSERT INTO core.processor_checkpoints 
-            (processor_name, last_processed_id, processed_count, last_activity, state_data)
-            VALUES ($1, $2, $3, {}, '{{"checkpoint_test": true}}'::jsonb)
+            (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+            VALUES ($1, $2::uuid, $3, {}, '{{"checkpoint_test": true}}'::jsonb)
             "#,
             last_activity
         ))
@@ -572,7 +572,7 @@ async fn test_cross_automaton_checkpoint_validation(
         .execute(&pool)
         .await?;
         sqlx::query!(
-            "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+            "DELETE FROM core.processor_manifests WHERE processor_name = $1",
             name
         )
         .execute(&pool)
@@ -593,7 +593,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     let processor_name = format!("recovery_test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', '1.0.0', 'Recovery scenario test automaton')",
         processor_name
     )
@@ -606,8 +606,8 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 100, NOW(), '{"scenario": "non_existent_event"}'::jsonb)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 100, NOW(), '{"scenario": "non_existent_event"}'::jsonb)
         "#,
         processor_name,
         non_existent_ulid.to_string()
@@ -640,7 +640,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
         VALUES ($1, 'invalid-ulid-format', 50, NOW(), '{"scenario": "invalid_ulid"}'::jsonb)
         "#,
         processor_name
@@ -730,8 +730,8 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 999, NOW(), '{"scenario": "future_checkpoint"}'::jsonb)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 999, NOW(), '{"scenario": "future_checkpoint"}'::jsonb)
         "#,
         processor_name,
         future_ulid.to_string()
@@ -761,7 +761,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     .execute(&pool)
     .await?;
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         processor_name
     )
     .execute(&pool)
@@ -781,7 +781,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
     let processor_name = format!("data_loss_test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', '1.0.0', 'Data loss detection test automaton')",
         processor_name
     )
@@ -807,8 +807,8 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
-        (processor_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb)
+        (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
+        VALUES ($1, $2::uuid, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb)
         "#,
         processor_name,
         checkpoint_ulid.to_string()
@@ -910,7 +910,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
     .execute(&pool)
     .await?;
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         processor_name
     )
     .execute(&pool)

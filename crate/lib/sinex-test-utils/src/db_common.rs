@@ -183,7 +183,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
                     core.tagged_items,
                     raw.source_material_registry,
                     raw.temporal_ledger,
-                    sinex_schemas.processor_manifests,
+                    core.processor_manifests,
                     sinex_schemas.event_payload_schemas
                 CASCADE
             "#,
@@ -202,7 +202,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
                 "DELETE FROM core.event_embeddings",
                 "DELETE FROM core.entity_relations",
                 "DELETE FROM core.revisions",
-                "DELETE FROM sinex_schemas.processor_manifests",
+                "DELETE FROM core.processor_manifests",
                 "DELETE FROM sinex_schemas.event_payload_schemas",
                 "DELETE FROM core.processor_checkpoints",
                 "DELETE FROM core.operations_log",
@@ -510,7 +510,7 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 /// - raw.source_material_registry
 /// - raw.temporal_ledger
 /// - sinex_schemas.event_payload_schemas
-/// - sinex_schemas.processor_manifests
+/// - core.processor_manifests
 ///
 /// # Example
 ///
@@ -550,7 +550,7 @@ pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
         "raw.temporal_ledger",
         // Schema tables
         "sinex_schemas.event_payload_schemas",
-        "sinex_schemas.processor_manifests",
+        "core.processor_manifests",
     ];
 
     for table in tables {

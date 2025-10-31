@@ -539,7 +539,7 @@ async fn create_user_session_fixture(
         TestCheckpointBuilder::new(&format!("test_processor_{user_id}"))
             .processed_count((event_count / checkpoint_interval * checkpoint_interval) as i64)
             .last_processed_id(Id::from(event_ids[checkpoint_interval - 1]))
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "user_id": user_id,
                 "session_start": session_start,
                 "events_processed": event_count / checkpoint_interval * checkpoint_interval
@@ -593,7 +593,7 @@ async fn create_populated_checkpoints_fixture(
         TestCheckpointBuilder::new(name)
             .processed_count(processed_count)
             .last_processed_id(Id::from(Ulid::new()))
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "processor_name": name,
                 "version": "1.0.0",
                 "status": "healthy",
@@ -921,7 +921,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     for i in 0..checkpoint_count {
         TestCheckpointBuilder::new(&format!("pre_warmed_processor_{i}"))
             .processed_count((i * 500) as i64)
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "fixture": "pre_warmed",
                 "index": i,
             }))

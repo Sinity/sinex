@@ -111,7 +111,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
         let checkpoint_id = Ulid::new();
         let last_processed_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
                  VALUES ($1::uuid, $2, $3::uuid, $4)",
             checkpoint_id.to_uuid(),
             "existing_agent",
@@ -938,7 +938,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         let migration_checkpoint_id = Ulid::new();
         let migration_last_processed_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
                  VALUES ($1::uuid, $2, $3::uuid, $4)",
             migration_checkpoint_id.to_uuid(),
             "migration_test_agent",
@@ -1007,7 +1007,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
 
         // Verify checkpoint data integrity
         let checkpoint_data: Option<serde_json::Value> = sqlx::query_scalar!(
-            "SELECT state_data FROM core.processor_checkpoints
+            "SELECT checkpoint_data FROM core.processor_checkpoints
                  WHERE processor_name = 'migration_test_agent'"
         )
         .fetch_optional(pool)
@@ -1166,7 +1166,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
     let degradation_checkpoint_id = Ulid::new();
     let degradation_last_processed_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
          VALUES ($1::uuid, $2, $3::uuid, $4)",
         degradation_checkpoint_id.to_uuid(),
         agent_name,

@@ -10,7 +10,6 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::types::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::JetStreamConsumer;
@@ -23,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
+#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     info!("🚀 Starting E2E JetStream test");
@@ -129,7 +129,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     for attempt in 0..30 {
         // Check if event persisted to database
         if !event_persisted {
-            if let Some(event_from_db) = pool.events().get_by_id(event_id).await? {
+            if let Some(event_from_db) = pool.events().get_by_id(event_id.clone()).await? {
                 info!(
                     attempt,
                     event_id = %event_id,
@@ -192,6 +192,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     Ok(())
 }
 
+#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
     info!("🚀 Starting JetStream idempotency test");

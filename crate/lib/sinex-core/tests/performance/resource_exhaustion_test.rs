@@ -35,21 +35,23 @@ async fn create_consumer(
     durable: &str,
     ack_wait: Duration,
 ) -> Result<Consumer> {
-    js.get_or_create_consumer(
-        stream,
-        ConsumerConfig {
-            durable_name: Some(durable.to_string()),
-            name: Some(durable.to_string()),
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::Explicit,
-            filter_subject: subject.to_string(),
-            ack_wait,
-            max_ack_pending: 64,
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(Into::into)
+    let stream_handle = js.get_stream(stream).await?;
+    stream_handle
+        .get_or_create_consumer(
+            durable,
+            ConsumerConfig {
+                durable_name: Some(durable.to_string()),
+                name: Some(durable.to_string()),
+                deliver_policy: DeliverPolicy::All,
+                ack_policy: AckPolicy::Explicit,
+                filter_subject: subject.to_string(),
+                ack_wait,
+                max_ack_pending: 64,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(Into::into)
 }
 
 #[sinex_bench]
@@ -73,7 +75,7 @@ async fn jetstream_backpressure_limits(_ctx: TestContext) -> color_eyre::eyre::R
         ack.await?;
     }
 
-    let info = js.stream_info(&stream).await?;
+    let info = js.get_stream(&stream).await?.info().await?;
     color_eyre::eyre::ensure!(
         info.state.messages <= 200,
         "stream should cap at 200 messages, observed {}",
@@ -104,9 +106,10 @@ async fn jetstream_consumer_recovery(_ctx: TestContext) -> color_eyre::eyre::Res
 
     // Create a consumer and fetch a batch, acknowledging only half to simulate failures.
     let durable = format!("perf_recovery_consumer_{}", Ulid::new());
-    let consumer = js
+    let stream_handle = js.get_stream(&stream).await?;
+    let consumer = stream_handle
         .get_or_create_consumer(
-            &stream,
+            &durable,
             ConsumerConfig {
                 durable_name: Some(durable.clone()),
                 name: Some(durable.clone()),
@@ -157,7 +160,8 @@ async fn jetstream_consumer_recovery(_ctx: TestContext) -> color_eyre::eyre::Res
         "expected to recover unacked messages on restart"
     );
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }
@@ -247,7 +251,8 @@ async fn jetstream_high_concurrency_publish(_ctx: TestContext) -> color_eyre::ey
         processed
     );
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }

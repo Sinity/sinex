@@ -11,7 +11,10 @@ use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use crate::{validator::EventValidator, IngestdResult, SinexError};
+use crate::{
+    validator::{EventValidator, ValidationResult},
+    IngestdResult, SinexError,
+};
 
 #[derive(Debug, Deserialize)]
 struct RawEvent {
@@ -286,8 +289,6 @@ impl JetStreamConsumer {
 
     /// Validate event against JSON schema
     async fn validate_event(&self, event: &RawEvent) -> IngestdResult<()> {
-        // Use EventValidator to validate payload
-        // For now, basic validation - can be enhanced with schema validation
         if event.id.is_empty() {
             return Err(SinexError::validation("Event ID cannot be empty"));
         }
@@ -298,7 +299,33 @@ impl JetStreamConsumer {
             return Err(SinexError::validation("Event type cannot be empty"));
         }
 
-        Ok(())
+        let validation = self
+            .validator
+            .validate_payload_for(&event.source, &event.event_type, &event.payload)
+            .map_err(|err| {
+                SinexError::validation(format!("Schema validation error: {}", err))
+                    .with_operation("jetstream_consumer.validate_event")
+            })?;
+
+        match validation {
+            ValidationResult::Valid | ValidationResult::Skipped | ValidationResult::NoSchema => {
+                Ok(())
+            }
+            ValidationResult::SchemaNotFound { schema_id } => {
+                warn!(
+                    source = %event.source,
+                    event_type = %event.event_type,
+                    schema = %schema_id,
+                    "Schema referenced in lookup was not found; accepting event"
+                );
+                Ok(())
+            }
+            ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
+                "Schema validation failed: {}",
+                errors.join(", ")
+            ))
+            .with_operation("jetstream_consumer.validate_event")),
+        }
     }
 
     /// Persist batch using optimized UNNEST pattern

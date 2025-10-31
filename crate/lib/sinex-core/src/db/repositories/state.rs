@@ -265,6 +265,7 @@ impl<'a> StateRepository<'a> {
                 last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 processed_count = core.processor_checkpoints.processed_count + 1,
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
@@ -275,6 +276,8 @@ impl<'a> StateRepository<'a> {
                 last_processed_id::uuid as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
+                checkpoint_version,
+                created_at,
                 last_activity,
                 updated_at
             "#,
@@ -308,6 +311,8 @@ impl<'a> StateRepository<'a> {
                 last_processed_id::uuid as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
+                checkpoint_version,
+                created_at,
                 last_activity,
                 updated_at
             FROM core.processor_checkpoints 
@@ -333,6 +338,8 @@ impl<'a> StateRepository<'a> {
                 last_processed_id::uuid as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
+                checkpoint_version,
+                created_at,
                 last_activity,
                 updated_at
             FROM core.processor_checkpoints 
@@ -1096,12 +1103,13 @@ impl<'a> StateRepositoryTx<'a> {
                 processor_name, consumer_group, consumer_name,
                 last_processed_id, checkpoint_data
             ) VALUES (
-                $1, $2, $3, $4, $5
+                $1, $2, $3, $4::uuid, $5
             )
             ON CONFLICT (processor_name, consumer_group, consumer_name) DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
                 checkpoint_data = EXCLUDED.checkpoint_data,
                 processed_count = core.processor_checkpoints.processed_count + 1,
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
@@ -1112,13 +1120,15 @@ impl<'a> StateRepositoryTx<'a> {
                 last_processed_id as "last_processed_id?: Id<Event<JsonValue>>",
                 processed_count,
                 checkpoint_data,
+                checkpoint_version,
+                created_at,
                 last_activity,
                 updated_at
             "#,
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref(),
-            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_id.map(|id| id.to_uuid()),
             checkpoint.checkpoint_data
         )
         .fetch_one(&mut **self.tx)

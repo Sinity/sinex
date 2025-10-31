@@ -64,7 +64,7 @@ sd-notify.workspace = true
 
 # Local dependencies
 sinex-core = { path = "../../lib/sinex-core", features = [] }
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", default-features = false }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
-sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }

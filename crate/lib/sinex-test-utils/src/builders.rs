@@ -20,8 +20,6 @@ pub(crate) struct TestCheckpointBuilder {
     consumer_name: Option<String>,
     last_processed_id: Option<Id<Event<JsonValue>>>,
     processed_count: i64,
-    state_data: Option<JsonValue>,
-    checkpoint_version: i32,
     checkpoint_data: Option<JsonValue>,
 }
 
@@ -34,8 +32,6 @@ impl TestCheckpointBuilder {
             consumer_name: None,
             last_processed_id: None,
             processed_count: 0,
-            state_data: None,
-            checkpoint_version: 1,
             checkpoint_data: None,
         }
     }
@@ -65,8 +61,8 @@ impl TestCheckpointBuilder {
     }
 
     /// Set the state data
-    pub fn state_data(mut self, data: JsonValue) -> Self {
-        self.state_data = Some(data);
+    pub fn checkpoint_data(mut self, data: JsonValue) -> Self {
+        self.checkpoint_data = Some(data);
         self
     }
 
@@ -84,7 +80,6 @@ impl TestCheckpointBuilder {
             last_processed_id,
             processed_count,
             checkpoint_data,
-            ..
         } = self;
 
         let raw_processor_name = processor_name;

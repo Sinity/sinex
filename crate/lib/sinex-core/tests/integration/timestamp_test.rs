@@ -36,7 +36,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
                 "test_case": i
             }),
         )
-        .at_time(*ts);
+        .at_time(ts.clone());
 
         ctx.pool.events().insert(event).await?;
     }
@@ -211,7 +211,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         ),
     ];
 
-    for (name, ts) in timezone_cases {
+    for (name, ts) in &timezone_cases {
         let event = Event::test_event(
             EventSource::from("timezone_test"),
             EventType::from("timezone_event"),
@@ -220,7 +220,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
                 "timestamp": ts.to_rfc3339()
             }),
         )
-        .at_time(ts);
+        .at_time(*ts);
 
         ctx.pool.events().insert(event).await?;
     }

@@ -19,7 +19,7 @@ pub use figment_config::IngestdFigmentConfig;
 pub use jetstream_consumer::JetStreamConsumer;
 pub use material_assembler::MaterialAssembler;
 pub use schema_sync::SyncResult;
-pub use service::{IngestService, SubjectCache};
+pub use service::IngestService;
 pub use validator::{
     EventValidator, SchemaCache, SchemaInfo, SchemaLookup, ValidationResult, ValidationStats,
 };

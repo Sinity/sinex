@@ -32,6 +32,8 @@ pub enum ProcessorCheckpoints {
     LastProcessedId,
     ProcessedCount,
     CheckpointData,
+    CheckpointVersion,
+    CreatedAt,
     LastActivity,
     UpdatedAt,
 }
@@ -58,6 +60,8 @@ pub struct CheckpointRecord {
     pub last_processed_id: Option<Ulid>,
     pub processed_count: i64,
     pub checkpoint_data: Option<JsonValue>,
+    pub checkpoint_version: i32,
+    pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -98,6 +102,18 @@ impl ProcessorCheckpoints {
                     .default(0),
             )
             .col(ColumnDef::new(ProcessorCheckpoints::CheckpointData).json_binary())
+            .col(
+                ColumnDef::new(ProcessorCheckpoints::CheckpointVersion)
+                    .integer()
+                    .not_null()
+                    .default(1),
+            )
+            .col(
+                ColumnDef::new(ProcessorCheckpoints::CreatedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
             .col(
                 ColumnDef::new(ProcessorCheckpoints::LastActivity)
                     .timestamp_with_time_zone()
