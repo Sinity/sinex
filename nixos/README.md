@@ -740,7 +740,7 @@ sudo systemctl start sinex-satellite-system
 ```bash
 # Reset checkpoints on corruption
 sudo -u sinex psql sinex_dev -c "
-UPDATE core.automaton_checkpoints 
+UPDATE core.processor_checkpoints 
 SET last_processed_id = NULL 
 WHERE automaton_name = 'terminal-command-canonicalizer';"
 
