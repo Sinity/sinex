@@ -213,11 +213,8 @@ impl IngestService {
         let validator = self.validator.clone();
 
         tokio::spawn(async move {
-            let consumer = crate::JetStreamConsumer::new(
-                nats_client,
-                pool.clone(),
-                Arc::new(validator.read().await.clone()),
-            );
+            let consumer =
+                crate::JetStreamConsumer::new(nats_client, pool.clone(), validator.clone());
 
             tokio::select! {
                 result = consumer.run() => {

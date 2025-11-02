@@ -8,6 +8,7 @@ use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::JetStreamConsumer;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
@@ -42,7 +43,11 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -114,7 +119,11 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -171,7 +180,11 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     })
     .await?;
 
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;

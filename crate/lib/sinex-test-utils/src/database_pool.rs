@@ -1091,7 +1091,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
                 let err_str = err.to_string();
                 if !err_str.to_lowercase().contains("too many clients") {
                     return Err(SinexError::database(format!(
-                        "Admin connection failed: {err_str}"
+                        "Admin connection failed: {err_str}. Ensure the local PostgreSQL instance is running and accessible (try `just db-setup`, `pg_ctl start`, or set DATABASE_URL to a reachable server)."
                     )));
                 }
                 last_error = Some(err);
@@ -1103,7 +1103,9 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
                 );
             }
             Err(_) => {
-                return Err(SinexError::database("Admin connection timeout"));
+                return Err(SinexError::database(
+                    "Admin connection timeout. Ensure PostgreSQL is running locally.",
+                ));
             }
         }
 
@@ -1112,7 +1114,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
     }
 
     Err(SinexError::database(format!(
-        "Admin connection failed after retries: {}",
+        "Admin connection failed after retries: {}. Ensure PostgreSQL is running and reachable for tests.",
         last_error
             .map(|e| e.to_string())
             .unwrap_or_else(|| "unknown error".to_string())

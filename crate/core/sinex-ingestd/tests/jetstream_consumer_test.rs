@@ -8,8 +8,10 @@ use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::JetStreamConsumer;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
+use tokio::time::timeout;
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -37,11 +39,19 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     .await?;
 
     // Start JetStream consumer in background
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     // Wait for consumer to fully initialize
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    if consumer_handle.is_finished() {
+        let result = consumer_handle.await.expect("consumer task panicked");
+        panic!("consumer exited early: {:?}", result);
+    }
 
     // Publish test event
     let event_id = Ulid::new();
@@ -62,27 +72,23 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     eprintln!("Published event {} to {}", event_id, subject);
 
     // Wait for consumer to process with retries
-    let mut event = None;
-    for attempt in 0..20 {
-        event = ctx.pool.events().get_by_id(event_id.into()).await?;
-        if event.is_some() {
-            eprintln!("Event found after {} attempts", attempt + 1);
-            break;
+    let event = timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(event) = ctx.pool.events().get_by_id(event_id.into()).await? {
+                break Ok::<_, color_eyre::Report>(event);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        eprintln!("Attempt {}: Event not found yet, waiting...", attempt + 1);
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    }
-
-    let event = event.expect("Event should exist in database after 10 seconds");
+    })
+    .await??;
 
     assert_eq!(event.id.as_ref().unwrap().as_ulid(), &event_id);
     assert_eq!(event.source.as_str(), "test");
 
-    drop(consumer_handle);
+    consumer_handle.abort();
     Ok(())
 }
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -121,11 +127,19 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     .await?;
 
     // Start JetStream consumer in background
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     // Wait for consumer to initialize
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    if consumer_handle.is_finished() {
+        let result = consumer_handle.await.expect("consumer task panicked");
+        panic!("consumer exited early: {:?}", result);
+    }
 
     // Publish test event
     let event_id = Ulid::new();
@@ -144,7 +158,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         .await?;
 
     // Wait for processing
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Check for confirmation in stream
     let mut stream = js
@@ -156,6 +170,106 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         "Should have at least one confirmation message"
     );
 
-    drop(consumer_handle);
+    consumer_handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Result<()> {
+    let ctx = TestContext::new().await?.with_nats().await?;
+
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    let validator = EventValidator::new(false);
+
+    let js = jetstream::new(nats_client.clone());
+    let env = ctx.env();
+
+    // Ensure streams exist
+    let events_stream_name = env.nats_stream_name("events_raw");
+    js.get_or_create_stream(jetstream::stream::Config {
+        name: events_stream_name,
+        subjects: vec![env.nats_subject("events.raw.>")],
+        retention: jetstream::stream::RetentionPolicy::Limits,
+        max_messages: 10_000,
+        storage: jetstream::stream::StorageType::File,
+        ..Default::default()
+    })
+    .await?;
+
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
+    let consumer_handle = tokio::spawn(async move { consumer.run().await });
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    if consumer_handle.is_finished() {
+        let result = consumer_handle.await.expect("consumer task panicked");
+        panic!("consumer exited early: {:?}", result);
+    }
+
+    // Publish invalid event (bad timestamp)
+    let bad_event_id = Ulid::new();
+    let bad_payload = json!({
+        "id": bad_event_id.to_string(),
+        "source": "test",
+        "event_type": "test.bad_timestamp",
+        "ts_orig": "not-a-timestamp",
+        "host": "test-host",
+        "payload": {"data": "invalid"}
+    });
+    let subject = env.nats_subject("events.raw.test");
+    js.publish(subject.clone(), bad_payload.to_string().into())
+        .await?
+        .await?;
+
+    // Publish valid event afterwards to ensure pipeline keeps moving
+    let good_event_id = Ulid::new();
+    let good_payload = json!({
+        "id": good_event_id.to_string(),
+        "source": "test",
+        "event_type": "test.good",
+        "ts_orig": "2024-01-01T00:00:00Z",
+        "host": "test-host",
+        "payload": {"data": "ok"}
+    });
+    js.publish(subject, good_payload.to_string().into())
+        .await?
+        .await?;
+
+    // Valid event should make it to the database
+    timeout(Duration::from_secs(10), async {
+        loop {
+            if pool
+                .events()
+                .get_by_id(good_event_id.into())
+                .await?
+                .is_some()
+            {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await??;
+
+    // Verify DLQ received the bad event
+    let dlq_stream_name = env.nats_subject("events_dlq");
+    let mut dlq_stream = js.get_stream(&dlq_stream_name).await?;
+    let state = dlq_stream.info().await?.state;
+    assert!(state.messages > 0, "DLQ should contain the rejected event");
+
+    // Ensure the poisoned event never landed in the core events table
+    assert!(
+        pool.events()
+            .get_by_id(bad_event_id.into())
+            .await?
+            .is_none(),
+        "Invalid timestamp event should not be persisted"
+    );
+
+    consumer_handle.abort();
     Ok(())
 }

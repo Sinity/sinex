@@ -15,6 +15,7 @@ use crate::{
     validator::{EventValidator, ValidationResult},
     IngestdResult, SinexError,
 };
+use tokio::sync::RwLock;
 
 #[derive(Debug, Deserialize)]
 struct RawEvent {
@@ -44,10 +45,15 @@ struct DlqEntry {
 pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
-    #[allow(dead_code)]
-    validator: Arc<EventValidator>,
+    validator: Arc<RwLock<EventValidator>>,
     env: SinexEnvironment,
     stats: ConsumerStats,
+}
+
+struct PreparedEvent {
+    raw: RawEvent,
+    parsed_ts: DateTime<Utc>,
+    message: jetstream::Message,
 }
 
 #[derive(Debug, Default)]
@@ -71,7 +77,11 @@ impl ConsumerStats {
 }
 
 impl JetStreamConsumer {
-    pub fn new(nats_client: NatsClient, pool: DbPool, validator: Arc<EventValidator>) -> Self {
+    pub fn new(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+    ) -> Self {
         let js = jetstream::new(nats_client);
         let env = sinex_core::environment().clone();
 
@@ -243,7 +253,37 @@ impl JetStreamConsumer {
                 continue;
             }
 
-            batch.push((raw_event, msg));
+            // Parse timestamp early to isolate poison messages
+            let parsed_ts = match raw_event.ts_orig.parse::<DateTime<Utc>>() {
+                Ok(ts) => ts,
+                Err(e) => {
+                    error!(
+                        event_id = %raw_event.id,
+                        ts = %raw_event.ts_orig,
+                        "Invalid timestamp; routing to DLQ: {}",
+                        e
+                    );
+                    self.route_to_dlq(&msg, format!("Invalid timestamp: {}", e))
+                        .await;
+                    msg.ack().await.map_err(|ack_err| {
+                        SinexError::network(format!(
+                            "Failed to ack invalid timestamp message: {}",
+                            ack_err
+                        ))
+                    })?;
+                    self.stats
+                        .validation_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+            };
+
+            batch.push(PreparedEvent {
+                raw: raw_event,
+                parsed_ts,
+                message: msg,
+            });
         }
 
         if batch.is_empty() {
@@ -261,8 +301,10 @@ impl JetStreamConsumer {
                 }
 
                 // ACK all messages
-                for (_, msg) in &batch {
-                    msg.ack()
+                for prepared in &batch {
+                    prepared
+                        .message
+                        .ack()
                         .await
                         .map_err(|e| SinexError::network(format!("Failed to ack: {}", e)))?;
                 }
@@ -275,8 +317,11 @@ impl JetStreamConsumer {
             Err(e) => {
                 error!("Failed to persist batch: {}", e);
                 // NACK all - they'll be redelivered
-                for (_, msg) in &batch {
-                    let _ = msg.ack_with(jetstream::AckKind::Nak(None)).await;
+                for prepared in &batch {
+                    let _ = prepared
+                        .message
+                        .ack_with(jetstream::AckKind::Nak(None))
+                        .await;
                 }
                 self.stats
                     .events_failed
@@ -299,8 +344,8 @@ impl JetStreamConsumer {
             return Err(SinexError::validation("Event type cannot be empty"));
         }
 
-        let validation = self
-            .validator
+        let guard = self.validator.read().await;
+        let validation = guard
             .validate_payload_for(&event.source, &event.event_type, &event.payload)
             .map_err(|err| {
                 SinexError::validation(format!("Schema validation error: {}", err))
@@ -329,40 +374,32 @@ impl JetStreamConsumer {
     }
 
     /// Persist batch using optimized UNNEST pattern
-    async fn persist_batch_optimized(
-        &self,
-        batch: &[(RawEvent, jetstream::Message)],
-    ) -> IngestdResult<Vec<String>> {
+    async fn persist_batch_optimized(&self, batch: &[PreparedEvent]) -> IngestdResult<Vec<String>> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Parse timestamps first to fail fast on invalid data
-        let parsed_events: Result<Vec<_>, SinexError> = batch
-            .iter()
-            .map(|(event, _)| {
-                let ts_orig: DateTime<Utc> = event
-                    .ts_orig
-                    .parse()
-                    .map_err(|e| SinexError::parse(format!("Invalid timestamp: {}", e)))?;
-                Ok((event, ts_orig))
-            })
-            .collect();
-        let parsed_events = parsed_events?;
-
         // Extract arrays for UNNEST
-        let ids: Vec<&str> = parsed_events.iter().map(|(e, _)| e.id.as_str()).collect();
-        let sources: Vec<&str> = parsed_events
+        let ids: Vec<&str> = batch
             .iter()
-            .map(|(e, _)| e.source.as_str())
+            .map(|prepared| prepared.raw.id.as_str())
             .collect();
-        let event_types: Vec<&str> = parsed_events
+        let sources: Vec<&str> = batch
             .iter()
-            .map(|(e, _)| e.event_type.as_str())
+            .map(|prepared| prepared.raw.source.as_str())
             .collect();
-        let ts_origs: Vec<DateTime<Utc>> = parsed_events.iter().map(|(_, ts)| *ts).collect();
-        let hosts: Vec<&str> = parsed_events.iter().map(|(e, _)| e.host.as_str()).collect();
-        let payloads: Vec<&JsonValue> = parsed_events.iter().map(|(e, _)| &e.payload).collect();
+        let event_types: Vec<&str> = batch
+            .iter()
+            .map(|prepared| prepared.raw.event_type.as_str())
+            .collect();
+        let ts_origs: Vec<DateTime<Utc>> =
+            batch.iter().map(|prepared| prepared.parsed_ts).collect();
+        let hosts: Vec<&str> = batch
+            .iter()
+            .map(|prepared| prepared.raw.host.as_str())
+            .collect();
+        let payloads: Vec<&JsonValue> =
+            batch.iter().map(|prepared| &prepared.raw.payload).collect();
 
         // Bulk insert using UNNEST for optimal performance
         let rows = sqlx::query(

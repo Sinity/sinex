@@ -113,12 +113,17 @@ impl IngestdConfig {
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
     ) -> Self {
+        let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
+        let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
+
         let builder = Self::builder()
             .nats_url(nats_url)
             .database_pool_size(pool_size)
             .batch_size(batch_size)
             .batch_timeout_secs(batch_timeout_secs)
-            .dry_run(dry_run);
+            .dry_run(dry_run)
+            .skip_schema_sync(skip_schema_sync)
+            .validate_schemas(validate_schemas);
 
         let db_url = database_url.unwrap_or_else(default_database_url);
         let builder = builder.database_url(db_url);
@@ -255,6 +260,23 @@ impl IngestdConfig {
             .acquire_timeout(std::time::Duration::from_secs(30))
             .idle_timeout(std::time::Duration::from_secs(600))
             .max_lifetime(std::time::Duration::from_secs(1800))
+    }
+}
+
+fn env_flag(name: &str) -> Option<bool> {
+    match std::env::var(name) {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            warn!(
+                env = name,
+                "Environment variable is not valid UTF-8; ignoring"
+            );
+            None
+        }
+        Err(std::env::VarError::NotPresent) => None,
     }
 }
 

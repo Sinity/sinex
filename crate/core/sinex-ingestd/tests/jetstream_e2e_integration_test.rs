@@ -20,6 +20,7 @@ use sinex_satellite_sdk::{
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tracing::info;
 
 #[ignore = "requires full ingestd pipeline"]
@@ -64,8 +65,11 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
 
     // Step 1: Start ingestd consumer
     let validator = EventValidator::new(false); // Validation disabled for test
-    let ingestd_consumer =
-        JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let ingestd_consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let ingestd_handle = tokio::spawn(async move { ingestd_consumer.run().await });
 
     // Wait for ingestd to initialize
@@ -217,8 +221,11 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
 
     // Start ingestd
     let validator = EventValidator::new(false);
-    let ingestd_consumer =
-        JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let ingestd_consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _ingestd_handle = tokio::spawn(async move { ingestd_consumer.run().await });
     tokio::time::sleep(Duration::from_secs(1)).await;
 

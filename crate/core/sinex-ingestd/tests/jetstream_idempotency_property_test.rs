@@ -6,6 +6,7 @@ use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
@@ -33,7 +34,11 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     })
     .await?;
 
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -121,7 +126,11 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let consumer = JetStreamConsumer::new(nats_client.clone(), pool.clone(), Arc::new(validator));
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+    );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;

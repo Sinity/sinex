@@ -9,6 +9,7 @@ use sinex_core::{
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
+use tracing::debug;
 // (no mpsc channel needed here)
 
 /// Container holding all service instances
@@ -48,8 +49,14 @@ impl ServiceContainer {
         })?;
 
         // Create event channel for BlobManager
-        let (event_sender, _event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        // TODO: Connect event_receiver to proper event processing pipeline
+        let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(event) = event_receiver.recv().await {
+                // In lieu of a dedicated processing pipeline, drain events to avoid backpressure.
+                debug!(?event, "Blob manager emitted event");
+            }
+        });
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,

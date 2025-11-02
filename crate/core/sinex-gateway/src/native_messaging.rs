@@ -1,9 +1,10 @@
 #![doc = include_str!("../doc/native_messaging.md")]
 
-use color_eyre::eyre::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
+use tokio::task;
 use tracing::{debug, error, info};
 
 use crate::service_container::ServiceContainer;
@@ -51,8 +52,8 @@ impl NativeResponse {
     }
 }
 
-/// Read a message from stdin using native messaging protocol
-fn read_message() -> Result<Option<NativeMessage>> {
+/// Read a message from stdin using native messaging protocol (blocking)
+fn read_message_blocking() -> Result<Option<NativeMessage>> {
     let stdin = io::stdin();
     let mut handle = stdin.lock();
 
@@ -81,8 +82,14 @@ fn read_message() -> Result<Option<NativeMessage>> {
     Ok(Some(message))
 }
 
+async fn read_message() -> Result<Option<NativeMessage>> {
+    task::spawn_blocking(read_message_blocking)
+        .await
+        .map_err(|e| eyre::eyre!("read_message task panicked: {}", e))?
+}
+
 /// Write a message to stdout using native messaging protocol
-fn write_message(response: &NativeResponse) -> Result<()> {
+fn write_message_blocking(response: &NativeResponse) -> Result<()> {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
 
@@ -98,6 +105,13 @@ fn write_message(response: &NativeResponse) -> Result<()> {
     handle.flush()?;
 
     Ok(())
+}
+
+async fn write_message(response: &NativeResponse) -> Result<()> {
+    let response = response.clone();
+    task::spawn_blocking(move || write_message_blocking(&response))
+        .await
+        .map_err(|e| eyre::eyre!("write_message task panicked: {}", e))?
 }
 
 /// Process a single message and return response
@@ -148,7 +162,7 @@ pub async fn run(services: ServiceContainer) -> Result<()> {
 
                 let response = process_message(&services, message).await;
 
-                if let Err(e) = write_message(&response) {
+                if let Err(e) = write_message(&response).await {
                     error!("Failed to write response: {}", e);
                     break;
                 }

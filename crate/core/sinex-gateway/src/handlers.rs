@@ -1,5 +1,7 @@
 //! Shared RPC method handlers
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
@@ -197,7 +199,40 @@ pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Re
         .wrap_err("Missing annex_key")?;
 
     let content = service.retrieve_content(annex_key).await?;
-    let content_str = String::from_utf8(content).unwrap_or_else(|_| "<binary content>".to_string());
+    let metadata = service.get_content_metadata(annex_key).await?;
 
-    Ok(json!({ "content": content_str }))
+    Ok(blob_response_payload(&content, &metadata))
+}
+
+fn blob_response_payload(
+    content: &[u8],
+    metadata: &sinex_satellite_sdk::annex::BlobMetadata,
+) -> Value {
+    json!({
+        "content_base64": BASE64_STANDARD.encode(content),
+        "mime_type": metadata.mime_type.clone(),
+        "size_bytes": metadata.size_bytes,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core::Blob;
+
+    #[test]
+    fn blob_response_payload_encodes_base64() {
+        let blob = Blob::builder()
+            .annex_backend("SHA256".into())
+            .content_hash("deadbeef".into())
+            .original_filename("blob.bin".into())
+            .size_bytes(2)
+            .mime_type("application/octet-stream".into())
+            .build();
+
+        let json = blob_response_payload(b"hi", &blob);
+        assert_eq!(json["content_base64"], "aGk=");
+        assert_eq!(json["mime_type"], "application/octet-stream");
+        assert_eq!(json["size_bytes"], 2);
+    }
 }
