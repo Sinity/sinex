@@ -11,7 +11,7 @@
 let
   inherit (pkgs) lib;
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-basic-flow";
   
   # Skip lint check for this test to avoid f-string issues
@@ -25,27 +25,23 @@ pkgs.nixosTest {
     ];
 
     # Override base config for this test
-    services.sinex = {
-      shell = {
-        asciinema = {
-          autoRecord = false;
-          recordingsPath = "/home/test/.local/share/asciinema";
-        };
-        kitty = {
-          enable = true;
-          autoConfigure = true;
-          userConfigPath = "~/.config/kitty/kitty.conf";
-        };
+    services.sinex.shell = {
+      asciinema = {
+        autoRecord = false;
+        recordingsPath = "/home/test/.local/share/asciinema";
       };
+      kitty = {
+        enable = true;
+        autoConfigure = true;
+        configFile = "~/.config/kitty/kitty.conf";
+      };
+    };
 
-      satellite = {
-        eventSources = {
-          filesystem.watchPaths = lib.mkAfter [ "/home/test/watched" ];
-          terminal.enable = true;
-          desktop.enable = true;
-          system.enable = true;
-        };
-      };
+    services.sinex.satellites = {
+      filesystem.watchPaths = lib.mkAfter [ "/home/test/watched" ];
+      terminal.enable = true;
+      desktop.enable = true;
+      system.enable = true;
     };
 
     # Additional packages for comprehensive testing
@@ -65,7 +61,7 @@ pkgs.nixosTest {
     # Additional tmpfiles for test data
     systemd.tmpfiles.rules = lib.mkAfter (
       let
-        stateDir = config.services.sinex.directories.state;
+        stateDir = config.services.sinex.stateRoot;
       in [
         # Atuin directories
         "d ${stateDir}/.local 0755 sinex sinex -"
@@ -82,6 +78,8 @@ pkgs.nixosTest {
         "d /run/user/1000 0700 test users -"
       ]
     );
+
+    environment.sessionVariables.SINEX_STATE_DIR = config.services.sinex.stateRoot;
     
     # Configure Atuin
     environment.etc."atuin/config.toml".text = ''
@@ -139,7 +137,7 @@ EOF
   testScript = ''
     start_all()
 
-    state_dir = "/var/lib/sinex"
+    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
     
     # Simple helper functions embedded in test
     def wait_for_sinex_ready():

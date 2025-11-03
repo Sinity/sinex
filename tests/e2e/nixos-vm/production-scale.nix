@@ -7,7 +7,7 @@
 , ...
 }:
 
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-production-scale";
 
   nodes.machine = { pkgs, config, lib, ... }: {

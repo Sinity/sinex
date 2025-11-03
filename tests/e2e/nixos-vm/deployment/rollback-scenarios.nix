@@ -5,7 +5,10 @@
   meta.maintainers = with lib.maintainers; [ sinity ];
 
   nodes = {
-    sinex = { config, pkgs, ... }: {
+    sinex = { config, pkgs, ... }:
+      let
+        stateDir = config.services.sinex.directories.state;
+      in {
       imports = [ ../common/production-load.nix ];
       
       services.sinex = {
@@ -44,7 +47,7 @@
       environment.systemPackages = [
         (pkgs.writeScriptBin "inject-failure" ''
           #!${pkgs.bash}/bin/bash
-          STATE_DIR="${config.services.sinex.directories.state}"
+          STATE_DIR="${stateDir}"
           case "$1" in
             "config")
               echo "Injecting config failure..."
@@ -85,6 +88,10 @@
           fi
         '')
       ];
+
+      environment.sessionVariables = {
+        SINEX_STATE_DIR = stateDir;
+      };
     };
   };
 
@@ -92,7 +99,7 @@
     import json
     import time
     import subprocess
-    state_dir = "/var/lib/sinex"
+    state_dir = sinex.succeed("echo -n $SINEX_STATE_DIR")
     
     start_all()
     

@@ -15,37 +15,33 @@ let
   sinexConfigBase = {
     enable = true;
     package = sinexPackage;
-    targetUser = "test";
+    users.target = "test";
 
-    serviceManagement.serviceGroups = {
-      core = lib.mkDefault true;
-      maintenance = lib.mkDefault false;
-      monitoring = lib.mkDefault false;
+    database = {
+      autoSetup = lib.mkDefault true;
+      name = lib.mkDefault "sinex";
+      user = lib.mkDefault "sinex";
     };
 
-    preflightVerification.enable = lib.mkForce false;
+    lifecycle.preflight.enable = lib.mkForce false;
 
-    satellite = {
+    satellites = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
-      database.url = lib.mkDefault "postgresql:///sinex?host=/run/postgresql";
+      defaults.instances = lib.mkDefault 1;
 
-      coreServices.enable = lib.mkDefault true;
-
-      eventSources = {
-        filesystem = {
-          enable = lib.mkDefault true;
-          instances = lib.mkDefault 1;
-          extraArgs = lib.mkDefault "";
-          watchPaths = lib.mkDefault [ "/home/test/watched" ];
-        };
-        terminal.enable = lib.mkDefault false;
-        desktop.enable = lib.mkDefault false;
-        system.enable = lib.mkDefault false;
+      filesystem = {
+        enable = lib.mkDefault true;
+        watchPaths = lib.mkDefault [ "/home/test/watched" ];
       };
 
+      terminal.enable = lib.mkDefault false;
+      desktop.enable = lib.mkDefault false;
+      system.enable = lib.mkDefault false;
+
       automata = {
-        canonicalCommandSynthesizer.enable = lib.mkDefault false;
+        enable = lib.mkDefault false;
+        canonicalizer.enable = lib.mkDefault false;
         healthAggregator.enable = lib.mkDefault false;
       };
     };
@@ -138,7 +134,7 @@ in
   # Minimal tmpfiles rules
   systemd.tmpfiles.rules =
     let
-      stateDir = config.services.sinex.directories.state;
+      stateDir = config.services.sinex.stateRoot;
     in [
       "d /home/test/watched 0755 test users -"
       "f ${stateDir}/.zsh_history 0644 sinex sinex -"

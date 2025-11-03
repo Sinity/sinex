@@ -10,8 +10,7 @@
 
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = sinexCli;
-  stateDir = "/var/lib/sinex";
+  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with metrics support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -122,16 +121,17 @@ let
   '';
 
   # Stress test generator script
-  stress-generator = pkgs.writeScriptBin "sinex-stress" ''
+  stress-generator = stateDir: pkgs.writeScriptBin "sinex-stress" ''
     #!${pkgs.bash}/bin/bash
-    set -e
-    
-    DURATION=''${1:-30}  # Default 30 seconds
-    INTENSITY=''${2:-medium}  # low, medium, high
-    
-    STATE_DIR="${stateDir}"
+    set -euo pipefail
 
-    case $INTENSITY in
+    STATE_DIR="''${SINEX_STATE_DIR:-${stateDir}}"
+    export SINEX_STATE_DIR="$STATE_DIR"
+
+    DURATION="''${1:-30}"  # Default 30 seconds
+    INTENSITY="''${2:-medium}"  # low, medium, high
+
+    case "$INTENSITY" in
       low)
         FILE_OPS_PER_SEC=10
         SHELL_CMDS_PER_SEC=5
@@ -147,8 +147,12 @@ let
         SHELL_CMDS_PER_SEC=50
         CLIPBOARD_OPS_PER_SEC=10
         ;;
+      *)
+        echo "Unknown intensity '$INTENSITY'" >&2
+        exit 1
+        ;;
     esac
-    
+
     echo "Starting $INTENSITY stress test for $DURATION seconds"
     echo "File ops/sec: $FILE_OPS_PER_SEC, Shell cmds/sec: $SHELL_CMDS_PER_SEC, Clipboard ops/sec: $CLIPBOARD_OPS_PER_SEC"
     
@@ -210,18 +214,20 @@ let
     
     # Wait for all background processes
     for pid in "''${pids[@]}"; do
-      wait $pid
+      wait "$pid"
     done
     
     echo "Stress test completed"
   '';
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-multi-source-stress";
 
   nodes.machine =
     { config, pkgs, lib, ... }:
-    {
+    let
+      stateDir = config.services.sinex.stateRoot;
+    in {
       imports = [
         ../../../../nixos
       ];
@@ -229,57 +235,48 @@ pkgs.nixosTest {
       services.sinex = {
         enable = true;
         package = sinexPackage;
-        targetUser = "test";
-
-        serviceManagement.serviceGroups = {
-          core = true;
-          maintenance = false;
-          monitoring = false;
-        };
-
-        satellite = {
-          enable = true;
-          coordination.enable = false;
-          database.url = "postgresql:///sinex?host=/run/postgresql";
-          logLevel = "info";
-
-          coreServices.enable = true;
-
-          eventSources = {
-            filesystem = {
-              enable = true;
-              instances = 2;
-              extraArgs = "";
-              watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
-            };
-            terminal = {
-              enable = true;
-              instances = 1;
-            };
-            desktop = {
-              enable = true;
-              instances = 1;
-            };
-            system = {
-              enable = true;
-              instances = 1;
-        };
-      }
-      // lib.optionalAttrs (sinexCliPackage != null) {
         cliPackage = sinexCliPackage;
-      };
-
-          automata = {
-            canonicalCommandSynthesizer.enable = true;
-            healthAggregator.enable = true;
-          };
-        };
+        users.target = "test";
 
         shell = {
           asciinema.recordingsPath = "/home/test/.local/share/asciinema";
           kitty.enable = true;
         };
 
+        database.autoSetup = true;
+
+        storage = {
+          dlq.path = "/var/lib/sinex/failures";
+          blob = {
+            repositoryPath = "/var/lib/sinex/blob-repo";
+            autoInit = true;
+          };
+        };
+
+        satellites = {
+          enable = true;
+          coordination.enable = false;
+          defaults = {
+            logLevel = "info";
+            instances = 1;
+          };
+
+          filesystem = {
+            enable = true;
+            instances = 2;
+            watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
+          };
+
+          terminal.enable = true;
+          desktop.enable = true;
+          system.enable = true;
+
+          automata = {
+            enable = true;
+            canonicalizer.enable = true;
+            healthAggregator.enable = true;
+          };
+        };
       };
 
       # Test user setup with additional stress directories
@@ -371,7 +368,7 @@ EOF
         wl-clipboard
         wl-clip-persist
         sinex-query
-        stress-generator
+        (stress-generator stateDir)
         hyprland
         bc  # For floating point calculations
         procps  # For process monitoring
@@ -392,6 +389,7 @@ EOF
       environment.sessionVariables = {
         WAYLAND_DISPLAY = "wayland-1";
         XDG_SESSION_TYPE = "wayland";
+        SINEX_STATE_DIR = stateDir;
       };
       
       programs.zsh.enable = true;
@@ -401,51 +399,46 @@ EOF
         # Test directories
         "d /home/test/watched 0755 test users -"
         "d /tmp/sinex-stress 0755 test users -"
-
-          # Shell history files
-          "f ${stateDir}/.zsh_history 0644 sinex sinex -"
-          "f ${stateDir}/.bash_history 0644 sinex sinex -"
-
-          # Atuin directories
-          "d ${stateDir}/.local 0755 sinex sinex -"
-          "d ${stateDir}/.local/share 0755 sinex sinex -"
-          "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
-
-          # Asciinema directories
-          "d /home/test/.local 0755 test users -"
-          "d /home/test/.local/share 0755 test users -"
-          "d /home/test/.local/share/asciinema 0755 test users -"
-
-          # Runtime directories
-          "d /run/user 0755 root root -"
-          "d /run/user/1000 0700 test users -"
-
+        
+        # Shell history files
+        "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+        "f ${stateDir}/.bash_history 0644 sinex sinex -"
+        
+        # Atuin directories
+        "d ${stateDir}/.local 0755 sinex sinex -"
+        "d ${stateDir}/.local/share 0755 sinex sinex -"
+        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+        
+        # Asciinema directories
+        "d /home/test/.local 0755 test users -"
+        "d /home/test/.local/share 0755 test users -"
+        "d /home/test/.local/share/asciinema 0755 test users -"
+        
+        # Runtime directories
+        "d /run/user 0755 root root -"
+        "d /run/user/1000 0700 test users -"
+        
         # Hyprland IPC socket directory
         "d /tmp/hypr 0755 test users -"
       ];
       
       # Package overlays
-      nixpkgs.overlays = [
-        (final: prev:
-          ({
-            sinex-ingestd = sinex-ingestd;
-            sinex-gateway = sinex-gateway;
-            sinex = sinexPackage;
-            postgresql16Packages = prev.postgresql16Packages // {
-              pg_jsonschema = pg_jsonschema;
-            };
-          }
-          // lib.optionalAttrs (sinexCliPackage != null) {
-            sinexCli = sinexCliPackage;
-          }))
-      ];
+      nixpkgs.overlays = [(final: prev: {
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
+        sinex = sinexPackage;
+        sinexCli = sinexCliPackage;
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = pg_jsonschema;
+        };
+      })];
     };
 
   testScript = ''
     import time
     import re
 
-    state_dir = "${stateDir}"
+    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -499,16 +492,15 @@ EOF
     # Wait for Sinex services
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
-    machine.wait_for_unit("nats.service")
 
     # Ensure satellite instances are online
     satellite_units = [
-        "sinex-fs-watcher-1.service",
-        "sinex-fs-watcher-2.service",
-        "sinex-terminal-satellite-1.service",
-        "sinex-desktop-satellite-1.service",
-        "sinex-system-satellite-1.service",
-        "sinex-terminal-command-canonicalizer.service",
+        "sinex-filesystem-1.service",
+        "sinex-filesystem-2.service",
+        "sinex-terminal-1.service",
+        "sinex-desktop-1.service",
+        "sinex-system-1.service",
+        "sinex-canonicalizer.service",
         "sinex-health-aggregator.service",
     ]
     for unit in satellite_units:

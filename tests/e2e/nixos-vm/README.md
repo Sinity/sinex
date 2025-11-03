@@ -130,7 +130,7 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 , sinexCli ? null
 , ... }:
 
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-my-test";
   
   nodes.machine = { config, pkgs, lib, ... }: {

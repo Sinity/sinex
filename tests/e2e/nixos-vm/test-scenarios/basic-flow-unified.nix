@@ -61,7 +61,7 @@ let
     ];
   };
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-basic-flow-unified";
   
   skipLint = true;

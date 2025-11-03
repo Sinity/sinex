@@ -10,8 +10,7 @@
 
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = sinexCli;
-  stateDir = "/var/lib/sinex";
+  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -263,12 +262,14 @@ let
     fi
   '';
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-failure-recovery";
 
   nodes.machine =
     { config, pkgs, lib, ... }:
-    {
+    let
+      stateDir = config.services.sinex.stateRoot;
+    in {
       imports = [
         ../../../../nixos
       ];
@@ -276,45 +277,31 @@ pkgs.nixosTest {
       services.sinex = {
         enable = true;
         package = sinexPackage;
-        targetUser = "test";
+        cliPackage = sinexCliPackage;
+        users.target = "test";
 
-        serviceManagement.serviceGroups = {
-          core = true;
-          maintenance = false;
-          monitoring = false;
-        };
+        database.autoSetup = true;
 
-        satellite = {
+        satellites = {
           enable = true;
           coordination.enable = false;
-          database.url = "postgresql:///sinex?host=/run/postgresql";
-          logLevel = "info";
-
-          coreServices.enable = true;
-
-          eventSources = {
-            filesystem = {
-              enable = true;
-              instances = 1;
-              extraArgs = "";
-              watchPaths = [ "/home/test/watched" ];
-            };
-            terminal = {
-              enable = true;
-              instances = 1;
-            };
-            desktop = {
-              enable = true;
-              instances = 1;
-            };
-            system = {
-              enable = true;
-              instances = 1;
-            };
+          defaults = {
+            instances = 1;
+            logLevel = "info";
           };
 
+          filesystem = {
+            enable = true;
+            watchPaths = [ "/home/test/watched" ];
+          };
+
+          terminal.enable = true;
+          desktop.enable = true;
+          system.enable = true;
+
           automata = {
-            canonicalCommandSynthesizer.enable = true;
+            enable = true;
+            canonicalizer.enable = true;
             healthAggregator.enable = true;
           };
         };
@@ -349,37 +336,31 @@ pkgs.nixosTest {
         psmisc     # killall and other utilities
         systemd    # systemctl commands
       ];
+
+      environment.sessionVariables.SINEX_STATE_DIR = stateDir;
       
       programs.zsh.enable = true;
       
       # Enhanced tmpfiles for testing
-      systemd.tmpfiles.rules =
-        let
-          stateDir = config.services.sinex.directories.state;
-        in [
-          "d /home/test/watched 0755 test users -"
-          "f ${stateDir}/.zsh_history 0644 sinex sinex -"
-          "f ${stateDir}/.bash_history 0644 sinex sinex -"
-          "d ${stateDir}/.local 0755 sinex sinex -"
-          "d ${stateDir}/.local/share 0755 sinex sinex -"
-          "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
-        ];
+      systemd.tmpfiles.rules = [
+        "d /home/test/watched 0755 test users -"
+        "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+        "f ${stateDir}/.bash_history 0644 sinex sinex -"
+        "d ${stateDir}/.local 0755 sinex sinex -"
+        "d ${stateDir}/.local/share 0755 sinex sinex -"
+        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+      ];
       
       # Package overlays
-      nixpkgs.overlays = [
-        (final: prev:
-          ({
-            sinex-ingestd = sinex-ingestd;
-            sinex-gateway = sinex-gateway;
-            sinex = sinexPackage;
-            postgresql16Packages = prev.postgresql16Packages // {
-              pg_jsonschema = pg_jsonschema;
-            };
-          }
-          // lib.optionalAttrs (sinexCliPackage != null) {
-            sinexCli = sinexCliPackage;
-          }))
-      ];
+      nixpkgs.overlays = [(final: prev: {
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
+        sinex = sinexPackage;
+        sinexCli = sinexCliPackage;
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = pg_jsonschema;
+        };
+      })];
 
       # Enhanced service configuration for failure testing
       systemd.services.sinex-ingestd = {
@@ -389,9 +370,6 @@ pkgs.nixosTest {
           StartLimitInterval = "300";
           StartLimitBurst = "10";
         };
-      }
-      // lib.optionalAttrs (sinexCliPackage != null) {
-        cliPackage = sinexCliPackage;
       };
 
       systemd.services.sinex-gateway = {
@@ -408,7 +386,7 @@ pkgs.nixosTest {
     import time
     import re
 
-    state_dir = "${stateDir}"
+    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -441,15 +419,14 @@ pkgs.nixosTest {
     machine.wait_for_unit("postgresql.service")
     machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-gateway.service")
-    machine.wait_for_unit("nats.service")
 
     # Ensure satellite instances are online
     satellite_units = [
-        "sinex-fs-watcher-1.service",
-        "sinex-terminal-satellite-1.service",
-        "sinex-desktop-satellite-1.service",
-        "sinex-system-satellite-1.service",
-        "sinex-terminal-command-canonicalizer.service",
+        "sinex-filesystem-1.service",
+        "sinex-terminal-1.service",
+        "sinex-desktop-1.service",
+        "sinex-system-1.service",
+        "sinex-canonicalizer.service",
         "sinex-health-aggregator.service",
     ]
     wait_for_services(satellite_units)

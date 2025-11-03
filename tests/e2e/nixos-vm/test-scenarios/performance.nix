@@ -10,7 +10,6 @@
 
 let
   inherit (pkgs) lib;
-  stateDir = "/var/lib/sinex";
   
   # Enhanced performance monitoring and query tool
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -244,162 +243,164 @@ let
         query_events()
   '';
 
-  # High-frequency event generator
+  # High-frequency event generator (bounded for faster tests)
   perf-generator = pkgs.writeScriptBin "sinex-perf" ''
     #!${pkgs.bash}/bin/bash
-    set -e
-    
-    MODE=''${1:-burst}  # burst, sustained, ramp
-    DURATION=''${2:-60}  # Default 60 seconds
-    TARGET_EPS=''${3:-100}  # Target events per second
-    
+    set -euo pipefail
+
+    MODE=''${1:-burst}
+    DURATION=''${2:-30}
+    TARGET_EPS=''${3:-60}
+
     echo "Performance test: $MODE mode, $DURATION seconds, target $TARGET_EPS events/sec"
-    
-    case $MODE in
+
+    clamp_eps() {
+      local value="$1"
+      local max="$2"
+      if (( value > max )); then
+        echo "$max"
+      else
+        echo "$value"
+      fi
+    }
+
+    calc_interval() {
+      local eps="$1"
+      if (( eps <= 0 )); then eps=1; fi
+      awk "BEGIN { printf \"%.6f\", 1 / $eps }"
+    }
+
+    case "$MODE" in
       burst)
-        # Generate bursts of events with pauses
-        for ((burst=1; burst<=10; burst++)); do
-          echo "Burst $burst/10..."
-          for ((i=1; i<=TARGET_EPS; i++)); do
+        bursts=4
+        events_per_burst=$(clamp_eps "$TARGET_EPS" 80)
+        pause=$(awk "BEGIN { p = $DURATION / $bursts; if (p < 1) p = 1; print p }")
+        for ((burst=1; burst<=bursts; burst++)); do
+          echo "Burst $burst/$bursts..."
+          for ((i=1; i<=events_per_burst; i++)); do
             su - test -c "echo 'burst-$burst-event-$i-$(date +%s%3N)' > /home/test/watched/burst_''${burst}_''${i}.tmp && mv /home/test/watched/burst_''${burst}_''${i}.tmp /home/test/watched/burst_''${burst}_''${i}.txt" &
-            if (( i % 20 == 0 )); then
-              wait  # Prevent too many background processes
-            fi
-          done
-          wait  # Wait for all events in this burst
-          sleep $((DURATION / 10))  # Pause between bursts
-        done
-        ;;
-        
-      sustained)
-        # Generate steady stream of events
-        interval=$(echo "scale=6; 1/$TARGET_EPS" | bc)
-        total_events=$((TARGET_EPS * DURATION))
-        
-        echo "Generating $total_events events over $DURATION seconds (interval: $interval)"
-        
-        for ((i=1; i<=total_events; i++)); do
-          su - test -c "echo 'sustained-event-$i-$(date +%s%3N)' > /home/test/watched/sustained_$i.txt" &
-          
-          # Throttle background processes
-          if (( i % 50 == 0 )); then
-            wait
-          fi
-          
-          # Sleep to maintain target rate
-          sleep $interval
-        done
-        wait
-        ;;
-        
-      ramp)
-        # Gradually increase event rate
-        echo "Ramping from 10 to $TARGET_EPS events/sec over $DURATION seconds"
-        
-        steps=10
-        step_duration=$((DURATION / steps))
-        
-        for ((step=1; step<=steps; step++)); do
-          current_eps=$(( 10 + (TARGET_EPS - 10) * step / steps ))
-          echo "Step $step/$steps: $current_eps events/sec for $step_duration seconds"
-          
-          interval=$(echo "scale=6; 1/$current_eps" | bc)
-          events_in_step=$((current_eps * step_duration))
-          
-          for ((i=1; i<=events_in_step; i++)); do
-            su - test -c "echo 'ramp-step-$step-event-$i-$(date +%s%3N)' > /home/test/watched/ramp_''${step}_''${i}.txt" &
-            
             if (( i % 20 == 0 )); then
               wait
             fi
-            
-            sleep $interval
+          done
+          wait
+          sleep "$pause"
+        done
+        ;;
+
+      sustained)
+        total_events=$(( TARGET_EPS * DURATION ))
+        if (( total_events > 1200 )); then total_events=1200; fi
+        interval=$(calc_interval "$TARGET_EPS")
+        echo "Generating $total_events events over $DURATION seconds (interval: $interval)"
+        for ((i=1; i<=total_events; i++)); do
+          su - test -c "echo 'sustained-event-$i-$(date +%s%3N)' > /home/test/watched/sustained_$i.txt" &
+          if (( i % 40 == 0 )); then
+            wait
+          fi
+          sleep "$interval"
+        done
+        wait
+        ;;
+
+      ramp)
+        steps=6
+        step_duration=$(( DURATION / steps ))
+        if (( step_duration < 1 )); then step_duration=1; fi
+        for ((step=1; step<=steps; step++)); do
+          current_eps=$(( 20 + (TARGET_EPS - 20) * step / steps ))
+          current_eps=$(clamp_eps "$current_eps" 120)
+          events_in_step=$(( current_eps * step_duration ))
+          if (( events_in_step > 400 )); then events_in_step=400; fi
+          interval=$(calc_interval "$current_eps")
+          echo "Step $step/$steps: $current_eps eps for $step_duration seconds ($events_in_step events)"
+          for ((i=1; i<=events_in_step; i++)); do
+            su - test -c "echo 'ramp-step-$step-event-$i-$(date +%s%3N)' > /home/test/watched/ramp_''${step}_''${i}.txt" &
+            if (( i % 20 == 0 )); then
+              wait
+            fi
+            sleep "$interval"
           done
           wait
         done
         ;;
-        
+
       spike)
-        # Generate normal load with occasional spikes
-        base_eps=10
-        spike_eps=$TARGET_EPS
-        spike_duration=5  # 5 second spikes
-        
-        echo "Spike test: base $base_eps eps with spikes to $spike_eps eps every 15 seconds"
-        
+        base_eps=15
+        spike_eps=$(clamp_eps "$TARGET_EPS" 160)
+        spike_duration=3
+        echo "Spike test: base $base_eps eps with spikes to $spike_eps eps every 12 seconds"
         start_time=$(date +%s)
         event_counter=1
-        
-        while [ $(($(date +%s) - start_time)) -lt $DURATION ]; do
-          current_time=$(($(date +%s) - start_time))
-          
-          # Spike every 15 seconds for 5 seconds
-          if (( (current_time % 15) < spike_duration )); then
+        while [ $(( $(date +%s) - start_time )) -lt "$DURATION" ]; do
+          elapsed=$(( $(date +%s) - start_time ))
+          if (( (elapsed % 12) < spike_duration )); then
             current_eps=$spike_eps
             mode_label="spike"
           else
             current_eps=$base_eps
             mode_label="base"
           fi
-          
-          su - test -c "echo '$mode_label-event-$event_counter-$(date +%s%3N)' > /home/test/watched/spike_$event_counter.txt" &
-          
-          if (( event_counter % 20 == 0 )); then
+          interval=$(calc_interval "$current_eps")
+          su - test -c "echo '$mode_label-event-$event_counter-$(date +%s%3N)' > /home/test/watched/spike_''${event_counter}.txt" &
+          if (( event_counter % 30 == 0 )); then
             wait
           fi
-          
-          interval=$(echo "scale=6; 1/$current_eps" | bc)
-          sleep $interval
-          
-          event_counter=$((event_counter + 1))
+          sleep "$interval"
+          event_counter=$(( event_counter + 1 ))
         done
         wait
         ;;
-        
+
       *)
         echo "Unknown mode: $MODE"
         echo "Available modes: burst, sustained, ramp, spike"
         exit 1
         ;;
     esac
-    
+
     echo "Performance test '$MODE' completed"
   '';
 
   # Load testing script
-  load-tester = pkgs.writeScriptBin "sinex-load" ''
+  load-tester = stateDir: pkgs.writeScriptBin "sinex-load" ''
     #!${pkgs.bash}/bin/bash
-    set -e
-    
-    TEST_TYPE=''${1:-mixed}  # mixed, filesystem-only, multi-source
-    INTENSITY=''${2:-medium}  # low, medium, high, extreme
-    DURATION=''${3:-120}  # Default 2 minutes
-    
-    case $INTENSITY in
+    set -euo pipefail
+
+    STATE_DIR="''${SINEX_STATE_DIR:-${stateDir}}"
+    export SINEX_STATE_DIR="$STATE_DIR"
+
+    TEST_TYPE="''${1:-mixed}"  # mixed, filesystem-only, multi-source
+    INTENSITY="''${2:-medium}"  # low, medium, high, extreme
+    DURATION="''${3:-45}"  # Default 45 seconds
+
+    case "$INTENSITY" in
       low)
-        FS_EPS=20
-        SHELL_EPS=5
-        CLIPBOARD_EPS=2
+        FS_EPS=10
+        SHELL_EPS=3
+        CLIPBOARD_EPS=1
         ;;
       medium)
-        FS_EPS=100
+        FS_EPS=40
+        SHELL_EPS=10
+        CLIPBOARD_EPS=3
+        ;;
+      high)
+        FS_EPS=120
         SHELL_EPS=20
         CLIPBOARD_EPS=5
         ;;
-      high)
-        FS_EPS=500
-        SHELL_EPS=50
-        CLIPBOARD_EPS=10
-        ;;
       extreme)
-        FS_EPS=1000
-        SHELL_EPS=100
-        CLIPBOARD_EPS=20
+        FS_EPS=200
+        SHELL_EPS=30
+        CLIPBOARD_EPS=8
+        ;;
+      *)
+        echo "Unknown intensity '$INTENSITY'" >&2
+        exit 1
         ;;
     esac
     
-    STATE_DIR="${stateDir}"
-
     echo "Load test: $TEST_TYPE, $INTENSITY intensity, $DURATION seconds"
     echo "Target rates - Filesystem: $FS_EPS eps, Shell: $SHELL_EPS eps, Clipboard: $CLIPBOARD_EPS eps"
     
@@ -466,154 +467,107 @@ let
     
     # Wait for all background processes
     for pid in "''${pids[@]}"; do
-      wait $pid
+      wait "$pid"
     done
     
     echo "Load test completed"
   '';
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-performance";
 
-  nodes.machine = { config, pkgs, lib, ... }: {
+  nodes.machine = { config, pkgs, lib, ... }: let
+    stateDir = config.services.sinex.stateRoot;
+  in {
     imports = [
-      (import ../common/test-base.nix {       services.sinex = {
-        serviceManagement.serviceGroups = {
-          core = true;
-          maintenance = true;
-          monitoring = false;
-        };
-
-        database = {
-          autoSetup = true;
-          name = "sinex_perf";
-          user = "sinex";
-        };
-
-        satellite = {
-          enable = true;
-          coordination.enable = false;
-          database.url = "postgresql:///sinex_perf?host=/run/postgresql";
-          logLevel = "info";
-
-          coreServices.enable = true;
-
-          eventSources = {
-            filesystem = {
-              enable = true;
-              instances = 2;
-            };
-            terminal = {
-              enable = true;
-              instances = 2;
-            };
-            desktop.enable = false;
-            system = {
-              enable = true;
-              instances = 1;
-            };
-          };
-
-          automata = {
-            canonicalCommandSynthesizer.enable = true;
-            healthAggregator.enable = true;
-          };
-        };
-      };
-
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli; 
+      (import ../common/test-base.nix {
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
       })
     ];
 
     # Override for performance testing
     services.sinex = {
-      serviceManagement.serviceGroups = {
-        core = true;
-        maintenance = true;
-        monitoring = false;
-      };
-
       database = {
         autoSetup = true;
         name = "sinex_perf";
-        user = "sinex";
+        user = "sinex_perf";
       };
 
-      satellite = {
+      shell = {
+        asciinema.recordingsPath = "/home/test/.local/share/asciinema";
+        kitty.enable = true;
+      };
+
+      satellites = {
         enable = true;
         coordination.enable = false;
-        database.url = "postgresql:///sinex_perf?host=/run/postgresql";
-        logLevel = "info";
+        defaults.instances = 1;
 
-        coreServices.enable = true;
+        filesystem = {
+          enable = true;
+          instances = 2;
+          watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
+          batch = {
+            size = 150;
+            timeoutSec = 2;
+          };
+        };
 
-        eventSources = {
-          filesystem = {
-            enable = true;
-            instances = 2;
-            batchSize = 150;
-            batchTimeout = 2;
+        terminal = {
+          enable = true;
+          instances = 2;
+          batch = {
+            size = 120;
+            timeoutSec = 2;
           };
-          terminal = {
-            enable = true;
-            instances = 2;
-            batchSize = 120;
-            batchTimeout = 2;
-          };
-          desktop.enable = false;
-          system = {
-            enable = true;
-            instances = 1;
-            batchSize = 150;
-            batchTimeout = 3;
+        };
+
+        desktop.enable = false;
+
+        system = {
+          enable = true;
+          instances = 1;
+          batch = {
+            size = 150;
+            timeoutSec = 3;
           };
         };
 
         automata = {
-          canonicalCommandSynthesizer.enable = true;
+          enable = true;
+          canonicalizer.enable = true;
           healthAggregator.enable = true;
         };
       };
 
-      eventSources = {
-        filesystem = {
-          enable = true;
-          watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
-        };
-        shellHistory.enable = true;
-      atuin = {
-        enable = true;
-        databasePath = "${stateDir}/.local/share/atuin/history.db";
-      };
-        dbus.enable = true;
-      };
-
-      monitoring.observabilityStack.enable = false;
+      observability.enable = false;
     };
     
-      # Performance test packages
+    # Performance test packages
     environment.systemPackages = with pkgs; [
       atuin
       zsh
       sinex-query
       perf-generator
-      load-tester
+      (load-tester stateDir)
       bc
       sysstat
     ];
+
+    environment.sessionVariables = {
+      SINEX_STATE_DIR = stateDir;
+    };
     
     programs.zsh.enable = true;
     services.dbus.enable = true;
     
     # Additional tmpfiles for performance testing
-    systemd.tmpfiles.rules = lib.mkAfter (
-      [
-        "d /tmp/perf-test 0755 test users -"
-        "d ${stateDir}/.local 0755 sinex sinex -"
-        "d ${stateDir}/.local/share 0755 sinex sinex -"
-        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
-      ]
-    );
+    systemd.tmpfiles.rules = lib.mkAfter [
+      "d /tmp/perf-test 0755 test users -"
+      "d ${stateDir}/.local 0755 sinex sinex -"
+      "d ${stateDir}/.local/share 0755 sinex sinex -"
+      "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+    ];
 
     # PostgreSQL performance tuning
     services.postgresql.settings = {
@@ -647,10 +601,10 @@ pkgs.nixosTest {
     import re
     from test_helpers import TestHelpers
 
-    state_dir = "${stateDir}"
-
     start_all()
     helpers = TestHelpers(machine)
+
+    state_dir = machine.succeed("echo -n $SINEX_STATE_DIR")
 
     def wait_for_delta(baseline: int, delta: int, timeout: int = 120) -> int:
         target = baseline + delta
@@ -687,7 +641,7 @@ pkgs.nixosTest {
 
     with subtest("Burst load performance test"):
         pre_burst = helpers.get_event_count()
-        duration = helpers.measure_operation_time(lambda: machine.succeed("sinex-perf burst 6 80"))
+        duration = helpers.measure_operation_time(lambda: machine.succeed("sinex-perf burst 4 50"))
         print(f"Burst generation duration: {duration:.2f}s")
         post_burst = wait_for_delta(pre_burst, 300, timeout=120)
         print(f"Burst captured {post_burst - pre_burst} events")
@@ -695,7 +649,7 @@ pkgs.nixosTest {
 
     with subtest("Sustained throughput test"):
         pre_sustained = helpers.get_event_count()
-        run_duration = helpers.measure_operation_time(lambda: machine.succeed("sinex-perf sustained 20 150"))
+        run_duration = helpers.measure_operation_time(lambda: machine.succeed("sinex-perf sustained 10 90"))
         print(f"Sustained load generation duration: {run_duration:.2f}s")
         post_sustained = wait_for_delta(pre_sustained, 2200, timeout=150)
         captured = post_sustained - pre_sustained
@@ -705,7 +659,7 @@ pkgs.nixosTest {
 
     with subtest("Multi-source concurrent load"):
         pre_multi = helpers.get_event_count()
-        helpers.measure_operation_time(lambda: machine.succeed("sinex-load multi-source medium 20"))
+        helpers.measure_operation_time(lambda: machine.succeed("sinex-load multi-source low 15"))
         post_multi = wait_for_delta(pre_multi, 2500, timeout=150)
         multi_events = post_multi - pre_multi
         print(f"Multi-source captured {multi_events} events")

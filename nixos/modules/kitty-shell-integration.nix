@@ -6,6 +6,7 @@ with lib;
 let
   cfg = config.services.sinex;
   kittySource = cfg.shell.kitty;
+  targetUser = cfg.users.target;
   kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.configSnippet;
   
   # Script to auto-configure kitty shell integration
@@ -84,60 +85,63 @@ EOF
 
 in
 {
-  config = mkIf (cfg.enable && kittySource.enable && kittySource.autoConfigure) {
-    
-    # Systemd service to configure kitty on service startup
-    systemd.services.sinex-kitty-setup = {
-      description = "Configure Kitty shell integration for Sinex";
-      wantedBy = [ "sinex-terminal-satellite-1.service" ];
-      before = [ "sinex-terminal-satellite-1.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        User = cfg.targetUser;
-        Group = "users";
-        ExecStart = "${configureKittyScript}";
-        ExecStop = "${removeKittyConfigScript}";
-        RemainAfterExit = true;
+  config = mkMerge [
+    (mkIf (cfg.enable && kittySource.enable && targetUser != null) {
+      environment.systemPackages = mkAfter (
+        [ pkgs.kitty ] ++
+        lib.optionals kittySource.autoConfigure [
+          pkgs.writeShellScriptBin "sinex-configure-kitty" ''
+            echo "Configuring Kitty shell integration for Sinex..."
+            sudo -u ${targetUser} ${configureKittyScript}
+          ''
+          pkgs.writeShellScriptBin "sinex-remove-kitty-config" ''
+            echo "Removing Kitty shell integration configuration..."
+            sudo -u ${targetUser} ${removeKittyConfigScript}
+          ''
+        ]
+      );
+    })
+
+    (mkIf (cfg.enable && kittySource.enable && targetUser == null) {
+      warnings = [ ''
+        Sinex Kitty shell integration is enabled but services.sinex.users.target is not set.
+        Auto-configuration requires a target user.
+      '' ];
+    })
+
+    (mkIf (cfg.enable && kittySource.enable && kittySource.autoConfigure && targetUser != null) {
+      systemd.services.sinex-kitty-setup = {
+        description = "Configure Kitty shell integration for Sinex";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = targetUser;
+          Group = targetUser;
+          ExecStart = "${configureKittyScript}";
+          ExecStop = "${removeKittyConfigScript}";
+          RemainAfterExit = true;
+        };
+        environment = {
+          HOME = "/home/${targetUser}";
+          USER = targetUser;
+        };
       };
-      environment = {
-        HOME = "/home/${cfg.targetUser}";
-        USER = cfg.targetUser;
-      };
-    };
-    
-    # User script for manual configuration and kitty package
-    environment.systemPackages = [
-      (pkgs.writeShellScriptBin "sinex-configure-kitty" ''
-        echo "Configuring Kitty shell integration for Sinex..."
-        sudo -u ${cfg.targetUser} ${configureKittyScript}
-      '')
-      
-      (pkgs.writeShellScriptBin "sinex-remove-kitty-config" ''
-        echo "Removing Kitty shell integration configuration..."
-        sudo -u ${cfg.targetUser} ${removeKittyConfigScript}
-      '')
-    ] ++ lib.optionals (kittySource.enable) [ pkgs.kitty ];
-    
-    # Validation warning if targetUser is not set
-    warnings = optional (cfg.targetUser == null) ''
-      Sinex Kitty shell integration is enabled but services.sinex.targetUser is not set.
-      Auto-configuration will not work properly without a target user.
-    '';
-    
-    # Documentation for manual setup if auto-config is disabled
-    system.extraDependencies = mkIf (!kittySource.autoConfigure) [
-      (pkgs.writeText "sinex-kitty-manual-setup.md" ''
-        # Manual Kitty Shell Integration Setup for Sinex
+    })
 
-        Add the following block to your kitty.conf and restart Kitty to pick up
-        the changes:
+    (mkIf (cfg.enable && kittySource.enable && !kittySource.autoConfigure) {
+      system.extraDependencies = [
+        (pkgs.writeText "sinex-kitty-manual-setup.md" ''
+          # Manual Kitty Shell Integration Setup for Sinex
 
-        ```
-        ${kittySource.configSnippet}
-        ```
+          Add the following block to your kitty.conf and restart Kitty to pick up the changes:
 
-        For more information, see: https://sw.kovidgoyal.net/kitty/shell-integration/
-      '')
-    ];
-  };
+          ```
+          ${kittySource.configSnippet}
+          ```
+
+          For more information, see: https://sw.kovidgoyal.net/kitty/shell-integration/
+        '')
+      ];
+    })
+  ];
 }
