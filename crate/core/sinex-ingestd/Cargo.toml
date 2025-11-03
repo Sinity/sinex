@@ -61,6 +61,7 @@ blake3.workspace = true
 
 # System
 sd-notify.workspace = true
+libc = "0.2"
 
 # Local dependencies
 sinex-core = { path = "../../lib/sinex-core", features = [] }

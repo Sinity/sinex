@@ -16,7 +16,7 @@ pub mod validator;
 
 pub use config::IngestdConfig;
 pub use figment_config::IngestdFigmentConfig;
-pub use jetstream_consumer::JetStreamConsumer;
+pub use jetstream_consumer::{JetStreamConsumer, JetStreamTopology};
 pub use material_assembler::MaterialAssembler;
 pub use schema_sync::SyncResult;
 pub use service::IngestService;

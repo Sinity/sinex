@@ -454,12 +454,13 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age = Utc::now()
+        let age_seconds = Utc::now()
             .signed_duration_since(handle.started_at)
-            .num_seconds() as u64;
+            .num_seconds()
+            .max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes
-            || age >= self.rotation_policy.max_age_seconds
+            || age_seconds >= self.rotation_policy.max_age_seconds
     }
 }
 

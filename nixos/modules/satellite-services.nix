@@ -198,7 +198,7 @@ let
       resources = params.resources;
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
-      afterUnits = [ "network-online.target" ] ++ optionals coreEnabled [ "sinex-ingestd.service" ];
+      afterUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
       requiresUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
       execArgs = concatStringsSep " " ([
         "--service-name sinex-${params.name}"
@@ -303,7 +303,7 @@ in
   config = mkMerge [
     (mkIf sinexEnabled {
       systemd.services = mkMerge [ coreServices satelliteServices automataServices ];
-      services.sinex.satellites.generatedUnits = mkIf satellitesEnabled generatedUnits;
+      services.sinex.satellites.generatedUnits = generatedUnits;
     })
   ];
 }

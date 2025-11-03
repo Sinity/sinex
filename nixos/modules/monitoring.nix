@@ -53,7 +53,7 @@ in
     (mkIf enableGrafana {
       services.grafana = {
         enable = true;
-        inherit (monitoringCfg.grafana) port;
+        settings.server.http_port = monitoringCfg.grafana.port;
       };
     })
   ];

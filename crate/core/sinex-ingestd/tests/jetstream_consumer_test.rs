@@ -5,7 +5,7 @@ use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
-use sinex_ingestd::JetStreamConsumer;
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +30,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: stream_name,
-        subjects: vec![env.nats_subject("events.raw.>")],
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -39,10 +39,16 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     .await?;
 
     // Start JetStream consumer in background
+    let topology = JetStreamTopology::new(
+        &env,
+        env.nats_stream_name("SINEX_RAW_EVENTS"),
+        "ingestd".to_string(),
+    );
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -107,7 +113,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let events_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_stream_name,
-        subjects: vec![env.nats_subject("events.raw.>")],
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -127,10 +133,16 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     .await?;
 
     // Start JetStream consumer in background
+    let topology = JetStreamTopology::new(
+        &env,
+        env.nats_stream_name("SINEX_RAW_EVENTS"),
+        "ingestd".to_string(),
+    );
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -186,10 +198,10 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     let env = ctx.env();
 
     // Ensure streams exist
-    let events_stream_name = env.nats_stream_name("events_raw");
+    let events_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_stream_name,
-        subjects: vec![env.nats_subject("events.raw.>")],
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -197,10 +209,16 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     })
     .await?;
 
+    let topology = JetStreamTopology::new(
+        &env,
+        env.nats_stream_name("SINEX_RAW_EVENTS"),
+        "ingestd".to_string(),
+    );
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 

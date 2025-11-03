@@ -733,7 +733,6 @@ in
           generatedUnits = mkOption {
             type = listOf str;
             default = [];
-            readOnly = true;
             internal = true;
             description = "Systemd units generated for satellite services.";
           };
@@ -762,6 +761,7 @@ in
                 prometheus = mkOption {
                   type = submodule {
                     options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable Prometheus."; };
                       listen = mkOption { type = str; default = "127.0.0.1"; description = "Prometheus bind address."; };
                       port = mkOption { type = port; default = 9090; description = "Prometheus port."; };
                       retention = mkOption { type = str; default = "30d"; description = "Prometheus retention window."; };
@@ -978,6 +978,7 @@ in
       dlqDir = cfg.storage.dlq.path;
       blobDir = cfg.storage.blob.repositoryPath;
       sinexUser = cfg.users.satellites;
+      targetUser = cfg.users.target;
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
       databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
@@ -995,6 +996,9 @@ in
           --max-files ${toString cfg.storage.dlq.cleanup.maxFiles} \
           --confirm
       '';
+      asciinemaDir = cfg.shell.asciinema.recordingsPath;
+      asciiPath = toString asciinemaDir;
+
       directoryRules =
         [
           { path = stateRoot; mode = "0755"; }
@@ -1005,8 +1009,16 @@ in
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.dlq.enable) [ { path = dlqDir; mode = "0750"; } ]
-        ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ];
-      tmpRule = rule: "d ${rule.path} ${rule.mode} ${sinexUser} ${sinexUser} -";
+        ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
+        ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
+          { path = asciiPath; mode = "0770"; user = targetUser; group = targetUser; }
+        ];
+      tmpRule = rule:
+        let
+          owner = rule.user or sinexUser;
+          group = rule.group or sinexUser;
+        in
+        "d ${rule.path} ${rule.mode} ${owner} ${group} -";
     in
     mkMerge [
       (mkIf cfg.enable {

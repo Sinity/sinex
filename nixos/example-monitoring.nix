@@ -12,40 +12,45 @@
 
   services.sinex = {
     enable = true;
-    targetUser = "observer";
-
-    serviceManagement.serviceGroups = {
-      core = true;
-      maintenance = true;  # keep DLQ cleanup and git-annex maintenance active
-      monitoring = true;   # expose observability stack on loopback
-    };
+    users.target = "observer";
 
     database = {
       autoSetup = true;
+      host = "127.0.0.1";
       name = "sinex_obs";
       user = "sinex";
     };
 
-    satellite = {
+    lifecycle.maintenance.enable = true;
+
+    core.enable = true;
+
+    satellites = {
       enable = true;
-      coordination.enable = false;
-      database.url = "postgresql:///sinex_obs?host=/run/postgresql";
-
-      coreServices.enable = true;
-
-      eventSources = {
-        filesystem = {
-          enable = true;
-          watchPaths = [ "/home/observer" ];
-        };
-        terminal.enable = true;
-        desktop.enable = true;
-        system.enable = true;
-      };
-
+      filesystem.watchPaths = [ "/home/observer" ];
+      terminal.enable = true;
+      desktop.enable = true;
+      system.enable = true;
       automata = {
-        canonicalCommandSynthesizer.enable = true;
+        enable = true;
+        canonicalizer.enable = true;
         healthAggregator.enable = true;
+      };
+    };
+
+    observability = {
+      enable = true;
+      monitoring = {
+        enable = true;
+        prometheus = {
+          listen = "127.0.0.1";
+          port = 9090;
+          retention = "7d";
+        };
+        grafana = {
+          enable = true;
+          port = 3000;
+        };
       };
     };
 
@@ -53,16 +58,6 @@
       asciinema.autoRecord = false;
       kitty.enable = true;
     };
-
-    monitoring.observabilityStack = {
-      enable = true;
-      listenAddress = "127.0.0.1";
-      prometheusPort = 9090;
-      grafanaPort = 3000;
-      retentionTime = "7d";
-    };
-
-    monitoring.dashboards.grafana.enable = true;
   };
 
   users.users.observer = {

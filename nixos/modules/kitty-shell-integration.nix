@@ -7,13 +7,13 @@ let
   cfg = config.services.sinex;
   kittySource = cfg.shell.kitty;
   targetUser = cfg.users.target;
-  kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.configSnippet;
+  kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.snippet;
   
   # Script to auto-configure kitty shell integration
   configureKittyScript = pkgs.writeShellScript "configure-kitty-integration" ''
     set -euo pipefail
     
-    USER_CONFIG_PATH="${kittySource.userConfigPath}"
+    USER_CONFIG_PATH="${kittySource.configFile}"
     
     # Expand ~ in path
     if [[ "$USER_CONFIG_PATH" == "~/"* ]]; then
@@ -63,7 +63,7 @@ EOF
   removeKittyConfigScript = pkgs.writeShellScript "remove-kitty-integration" ''
     set -euo pipefail
     
-    USER_CONFIG_PATH="${kittySource.userConfigPath}"
+    USER_CONFIG_PATH="${kittySource.configFile}"
     
     # Expand ~ in path
     if [[ "$USER_CONFIG_PATH" == "~/"* ]]; then
@@ -88,16 +88,16 @@ in
   config = mkMerge [
     (mkIf (cfg.enable && kittySource.enable && targetUser != null) {
       environment.systemPackages = mkAfter (
-        [ pkgs.kitty ] ++
-        lib.optionals kittySource.autoConfigure [
-          pkgs.writeShellScriptBin "sinex-configure-kitty" ''
+        [ pkgs.kitty ]
+        ++ lib.optionals kittySource.autoConfigure [
+          (pkgs.writeShellScriptBin "sinex-configure-kitty" ''
             echo "Configuring Kitty shell integration for Sinex..."
             sudo -u ${targetUser} ${configureKittyScript}
-          ''
-          pkgs.writeShellScriptBin "sinex-remove-kitty-config" ''
+          '')
+          (pkgs.writeShellScriptBin "sinex-remove-kitty-config" ''
             echo "Removing Kitty shell integration configuration..."
             sudo -u ${targetUser} ${removeKittyConfigScript}
-          ''
+          '')
         ]
       );
     })
@@ -136,7 +136,7 @@ in
           Add the following block to your kitty.conf and restart Kitty to pick up the changes:
 
           ```
-          ${kittySource.configSnippet}
+          ${kittySource.snippet}
           ```
 
           For more information, see: https://sw.kovidgoyal.net/kitty/shell-integration/

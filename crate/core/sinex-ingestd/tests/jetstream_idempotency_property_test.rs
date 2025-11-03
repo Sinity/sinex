@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
-use sinex_ingestd::{validator::EventValidator, JetStreamConsumer};
+use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -24,9 +24,10 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
 
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_subject("events_raw"),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        name: base_stream.clone(),
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -34,10 +35,12 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     })
     .await?;
 
+    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -116,9 +119,10 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
 
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_subject("events_raw"),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        name: base_stream.clone(),
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -126,10 +130,12 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     })
     .await?;
 
+    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 

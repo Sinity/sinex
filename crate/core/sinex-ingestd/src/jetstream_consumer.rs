@@ -47,7 +47,41 @@ pub struct JetStreamConsumer {
     pool: DbPool,
     validator: Arc<RwLock<EventValidator>>,
     env: SinexEnvironment,
+    topology: JetStreamTopology,
     stats: ConsumerStats,
+}
+
+#[derive(Debug, Clone)]
+pub struct JetStreamTopology {
+    pub events_stream: String,
+    pub events_subject: String,
+    pub confirmations_stream: String,
+    pub confirmations_subject: String,
+    pub confirmations_prefix: String,
+    pub dlq_stream: String,
+    pub dlq_subject: String,
+    pub dlq_publish_subject: String,
+    pub consumer_durable: String,
+}
+
+impl JetStreamTopology {
+    pub fn new(env: &SinexEnvironment, base_stream: String, consumer_durable: String) -> Self {
+        let confirmations_stream = format!("{base_stream}_CONFIRMATIONS");
+        let dlq_stream = format!("{base_stream}_DLQ");
+        let confirmations_prefix = format!("{}.", env.nats_subject("events.confirmations"));
+
+        Self {
+            events_stream: base_stream.clone(),
+            events_subject: env.nats_subject("events.>"),
+            confirmations_stream,
+            confirmations_subject: env.nats_subject("events.confirmations.>"),
+            confirmations_prefix,
+            dlq_stream,
+            dlq_subject: env.nats_subject("events.dlq.>"),
+            dlq_publish_subject: env.nats_subject("events.dlq.ingestd"),
+            consumer_durable,
+        }
+    }
 }
 
 struct PreparedEvent {
@@ -81,6 +115,7 @@ impl JetStreamConsumer {
         nats_client: NatsClient,
         pool: DbPool,
         validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
     ) -> Self {
         let js = jetstream::new(nats_client);
         let env = sinex_core::environment().clone();
@@ -90,6 +125,7 @@ impl JetStreamConsumer {
             pool,
             validator,
             env,
+            topology,
             stats: ConsumerStats::default(),
         }
     }
@@ -100,11 +136,11 @@ impl JetStreamConsumer {
 
         // Events stream - durable event log for automata replay
         // 90 days retention to support full operational history replay
-        let events_stream = self.env.nats_subject("events_raw");
+        let events_stream = self.topology.events_stream.clone();
         self.js
             .get_or_create_stream(jetstream::stream::Config {
                 name: events_stream.clone(),
-                subjects: vec![self.env.nats_subject("events.raw.>")],
+                subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
                 max_age: Duration::from_secs(90 * 24 * 60 * 60), // 90 days (operational history)
@@ -116,11 +152,11 @@ impl JetStreamConsumer {
 
         // Confirmations stream with compaction - only keep latest per event
         // Short retention since confirmations are ephemeral operational state
-        let confirmations_stream = self.env.nats_subject("events_confirmations");
+        let confirmations_stream = self.topology.confirmations_stream.clone();
         self.js
             .get_or_create_stream(jetstream::stream::Config {
                 name: confirmations_stream.clone(),
-                subjects: vec![self.env.nats_subject("events.confirmations.>")],
+                subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
                 max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days (operational buffer)
@@ -133,11 +169,11 @@ impl JetStreamConsumer {
             })?;
 
         // DLQ stream
-        let dlq_stream = self.env.nats_subject("events_dlq");
+        let dlq_stream = self.topology.dlq_stream.clone();
         self.js
             .get_or_create_stream(jetstream::stream::Config {
                 name: dlq_stream.clone(),
-                subjects: vec![self.env.nats_subject("events.dlq.>")],
+                subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 1_000_000,
                 max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
@@ -158,7 +194,7 @@ impl JetStreamConsumer {
         self.bootstrap_streams().await?;
 
         // Get events stream
-        let stream_name = self.env.nats_subject("events_raw");
+        let stream_name = self.topology.events_stream.clone();
         let stream = self
             .js
             .get_stream(&stream_name)
@@ -168,9 +204,9 @@ impl JetStreamConsumer {
         // Create durable consumer
         let consumer = stream
             .get_or_create_consumer(
-                "ingestd",
+                &self.topology.consumer_durable,
                 jetstream::consumer::pull::Config {
-                    durable_name: Some("ingestd".to_string()),
+                    durable_name: Some(self.topology.consumer_durable.clone()),
                     ack_policy: jetstream::consumer::AckPolicy::Explicit,
                     ack_wait: Duration::from_secs(30),
                     max_ack_pending: 100,
@@ -456,9 +492,7 @@ impl JetStreamConsumer {
             ts_ingest: Utc::now().to_rfc3339(),
         };
 
-        let subject = self
-            .env
-            .nats_subject(&format!("events.confirmations.{}", event_id));
+        let subject = format!("{}{}", self.topology.confirmations_prefix, event_id);
         let payload = serde_json::to_vec(&confirmation)?;
 
         // Add idempotency header
@@ -490,12 +524,22 @@ impl JetStreamConsumer {
             failed_at: Utc::now().to_rfc3339(),
         };
 
-        let subject = self.env.nats_subject("events.dlq.ingestd");
         if let Ok(payload) = serde_json::to_vec(&dlq_entry) {
-            if let Err(e) = self.js.publish(subject, payload.into()).await {
-                error!("Failed to route to DLQ: {}", e);
-            } else {
-                debug!(event_id = %dlq_entry.event_id, "Routed to DLQ");
+            match self
+                .js
+                .publish(self.topology.dlq_publish_subject.clone(), payload.into())
+                .await
+            {
+                Ok(ack) => {
+                    if let Err(e) = ack.await {
+                        error!("Failed to confirm DLQ publish: {}", e);
+                    } else {
+                        debug!(event_id = %dlq_entry.event_id, "Routed to DLQ");
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to route to DLQ: {}", e);
+                }
             }
         }
     }

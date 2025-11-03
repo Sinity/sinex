@@ -23,6 +23,13 @@ pub struct SinexEnvironment {
 }
 
 impl SinexEnvironment {
+    fn path_is_namespaced<P: AsRef<Path>>(&self, path: P) -> bool {
+        let suffix = format!("-{}", self.name);
+        path.as_ref()
+            .components()
+            .any(|component| component.as_os_str().to_string_lossy().ends_with(&suffix))
+    }
+
     /// Get the current environment from SINEX_ENVIRONMENT variable
     pub fn current() -> Result<Self> {
         let name = env::var("SINEX_ENVIRONMENT").unwrap_or_else(|_| {
@@ -105,7 +112,7 @@ impl SinexEnvironment {
         let (prefix, db_name) = main.split_at(last_slash + 1);
 
         // Skip namespacing if already present
-        if db_name.contains(&format!("_{}", self.name)) {
+        if db_name.strip_suffix(&format!("_{}", self.name)).is_some() {
             debug!(
                 "Database URL already namespaced for environment {}",
                 self.name
@@ -161,10 +168,7 @@ impl SinexEnvironment {
         if let Some(parent) = path.parent() {
             if let Some(filename) = path.file_name() {
                 // Check if path is already namespaced
-                if parent
-                    .to_string_lossy()
-                    .contains(&format!("-{}", self.name))
-                {
+                if self.path_is_namespaced(parent) {
                     debug!(
                         "Socket path already namespaced for environment {}",
                         self.name
@@ -207,7 +211,7 @@ impl SinexEnvironment {
         let path = base_path.as_ref();
 
         // Check if already namespaced
-        if path.to_string_lossy().contains(&format!("-{}", self.name)) {
+        if self.path_is_namespaced(path) {
             debug!(
                 "Work directory already namespaced for environment {}",
                 self.name

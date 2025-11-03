@@ -10,6 +10,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use sinex_core::{
     types::{domain::SanitizedPath, validate_path},
     Event as CoreEvent, Id, Provenance, Ulid,
@@ -26,7 +27,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{fs, sync::Mutex};
 use tracing::{debug, info, instrument, warn};
 use validator::ValidationError;
@@ -119,6 +120,12 @@ pub struct TerminalState {
     pub host: String,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct HistoryState {
+    offset_bytes: usize,
+    line_number: u64,
+}
+
 #[derive(Clone)]
 struct HistoryWatcherContext {
     acquisition: Arc<AcquisitionManager>,
@@ -127,6 +134,7 @@ struct HistoryWatcherContext {
     path: Utf8PathBuf,
     max_capture_bytes: u64,
     polling_interval: Duration,
+    state_path: Option<PathBuf>,
 }
 
 impl HistoryWatcherContext {
@@ -134,13 +142,26 @@ impl HistoryWatcherContext {
         let mut offset_bytes: usize = 0;
         let mut line_number: u64 = 0;
 
+        if let Some(state) = self.load_state().await {
+            offset_bytes = state.offset_bytes;
+            line_number = state.line_number;
+            debug!(
+                path = %self.path,
+                offset = offset_bytes,
+                line_number,
+                "Restored terminal watcher state"
+            );
+        }
+
         loop {
             match fs::read_to_string(&self.path).await {
                 Ok(contents) => {
                     if contents.len() < offset_bytes {
-                        // File truncated - restart
-                        offset_bytes = 0;
+                        offset_bytes = contents.len();
                         line_number = 0;
+                        self.persist_state(offset_bytes, line_number).await;
+                        tokio::time::sleep(self.polling_interval).await;
+                        continue;
                     }
 
                     if contents.len() > offset_bytes {
@@ -168,6 +189,7 @@ impl HistoryWatcherContext {
                         }
 
                         offset_bytes += consumed_bytes;
+                        self.persist_state(offset_bytes, line_number).await;
                     }
                 }
                 Err(e) => {
@@ -176,6 +198,45 @@ impl HistoryWatcherContext {
             }
 
             tokio::time::sleep(self.polling_interval).await;
+        }
+    }
+
+    async fn load_state(&self) -> Option<HistoryState> {
+        let path = self.state_path.as_ref()?;
+        match fs::read(path).await {
+            Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    warn!("Failed to decode history watcher state {:?}: {}", path, e);
+                    None
+                }
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                warn!("Failed to load history watcher state {:?}: {}", path, err);
+                None
+            }
+        }
+    }
+
+    async fn persist_state(&self, offset_bytes: usize, line_number: u64) {
+        let path = match &self.state_path {
+            Some(path) => path,
+            None => return,
+        };
+
+        let state = HistoryState {
+            offset_bytes,
+            line_number,
+        };
+
+        match serde_json::to_vec_pretty(&state) {
+            Ok(serialized) => {
+                if let Err(e) = fs::write(path, serialized).await {
+                    warn!("Failed to persist history watcher state {:?}: {}", path, e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize history watcher state: {}", e),
         }
     }
 }
@@ -254,6 +315,7 @@ pub struct TerminalProcessor {
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     host: Option<String>,
+    state_dir: Option<PathBuf>,
 }
 
 impl TerminalProcessor {
@@ -264,6 +326,7 @@ impl TerminalProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             host: None,
+            state_dir: None,
         }
     }
 
@@ -274,6 +337,7 @@ impl TerminalProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             host: None,
+            state_dir: None,
         }
     }
 
@@ -296,6 +360,7 @@ impl TerminalProcessor {
             .clone()
             .ok_or_else(|| SatelliteError::General(eyre::eyre!("Stage context not initialised")))?;
 
+        let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
             let acquisition = AcquisitionManager::new(
@@ -306,6 +371,13 @@ impl TerminalProcessor {
                 source.path.to_string(),
             );
 
+            let state_path = state_dir.as_ref().map(|dir| {
+                let hash = blake3::hash(source.path.as_str().as_bytes())
+                    .to_hex()
+                    .to_string();
+                dir.join(format!("{}.json", hash))
+            });
+
             contexts.push(HistoryWatcherContext {
                 acquisition: Arc::new(acquisition),
                 stage_context: stage.clone(),
@@ -313,6 +385,7 @@ impl TerminalProcessor {
                 path: source.path.clone(),
                 max_capture_bytes: self.config.max_capture_bytes,
                 polling_interval: Duration::from_secs(self.config.polling_interval_secs),
+                state_path,
             });
         }
 
@@ -358,6 +431,17 @@ impl StatefulStreamProcessor for TerminalProcessor {
             .await
             .map_err(SatelliteError::from)?;
 
+        let state_dir =
+            sinex_core::environment::environment().work_directory("/tmp/sinex/terminal-history");
+        if let Err(e) = fs::create_dir_all(&state_dir).await {
+            return Err(SatelliteError::General(eyre::eyre!(
+                "Failed to create terminal state directory {}: {}",
+                state_dir.display(),
+                e
+            )));
+        }
+
+        self.state_dir = Some(state_dir);
         self.stage_context = Some(StageAsYouGoContext::new(
             ctx.db_pool.clone(),
             ctx.event_sender.clone(),

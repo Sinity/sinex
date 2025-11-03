@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use sinex_core::{
     db::create_pool,
+    environment as sinex_environment,
     types::{domain::SanitizedPath, error::SinexError},
 };
 use sinex_satellite_sdk::annex::BlobManager;
@@ -35,8 +36,14 @@ impl ServiceContainer {
         let pool = create_pool(&db_url).await?;
 
         // Create blob manager for content service
-        let annex_path_str =
-            std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string());
+        let annex_path_str = match std::env::var("SINEX_ANNEX_PATH") {
+            Ok(value) => value,
+            Err(_) => {
+                let default_path =
+                    sinex_environment::environment().work_directory("/tmp/sinex/annex");
+                default_path.to_string_lossy().into_owned()
+            }
+        };
         let annex_path = SanitizedPath::from_str_validated(&annex_path_str)
             .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {}", e)))?;
         let annex_path = Utf8PathBuf::from(annex_path.as_str());

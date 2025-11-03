@@ -3,7 +3,9 @@
 //! Main ingestion service implementation.
 
 // Local crate imports
-use crate::{config::IngestdConfig, validator::EventValidator, IngestdResult, SinexError};
+use crate::{
+    config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
+};
 
 // External crates
 use async_nats::{jetstream, Client as NatsClient};
@@ -90,13 +92,16 @@ impl IngestService {
                 ..Default::default()
             };
 
-            match js.get_or_create_stream(stream_config).await {
-                Ok(_) => info!(
-                    "Connected to NATS JetStream stream: {}",
-                    config.nats_stream_name
-                ),
-                Err(e) => error!("Failed to create/get stream: {}", e),
-            }
+            js.get_or_create_stream(stream_config).await.map_err(|e| {
+                SinexError::network(format!("Failed to create/get stream: {e}"))
+                    .with_operation("service.bootstrap_stream")
+                    .with_context("stream", config.nats_stream_name.clone())
+            })?;
+
+            info!(
+                "Connected to NATS JetStream stream: {}",
+                config.nats_stream_name
+            );
 
             (Some(client), Some(js))
         };
@@ -211,10 +216,20 @@ impl IngestService {
     async fn start_jetstream_consumer_task(&self, nats_client: NatsClient, pool: PgPool) {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
+        let env = sinex_environment();
+        let topology = JetStreamTopology::new(
+            &env,
+            self.config.nats_stream_name.clone(),
+            self.config.nats_consumer_name.clone(),
+        );
 
         tokio::spawn(async move {
-            let consumer =
-                crate::JetStreamConsumer::new(nats_client, pool.clone(), validator.clone());
+            let consumer = crate::JetStreamConsumer::new(
+                nats_client,
+                pool.clone(),
+                validator.clone(),
+                topology,
+            );
 
             tokio::select! {
                 result = consumer.run() => {

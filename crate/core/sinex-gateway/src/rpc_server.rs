@@ -18,7 +18,10 @@ use tower_http::cors::CorsLayer;
 
 // Standard library
 use sinex_core::environment::environment;
-use tracing::{debug, error, info};
+use thiserror::Error;
+use tracing::{debug, error, info, warn};
+
+pub const DEFAULT_SOCKET_PATH: &str = "/tmp/sinex-host.sock";
 
 #[derive(Debug, Clone, Deserialize)]
 struct JsonRpcRequest {
@@ -44,6 +47,12 @@ struct JsonRpcError {
     code: i32,
     message: String,
     data: Option<Value>,
+}
+
+#[derive(Debug, Error)]
+#[error("Unknown method: {method}")]
+struct UnknownMethodError {
+    method: String,
 }
 
 impl JsonRpcResponse {
@@ -109,7 +118,9 @@ pub async fn dispatch_rpc_method(
 
         "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params).await,
 
-        _ => Err(color_eyre::eyre::eyre!("Unknown method: {}", method)),
+        _ => Err(color_eyre::Report::new(UnknownMethodError {
+            method: method.to_string(),
+        })),
     }
 }
 
@@ -133,7 +144,7 @@ async fn handle_rpc(
 
     match result {
         Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
-        Err(err) if err.to_string().contains("Unknown method:") => {
+        Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
             Json(JsonRpcResponse::error(request.id, -32601, err.to_string()))
         }
         Err(err) => {
@@ -165,16 +176,15 @@ impl BindAddress {
             return BindAddress::Tcp { host, port };
         }
 
-        // In development, prefer TCP 127.0.0.1:9999 for CLI friendliness
         let env = environment();
-        if env.is_dev() {
+        if env.is_dev() && socket_path.as_str() == DEFAULT_SOCKET_PATH {
             return BindAddress::Tcp {
                 host: "127.0.0.1".to_string(),
                 port: 9999,
             };
         }
 
-        // Default to Unix socket elsewhere
+        // Default to Unix socket otherwise
         BindAddress::UnixSocket { path: socket_path }
     }
 }
@@ -228,6 +238,17 @@ pub async fn run(socket_path: sinex_core::SanitizedPath, services: ServiceContai
             let listener = tokio::net::UnixListener::bind(socket_path)
                 .wrap_err("Failed to bind Unix socket")?;
             info!("RPC server listening on Unix socket {}", path_str);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) =
+                    tokio::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
+                        .await
+                {
+                    warn!("Failed to set Unix socket permissions to 0600: {}", e);
+                }
+            }
 
             let mut incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
             let app = app;

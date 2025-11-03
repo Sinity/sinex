@@ -5,6 +5,7 @@
 //! Document ingestor that consumes `MaterialSliceStream` from sensd.
 
 use async_trait::async_trait;
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
@@ -13,6 +14,7 @@ use serde_json::json;
 use sinex_core::ulid_to_uuid;
 use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
 use sinex_satellite_sdk::{
+    annex::AnnexKey,
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
@@ -257,6 +259,17 @@ impl DocumentProcessor {
                         }
 
                         for record in records {
+                            if record.offset_end <= record.offset_start {
+                                warn!(
+                                    material_id = %material_id,
+                                    start = record.offset_start,
+                                    end = record.offset_end,
+                                    "Skipping zero-length material slice"
+                                );
+                                offset = offset.max(record.offset_end).saturating_add(1);
+                                continue;
+                            }
+
                             // Load data from storage
                             let data = if let Some(inline_data) = record.inline_data {
                                 // Data is stored inline in the source_material_registry
@@ -304,7 +317,11 @@ impl DocumentProcessor {
                                 metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
                             };
 
-                            offset = record.offset_end;
+                            let mut next_offset = record.offset_end;
+                            if next_offset <= offset {
+                                next_offset = offset.saturating_add(1);
+                            }
+                            offset = next_offset;
                             yield Ok(slice);
                         }
                     }
@@ -337,34 +354,57 @@ impl DocumentProcessor {
         .await?
         .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        // Determine storage backend from annex_backend format
         match blob.annex_backend.as_str() {
-            backend if backend.starts_with("SHA256") => {
-                // Load from git-annex storage
-                let annex_path = std::path::Path::new(".git/annex/objects")
-                    .join(&blob.annex_backend[0..2])
-                    .join(&blob.annex_backend[2..4])
-                    .join(&blob.annex_backend);
+            backend if backend.starts_with("SHA") => {
+                let size = blob.size_bytes.max(0) as u64;
+                let annex_key = format!("{}-s{}--{}", blob.annex_backend, size, blob.content_hash);
+                let parsed_key = AnnexKey::parse(&annex_key)
+                    .map_err(|e| eyre!("Failed to parse annex key {}: {}", annex_key, e))?;
 
-                if annex_path.exists() {
-                    tokio::fs::read(&annex_path)
-                        .await
-                        .map_err(|e| eyre!("Failed to read annex file: {}", e))
-                } else {
-                    Err(eyre!("Annex file not found at {:?}", annex_path))
+                let repo_path = match std::env::var("SINEX_ANNEX_PATH") {
+                    Ok(path) => Utf8PathBuf::from(path),
+                    Err(_) => {
+                        let default_path = sinex_core::environment::environment()
+                            .work_directory("/tmp/sinex/annex");
+                        Utf8PathBuf::from_path_buf(default_path)
+                            .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
+                    }
+                };
+
+                let objects_path = repo_path.join(".git").join("annex").join("objects");
+
+                let hash_chars: Vec<char> = parsed_key.hash.chars().collect();
+                if hash_chars.len() < 4 {
+                    return Err(eyre!(
+                        "Annex key hash too short for material {}: {}",
+                        blob_id,
+                        parsed_key.hash
+                    ));
                 }
+
+                let dir1: String = hash_chars[0..2].iter().collect();
+                let dir2: String = hash_chars[2..4].iter().collect();
+                let candidate = objects_path.join(dir1).join(dir2).join(&parsed_key.key);
+
+                if !candidate.as_std_path().exists() {
+                    return Err(eyre!(
+                        "Annex object not found for material {} at {:?}",
+                        blob_id,
+                        candidate
+                    ));
+                }
+
+                tokio::fs::read(candidate.as_std_path())
+                    .await
+                    .map_err(|e| eyre!("Failed to read annex object for {}: {}", blob_id, e))
             }
             "filesystem" => {
-                // Load from filesystem path stored in annex_key
                 let path = std::path::Path::new(&blob.annex_backend);
                 tokio::fs::read(path)
                     .await
                     .map_err(|e| eyre!("Failed to read file: {}", e))
             }
-            "s3" => {
-                // S3 support would go here
-                Err(eyre!("S3 storage backend not yet implemented"))
-            }
+            "s3" => Err(eyre!("S3 storage backend not yet implemented")),
             backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }
     }

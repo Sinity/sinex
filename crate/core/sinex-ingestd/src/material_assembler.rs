@@ -28,6 +28,8 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+
+use libc;
 use tokio::{fs, fs::File, io::AsyncWriteExt, sync::RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -657,16 +659,29 @@ impl MaterialAssembler {
 
         match serde_json::to_vec(&payload) {
             Ok(bytes) => {
-                if let Err(e) = self
+                match self
                     .js
                     .publish(self.dlq_subject.clone(), bytes.into())
                     .await
                 {
-                    error!(
-                        material_id = %material_id,
-                        "Failed to publish material DLQ entry: {}",
-                        e
-                    );
+                    Ok(ack) => {
+                        if let Err(e) = ack.await {
+                            error!(
+                                material_id = %material_id,
+                                "Failed to confirm DLQ publish: {}",
+                                e
+                            );
+                        } else {
+                            debug!(material_id = %material_id, "Routed to DLQ");
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            material_id = %material_id,
+                            "Failed to publish material DLQ entry: {}",
+                            e
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -702,11 +717,31 @@ impl MaterialAssembler {
 
         let target_path: PathBuf = target_path_utf8.clone().into_std_path_buf();
 
-        fs::rename(&state.temp_path, &target_path)
-            .await
-            .map_err(|e| {
-                SinexError::io(format!("Failed to move assembled file into annex: {}", e))
-            })?;
+        if let Err(e) = fs::rename(&state.temp_path, &target_path).await {
+            if e.raw_os_error() == Some(libc::EXDEV) {
+                fs::copy(&state.temp_path, &target_path)
+                    .await
+                    .map_err(|copy_err| {
+                        SinexError::io(format!(
+                            "Failed to copy assembled file into annex: {}",
+                            copy_err
+                        ))
+                    })?;
+                fs::remove_file(&state.temp_path)
+                    .await
+                    .map_err(|remove_err| {
+                        SinexError::io(format!(
+                            "Failed to remove staging file after copy: {}",
+                            remove_err
+                        ))
+                    })?;
+            } else {
+                return Err(SinexError::io(format!(
+                    "Failed to move assembled file into annex: {}",
+                    e
+                )));
+            }
+        }
 
         let annex_key = self
             .annex
@@ -1141,22 +1176,44 @@ impl MaterialAssembler {
         self.bootstrap_streams().await?;
         self.restore_state().await?;
 
-        let begin_handle = self.spawn_begin_consumer();
-        let slices_handle = self.spawn_slices_consumer();
-        let end_handle = self.spawn_end_consumer();
+        let mut begin_handle = self.spawn_begin_consumer();
+        let mut slices_handle = self.spawn_slices_consumer();
+        let mut end_handle = self.spawn_end_consumer();
 
         tokio::select! {
-            result = begin_handle => {
-                error!("Begin consumer exited: {:?}", result);
+            result = &mut begin_handle => {
+                slices_handle.abort();
+                end_handle.abort();
+                return Self::handle_task_exit("material begin consumer", result);
             }
-            result = slices_handle => {
-                error!("Slices consumer exited: {:?}", result);
+            result = &mut slices_handle => {
+                begin_handle.abort();
+                end_handle.abort();
+                return Self::handle_task_exit("material slice consumer", result);
             }
-            result = end_handle => {
-                error!("End consumer exited: {:?}", result);
+            result = &mut end_handle => {
+                begin_handle.abort();
+                slices_handle.abort();
+                return Self::handle_task_exit("material end consumer", result);
             }
         }
+    }
 
-        Ok(())
+    fn handle_task_exit(
+        task_name: &str,
+        result: Result<IngestdResult<()>, tokio::task::JoinError>,
+    ) -> IngestdResult<()> {
+        match result {
+            Ok(Ok(())) => Err(SinexError::service(format!(
+                "{task_name} exited without signalling shutdown"
+            ))),
+            Ok(Err(err)) => Err(err),
+            Err(join_err) if join_err.is_cancelled() => {
+                Err(SinexError::cancelled(format!("{task_name} was cancelled")))
+            }
+            Err(join_err) => Err(SinexError::service(format!(
+                "{task_name} panicked: {join_err}"
+            ))),
+        }
     }
 }

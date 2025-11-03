@@ -113,12 +113,11 @@ in
       services.postgresql = {
         enable = true;
         package = mkForce postgresqlPkg;
-        port = mkForce db.port;
         ensureDatabases = mkDefault [ db.name ];
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
         extensions = extensionPackages;
-        settings = mkMerge [ baseSettings ];
+        settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
       };
     })
 

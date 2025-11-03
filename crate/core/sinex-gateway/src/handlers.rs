@@ -55,10 +55,17 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .map(Id::<Event<JsonValue>>::from_ulid)
         .wrap_err("Invalid or missing event_id")?;
 
-    let content = params
+    let content_b64 = params
         .get("content")
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
+
+    let mut decoded_bytes = BASE64_STANDARD
+        .decode(content_b64)
+        .wrap_err("Invalid base64 content")?;
+
+    let content = String::from_utf8(decoded_bytes.clone())
+        .wrap_err("Decoded note content is not valid UTF-8")?;
 
     let tags = params
         .get("tags")
@@ -165,10 +172,14 @@ pub async fn handle_search_events(service: &SearchService, params: Value) -> Res
 // Content handlers
 
 pub async fn handle_store_blob(service: &ContentService, params: Value) -> Result<Value> {
-    let content = params
+    let content_b64 = params
         .get("content")
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
+
+    let content = BASE64_STANDARD
+        .decode(content_b64)
+        .wrap_err("Invalid base64 content")?;
 
     let filename = params
         .get("filename")
@@ -186,7 +197,7 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .unwrap_or("sinex-host");
 
     let annex_key = service
-        .store_content(content.as_bytes(), filename, content_type, source)
+        .store_content(&content, filename, content_type, source)
         .await?;
 
     Ok(json!({ "annex_key": annex_key }))

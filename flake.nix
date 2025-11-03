@@ -472,8 +472,8 @@ PY
                 fsType = "tmpfs";
               };
               nixpkgs.config.allowUnfree = true;
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";
@@ -495,8 +495,8 @@ PY
                 device = "none";
                 fsType = "tmpfs";
               };
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";
@@ -518,8 +518,8 @@ PY
                 device = "none";
                 fsType = "tmpfs";
               };
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";
@@ -541,8 +541,8 @@ PY
                 device = "none";
                 fsType = "tmpfs";
               };
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";
@@ -564,8 +564,8 @@ PY
                 device = "none";
                 fsType = "tmpfs";
               };
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";
@@ -587,8 +587,8 @@ PY
                 device = "none";
                 fsType = "tmpfs";
               };
-              services.sinex.preflightVerification.enable = false;
-              services.sinex.update.enable = false;
+              services.sinex.lifecycle.preflight.enable = false;
+              services.sinex.lifecycle.updates.enable = false;
               services.nats.enable = lib.mkForce false;
               services.postgresql.enable = lib.mkForce false;
               system.stateVersion = "24.05";

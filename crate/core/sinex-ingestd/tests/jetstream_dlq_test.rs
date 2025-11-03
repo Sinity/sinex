@@ -5,7 +5,7 @@ use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
-use sinex_ingestd::JetStreamConsumer;
+use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -22,9 +22,10 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
 
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_subject("events_raw"),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        name: base_stream.clone(),
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -32,7 +33,7 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let dlq_stream = env.nats_subject("events_dlq");
+    let dlq_stream = format!("{base_stream}_DLQ");
     js.get_or_create_stream(jetstream::stream::Config {
         name: dlq_stream,
         subjects: vec![env.nats_subject("events.dlq.>")],
@@ -43,10 +44,12 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
+    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -75,7 +78,7 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
         "Invalid event should not be stored in main events table"
     );
 
-    let mut dlq_stream = js.get_stream(&ctx.env().nats_subject("events_dlq")).await?;
+    let mut dlq_stream = js.get_stream(&format!("{}_DLQ", base_stream)).await?;
 
     let info = dlq_stream.info().await?;
     assert!(
@@ -98,9 +101,10 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
 
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_subject("events_raw"),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        name: base_stream.clone(),
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -108,7 +112,7 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
-    let dlq_stream = env.nats_subject("events_dlq");
+    let dlq_stream = format!("{base_stream}_DLQ");
     js.get_or_create_stream(jetstream::stream::Config {
         name: dlq_stream,
         subjects: vec![env.nats_subject("events.dlq.>")],
@@ -119,10 +123,12 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     })
     .await?;
 
+    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -136,7 +142,7 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    let mut dlq_stream = js.get_stream(&ctx.env().nats_subject("events_dlq")).await?;
+    let mut dlq_stream = js.get_stream(&format!("{}_DLQ", base_stream)).await?;
 
     let info = dlq_stream.info().await?;
     assert!(
@@ -159,9 +165,10 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
 
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
-        name: env.nats_subject("events_raw"),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        name: base_stream.clone(),
+        subjects: vec![env.nats_subject("events.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -169,7 +176,7 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     })
     .await?;
 
-    let dlq_stream = env.nats_subject("events_dlq");
+    let dlq_stream = format!("{base_stream}_DLQ");
     js.get_or_create_stream(jetstream::stream::Config {
         name: dlq_stream,
         subjects: vec![env.nats_subject("events.dlq.>")],
@@ -180,10 +187,12 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     })
     .await?;
 
+    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
+        topology,
     );
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
@@ -201,7 +210,7 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-    let mut dlq_stream = js.get_stream(&ctx.env().nats_subject("events_dlq")).await?;
+    let mut dlq_stream = js.get_stream(&format!("{}_DLQ", base_stream)).await?;
 
     let info = dlq_stream.info().await?;
     assert!(

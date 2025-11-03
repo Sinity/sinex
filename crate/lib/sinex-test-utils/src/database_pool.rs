@@ -1537,7 +1537,10 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
 
         if available.is_none() {
             missing_required.push(format!("{ext_name} ({description})"));
+            continue;
         }
+
+        ensure_extension_installed(pool, ext_name).await?;
     }
 
     if !missing_required.is_empty() {
@@ -1556,6 +1559,15 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
                 .await?;
 
         if available.is_none() {
+            missing_optional.push((ext_name.to_string(), description.to_string()));
+            continue;
+        }
+
+        if let Err(err) = ensure_extension_installed(pool, ext_name).await {
+            warn!(
+                "Failed to auto-install optional extension '{}': {}",
+                ext_name, err
+            );
             missing_optional.push((ext_name.to_string(), description.to_string()));
         }
     }
@@ -1595,6 +1607,25 @@ async fn collect_extension_versions(pool: &DbPool) -> Result<HashMap<String, Str
 /// Check whether an optional database extension was unavailable during setup.
 pub fn optional_extension_missing(name: &str) -> bool {
     OPTIONAL_EXTENSION_MISSING.lock().contains_key(name)
+}
+
+async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()> {
+    let installed: Option<String> =
+        sqlx::query_scalar("SELECT extname FROM pg_extension WHERE extname = $1")
+            .bind(extension)
+            .fetch_optional(pool)
+            .await?;
+
+    if installed.is_some() {
+        return Ok(());
+    }
+
+    let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
+    sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
+        SinexError::database(format!("Failed to create extension {extension}: {e}"))
+    })?;
+
+    Ok(())
 }
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)

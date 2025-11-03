@@ -156,7 +156,7 @@ pub async fn run(services: ServiceContainer) -> Result<()> {
 
     // Main message loop
     loop {
-        match read_message()? {
+        match read_message().await? {
             Some(message) => {
                 debug!("Received message: {:?}", message);
 
