@@ -98,7 +98,7 @@
 - `annex_mod.rs` - Module interface validation
 - `annex_path_validator.rs` - Path sanitization
 - `error_helpers.rs` - Error construction and matching
-- `figment_config.rs` - Configuration parsing
+- `config_loading_tests.rs` - Configuration parsing
 - `heartbeat.rs` - Satellite heartbeat signals
 - `ingestion_helpers.rs` - Event ingestion utilities
 - `processor_runner.rs` - Stream processor execution
@@ -186,7 +186,7 @@
 ### Core Services Tests
 
 #### sinex-ingestd (5 files, 902 LOC)
-- `figment_config_tests.rs` - Configuration loading
+- `config_loading_tests.rs` - Configuration loading
 - `schema_sync_tests.rs` - Schema synchronization
 - `service_outbox_tests.rs` - Event outbox pattern
 - `config_security_tests.rs` - Secure configuration
@@ -385,4 +385,3 @@ ctx.create_test_event(source, event_type, json!(payload)).await?
 - sinex-ingestd: 902 LOC tests for 2,400 LOC source (37% coverage)
 - sinex-gateway: 531 LOC tests for 400+ LOC source (API untested)
 - sinex-sensd: ~150 LOC tests for 2,800+ LOC source (5% coverage)
-

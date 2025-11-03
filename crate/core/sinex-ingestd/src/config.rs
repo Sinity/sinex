@@ -4,6 +4,10 @@
 
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
+use figment::{
+    providers::{Env, Format, Serialized, Toml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 use sinex_core::{
     environment::environment,
@@ -102,6 +106,36 @@ pub struct IngestdConfig {
 }
 
 impl IngestdConfig {
+    /// Build a Figment instance with defaults, config files, and environment overrides.
+    fn build_figment_base() -> Figment {
+        Figment::from(Serialized::defaults(Self::default()))
+            .merge(Toml::file("ingestd.toml").nested())
+            .merge(Toml::file("/etc/sinex/ingestd.toml").nested())
+    }
+
+    /// Add shared environment variable layers for ingestd configuration.
+    fn add_env(figment: Figment) -> Figment {
+        figment
+            .merge(Env::prefixed("INGESTD_").split('_'))
+            .merge(Env::raw().only(&["DATABASE_URL"]))
+    }
+
+    /// Load configuration from defaults, files, and environment overrides.
+    pub fn load() -> Result<Self, figment::Error> {
+        Self::add_env(Self::build_figment_base()).extract()
+    }
+
+    /// Load configuration including a specific config file.
+    pub fn load_from_path(path: impl AsRef<str>) -> Result<Self, figment::Error> {
+        let figment = Self::build_figment_base().merge(Toml::file(path.as_ref()).nested());
+        Self::add_env(figment).extract()
+    }
+
+    /// Load configuration from an existing Figment instance.
+    pub fn from_figment(figment: Figment) -> Result<Self, figment::Error> {
+        Self::add_env(figment).extract()
+    }
+
     /// Create configuration from command line arguments using the builder
     pub fn from_args(
         database_url: Option<String>,

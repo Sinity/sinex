@@ -23,7 +23,6 @@ pub mod dlq_retry;
 pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
-pub mod figment_config;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod jetstream_consumer;

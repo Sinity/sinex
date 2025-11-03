@@ -14,9 +14,6 @@
 // Core service
 pub use crate::{IngestService, IngestdConfig};
 
-// Configuration
-pub use crate::IngestdFigmentConfig;
-
 // Validation
 pub use crate::{
     EventValidator, SchemaCache, SchemaInfo, SchemaLookup, ValidationResult, ValidationStats,
