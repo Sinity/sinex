@@ -305,65 +305,62 @@ in
       '';
     in
     {
-      systemd.services = lib.mkMerge (
-        [
-          {
-            sinex-preflight = {
-              description = "Sinex Pre-Flight Verification";
-              wantedBy = [ "multi-user.target" ];
-              after = [ "network-online.target" "postgresql.service" ];
-              requires = [ "postgresql.service" ];
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                TimeoutStartSec = preflightCfg.timeout;
-                User = cfg.database.user;
-                Group = cfg.database.user;
-                ProtectSystem = "strict";
-                ProtectHome = true;
-                PrivateTmp = true;
-                NoNewPrivileges = true;
-                RestrictSUIDSGID = true;
-                RemoveIPC = true;
-                ProtectKernelTunables = true;
-                ProtectControlGroups = true;
-                RestrictRealtime = true;
-                LockPersonality = true;
-                SystemCallFilter = [ "@system-service" "~@privileged" ];
-                ReadOnlyPaths = [
-                  "/etc/sinex"
-                  cfg.directories.state
-                  cfg.directories.logs
-                ];
-                Environment = [
-                  "DATABASE_URL=${databaseUrl}"
-                  "RUST_LOG=sinex_preflight=info"
-                ];
-                ExecStart = builtins.toString runPreflightScript;
-              };
-            };
-          }
-        ]
-        ++ lib.optionals (cfg.update.enable) [
-          {
-            sinex-update = {
-              description = "Sinex Coordinated Update";
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                ExecStart = builtins.toString updateScript;
-              };
-            };
-          }
-        ]
-        ++ [
-          (lib.listToAttrs (map (unit: lib.nameValuePair unit {
+      systemd.services =
+        let
+          guardUnits = lib.genAttrs requiredUnits (unit: {
             after = lib.mkAfter [ "sinex-preflight.service" ];
             requires = lib.mkAfter [ "sinex-preflight.service" ];
-            serviceConfig.ExecStartPre = lib.mkAfter [ builtins.toString (preflightCheckScript unit) ];
-          }) requiredUnits))
-        ]
-      );
+            serviceConfig.ExecStartPre = lib.mkAfter [ "${preflightCheckScript unit}" ];
+          });
+        in
+        {
+          sinex-preflight = {
+            description = "Sinex Pre-Flight Verification";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network-online.target" "postgresql.service" ];
+            requires = [ "postgresql.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              TimeoutStartSec = preflightCfg.timeout;
+              User = cfg.database.user;
+              Group = cfg.database.user;
+              ProtectSystem = "strict";
+              ProtectHome = true;
+              PrivateTmp = true;
+              NoNewPrivileges = true;
+              RestrictSUIDSGID = true;
+              RemoveIPC = true;
+              ProtectKernelTunables = true;
+              ProtectControlGroups = true;
+              RestrictRealtime = true;
+              LockPersonality = true;
+              SystemCallFilter = [ "@system-service" "~@privileged" ];
+              ReadOnlyPaths = [
+                "/etc/sinex"
+                cfg.directories.state
+                cfg.directories.logs
+                cfg.directories.spool.base
+              ];
+              Environment = [
+                "DATABASE_URL=${databaseUrl}"
+                "RUST_LOG=sinex_preflight=info"
+              ];
+              ExecStart = "${runPreflightScript}";
+            };
+          };
+        }
+        // lib.optionalAttrs cfg.update.enable {
+          sinex-update = {
+            description = "Sinex Coordinated Update";
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ExecStart = "${updateScript}";
+            };
+          };
+        }
+        // guardUnits;
 
       assertions = [
         {

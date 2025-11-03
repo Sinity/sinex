@@ -10,7 +10,8 @@
 
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
+  sinexCliPackage = sinexCli;
+  stateDir = "/var/lib/sinex";
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -275,7 +276,6 @@ pkgs.nixosTest {
       services.sinex = {
         enable = true;
         package = sinexPackage;
-        cliPackage = sinexCliPackage;
         targetUser = "test";
 
         serviceManagement.serviceGroups = {
@@ -353,25 +353,33 @@ pkgs.nixosTest {
       programs.zsh.enable = true;
       
       # Enhanced tmpfiles for testing
-      systemd.tmpfiles.rules = [
-        "d /home/test/watched 0755 test users -"
-        "f /var/lib/sinex/.zsh_history 0644 sinex sinex -"
-        "f /var/lib/sinex/.bash_history 0644 sinex sinex -"
-        "d /var/lib/sinex/.local 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
-      ];
+      systemd.tmpfiles.rules =
+        let
+          stateDir = config.services.sinex.directories.state;
+        in [
+          "d /home/test/watched 0755 test users -"
+          "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+          "f ${stateDir}/.bash_history 0644 sinex sinex -"
+          "d ${stateDir}/.local 0755 sinex sinex -"
+          "d ${stateDir}/.local/share 0755 sinex sinex -"
+          "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+        ];
       
       # Package overlays
-      nixpkgs.overlays = [(final: prev: {
-        sinex-ingestd = sinex-ingestd;
-        sinex-gateway = sinex-gateway;
-        sinex = sinexPackage;
-        sinexCli = sinexCliPackage;
-        postgresql16Packages = prev.postgresql16Packages // {
-          pg_jsonschema = pg_jsonschema;
-        };
-      })];
+      nixpkgs.overlays = [
+        (final: prev:
+          ({
+            sinex-ingestd = sinex-ingestd;
+            sinex-gateway = sinex-gateway;
+            sinex = sinexPackage;
+            postgresql16Packages = prev.postgresql16Packages // {
+              pg_jsonschema = pg_jsonschema;
+            };
+          }
+          // lib.optionalAttrs (sinexCliPackage != null) {
+            sinexCli = sinexCliPackage;
+          }))
+      ];
 
       # Enhanced service configuration for failure testing
       systemd.services.sinex-ingestd = {
@@ -381,6 +389,9 @@ pkgs.nixosTest {
           StartLimitInterval = "300";
           StartLimitBurst = "10";
         };
+      }
+      // lib.optionalAttrs (sinexCliPackage != null) {
+        cliPackage = sinexCliPackage;
       };
 
       systemd.services.sinex-gateway = {
@@ -396,6 +407,8 @@ pkgs.nixosTest {
   testScript = ''
     import time
     import re
+
+    state_dir = "${stateDir}"
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -447,10 +460,10 @@ pkgs.nixosTest {
 
     # Initialize baseline system state
     with subtest("Initialize baseline system state"):
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'")
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin import auto'")
+        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
+        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
         machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
-        machine.succeed("echo 'baseline_cmd' >> /var/lib/sinex/.zsh_history")
+        machine.succeed(f"echo 'baseline_cmd' >> {state_dir}/.zsh_history")
         wait_for_event_pattern("baseline")
         baseline_count = extract_total_events() or 0
         print(f"Baseline event count: {baseline_count}")

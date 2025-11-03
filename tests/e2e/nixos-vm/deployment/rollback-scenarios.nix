@@ -44,6 +44,7 @@
       environment.systemPackages = [
         (pkgs.writeScriptBin "inject-failure" ''
           #!${pkgs.bash}/bin/bash
+          STATE_DIR="${config.services.sinex.directories.state}"
           case "$1" in
             "config")
               echo "Injecting config failure..."
@@ -55,7 +56,7 @@
               ;;
             "permission")
               echo "Injecting permission failure..."
-              chmod 000 /var/lib/sinex/
+              chmod 000 "$STATE_DIR"/
               ;;
             *)
               echo "Usage: $0 {config|database|permission}"
@@ -91,6 +92,7 @@
     import json
     import time
     import subprocess
+    state_dir = "/var/lib/sinex"
     
     start_all()
     
@@ -166,7 +168,7 @@
     # Test permission failure rollback
     with subtest("Permission failure rollback"):
         # Create state directory backup
-        sinex.succeed("cp -r /var/lib/sinex /tmp/sinex-backup")
+        sinex.succeed(f"cp -r {state_dir} /tmp/sinex-backup")
         
         # Inject permission failure
         sinex.execute("inject-failure permission")
@@ -176,7 +178,7 @@
         time.sleep(5)
         
         # Fix permissions
-        sinex.succeed("chmod 755 /var/lib/sinex/")
+        sinex.succeed(f"chmod 755 {state_dir}/")
         
         # Service should recover
         sinex.succeed("systemctl start sinex-ingestd.service")
@@ -262,7 +264,7 @@
         
         # Check Dead Letter Queue captured events
         dlq_exists = sinex.succeed(
-            "test -d /var/lib/sinex/dlq && echo 'exists' || echo 'missing'"
+            f"test -d {state_dir}/dlq && echo 'exists' || echo 'missing'"
         ).strip()
         
         # Restart service

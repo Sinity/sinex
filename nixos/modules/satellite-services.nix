@@ -10,6 +10,13 @@ let
     lib.optionals (cfg.satellite.coordination.enable or false) [
       "sinex-coordination-setup.service"
     ];
+  stateDir = cfg.directories.state;
+  logsDir = cfg.directories.logs;
+  runtimeDir = cfg.directories.runtime;
+  spoolBaseDir = cfg.directories.spool.base;
+  spoolIngestdDir = cfg.directories.spool.ingestd;
+  spoolSatellitesDir = cfg.directories.spool.satellites;
+  dlqDir = cfg.directories.dlq;
 
   # Helper function to generate satellite systemd service with coordination support
   mkSatelliteService = name: serviceConfig: instanceId: {
@@ -48,16 +55,8 @@ let
       LockPersonality = true;
       SystemCallFilter = [ "@system-service" "~@privileged" ];
 
-      # Runtime directories
-      RuntimeDirectory = "sinex";
-      RuntimeDirectoryMode = "0755";
-      
-      # Working directory and state
-      WorkingDirectory = serviceConfig.workingDirectory or "/var/lib/sinex";
-      StateDirectory = "sinex";
-      StateDirectoryMode = "0755";
-      LogsDirectory = "sinex";
-      LogsDirectoryMode = "0755";
+      # Working directory respects configured state path
+      WorkingDirectory = serviceConfig.workingDirectory or stateDir;
 
       # Resource limits
       MemoryMax = serviceConfig.memoryLimit or "512M";
@@ -72,8 +71,15 @@ let
         (cfg.satellite.environment or [])
         ++ (serviceConfig.environment or [])
         ++ [
+        "SINEX_STATE_DIR=${stateDir}"
+        "SINEX_LOG_DIR=${logsDir}"
+        "SINEX_RUNTIME_DIR=${runtimeDir}"
+        "SINEX_SPOOL_BASE=${spoolBaseDir}"
+        "SINEX_SPOOL_INGESTD=${spoolIngestdDir}"
+        "SINEX_SPOOL_SATELLITES=${spoolSatellitesDir}"
+        "SINEX_DLQ_DIR=${dlqDir}"
         "COORDINATION_HEARTBEAT_INTERVAL=${toString cfg.satellite.coordination.heartbeatInterval}"
-        "COORDINATION_LEADERSHIP_TIMEOUT=${toString cfg.satellite.coordination.leadershipTimeout}" 
+        "COORDINATION_LEADERSHIP_TIMEOUT=${toString cfg.satellite.coordination.leadershipTimeout}"
         "COORDINATION_HANDOFF_TIMEOUT=${toString cfg.satellite.coordination.handoffTimeout}"
         "COORDINATION_INSTANCE_ID=${instanceId}"
       ];
@@ -756,13 +762,6 @@ in {
           '';
         };
       };
-
-    # Directory setup
-    systemd.tmpfiles.rules = [
-      "d /var/lib/sinex 0755 ${cfg.satelliteUser} ${cfg.satelliteUser} -"
-      "d /var/log/sinex 0755 ${cfg.satelliteUser} ${cfg.satelliteUser} -"
-      "d /run/sinex 0755 ${cfg.satelliteUser} ${cfg.satelliteUser} -"
-    ];
 
     services.sinex.satellite.generatedUnits = lib.attrNames satelliteConfigs;
 

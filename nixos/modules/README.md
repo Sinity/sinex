@@ -17,9 +17,17 @@ This directory contains the NixOS module for deploying and managing the Sinex sy
 ### Declarative Configuration
 The `services.sinex` module provides complete system configuration:
 - Automatic database setup with migrations
+- Database provisioning (`services.sinex.database.autoSetup`) can be enabled
+  independently of the main service toggle to pre-create clusters, roles, and
+  extensions
+- Derived directories cascade from `services.sinex.directories.state`, covering
+  logs, spool paths, DLQ storage, and blob repositories without repeating
+  boilerplate downstream
 - Systemd service generation for all satellites
 - User and permission management
 - Resource limits and security policies
+- Optional CLI package automatically placed on `PATH` when available; the module
+  gracefully skips CLI-dependent timers if omitted
 
 ### Service Architecture
 - **Satellite Services**: Each event source runs as independent systemd service

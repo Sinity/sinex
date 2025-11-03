@@ -71,9 +71,4 @@
   };
 
   networking.firewall.interfaces.lo.allowedTCPPorts = [ 9090 3000 ];
-
-  systemd.tmpfiles.rules = [
-    "d /var/lib/sinex 0755 sinex sinex -"
-    "d /var/log/sinex 0755 sinex sinex -"
-  ];
 }

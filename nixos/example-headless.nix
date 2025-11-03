@@ -63,9 +63,4 @@
     createHome = true;
     extraGroups = [ "wheel" ];
   };
-
-  systemd.tmpfiles.rules = [
-    "d /var/lib/sinex 0755 sinex sinex -"
-    "d /var/log/sinex 0755 sinex sinex -"
-  ];
 }

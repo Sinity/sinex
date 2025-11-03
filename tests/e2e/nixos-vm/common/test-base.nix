@@ -11,20 +11,10 @@
 }:
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
-in
-{
-  imports = [
-    ./test-helpers.nix
-    ./health-checks.nix
-    ../../../../nixos  # Import Sinex NixOS module
-  ];
-
-  # Basic Sinex configuration
-  services.sinex = {
+  sinexCliPackage = sinexCli;
+  sinexConfigBase = {
     enable = true;
     package = sinexPackage;
-    cliPackage = sinexCliPackage;
     targetUser = "test";
 
     serviceManagement.serviceGroups = {
@@ -33,7 +23,7 @@ in
       monitoring = lib.mkDefault false;
     };
 
-    preflightVerification.enable = lib.mkDefault false;
+    preflightVerification.enable = lib.mkForce false;
 
     satellite = {
       enable = lib.mkDefault true;
@@ -59,8 +49,20 @@ in
         healthAggregator.enable = lib.mkDefault false;
       };
     };
-
   };
+in
+{
+  imports = [
+    ./test-helpers.nix
+    ./health-checks.nix
+    ../../../../nixos  # Import Sinex NixOS module
+  ];
+
+  # Basic Sinex configuration
+  services.sinex = sinexConfigBase
+    // lib.optionalAttrs (sinexCliPackage != null) {
+      cliPackage = sinexCliPackage;
+    };
 
   # Test user
   users.users.test = {
@@ -134,22 +136,30 @@ in
   ];
 
   # Minimal tmpfiles rules
-  systemd.tmpfiles.rules = [
-    "d /home/test/watched 0755 test users -"
-    "f /var/lib/sinex/.zsh_history 0644 sinex sinex -"
-    "f /var/lib/sinex/.bash_history 0644 sinex sinex -"
-  ];
+  systemd.tmpfiles.rules =
+    let
+      stateDir = config.services.sinex.directories.state;
+    in [
+      "d /home/test/watched 0755 test users -"
+      "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+      "f ${stateDir}/.bash_history 0644 sinex sinex -"
+    ];
 
   # Package overlays
-  nixpkgs.overlays = [(final: prev: {
-    sinex-ingestd = sinex-ingestd;
-    sinex-gateway = sinex-gateway;
-    sinex = sinexPackage;
-    sinexCli = sinexCliPackage;
-    postgresql16Packages = prev.postgresql16Packages // {
-      pg_jsonschema = pg_jsonschema;
-    };
-  })];
+  nixpkgs.overlays = [
+    (final: prev:
+      ({
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
+        sinex = sinexPackage;
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = pg_jsonschema;
+        };
+      }
+      // lib.optionalAttrs (sinexCliPackage != null) {
+        sinexCli = sinexCliPackage;
+      }))
+  ];
 
   # Default VM configuration (standard profile)
   virtualisation = {

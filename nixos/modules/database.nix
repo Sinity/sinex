@@ -72,7 +72,12 @@ in
     autoSetup = mkOption {
       type = types.bool;
       default = true;
-      description = "Automatically setup database user and permissions";
+      description = ''
+        Automatically prepare the PostgreSQL cluster, database, and roles
+        managed by services.postgresql. This runs even when
+        services.sinex.enable = false so downstream modules can provision the
+        database in advance.
+      '';
     };
 
     package = mkOption {

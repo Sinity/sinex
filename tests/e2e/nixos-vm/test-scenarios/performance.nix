@@ -10,6 +10,7 @@
 
 let
   inherit (pkgs) lib;
+  stateDir = "/var/lib/sinex";
   
   # Enhanced performance monitoring and query tool
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -397,6 +398,8 @@ let
         ;;
     esac
     
+    STATE_DIR="${stateDir}"
+
     echo "Load test: $TEST_TYPE, $INTENSITY intensity, $DURATION seconds"
     echo "Target rates - Filesystem: $FS_EPS eps, Shell: $SHELL_EPS eps, Clipboard: $CLIPBOARD_EPS eps"
     
@@ -419,7 +422,7 @@ let
       (
         interval=$(echo "scale=6; 1/$SHELL_EPS" | bc)
         for ((i=1; i<=DURATION*SHELL_EPS; i++)); do
-          echo "load_shell_cmd_$i /tmp/load_$i" >> /var/lib/sinex/.zsh_history
+          echo "load_shell_cmd_$i /tmp/load_$i" >> "$STATE_DIR"/.zsh_history
           sleep $interval
         done
       ) &
@@ -441,7 +444,7 @@ let
     # Atuin database load
     if [[ "$TEST_TYPE" == "multi-source" ]]; then
       (
-        db_path="/var/lib/sinex/.local/share/atuin/history.db"
+        db_path="$STATE_DIR/.local/share/atuin/history.db"
         interval=$(echo "scale=6; 1/10" | bc)  # 10 atuin entries per second
         for ((i=1; i<=DURATION*10; i++)); do
           sqlite3 "$db_path" "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname) VALUES ('load$i', $(date +%s), 100, 0, 'load-command-$i', '/tmp', 'load-session', 'loadhost');" 2>/dev/null || true
@@ -578,10 +581,10 @@ pkgs.nixosTest {
           watchPaths = lib.mkAfter [ "/tmp/perf-test" ];
         };
         shellHistory.enable = true;
-        atuin = {
-          enable = true;
-          databasePath = "/var/lib/sinex/.local/share/atuin/history.db";
-        };
+      atuin = {
+        enable = true;
+        databasePath = "${stateDir}/.local/share/atuin/history.db";
+      };
         dbus.enable = true;
       };
 
@@ -603,12 +606,14 @@ pkgs.nixosTest {
     services.dbus.enable = true;
     
     # Additional tmpfiles for performance testing
-    systemd.tmpfiles.rules = lib.mkAfter [
-      "d /tmp/perf-test 0755 test users -"
-      "d /var/lib/sinex/.local 0755 sinex sinex -"
-      "d /var/lib/sinex/.local/share 0755 sinex sinex -"
-      "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
-    ];
+    systemd.tmpfiles.rules = lib.mkAfter (
+      [
+        "d /tmp/perf-test 0755 test users -"
+        "d ${stateDir}/.local 0755 sinex sinex -"
+        "d ${stateDir}/.local/share 0755 sinex sinex -"
+        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+      ]
+    );
 
     # PostgreSQL performance tuning
     services.postgresql.settings = {
@@ -642,6 +647,8 @@ pkgs.nixosTest {
     import re
     from test_helpers import TestHelpers
 
+    state_dir = "${stateDir}"
+
     start_all()
     helpers = TestHelpers(machine)
 
@@ -670,10 +677,10 @@ pkgs.nixosTest {
         print(f"Active satellites: {satellites}")
 
     with subtest("Initialize performance testing environment"):
-        machine.wait_until_succeeds("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'", timeout=45)
-        machine.wait_until_succeeds("su - sinex -c 'cd /var/lib/sinex && atuin import auto'", timeout=45)
+        machine.wait_until_succeeds(f"su - sinex -c 'cd {state_dir} && atuin init zsh'", timeout=45)
+        machine.wait_until_succeeds(f"su - sinex -c 'cd {state_dir} && atuin import auto'", timeout=45)
         machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
-        machine.succeed("echo 'baseline_cmd' >> /var/lib/sinex/.zsh_history")
+        machine.succeed(f"echo 'baseline_cmd' >> {state_dir}/.zsh_history")
         ensure_event("baseline")
         baseline_count = helpers.get_event_count()
         print(f"Baseline event count: {baseline_count}")

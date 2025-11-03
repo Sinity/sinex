@@ -6,6 +6,7 @@ with lib;
 let
   cfg = config.services.sinex;
   kittySource = cfg.shell.kitty;
+  kittySnippetFile = pkgs.writeText "sinex-kitty-snippet.conf" kittySource.configSnippet;
   
   # Script to auto-configure kitty shell integration
   configureKittyScript = pkgs.writeShellScript "configure-kitty-integration" ''
@@ -21,50 +22,25 @@ let
     # Create config directory if it doesn't exist
     mkdir -p "$(dirname "$USER_CONFIG_PATH")"
     
-    # Backup existing config if it exists
     if [[ -f "$USER_CONFIG_PATH" ]]; then
       cp "$USER_CONFIG_PATH" "$USER_CONFIG_PATH.sinex-backup-$(date +%s)"
       echo "Backed up existing kitty config to $USER_CONFIG_PATH.sinex-backup-*"
-    fi
-    
-    # Required configuration for Sinex integration
-    SINEX_CONFIG="
-# === Sinex Integration Auto-Generated Configuration ===
-# This section enables shell integration for command+output capture
-# DO NOT MODIFY - Managed by Sinex NixOS module
-
-# Enable shell integration for command boundaries
-shell_integration enabled
-
-# Allow remote control via socket for event capture
-allow_remote_control socket-only
-
-# Create socket for Sinex to connect to
-listen_on unix:/tmp/kitty-$USER
-
-# Enable cursor shape changes during editing
-shell_integration no-cursor
-
-# Keep window titles managed by shell
-shell_integration no-title
-
-# === End Sinex Auto-Generated Configuration ===
-"
-    
-    # Check if Sinex config already exists
-    if grep -q "=== Sinex Integration Auto-Generated Configuration ===" "$USER_CONFIG_PATH" 2>/dev/null; then
-      echo "Sinex configuration already present in $USER_CONFIG_PATH"
-      
-      # Update the configuration section
-      # Remove old section and add new one
-      sed -i '/=== Sinex Integration Auto-Generated Configuration ===/,/=== End Sinex Auto-Generated Configuration ===/d' "$USER_CONFIG_PATH"
-      echo "$SINEX_CONFIG" >> "$USER_CONFIG_PATH"
-      echo "Updated Sinex configuration in $USER_CONFIG_PATH"
     else
-      # Add configuration to the file
-      echo "$SINEX_CONFIG" >> "$USER_CONFIG_PATH"
-      echo "Added Sinex shell integration configuration to $USER_CONFIG_PATH"
+      touch "$USER_CONFIG_PATH"
     fi
+
+    # Strip any existing Sinex-managed block before appending the current snippet
+    sed -i '/# --- BEGIN Sinex managed block ---/,/# --- END Sinex managed block ---/d' "$USER_CONFIG_PATH" || true
+
+    cat <<'EOF' >> "$USER_CONFIG_PATH"
+# --- BEGIN Sinex managed block ---
+EOF
+    cat "${kittySnippetFile}" >> "$USER_CONFIG_PATH"
+    cat <<'EOF' >> "$USER_CONFIG_PATH"
+# --- END Sinex managed block ---
+EOF
+
+    echo "Applied Sinex Kitty configuration to $USER_CONFIG_PATH"
     
     # Validate the configuration
     if command -v kitty >/dev/null 2>&1; then
@@ -94,9 +70,9 @@ shell_integration no-title
     fi
     
     if [[ -f "$USER_CONFIG_PATH" ]]; then
-      if grep -q "=== Sinex Integration Auto-Generated Configuration ===" "$USER_CONFIG_PATH"; then
+      if grep -q "# --- BEGIN Sinex managed block ---" "$USER_CONFIG_PATH"; then
         # Remove Sinex configuration section
-        sed -i '/=== Sinex Integration Auto-Generated Configuration ===/,/=== End Sinex Auto-Generated Configuration ===/d' "$USER_CONFIG_PATH"
+        sed -i '/# --- BEGIN Sinex managed block ---/,/# --- END Sinex managed block ---/d' "$USER_CONFIG_PATH"
         echo "Removed Sinex configuration from $USER_CONFIG_PATH"
       else
         echo "No Sinex configuration found in $USER_CONFIG_PATH"
@@ -152,20 +128,14 @@ in
     system.extraDependencies = mkIf (!kittySource.autoConfigure) [
       (pkgs.writeText "sinex-kitty-manual-setup.md" ''
         # Manual Kitty Shell Integration Setup for Sinex
-        
-        To enable command+output capture in Sinex, add the following to your kitty.conf:
-        
+
+        Add the following block to your kitty.conf and restart Kitty to pick up
+        the changes:
+
         ```
-        # Enable shell integration
-        shell_integration enabled
-        
-        # Allow remote control for Sinex
-        allow_remote_control socket-only
-        listen_on unix:/tmp/kitty-$USER
+        ${kittySource.configSnippet}
         ```
-        
-        Then restart Kitty for changes to take effect.
-        
+
         For more information, see: https://sw.kovidgoyal.net/kitty/shell-integration/
       '')
     ];

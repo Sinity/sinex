@@ -63,21 +63,25 @@ pkgs.nixosTest {
     programs.zsh.enable = true;
     
     # Additional tmpfiles for test data
-    systemd.tmpfiles.rules = lib.mkAfter [
-      # Atuin directories
-      "d /var/lib/sinex/.local 0755 sinex sinex -"
-      "d /var/lib/sinex/.local/share 0755 sinex sinex -"
-      "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
-      
-      # Asciinema directories
-      "d /home/test/.local 0755 test users -"
-      "d /home/test/.local/share 0755 test users -"
-      "d /home/test/.local/share/asciinema 0755 test users -"
-      
-      # Runtime directories for optional Wayland tests
-      "d /run/user 0755 root root -"
-      "d /run/user/1000 0700 test users -"
-    ];
+    systemd.tmpfiles.rules = lib.mkAfter (
+      let
+        stateDir = config.services.sinex.directories.state;
+      in [
+        # Atuin directories
+        "d ${stateDir}/.local 0755 sinex sinex -"
+        "d ${stateDir}/.local/share 0755 sinex sinex -"
+        "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+
+        # Asciinema directories
+        "d /home/test/.local 0755 test users -"
+        "d /home/test/.local/share 0755 test users -"
+        "d /home/test/.local/share/asciinema 0755 test users -"
+
+        # Runtime directories for optional Wayland tests
+        "d /run/user 0755 root root -"
+        "d /run/user/1000 0700 test users -"
+      ]
+    );
     
     # Configure Atuin
     environment.etc."atuin/config.toml".text = ''
@@ -134,6 +138,8 @@ EOF
 
   testScript = ''
     start_all()
+
+    state_dir = "/var/lib/sinex"
     
     # Simple helper functions embedded in test
     def wait_for_sinex_ready():
@@ -206,10 +212,10 @@ EOF
         
         # Add commands to shell history with retry for file creation
         machine.wait_until_succeeds(
-            "echo 'cd /tmp' >> /var/lib/sinex/.zsh_history",
+            f"echo 'cd /tmp' >> {state_dir}/.zsh_history",
             timeout=10
         )
-        machine.succeed("echo 'ls -la' >> /var/lib/sinex/.bash_history")
+        machine.succeed(f"echo 'ls -la' >> {state_dir}/.bash_history")
         
         # Wait for processing
         machine.sleep(3)
@@ -224,11 +230,11 @@ EOF
         
         # Initialize Atuin with proper error handling
         try:
-            machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'")
-            machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin import auto'")
+            machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
+            machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
             
             # Add test command to Atuin
-            db_path = "/var/lib/sinex/.local/share/atuin/history.db"
+            db_path = f"{state_dir}/.local/share/atuin/history.db"
             machine.wait_until_succeeds(
                 f"sqlite3 {db_path} \"INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname) VALUES ('test123', 1700000000, 100, 0, 'echo test-command', '/tmp', 'session1', 'testhost');\"",
                 timeout=10

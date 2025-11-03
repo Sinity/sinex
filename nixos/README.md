@@ -77,7 +77,7 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` and `pkgs.sinexCli` are available:
+> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` is available (the module installs it by default). The CLI package is picked up automatically when present, but is optional.
 > ```nix
 > {
 >   inputs.sinex.url = "github:.../sinex";

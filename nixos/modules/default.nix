@@ -19,7 +19,22 @@ let
     if pkgs ? sinexCli then
       pkgs.sinexCli
     else
-      pkgs.python3;
+      null;
+
+  defaultKittySnippet = ''
+# Enable shell integration boundaries for session capture
+shell_integration enabled
+
+# Allow remote control for event collection (unix socket only)
+allow_remote_control socket-only
+
+# Socket path used by Sinex listeners
+listen_on unix:/tmp/kitty-$USER
+
+# Preserve editor cursor and titles while still emitting events
+shell_integration no-cursor
+shell_integration no-title
+'';
 
 in
 {
@@ -49,10 +64,13 @@ in
     };
 
     cliPackage = mkOption {
-      type = types.package;
+      type = types.nullOr types.package;
       default = defaultCliPackage;
-      defaultText = literalExpression "pkgs.sinexCli";
-      description = "Sinex CLI package to use";
+      defaultText = literalExpression "pkgs.sinexCli or null";
+      description = ''
+        Optional Sinex CLI package to install on PATH. When left as null the
+        module skips installing a CLI and disables timers that require it.
+      '';
     };
 
     # Simplified target user configuration
@@ -115,12 +133,20 @@ in
                   default = "~/.config/kitty/kitty.conf";
                   description = "Path to the user's Kitty configuration.";
                 };
+
+                configSnippet = mkOption {
+                  type = types.lines;
+                  default = defaultKittySnippet;
+                  defaultText = literalExpression "defaultKittySnippet";
+                  description = "Configuration block that Sinex injects when autoConfigure is enabled.";
+                };
               };
             };
             default = {
               enable = true;
               autoConfigure = true;
               userConfigPath = "~/.config/kitty/kitty.conf";
+              configSnippet = defaultKittySnippet;
             };
             description = "Kitty-specific integration settings.";
           };
@@ -143,6 +169,50 @@ in
         default = "/var/log/sinex";
         description = "Directory for log files";
       };
+
+      runtime = mkOption {
+        type = types.path;
+        default = "/run/sinex";
+        description = "Runtime directory for sockets and pid files";
+      };
+
+      dlq = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex/failures";
+        description = "Directory for DLQ payloads and failure artifacts";
+      };
+
+      blobRepository = mkOption {
+        type = types.path;
+        default = "/var/lib/sinex/blob-repository";
+        description = "Default blob repository root used by git-annex";
+      };
+
+      spool = mkOption {
+        type = types.submodule {
+          options = {
+            base = mkOption {
+              type = types.path;
+              default = "/var/lib/sinex/spool";
+              description = "Base directory for Sinex spool data";
+            };
+
+            ingestd = mkOption {
+              type = types.path;
+              default = "/var/lib/sinex/spool/ingestd";
+              description = "Ingestion daemon spool directory";
+            };
+
+            satellites = mkOption {
+              type = types.path;
+              default = "/var/lib/sinex/spool/satellites";
+              description = "Satellite service spool directory";
+            };
+          };
+        };
+        default = {};
+        description = "Spool directories used by ingestion and satellite services";
+      };
     };
 
     # Log level configuration (applies to all services)
@@ -161,11 +231,11 @@ in
       };
 
       failureStoragePath = mkOption {
-        type = types.str;
+        type = types.path;
         default = "/var/lib/sinex/failures";
         description = ''
-          Directory for DLQ files and critical failure logs when database is down.
-          Contains both failed event files and critical meta-failure logs.
+          Directory for DLQ files and critical failure logs when the database is down.
+          Defaults to services.sinex.directories.state + "/failures" unless overridden.
         '';
       };
 
@@ -456,124 +526,135 @@ in
     };
 
   };
-
-  config = mkIf cfg.enable {
-    services.sinex.satellite.enable =
-      mkDefault (cfg.serviceManagement.serviceGroups.core or true);
-    services.sinex.monitoring.enable =
-      mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
-
-    # Environment packages
-    environment.systemPackages = with pkgs; [
-      asciinema
-      cfg.cliPackage
-      dbus
-    ];
-
-
-    # Satellite architecture is now the default
-    # Legacy collector/worker services have been removed
-    # Use satellite services via satellite-services.nix module
-
-
-    # User and group creation
-    users.users = {
-      ${cfg.database.user} = {
-        isSystemUser = true;
-        group = cfg.database.user;
-        description = "Sinex database user";
-        home = "/var/lib/${cfg.database.user}";
-        createHome = true;
-      };
-    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
-      ${cfg.satelliteUser} = {
-        isSystemUser = true;
-        group = cfg.satelliteUser;
-        description = "Sinex satellite services user";
-        home = "/var/lib/sinex";
-        createHome = true;
-      };
-    };
-
-    users.groups = {
-      ${cfg.database.user} = {};
-    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
-      ${cfg.satelliteUser} = {};
-    };
-
-    # Directory setup and configuration
-    systemd.tmpfiles.rules = [
-      # Basic directories for monitoring.nix compatibility  
-      "d ${cfg.directories.state} 0755 ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.logs} 0755 ${cfg.database.user} ${cfg.database.user} -"
-      # Configuration directory
-      "d /etc/sinex 0755 root root -"
-    ] ++ lib.optionals cfg.dlq.enable [
-      # DLQ failure storage directory
-      "d ${cfg.dlq.failureStoragePath} 0755 ${cfg.database.user} ${cfg.database.user} -"
-    ];
-
-    # Database setup (if enabled)
-    services.postgresql = mkIf cfg.database.autoSetup {
-      enable = true;
-      ensureDatabases = [ cfg.database.name ];
-      ensureUsers = [
-        {
-          name = cfg.database.user;
-          ensureDBOwnership = true;
-        }
+  config =
+    let
+      satelliteEnabled = cfg.satellite.enable or false;
+      stateDir = cfg.directories.state;
+      logsDir = cfg.directories.logs;
+      runtimeDir = cfg.directories.runtime;
+      dlqDir = cfg.directories.dlq;
+      blobDir = cfg.directories.blobRepository;
+      spoolBase = cfg.directories.spool.base;
+      spoolIngestd = cfg.directories.spool.ingestd;
+      spoolSatellites = cfg.directories.spool.satellites;
+      dataOwner = if satelliteEnabled then cfg.satelliteUser else cfg.database.user;
+      commonDirRules = [
+        { path = stateDir; mode = "0755"; }
+        { path = logsDir; mode = "0755"; }
+        { path = runtimeDir; mode = "0755"; }
+        { path = spoolBase; mode = "0750"; }
+        { path = spoolIngestd; mode = "0750"; }
+        { path = spoolSatellites; mode = "0750"; }
       ];
-    };
+    in
+    mkMerge [
+      {
+        services.sinex.directories.runtime = mkDefault (cfg.directories.state + "/run");
+        services.sinex.directories.logs = mkDefault (cfg.directories.state + "/logs");
+        services.sinex.directories.dlq = mkDefault (cfg.directories.state + "/failures");
+        services.sinex.directories.blobRepository = mkDefault (cfg.directories.state + "/blob-repository");
+        services.sinex.directories.spool.base = mkDefault (cfg.directories.state + "/spool");
+        services.sinex.directories.spool.ingestd = mkDefault (cfg.directories.spool.base + "/ingestd");
+        services.sinex.directories.spool.satellites = mkDefault (cfg.directories.spool.base + "/satellites");
+        services.sinex.dlq.failureStoragePath = mkDefault cfg.directories.dlq;
+        services.sinex.blobStorage.repositoryPath = mkDefault cfg.directories.blobRepository;
+      }
+      (mkIf (cfg.cliPackage != null) {
+        environment.systemPackages = lib.mkAfter [ cfg.cliPackage ];
+      })
+      (mkIf (cfg.enable || cfg.database.autoSetup) {
+        users.groups.${cfg.database.user} = {};
+        users.users.${cfg.database.user} = {
+          isSystemUser = true;
+          group = cfg.database.user;
+          description = "Sinex service account";
+          home = stateDir;
+          createHome = true;
+        };
+      })
+      (mkIf (cfg.enable && cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
+        users.groups.${cfg.satelliteUser} = {};
+        users.users.${cfg.satelliteUser} = {
+          isSystemUser = true;
+          group = cfg.satelliteUser;
+          description = "Sinex satellite services account";
+          home = stateDir;
+          createHome = true;
+        };
+      })
+      (mkIf cfg.enable {
+        services.sinex.satellite.enable =
+          mkDefault (cfg.serviceManagement.serviceGroups.core or true);
+        services.sinex.monitoring.enable =
+          mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
+        services.sinex.monitoring.dashboards.enable = mkDefault cfg.monitoring.observabilityStack.enable;
+        services.sinex.monitoring.dashboards.grafana.enable = mkDefault cfg.monitoring.observabilityStack.enable;
+        services.sinex.monitoring.observabilityStack.enable = mkDefault true;
+        services.sinex.preflightVerification.enable = mkDefault true;
+        services.sinex.update.enable = mkDefault true;
 
-    # Terminal auto-recording for all users
-    programs.bash.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
-      # Automatic asciinema recording for Sinex
-      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
-        export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
-        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
-          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
-        fi
-        mkdir -p "$ASCIINEMA_DIR"
-        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
-          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
-      fi
-    '';
+        environment.systemPackages = lib.mkAfter (
+          lib.optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
+          ++ [ pkgs.dbus ]
+        );
 
-    programs.zsh.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
-      # Automatic asciinema recording for Sinex
-      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
-        export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
-        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
-          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
-        fi
-        mkdir -p "$ASCIINEMA_DIR"
-        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
-          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
-      fi
-    '';
+        systemd.tmpfiles.rules = lib.mkAfter (
+          [ "d /etc/sinex 0755 root root -" ]
+          ++ (map (rule: "d ${rule.path} ${rule.mode} ${dataOwner} ${dataOwner} -") (
+            commonDirRules
+            ++ lib.optionals cfg.dlq.enable [ { path = dlqDir; mode = "0750"; } ]
+            ++ lib.optionals (cfg.blobStorage.enable or false) [ { path = blobDir; mode = "0750"; } ]
+          ))
+        );
 
-    # Assertions for configuration validation
-    assertions = [
-      {
-        assertion = cfg.enable -> cfg.targetUser != "";
-        message = "services.sinex.targetUser must be set when Sinex is enabled";
-      }
-      {
-        assertion =
-          let userDefs = config.users.users or {};
-          in cfg.enable -> lib.hasAttr cfg.targetUser userDefs;
-        message = "services.sinex.targetUser must reference an existing users.users entry";
-      }
-      {
-        assertion = cfg.monitoring.observabilityStack.enable -> cfg.database.autoSetup || config.services.postgresql.enable;
-        message = "PostgreSQL must be enabled for Sinex observability stack";
-      }
-      {
-        assertion = cfg.monitoring.dashboards.grafana.enable -> cfg.monitoring.observabilityStack.enable;
-        message = "Grafana dashboards require the observability stack to be enabled";
-      }
+        programs.bash.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
+          # Automatic asciinema recording for Sinex
+          if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+            export ASCIINEMA_REC=1
+            ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+            if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+              ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+            fi
+            mkdir -p "$ASCIINEMA_DIR"
+            exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
+              "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+          fi
+        '';
+
+        programs.zsh.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
+          # Automatic asciinema recording for Sinex
+          if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+            export ASCIINEMA_REC=1
+            ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+            if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+              ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+            fi
+            mkdir -p "$ASCIINEMA_DIR"
+            exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
+              "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+          fi
+        '';
+
+        assertions = [
+          {
+            assertion = cfg.enable -> cfg.targetUser != "";
+            message = "services.sinex.targetUser must be set when Sinex is enabled";
+          }
+          {
+            assertion =
+              let userDefs = config.users.users or {};
+              in cfg.enable -> lib.hasAttr cfg.targetUser userDefs;
+            message = "services.sinex.targetUser must reference an existing users.users entry";
+          }
+          {
+            assertion = cfg.monitoring.observabilityStack.enable -> cfg.database.autoSetup || config.services.postgresql.enable;
+            message = "PostgreSQL must be enabled for Sinex observability stack";
+          }
+          {
+            assertion = cfg.monitoring.dashboards.grafana.enable -> cfg.monitoring.observabilityStack.enable;
+            message = "Grafana dashboards require the observability stack to be enabled";
+          }
+        ];
+      })
     ];
-  };
 }

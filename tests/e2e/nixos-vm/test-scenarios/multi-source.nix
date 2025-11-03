@@ -10,7 +10,8 @@
 
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
+  sinexCliPackage = sinexCli;
+  stateDir = "/var/lib/sinex";
   # Enhanced query tool with metrics support
   sinex-query = pkgs.writeScriptBin "sinex" ''
     #!${pkgs.python3}/bin/python3
@@ -128,6 +129,8 @@ let
     DURATION=''${1:-30}  # Default 30 seconds
     INTENSITY=''${2:-medium}  # low, medium, high
     
+    STATE_DIR="${stateDir}"
+
     case $INTENSITY in
       low)
         FILE_OPS_PER_SEC=10
@@ -165,8 +168,8 @@ let
     # Shell history stress  
     (
       for ((i=1; i<=DURATION*SHELL_CMDS_PER_SEC; i++)); do
-        echo "stress_cmd_$i /tmp/stress_$i" >> /var/lib/sinex/.zsh_history
-        echo "stress_bash_$i" >> /var/lib/sinex/.bash_history
+        echo "stress_cmd_$i /tmp/stress_$i" >> "$STATE_DIR"/.zsh_history
+        echo "stress_bash_$i" >> "$STATE_DIR"/.bash_history
         sleep $(echo "scale=3; 1/$SHELL_CMDS_PER_SEC" | bc)
       done
     ) &
@@ -185,7 +188,7 @@ let
     
     # Atuin database stress
     (
-      db_path="/var/lib/sinex/.local/share/atuin/history.db"
+      db_path="$STATE_DIR/.local/share/atuin/history.db"
       for ((i=1; i<=DURATION*5; i++)); do  # 5 atuin entries per second
         sqlite3 "$db_path" "INSERT INTO history (id, timestamp, duration, exit, command, cwd, session, hostname) VALUES ('stress$i', $(date +%s), 100, 0, 'stress-command-$i', '/tmp', 'stress-session', 'testhost');" 2>/dev/null || true
         sleep 0.2
@@ -226,7 +229,6 @@ pkgs.nixosTest {
       services.sinex = {
         enable = true;
         package = sinexPackage;
-        cliPackage = sinexCliPackage;
         targetUser = "test";
 
         serviceManagement.serviceGroups = {
@@ -261,8 +263,11 @@ pkgs.nixosTest {
             system = {
               enable = true;
               instances = 1;
-            };
-          };
+        };
+      }
+      // lib.optionalAttrs (sinexCliPackage != null) {
+        cliPackage = sinexCliPackage;
+      };
 
           automata = {
             canonicalCommandSynthesizer.enable = true;
@@ -396,44 +401,51 @@ EOF
         # Test directories
         "d /home/test/watched 0755 test users -"
         "d /tmp/sinex-stress 0755 test users -"
-        
-        # Shell history files
-        "f /var/lib/sinex/.zsh_history 0644 sinex sinex -"
-        "f /var/lib/sinex/.bash_history 0644 sinex sinex -"
-        
-        # Atuin directories
-        "d /var/lib/sinex/.local 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share 0755 sinex sinex -"
-        "d /var/lib/sinex/.local/share/atuin 0755 sinex sinex -"
-        
-        # Asciinema directories
-        "d /home/test/.local 0755 test users -"
-        "d /home/test/.local/share 0755 test users -"
-        "d /home/test/.local/share/asciinema 0755 test users -"
-        
-        # Runtime directories
-        "d /run/user 0755 root root -"
-        "d /run/user/1000 0700 test users -"
-        
+
+          # Shell history files
+          "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+          "f ${stateDir}/.bash_history 0644 sinex sinex -"
+
+          # Atuin directories
+          "d ${stateDir}/.local 0755 sinex sinex -"
+          "d ${stateDir}/.local/share 0755 sinex sinex -"
+          "d ${stateDir}/.local/share/atuin 0755 sinex sinex -"
+
+          # Asciinema directories
+          "d /home/test/.local 0755 test users -"
+          "d /home/test/.local/share 0755 test users -"
+          "d /home/test/.local/share/asciinema 0755 test users -"
+
+          # Runtime directories
+          "d /run/user 0755 root root -"
+          "d /run/user/1000 0700 test users -"
+
         # Hyprland IPC socket directory
         "d /tmp/hypr 0755 test users -"
       ];
       
       # Package overlays
-      nixpkgs.overlays = [(final: prev: {
-        sinex-ingestd = sinex-ingestd;
-        sinex-gateway = sinex-gateway;
-        sinex = sinexPackage;
-        sinexCli = sinexCliPackage;
-        postgresql16Packages = prev.postgresql16Packages // {
-          pg_jsonschema = pg_jsonschema;
-        };
-      })];
+      nixpkgs.overlays = [
+        (final: prev:
+          ({
+            sinex-ingestd = sinex-ingestd;
+            sinex-gateway = sinex-gateway;
+            sinex = sinexPackage;
+            postgresql16Packages = prev.postgresql16Packages // {
+              pg_jsonschema = pg_jsonschema;
+            };
+          }
+          // lib.optionalAttrs (sinexCliPackage != null) {
+            sinexCli = sinexCliPackage;
+          }))
+      ];
     };
 
   testScript = ''
     import time
     import re
+
+    state_dir = "${stateDir}"
 
     def extract_total_events():
         stats = machine.succeed("sinex stats")
@@ -512,10 +524,10 @@ EOF
 
     # Initialize all data sources
     with subtest("Initialize all event sources"):
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin init zsh'")
-        machine.succeed("su - sinex -c 'cd /var/lib/sinex && atuin import auto'")
+        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
+        machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
         machine.succeed("su - test -c 'echo initial > /home/test/watched/initial.txt'")
-        machine.succeed("echo 'initial_cmd' >> /var/lib/sinex/.zsh_history")
+        machine.succeed(f"echo 'initial_cmd' >> {state_dir}/.zsh_history")
         wait_for_event_pattern("initial")
         baseline_count = extract_total_events() or 0
         print(f"Baseline event count: {baseline_count}")
