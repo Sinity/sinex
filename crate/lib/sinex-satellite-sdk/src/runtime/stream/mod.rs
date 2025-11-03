@@ -1,5 +1,17 @@
 #![doc = include_str!("../../../doc/stream_processor.md")]
 
+mod checkpoint;
+mod handles;
+mod stats;
+mod time_horizon;
+
+pub use checkpoint::Checkpoint;
+pub use handles::{
+    EventEmitter, EventSender, EventStream, ProcessorHandles, ProcessorInitContext, ServiceInfo,
+};
+pub use stats::ProcessingStats;
+pub use time_horizon::TimeHorizon;
+
 use crate::{
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
@@ -8,34 +20,18 @@ use crate::{
     SatelliteError, SatelliteResult,
 };
 use async_trait::async_trait;
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::{Event, EventId};
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::Ulid;
 use sinex_core::JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-
-/// Processing statistics for batch operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessingStats {
-    /// Number of events processed successfully
-    pub processed: usize,
-    /// Number of events skipped (filtered out)
-    pub skipped: usize,
-    /// Number of events that failed processing
-    pub failed: usize,
-    /// Processing duration
-    pub duration: std::time::Duration,
-    /// Any errors encountered
-    pub errors: Vec<String>,
-}
-
 #[derive(Clone)]
 struct RunnerConfirmedEventHandler {
     sender: mpsc::UnboundedSender<ProvisionalEvent>,
@@ -58,256 +54,6 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
         })
     }
 }
-
-impl Default for ProcessingStats {
-    fn default() -> Self {
-        Self {
-            processed: 0,
-            skipped: 0,
-            failed: 0,
-            duration: std::time::Duration::from_millis(0),
-            errors: Vec::new(),
-        }
-    }
-}
-
-/// Time horizon defines the scope and mode of scanning operations.
-///
-/// This enum controls how a stream processor scans events:
-/// - `Historical`: Bounded scan from checkpoint to a specific end time
-/// - `Continuous`: Unbounded scan for real-time streaming (sensor mode)
-/// - `Snapshot`: Instantaneous state capture for point-in-time analysis
-///
-/// # Examples
-/// ```
-/// use sinex_satellite_sdk::{TimeHorizon, Checkpoint};
-/// use chrono::{DateTime, Utc};
-///
-/// // Historical scan: process events from last checkpoint to noon today
-/// let historical = TimeHorizon::Historical {
-///     end_time: DateTime::parse_from_rfc3339("2024-01-01T12:00:00Z").unwrap().with_timezone(&Utc)
-/// };
-///
-/// // Continuous scan: process events indefinitely from checkpoint
-/// let continuous = TimeHorizon::Continuous;
-///
-/// // Snapshot scan: capture current state only
-/// let snapshot = TimeHorizon::Snapshot;
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TimeHorizon {
-    /// Historical scan: Process from checkpoint up to a defined point in the past
-    Historical {
-        /// End time for historical processing
-        end_time: DateTime<Utc>,
-    },
-    /// Continuous scan: Process from checkpoint and continue forever (sensor mode)
-    Continuous,
-    /// Snapshot scan: Instantaneous scan for sources like udev or systemd
-    Snapshot,
-}
-
-impl TimeHorizon {
-    /// Check if this is a continuous (streaming) operation.
-    ///
-    /// Returns `true` for `TimeHorizon::Continuous`, which indicates
-    /// unbounded processing that should continue indefinitely.
-    pub fn is_continuous(&self) -> bool {
-        matches!(self, TimeHorizon::Continuous)
-    }
-
-    /// Check if this is a bounded operation.
-    ///
-    /// Returns `true` for `Historical` and `Snapshot` modes, which have
-    /// defined endpoints and will eventually complete.
-    pub fn is_bounded(&self) -> bool {
-        matches!(self, TimeHorizon::Historical { .. } | TimeHorizon::Snapshot)
-    }
-
-    /// Get the end time if applicable.
-    ///
-    /// Returns `Some(end_time)` for `Historical` mode, `None` for other modes.
-    /// Used by processors to determine when to stop processing.
-    pub fn end_time(&self) -> Option<DateTime<Utc>> {
-        match self {
-            TimeHorizon::Historical { end_time } => Some(*end_time),
-            _ => None,
-        }
-    }
-}
-
-/// Unified checkpoint representation for tracking progress across both ingestors and automata.
-///
-/// Checkpoints enable resumable processing by storing the last processed position.
-/// Different checkpoint types support various data sources:
-/// - `External`: For ingestors tracking external system state (files, logs, etc.)
-/// - `Internal`: For automata tracking processed event IDs in the event stream
-/// - `Stream`: For message stream-based processing (NATS JetStream)
-/// - `Timestamp`: For time-based processing resumption
-///
-/// # Examples
-/// ```
-/// use sinex_satellite_sdk::Checkpoint;
-/// use sinex_core::types::ulid::Ulid;
-/// use chrono::Utc;
-///
-/// // External checkpoint for file position
-/// let file_pos = Checkpoint::external(
-///     serde_json::json!({"file_offset": 1024, "line_number": 42}),
-///     "Processing from line 42 of /var/log/app.log"
-/// );
-///
-/// // Internal checkpoint for event processing
-/// let event_id = Ulid::new();
-/// let internal = Checkpoint::internal(event_id, 150);
-///
-/// // Stream checkpoint for NATS JetStream processing
-/// let stream = Checkpoint::stream("1234567890-0", Some(event_id));
-/// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Checkpoint {
-    /// No checkpoint - start from beginning
-    None,
-    /// External position for ingestors (file offset, timestamp, log line, etc.)
-    External {
-        /// External system identifier (varies by source)
-        position: serde_json::Value,
-        /// Human-readable description
-        description: String,
-    },
-    /// Internal event ID for automata (ULID of last processed event)
-    Internal {
-        /// Last processed event ULID
-        event_id: Ulid,
-        /// Message count for verification
-        message_count: u64,
-    },
-    /// Message stream ID for stream-based processing (NATS JetStream)
-    Stream {
-        /// Stream message ID (NATS JetStream sequence number)
-        message_id: String,
-        /// Associated event ULID if known
-        event_id: Option<Ulid>,
-    },
-    /// Timestamp-based checkpoint for time-ordered sources
-    Timestamp {
-        /// Last processed timestamp
-        timestamp: DateTime<Utc>,
-        /// Optional metadata
-        metadata: Option<serde_json::Value>,
-    },
-}
-
-impl Checkpoint {
-    /// Create a checkpoint from an external position.
-    ///
-    /// Used by ingestors to track progress in external systems.
-    /// The position can be any JSON-serializable value representing
-    /// the current state (file offset, timestamp, log line number, etc.).
-    ///
-    /// # Examples
-    /// ```
-    /// use sinex_satellite_sdk::Checkpoint;
-    ///
-    /// // File position
-    /// let pos = Checkpoint::external(
-    ///     serde_json::json!({"file": "/var/log/app.log", "offset": 1024}),
-    ///     "Processing from byte 1024 of app.log"
-    /// );
-    ///
-    /// // Database sequence
-    /// let seq = Checkpoint::external(
-    ///     serde_json::json!({"table": "events", "last_id": 12345}),
-    ///     "Last processed event ID: 12345"
-    /// );
-    /// ```
-    pub fn external(position: serde_json::Value, description: impl Into<String>) -> Self {
-        Self::External {
-            position,
-            description: description.into(),
-        }
-    }
-
-    /// Create a checkpoint from an event ULID.
-    ///
-    /// Used by automata to track progress through the internal event stream.
-    /// The event_id represents the last processed event, and message_count
-    /// provides verification and debugging information.
-    ///
-    /// # Parameters
-    /// - `event_id`: ULID of the last successfully processed event
-    /// - `message_count`: Total number of messages processed (for verification)
-    pub fn internal(event_id: Ulid, message_count: u64) -> Self {
-        Self::Internal {
-            event_id,
-            message_count,
-        }
-    }
-
-    /// Create a checkpoint from a stream message ID.
-    ///
-    /// Used for NATS JetStream-based processing. The message_id is
-    /// typically a sequence number, and event_id provides correlation
-    /// with the internal event stream.
-    ///
-    /// # Parameters
-    /// - `message_id`: Stream message ID (NATS JetStream sequence number)
-    /// - `event_id`: Optional ULID of the corresponding internal event
-    pub fn stream(message_id: impl Into<String>, event_id: Option<Ulid>) -> Self {
-        Self::Stream {
-            message_id: message_id.into(),
-            event_id,
-        }
-    }
-
-    /// Create a checkpoint from a timestamp.
-    ///
-    /// Used for time-based processing resumption. Suitable for sources
-    /// that can be queried by timestamp (logs, database tables, etc.).
-    ///
-    /// # Parameters
-    /// - `timestamp`: The last processed timestamp
-    /// - `metadata`: Optional source-specific metadata for context
-    pub fn timestamp(timestamp: DateTime<Utc>, metadata: Option<serde_json::Value>) -> Self {
-        Self::Timestamp {
-            timestamp,
-            metadata,
-        }
-    }
-
-    /// Get a human-readable description of this checkpoint
-    pub fn description(&self) -> String {
-        match self {
-            Checkpoint::None => "start".to_string(),
-            Checkpoint::External { description, .. } => description.clone(),
-            Checkpoint::Internal {
-                event_id,
-                message_count,
-            } => {
-                format!("event {} (#{message_count})", event_id)
-            }
-            Checkpoint::Stream {
-                message_id,
-                event_id,
-            } => {
-                if let Some(event_id) = event_id {
-                    format!("stream {} (event {})", message_id, event_id)
-                } else {
-                    format!("stream {}", message_id)
-                }
-            }
-            Checkpoint::Timestamp { timestamp, .. } => {
-                format!("timestamp {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC"))
-            }
-        }
-    }
-}
-
-/// Stream of events produced by scanning operations
-pub type EventStream = mpsc::UnboundedReceiver<Event<JsonValue>>;
-
-/// Sender for events during scanning operations
-pub type EventSender = mpsc::UnboundedSender<Event<JsonValue>>;
 
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,7 +139,7 @@ pub struct StreamProcessorContext {
     pub transport: crate::event_processor::EventTransport,
 
     /// Checkpoint manager for state persistence
-    pub checkpoint_manager: CheckpointManager,
+    pub checkpoint_manager: Arc<CheckpointManager>,
 
     /// Legacy processor-specific configuration (deprecated).
     ///
@@ -424,6 +170,28 @@ impl std::fmt::Debug for StreamProcessorContext {
 }
 
 impl StreamProcessorContext {
+    pub fn from_runtime(
+        service: &ServiceInfo,
+        handles: &ProcessorHandles,
+        config: HashMap<String, serde_json::Value>,
+        work_dir_utf8: Utf8PathBuf,
+    ) -> Self {
+        let sender_arc = handles.emitter().sender();
+        Self {
+            service_name: service.service_name().to_string(),
+            host: service.host().to_string(),
+            work_dir: work_dir_utf8.into_std_path_buf(),
+            dry_run: service.dry_run(),
+            db_pool: handles.db_pool().clone(),
+            transport: handles.transport().clone(),
+            checkpoint_manager: handles.checkpoint_manager(),
+            config,
+            event_sender: (*sender_arc).clone(),
+            lease_manager: handles.lease_manager(),
+            confirmation_buffer: handles.confirmation_buffer(),
+        }
+    }
+
     /// Send an event through the event channel
     #[cfg_attr(
         feature = "macros",
@@ -541,6 +309,18 @@ pub trait StatefulStreamProcessor: Send + Sync {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()>;
+
+    /// Initialize using the new runtime handles. Default implementation builds the
+    /// legacy context and defers to `initialize` for backward compatibility.
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service, handles, work_dir_utf8) = init.into_parts();
+        let legacy_ctx =
+            StreamProcessorContext::from_runtime(&service, &handles, raw_config, work_dir_utf8);
+        self.initialize(legacy_ctx, config).await
+    }
 
     /// Backward compatibility method for processors that need access to legacy config format.
     ///
@@ -753,16 +533,17 @@ impl Default for ScanEstimate {
 /// Unified runner for stream processors
 pub struct StreamProcessorRunner<T: StatefulStreamProcessor> {
     processor: T,
-    context: Option<StreamProcessorContext>,
+    handles: Option<ProcessorHandles>,
+    service_info: Option<ServiceInfo>,
+    raw_config: Option<HashMap<String, serde_json::Value>>,
+    work_dir_utf8: Option<Utf8PathBuf>,
+    checkpoint_manager: Option<Arc<CheckpointManager>>,
     shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
     event_processor_handle: Option<tokio::task::JoinHandle<SatelliteResult<()>>>,
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     lease_manager: Option<Arc<crate::LeaseManager>>,
     confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
     processing_model: ProcessingModel,
-    db_pool: Option<PgPool>,
-    transport: Option<EventTransport>,
-    service_name: Option<String>,
 }
 
 impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
@@ -770,16 +551,17 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     pub fn new(processor: T) -> Self {
         Self {
             processor,
-            context: None,
+            handles: None,
+            service_info: None,
+            raw_config: None,
+            work_dir_utf8: None,
+            checkpoint_manager: None,
             shutdown_receiver: None,
             event_processor_handle: None,
             event_processor_shutdown: None,
             lease_manager: None,
             confirmation_buffer: None,
             processing_model: ProcessingModel::StatelessWorker,
-            db_pool: None,
-            transport: None,
-            service_name: None,
         }
     }
 
@@ -787,15 +569,14 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     pub async fn initialize_with_transport(
         &mut self,
         service_name: String,
-        config: HashMap<String, serde_json::Value>,
+        raw_config: HashMap<String, serde_json::Value>,
         db_pool: PgPool,
         transport: EventTransport,
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create bounded event channel (capacity: 10000 for high-throughput event processing)
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
-        let stored_event_sender = event_sender.clone();
+        let (event_sender_raw, event_receiver) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
         // Create shutdown channels
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -807,19 +588,16 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
         let consumer_name = format!("{}-{}", host, std::process::id());
-        let work_dir_clone = work_dir.clone();
-        let config_clone = config.clone();
-        let db_pool_clone_for_runner = db_pool.clone();
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
         // Initialize checkpoint manager
-        let checkpoint_manager = CheckpointManager::new(
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
             db_pool.clone(),
             service_name.clone(),
             "default".to_string(), // Default consumer group
             consumer_name.clone(), // Unique consumer name
-        );
+        ));
 
         // NATS is the only transport
         let transport_type = "NATS";
@@ -862,57 +640,58 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 (None, None)
             };
 
-        // Store in runner
         self.lease_manager = lease_manager_opt.clone();
         self.confirmation_buffer = confirmation_buffer_opt.clone();
 
-        // Create context with LeaseManager and ConfirmationBuffer
-        let context = StreamProcessorContext {
-            service_name: service_name.clone(),
-            host: host.clone(),
-            work_dir,
-            dry_run,
-            db_pool,
-            transport: transport_for_context,
-            checkpoint_manager,
-            config,
-            event_sender,
-            lease_manager: lease_manager_opt,
-            confirmation_buffer: confirmation_buffer_opt,
-        };
-
-        // Initialize the processor with legacy config conversion
-        self.processor.initialize_legacy(context).await?;
-
-        self.db_pool = Some(db_pool_clone_for_runner.clone());
-        self.transport = Some(transport_clone_for_runner.clone());
-        self.service_name = Some(service_name.clone());
-
-        let stored_checkpoint_manager = CheckpointManager::new(
-            db_pool_clone_for_runner.clone(),
-            service_name.clone(),
-            "default".to_string(),
-            consumer_name,
+        let event_emitter = EventEmitter::new(event_sender_raw, dry_run);
+        let handles = ProcessorHandles::new(
+            db_pool.clone(),
+            checkpoint_manager.clone(),
+            event_emitter.clone(),
+            transport_for_context,
+            lease_manager_opt,
+            confirmation_buffer_opt,
         );
 
-        self.context = Some(StreamProcessorContext {
-            service_name: service_name.clone(),
-            host: host.clone(),
-            work_dir: work_dir_clone,
+        let service_info = ServiceInfo::new(
+            service_name.clone(),
+            host.clone(),
+            work_dir.clone(),
             dry_run,
-            db_pool: db_pool_clone_for_runner,
-            transport: transport_clone_for_runner,
-            checkpoint_manager: stored_checkpoint_manager,
-            config: config_clone,
-            event_sender: stored_event_sender,
-            lease_manager: self.lease_manager.clone(),
-            confirmation_buffer: self.confirmation_buffer.clone(),
-        });
+        );
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir)
+            .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"));
 
-        // Spawn event processor
+        let typed_config = if raw_config.is_empty() {
+            T::Config::default()
+        } else {
+            let config_value = serde_json::to_value(&raw_config).map_err(|e| {
+                SatelliteError::Configuration(format!("Failed to serialize processor config: {e}"))
+            })?;
+            serde_json::from_value(config_value).map_err(|e| {
+                SatelliteError::Configuration(format!("Failed to parse processor config: {e}"))
+            })?
+        };
+
+        let init_context = ProcessorInitContext::new(
+            typed_config,
+            raw_config.clone(),
+            service_info.clone(),
+            handles.clone(),
+            work_dir_utf8.clone(),
+        );
+
+        self.processor.initialize_with_runtime(init_context).await?;
+
+        self.handles = Some(handles);
+        self.service_info = Some(service_info);
+        self.raw_config = Some(raw_config.clone());
+        self.work_dir_utf8 = Some(work_dir_utf8);
+        self.checkpoint_manager = Some(checkpoint_manager.clone());
+
         let processor_config = EventProcessorConfig::default();
         self.event_processor_handle = Some(spawn_event_processor(
-            transport,
+            transport_clone_for_runner,
             processor_config,
             event_receiver,
             processor_shutdown_receiver,
@@ -936,7 +715,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         until: TimeHorizon,
         args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        if self.context.is_none() {
+        if self.handles.is_none() {
             return Err(SatelliteError::Lifecycle(
                 "Stream processor not initialized".to_string(),
             ));
@@ -977,7 +756,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
     /// Run in service mode with startup sequence
     pub async fn run_service(&mut self) -> SatelliteResult<()> {
-        if self.context.is_none() {
+        if self.handles.is_none() {
             return Err(SatelliteError::Lifecycle(
                 "Stream processor not initialized".to_string(),
             ));
@@ -1142,17 +921,17 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
     }
 
     async fn run_automaton_event_bridge(&mut self, from: Checkpoint) -> SatelliteResult<()> {
-        let db_pool = self.db_pool.clone().ok_or_else(|| {
-            SatelliteError::Lifecycle("Runner database pool not initialized".to_string())
+        let handles = self.handles.as_ref().ok_or_else(|| {
+            SatelliteError::Lifecycle("Runner handles not initialized".to_string())
         })?;
 
-        let transport = self.transport.clone().ok_or_else(|| {
-            SatelliteError::Lifecycle("Runner transport not initialized".to_string())
-        })?;
+        let db_pool = handles.db_pool().clone();
+        let transport = handles.transport().clone();
 
         let service_name = self
-            .service_name
-            .clone()
+            .service_info
+            .as_ref()
+            .map(|info| info.service_name().to_string())
             .unwrap_or_else(|| self.processor.processor_name().to_string());
 
         let (sender, mut receiver) = mpsc::unbounded_channel::<ProvisionalEvent>();
