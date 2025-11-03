@@ -22,8 +22,9 @@ use sinex_satellite_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        Checkpoint, EventEmitter, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
+        StreamProcessorContext, TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -310,33 +311,33 @@ async fn process_command(
 
 /// Terminal processor that monitors history files.
 pub struct TerminalProcessor {
-    context: Option<StreamProcessorContext>,
     config: TerminalConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    host: Option<String>,
+    handles: Option<ProcessorHandles>,
+    service_info: Option<ServiceInfo>,
     state_dir: Option<PathBuf>,
 }
 
 impl TerminalProcessor {
     pub fn new() -> Self {
         Self {
-            context: None,
             config: TerminalConfig::default(),
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            host: None,
+            handles: None,
+            service_info: None,
             state_dir: None,
         }
     }
 
     pub fn with_config(config: TerminalConfig) -> Self {
         Self {
-            context: None,
             config,
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            host: None,
+            handles: None,
+            service_info: None,
             state_dir: None,
         }
     }
@@ -345,11 +346,79 @@ impl TerminalProcessor {
         &self.config
     }
 
-    fn build_history_contexts(
-        &self,
-        ctx: &StreamProcessorContext,
-    ) -> SatelliteResult<Vec<HistoryWatcherContext>> {
-        let nats_client = match &ctx.transport {
+    fn handles(&self) -> SatelliteResult<&ProcessorHandles> {
+        self.handles.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre::eyre!(
+                "Terminal processor handles not initialised prior to scan"
+            ))
+        })
+    }
+
+    fn service_info(&self) -> SatelliteResult<&ServiceInfo> {
+        self.service_info.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre::eyre!(
+                "Terminal processor service info not initialised prior to scan"
+            ))
+        })
+    }
+
+    async fn initialise_from_handles(
+        &mut self,
+        config: TerminalConfig,
+        handles: ProcessorHandles,
+        service_info: ServiceInfo,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = self.processor_name(),
+            service = %service_info.service_name(),
+            "Initialising terminal processor"
+        );
+
+        config.validate_config().map_err(|e| {
+            SatelliteError::General(eyre::eyre!(
+                "Terminal configuration validation failed: {}",
+                e
+            ))
+        })?;
+
+        let publisher = match handles.transport() {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
+                Arc::clone(publisher)
+            }
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(SatelliteError::from)?;
+
+        let mut state_dir = service_info.work_dir().clone();
+        state_dir.push("terminal-history");
+
+        if let Err(e) = fs::create_dir_all(&state_dir).await {
+            return Err(SatelliteError::General(eyre::eyre!(
+                "Failed to create terminal state directory {}: {}",
+                state_dir.display(),
+                e
+            )));
+        }
+
+        self.state_dir = Some(state_dir);
+        self.stage_context = Some(StageAsYouGoContext::from_handles(
+            handles.db_pool().clone(),
+            handles.emitter().clone(),
+        ));
+        self.handles = Some(handles);
+        self.service_info = Some(service_info);
+        self.config = config;
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+
+        Ok(())
+    }
+
+    fn build_history_contexts(&self) -> SatelliteResult<Vec<HistoryWatcherContext>> {
+        let handles = self.handles()?;
+        let db_pool = handles.db_pool().clone();
+        let nats_client = match handles.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
                 publisher.nats_client().clone()
             }
@@ -365,7 +434,7 @@ impl TerminalProcessor {
         for source in &self.config.history_sources {
             let acquisition = AcquisitionManager::new(
                 nats_client.clone(),
-                ctx.db_pool.clone(),
+                db_pool.clone(),
                 RotationPolicy::default(),
                 "terminal-history".to_string(),
                 source.path.to_string(),
@@ -409,47 +478,34 @@ impl StatefulStreamProcessor for TerminalProcessor {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!(
-            processor = self.processor_name(),
-            service = %ctx.service_name,
-            "Initializing terminal processor"
+        let handles = ProcessorHandles::new(
+            ctx.db_pool.clone(),
+            ctx.checkpoint_manager.clone(),
+            EventEmitter::new(ctx.event_sender.clone(), ctx.dry_run),
+            ctx.transport.clone(),
+            ctx.lease_manager.clone(),
+            ctx.confirmation_buffer.clone(),
         );
 
-        config.validate_config().map_err(|e| {
-            SatelliteError::General(eyre::eyre!(
-                "Terminal configuration validation failed: {}",
-                e
-            ))
-        })?;
+        let service_info = ServiceInfo::new(
+            ctx.service_name.clone(),
+            ctx.host.clone(),
+            ctx.work_dir.clone(),
+            ctx.dry_run,
+        );
 
-        self.config = config;
-
-        let publisher = match &ctx.transport {
-            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => publisher,
-        };
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+        self.initialise_from_handles(config, handles, service_info)
             .await
-            .map_err(SatelliteError::from)?;
+    }
 
-        let state_dir =
-            sinex_core::environment::environment().work_directory("/tmp/sinex/terminal-history");
-        if let Err(e) = fs::create_dir_all(&state_dir).await {
-            return Err(SatelliteError::General(eyre::eyre!(
-                "Failed to create terminal state directory {}: {}",
-                state_dir.display(),
-                e
-            )));
-        }
-
-        self.state_dir = Some(state_dir);
-        self.stage_context = Some(StageAsYouGoContext::new(
-            ctx.db_pool.clone(),
-            ctx.event_sender.clone(),
-        ));
-        self.host = Some(ctx.host.clone());
-        self.context = Some(ctx);
-
-        Ok(())
+    #[instrument(skip(self, init))]
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, _raw_config, service_info, handles, _work_dir_utf8) = init.into_parts();
+        self.initialise_from_handles(config, handles, service_info)
+            .await
     }
 
     async fn scan(
@@ -460,6 +516,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
     ) -> SatelliteResult<ScanReport> {
         match until {
             TimeHorizon::Snapshot => {
+                let service_info = self.service_info()?;
                 let state = TerminalState {
                     captured_at: Utc::now(),
                     monitored_sources: self
@@ -468,7 +525,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
                         .iter()
                         .map(|src| src.path.clone())
                         .collect(),
-                    host: self.host.clone().unwrap_or_else(|| "unknown".into()),
+                    host: service_info.host().to_string(),
                 };
 
                 debug!(
@@ -501,11 +558,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 })
             }
             TimeHorizon::Continuous => {
-                let ctx = self.context.as_ref().ok_or_else(|| {
-                    SatelliteError::General(eyre::eyre!("Processor not initialised"))
-                })?;
-
-                let contexts = self.build_history_contexts(ctx)?;
+                let contexts = self.build_history_contexts()?;
 
                 let mut guard = self.watch_handles.lock().await;
                 for watch_ctx in contexts {
@@ -691,6 +744,7 @@ mod tests {
             path: Utf8PathBuf::from("/home/test/.bash_history"),
             max_capture_bytes: 1024,
             polling_interval: Duration::from_secs(1),
+            state_path: None,
         };
 
         let command = "echo 'hello world'";

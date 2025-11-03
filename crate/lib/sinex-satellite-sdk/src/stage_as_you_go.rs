@@ -1,5 +1,6 @@
 #![doc = include_str!("../doc/stage_as_you_go.md")]
 
+use crate::stream_processor::EventEmitter;
 use crate::{
     annex::{AnnexConfig, BlobManager, BlobMetadata},
     SatelliteError, SatelliteResult,
@@ -24,7 +25,7 @@ use tracing::{debug, info, warn};
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
     db_pool: PgPool,
-    event_sender: Arc<Mutex<mpsc::UnboundedSender<Event<JsonValue>>>>,
+    event_emitter: EventEmitter,
     blob_manager: Option<Arc<BlobManager>>,
     material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
 }
@@ -39,11 +40,16 @@ struct StageMaterialInfo {
 impl StageAsYouGoContext {
     /// Create a new Stage-as-You-Go context
     pub fn new(db_pool: PgPool, event_sender: mpsc::UnboundedSender<Event<JsonValue>>) -> Self {
-        let blob_manager = Self::init_blob_manager(&db_pool, &event_sender);
+        Self::from_handles(db_pool, EventEmitter::new(event_sender, false))
+    }
+
+    /// Create a Stage-as-You-Go context from runtime handles
+    pub fn from_handles(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
+        let blob_manager = Self::init_blob_manager(&db_pool, &event_emitter);
 
         Self {
             db_pool,
-            event_sender: Arc::new(Mutex::new(event_sender)),
+            event_emitter,
             blob_manager,
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -52,12 +58,12 @@ impl StageAsYouGoContext {
     /// Create a Stage-as-You-Go context with an explicitly provided blob manager
     pub fn with_blob_manager(
         db_pool: PgPool,
-        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+        event_emitter: EventEmitter,
         blob_manager: Arc<BlobManager>,
     ) -> Self {
         Self {
             db_pool,
-            event_sender: Arc::new(Mutex::new(event_sender)),
+            event_emitter,
             blob_manager: Some(blob_manager),
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -65,7 +71,7 @@ impl StageAsYouGoContext {
 
     fn init_blob_manager(
         db_pool: &PgPool,
-        event_sender: &mpsc::UnboundedSender<Event<JsonValue>>,
+        event_emitter: &EventEmitter,
     ) -> Option<Arc<BlobManager>> {
         let path = match std::env::var("SINEX_ANNEX_PATH") {
             Ok(path) => path,
@@ -82,7 +88,11 @@ impl StageAsYouGoContext {
             large_files: None,
         };
 
-        match BlobManager::new(annex_config, db_pool.clone(), event_sender.clone()) {
+        match BlobManager::new(
+            annex_config,
+            db_pool.clone(),
+            (*event_emitter.sender()).clone(),
+        ) {
             Ok(manager) => {
                 info!("Stage-as-You-Go blob manager initialised");
                 Some(Arc::new(manager))
@@ -167,11 +177,7 @@ impl StageAsYouGoContext {
             .ok_or_else(|| SatelliteError::Processing("Event must have an ID".to_string()))?
             .as_ulid();
 
-        self.event_sender
-            .lock()
-            .await
-            .send(event)
-            .map_err(|_| SatelliteError::Processing("Event channel closed".to_string()))?;
+        self.event_emitter.emit(event).await?;
 
         debug!(
             event_id = %event_id,
