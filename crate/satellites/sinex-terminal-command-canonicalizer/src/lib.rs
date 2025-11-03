@@ -24,10 +24,11 @@ mod common {
             IngestionHistoryEntry, MissingItem, SourceState,
         },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies
@@ -161,7 +162,7 @@ pub enum SafetyLevel {
 /// - Command pattern recognition
 /// - Shell workflow insights
 pub struct TerminalCommandCanonicalizer {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: TerminalCommandCanonicalizerConfig,
     event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
@@ -171,7 +172,7 @@ pub struct TerminalCommandCanonicalizer {
 impl TerminalCommandCanonicalizer {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: TerminalCommandCanonicalizerConfig::default(),
             event_sender: None,
             db_pool: None,
@@ -179,17 +180,67 @@ impl TerminalCommandCanonicalizer {
         }
     }
 
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(color_eyre::eyre::eyre!(
+                "Terminal canonicalizer runtime not initialised"
+            ))
+        })
+    }
+
+    fn db_pool(&self) -> SatelliteResult<&PgPool> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.db_pool())
+        } else if let Some(pool) = self.db_pool.as_ref() {
+            Ok(pool)
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Database pool not initialized"
+            )))
+        }
+    }
+
+    fn event_sender(&self) -> SatelliteResult<mpsc::UnboundedSender<Event<JsonValue>>> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.event_sender())
+        } else if let Some(sender) = self.event_sender.as_ref() {
+            Ok(sender.clone())
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Event sender not initialized"
+            )))
+        }
+    }
+
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: TerminalCommandCanonicalizerConfig,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = "terminal-command-canonicalizer",
+            service = %runtime.service_info().service_name(),
+            "Initializing terminal command canonicalizer"
+        );
+
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.config = config;
+        self.runtime = Some(runtime);
+
+        info!(
+            "Terminal command canonicalizer configured - processing {} event types, {} canonicalization rules",
+            self.config.terminal_event_types.len(),
+            self.config.canonicalization_rules.len()
+        );
+
+        Ok(())
+    }
+
     /// Process terminal command events and generate canonicalized insights
     async fn process_terminal_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?
-            .clone();
+        let db_pool = self.db_pool()?;
+        let event_sender = self.event_sender()?;
 
         // Query recent terminal command events
         let events = self.query_terminal_events(db_pool, from).await?;
@@ -989,21 +1040,17 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!("Initializing terminal command canonicalizer");
+        let runtime = ctx.to_runtime_state();
+        self.initialise_with_runtime_state(runtime, config).await
+    }
 
-        // Get database pool from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
-        self.config = config;
-
-        info!(
-            "Terminal command canonicalizer configured - processing {} event types, {} canonicalization rules",
-            self.config.terminal_event_types.len(),
-            self.config.canonicalization_rules.len()
-        );
-
-        Ok(())
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.initialise_with_runtime_state(runtime, config).await
     }
 
     async fn scan(

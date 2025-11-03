@@ -28,15 +28,15 @@ mod common {
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
         annex::{AnnexConfig, BlobManager},
-        checkpoint::CheckpointManager,
         cli::{
             ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
             IngestionHistoryEntry, MissingItem, SourceState,
         },
         error_helpers::{parse_config_value, parse_typed_config, path_utils, processing_error},
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };

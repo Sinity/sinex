@@ -29,7 +29,8 @@ use sinex_satellite_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
+        Checkpoint, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
+        ProcessorRuntimeState, ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
     SatelliteError, SatelliteResult,
@@ -145,33 +146,30 @@ struct WatchContext {
 
 /// Unified filesystem processor using JetStream acquisition.
 pub struct FilesystemProcessor {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: FilesystemConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    host: Option<HostName>,
 }
 
 impl FilesystemProcessor {
     /// Create a new filesystem processor with default configuration.
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: FilesystemConfig::default(),
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            host: None,
         }
     }
 
     /// Create processor with custom configuration.
     pub fn with_config(config: FilesystemConfig) -> Self {
         Self {
-            context: None,
+            runtime: None,
             config,
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            host: None,
         }
     }
 
@@ -180,18 +178,73 @@ impl FilesystemProcessor {
         &self.config
     }
 
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: FilesystemConfig,
+    ) -> SatelliteResult<()> {
+        let service_name = runtime.service_info().service_name().to_string();
+
+        info!(
+            processor = self.processor_name(),
+            service = %service_name,
+            "Initializing filesystem processor"
+        );
+
+        config.validate_config().map_err(|e| {
+            SatelliteError::General(eyre::eyre!(
+                "Filesystem configuration validation failed: {}",
+                e
+            ))
+        })?;
+
+        let publisher = match runtime.transport() {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
+                Arc::clone(publisher)
+            }
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(SatelliteError::from)?;
+
+        let stage_context = StageAsYouGoContext::from_handles(
+            runtime.db_pool().clone(),
+            runtime.event_emitter().clone(),
+        );
+
+        self.config = config;
+        self.stage_context = Some(stage_context);
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+        self.runtime = Some(runtime);
+
+        Ok(())
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre::eyre!("Filesystem runtime handles not initialised"))
+        })
+    }
+
+    fn handles(&self) -> SatelliteResult<&ProcessorHandles> {
+        Ok(self.runtime()?.handles())
+    }
+
+    fn service_info(&self) -> SatelliteResult<&ServiceInfo> {
+        Ok(self.runtime()?.service_info())
+    }
+
     /// Build watch contexts for each configured path.
-    fn build_watch_contexts(
-        &self,
-        ctx: &StreamProcessorContext,
-    ) -> SatelliteResult<HashMap<String, WatchContext>> {
-        let db_pool = ctx.db_pool.clone();
+    fn build_watch_contexts(&self) -> SatelliteResult<HashMap<String, WatchContext>> {
+        let runtime = self.runtime()?;
+        let db_pool = runtime.db_pool().clone();
         let stage_context = self
             .stage_context
             .clone()
             .ok_or_else(|| SatelliteError::General(eyre::eyre!("Stage context not available")))?;
 
-        let nats_client = match &ctx.transport {
+        let nats_client = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
                 publisher.nats_client().clone()
             }
@@ -225,11 +278,8 @@ impl FilesystemProcessor {
         Ok(contexts)
     }
 
-    async fn spawn_watchers(
-        &self,
-        ctx: &StreamProcessorContext,
-    ) -> SatelliteResult<Vec<tokio::task::JoinHandle<()>>> {
-        let contexts = self.build_watch_contexts(ctx)?;
+    async fn spawn_watchers(&self) -> SatelliteResult<Vec<tokio::task::JoinHandle<()>>> {
+        let contexts = self.build_watch_contexts()?;
 
         let mut handles = Vec::with_capacity(contexts.len());
         for (root, watch_ctx) in contexts {
@@ -257,13 +307,15 @@ impl FilesystemProcessor {
 
     /// Produce a snapshot of the current processor state.
     fn snapshot_state(&self) -> FilesystemState {
+        let host = self
+            .service_info()
+            .map(|info| HostName::new(info.host().to_string()))
+            .unwrap_or_else(|_| HostName::new("unknown-host"));
+
         FilesystemState {
             captured_at: chrono::Utc::now(),
             watch_paths: self.config.watch_paths.clone(),
-            host: self
-                .host
-                .clone()
-                .unwrap_or_else(|| HostName::new("unknown-host")),
+            host,
         }
     }
 }
@@ -284,35 +336,18 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!(
-            processor = self.processor_name(),
-            service = %ctx.service_name,
-            "Initializing filesystem processor"
-        );
+        let runtime = ctx.to_runtime_state();
+        self.initialise_with_runtime_state(runtime, config).await
+    }
 
-        self.config = config;
-        self.config.validate_config().map_err(|e| {
-            SatelliteError::General(eyre::eyre!(
-                "Filesystem configuration validation failed: {}",
-                e
-            ))
-        })?;
-
-        let publisher = match &ctx.transport {
-            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => publisher,
-        };
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SatelliteError::from)?;
-
-        self.stage_context = Some(StageAsYouGoContext::new(
-            ctx.db_pool.clone(),
-            ctx.event_sender.clone(),
-        ));
-        self.host = Some(HostName::new(ctx.host.clone()));
-        self.context = Some(ctx);
-
-        Ok(())
+    #[instrument(skip(self, init))]
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.initialise_with_runtime_state(runtime, config).await
     }
 
     async fn scan(
@@ -352,11 +387,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 })
             }
             TimeHorizon::Continuous => {
-                let ctx = self.context.as_ref().ok_or_else(|| {
-                    SatelliteError::General(eyre::eyre!("Processor not initialized"))
-                })?;
-
-                let handles = self.spawn_watchers(ctx).await?;
+                let handles = self.spawn_watchers().await?;
                 {
                     let mut guard = self.watch_handles.lock().await;
                     guard.extend(handles);

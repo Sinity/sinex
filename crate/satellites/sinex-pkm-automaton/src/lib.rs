@@ -21,10 +21,11 @@ mod common {
             IngestionHistoryEntry, MissingItem, SourceState,
         },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies
@@ -114,9 +115,9 @@ pub enum KnowledgeItemType {
 /// - Knowledge graph relationship building
 /// - Personal workflow pattern recognition
 pub struct PKMAutomaton {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: PKMAutomatonConfig,
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     knowledge_items: Vec<KnowledgeItem>,
 }
@@ -124,7 +125,7 @@ pub struct PKMAutomaton {
 impl PKMAutomaton {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: PKMAutomatonConfig::default(),
             event_sender: None,
             db_pool: None,
@@ -132,16 +133,42 @@ impl PKMAutomaton {
         }
     }
 
+    fn db_pool(&self) -> SatelliteResult<&PgPool> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.db_pool())
+        } else if let Some(pool) = self.db_pool.as_ref() {
+            Ok(pool)
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Database pool not initialized"
+            )))
+        }
+    }
+
+    fn event_sender(&self) -> SatelliteResult<mpsc::UnboundedSender<Event<JsonValue>>> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.event_sender())
+        } else if let Some(sender) = self.event_sender.as_ref() {
+            Ok(sender.clone())
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Event sender not initialized"
+            )))
+        }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(color_eyre::eyre::eyre!(
+                "PKM automaton runtime not initialised"
+            ))
+        })
+    }
+
     /// Process knowledge events and generate PKM insights
     async fn process_knowledge_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+        let db_pool = self.db_pool()?;
+        let event_sender = self.event_sender()?;
 
         // Query recent knowledge events
         let events = self.query_knowledge_events(db_pool, from).await?;
@@ -155,7 +182,7 @@ impl PKMAutomaton {
         // Generate knowledge extraction insights if enabled
         if self.config.enable_knowledge_extraction && !self.knowledge_items.is_empty() {
             if let Ok(extraction_event) = self.generate_knowledge_extraction_insights().await {
-                if let Err(e) = event_sender.send(extraction_event).await {
+                if let Err(e) = event_sender.send(extraction_event) {
                     warn!("Failed to send knowledge extraction event: {}", e);
                 } else {
                     events_processed += 1;
@@ -167,7 +194,7 @@ impl PKMAutomaton {
         if self.config.enable_learning_tracking {
             if let Ok(learning_events) = self.track_learning_sessions(&events).await {
                 for learning_event in learning_events {
-                    if let Err(e) = event_sender.send(learning_event).await {
+                    if let Err(e) = event_sender.send(learning_event) {
                         warn!("Failed to send learning tracking event: {}", e);
                     } else {
                         events_processed += 1;
@@ -182,7 +209,7 @@ impl PKMAutomaton {
         {
             if let Ok(graph_events) = self.build_knowledge_graph_insights().await {
                 for graph_event in graph_events {
-                    if let Err(e) = event_sender.send(graph_event).await {
+                    if let Err(e) = event_sender.send(graph_event) {
                         warn!("Failed to send knowledge graph event: {}", e);
                     } else {
                         events_processed += 1;
@@ -194,7 +221,7 @@ impl PKMAutomaton {
         // Generate workflow pattern insights
         if let Ok(workflow_events) = self.analyze_workflow_patterns(&events).await {
             for workflow_event in workflow_events {
-                if let Err(e) = event_sender.send(workflow_event).await {
+                if let Err(e) = event_sender.send(workflow_event) {
                     warn!("Failed to send workflow pattern event: {}", e);
                 } else {
                     events_processed += 1;
@@ -798,12 +825,30 @@ impl StatefulStreamProcessor for PKMAutomaton {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!("Initializing PKM automaton");
+        let runtime = ctx.to_runtime_state();
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
+        self.config = config;
 
-        // Get database pool from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
+        info!(
+            "PKM automaton configured - analyzing {} event types, window: {} hours",
+            self.config.knowledge_event_types.len(),
+            self.config.analysis_window_seconds / 3600
+        );
+
+        Ok(())
+    }
+
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
         self.config = config;
 
         info!(

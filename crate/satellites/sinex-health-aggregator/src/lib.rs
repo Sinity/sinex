@@ -22,8 +22,9 @@ mod common {
             CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
         },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
+            TimeHorizon,
         },
         SatelliteResult,
     };
@@ -110,7 +111,7 @@ pub enum HealthStatus {
 /// - Health trend analysis
 /// - Alert generation for unhealthy components
 pub struct HealthAggregator {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: HealthAggregatorConfig,
     event_sender: Option<tokio::sync::mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
@@ -124,7 +125,7 @@ pub struct HealthAggregator {
 impl HealthAggregator {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: HealthAggregatorConfig::default(),
             event_sender: None,
             db_pool: None,
@@ -134,6 +135,12 @@ impl HealthAggregator {
             consumer: None,
             consumer_handle: None,
         }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::Lifecycle("Processor runtime not initialized".to_string())
+        })
     }
 
     /// Initialize the confirmed event channel if needed.
@@ -155,12 +162,9 @@ impl HealthAggregator {
         self.consumer_handle = None;
         self.consumer = None;
 
-        let (transport, service_name) = {
-            let ctx = self.context.as_ref().ok_or_else(|| {
-                SatelliteError::Lifecycle("Stream processor context not initialized".to_string())
-            })?;
-            (ctx.transport.clone(), ctx.service_name.clone())
-        };
+        let runtime = self.runtime()?;
+        let transport = runtime.handles().transport().clone();
+        let service_name = runtime.service_info().service_name().to_string();
 
         // Only NATS transport is supported in JetStream mode
         let nats_publisher = match transport {
@@ -748,11 +752,30 @@ impl StatefulStreamProcessor for HealthAggregator {
         config: Self::Config,
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
+        let runtime = ctx.to_runtime_state();
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
+        self.config = config;
 
-        // Get database pool and event sender from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
+        info!(
+            "Health aggregator configured - monitoring {} components, aggregation window: {}s",
+            self.config.component_check_intervals.len(),
+            self.config.aggregation_window_seconds
+        );
+
+        Ok(())
+    }
+
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
         self.config = config;
 
         info!(

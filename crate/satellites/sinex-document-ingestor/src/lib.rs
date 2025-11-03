@@ -21,8 +21,9 @@ use sinex_satellite_sdk::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
+        TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -83,7 +84,7 @@ pub struct MaterialSlice {
 
 /// Document processor that consumes MaterialSliceStream from sensd
 pub struct DocumentProcessor {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: DocumentIngestorConfig,
     db_pool: Option<PgPool>,
     event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
@@ -93,12 +94,84 @@ pub struct DocumentProcessor {
 impl DocumentProcessor {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: DocumentIngestorConfig::default(),
             db_pool: None,
             event_sender: None,
             blob_manager: None,
         }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre!("Document processor runtime not initialised"))
+        })
+    }
+
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: DocumentIngestorConfig,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = "document-ingestor",
+            service = %runtime.service_info().service_name(),
+            "Initializing document ingestor that consumes MaterialSliceStream from sensd"
+        );
+
+        let db_pool = PgPool::connect(&config.database_url)
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to database: {}", e)))?;
+
+        let annex_repo = match std::env::var("SINEX_ANNEX_PATH") {
+            Ok(path) => Utf8PathBuf::from(path),
+            Err(_) => {
+                let default_path =
+                    sinex_core::environment::environment().work_directory("/tmp/sinex/annex");
+                Utf8PathBuf::from_path_buf(default_path)
+                    .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
+            }
+        };
+
+        fs::create_dir_all(annex_repo.as_std_path())
+            .await
+            .map_err(|e| {
+                SatelliteError::General(eyre!(
+                    "Failed to create annex directory {}: {}",
+                    annex_repo,
+                    e
+                ))
+            })?;
+
+        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(event) = blob_event_rx.recv().await {
+                debug!(?event, "Blob manager emitted event");
+            }
+        });
+
+        let annex_config = AnnexConfig {
+            repo_path: annex_repo.clone(),
+            num_copies: None,
+            large_files: None,
+        };
+
+        let blob_manager = Arc::new(
+            BlobManager::new(annex_config, db_pool.clone(), blob_event_tx).map_err(|e| {
+                SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
+            })?,
+        );
+
+        let event_sender = runtime.event_sender();
+
+        self.config = config;
+        self.db_pool = Some(db_pool);
+        self.event_sender = Some(event_sender);
+        self.blob_manager = Some(blob_manager);
+        self.runtime = Some(runtime);
+
+        info!("Document ingestor initialized with sensd integration");
+        Ok(())
     }
 
     /// Submit a job to sensd for document processing
@@ -507,64 +580,17 @@ impl StatefulStreamProcessor for DocumentProcessor {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!("Initializing document ingestor that consumes MaterialSliceStream from sensd");
+        let runtime = ctx.to_runtime_state();
+        self.initialise_with_runtime_state(runtime, config).await
+    }
 
-        // Connect to database for sensd integration
-        let db_pool = PgPool::connect(&config.database_url)
-            .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to database: {}", e)))?;
-
-        let annex_repo = match std::env::var("SINEX_ANNEX_PATH") {
-            Ok(path) => Utf8PathBuf::from(path),
-            Err(_) => {
-                let default_path =
-                    sinex_core::environment::environment().work_directory("/tmp/sinex/annex");
-                Utf8PathBuf::from_path_buf(default_path)
-                    .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
-            }
-        };
-
-        fs::create_dir_all(annex_repo.as_std_path())
-            .await
-            .map_err(|e| {
-                SatelliteError::General(eyre!(
-                    "Failed to create annex directory {}: {}",
-                    annex_repo,
-                    e
-                ))
-            })?;
-
-        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            while let Some(event) = blob_event_rx.recv().await {
-                debug!(?event, "Blob manager emitted event");
-            }
-        });
-
-        let annex_config = AnnexConfig {
-            repo_path: annex_repo.clone(),
-            num_copies: None,
-            large_files: None,
-        };
-
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, db_pool.clone(), blob_event_tx).map_err(|e| {
-                SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
-            })?,
-        );
-
-        // Use the context's event sender directly
-        let event_sender = ctx.event_sender.clone();
-
-        // Store configuration and resources
-        self.config = config;
-        self.db_pool = Some(db_pool);
-        self.event_sender = Some(event_sender);
-        self.context = Some(ctx);
-        self.blob_manager = Some(blob_manager);
-
-        info!("Document ingestor initialized with sensd integration");
-        Ok(())
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.initialise_with_runtime_state(runtime, config).await
     }
 
     async fn scan(
@@ -750,7 +776,7 @@ impl ExplorationProvider for DocumentProcessor {
 impl Clone for DocumentProcessor {
     fn clone(&self) -> Self {
         Self {
-            context: None, // Context cannot be cloned
+            runtime: self.runtime.clone(),
             config: self.config.clone(),
             db_pool: self.db_pool.clone(),
             event_sender: self.event_sender.clone(),

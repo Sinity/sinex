@@ -21,10 +21,11 @@ mod common {
             IngestionHistoryEntry, MissingItem, SourceState,
         },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies
@@ -116,9 +117,9 @@ pub struct SearchQueryPattern {
 /// - Content discoverability insights
 /// - Search optimization recommendations
 pub struct SearchAutomaton {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: SearchAutomatonConfig,
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     search_index: Vec<SearchIndexEntry>,
 }
@@ -126,7 +127,7 @@ pub struct SearchAutomaton {
 impl SearchAutomaton {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: SearchAutomatonConfig::default(),
             event_sender: None,
             db_pool: None,
@@ -134,16 +135,42 @@ impl SearchAutomaton {
         }
     }
 
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(color_eyre::eyre::eyre!(
+                "Search automaton runtime not initialised"
+            ))
+        })
+    }
+
+    fn db_pool(&self) -> SatelliteResult<&PgPool> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.db_pool())
+        } else if let Some(pool) = self.db_pool.as_ref() {
+            Ok(pool)
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Database pool not initialized"
+            )))
+        }
+    }
+
+    fn event_sender(&self) -> SatelliteResult<mpsc::UnboundedSender<Event<JsonValue>>> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.event_sender())
+        } else if let Some(sender) = self.event_sender.as_ref() {
+            Ok(sender.clone())
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Event sender not initialized"
+            )))
+        }
+    }
+
     /// Process searchable events and generate search insights
     async fn process_search_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+        let db_pool = self.db_pool()?;
+        let event_sender = self.event_sender()?;
 
         // Query recent searchable events
         let events = self.query_searchable_events(db_pool, from).await?;
@@ -157,7 +184,7 @@ impl SearchAutomaton {
         // Generate full-text search index if enabled
         if self.config.enable_fulltext_indexing && !self.search_index.is_empty() {
             if let Ok(index_event) = self.generate_search_index_event().await {
-                if let Err(e) = event_sender.send(index_event).await {
+                if let Err(e) = event_sender.send(index_event) {
                     warn!("Failed to send search index event: {}", e);
                 } else {
                     events_processed += 1;
@@ -169,7 +196,7 @@ impl SearchAutomaton {
         if self.config.enable_search_analytics {
             if let Ok(analytics_events) = self.generate_search_analytics(&events).await {
                 for analytics_event in analytics_events {
-                    if let Err(e) = event_sender.send(analytics_event).await {
+                    if let Err(e) = event_sender.send(analytics_event) {
                         warn!("Failed to send search analytics event: {}", e);
                     } else {
                         events_processed += 1;
@@ -181,7 +208,7 @@ impl SearchAutomaton {
         // Generate content discoverability insights
         if let Ok(discoverability_events) = self.analyze_content_discoverability().await {
             for discoverability_event in discoverability_events {
-                if let Err(e) = event_sender.send(discoverability_event).await {
+                if let Err(e) = event_sender.send(discoverability_event) {
                     warn!("Failed to send content discoverability event: {}", e);
                 } else {
                     events_processed += 1;
@@ -676,10 +703,30 @@ impl StatefulStreamProcessor for SearchAutomaton {
     ) -> SatelliteResult<()> {
         info!("Initializing search automaton");
 
-        // Get database pool from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
+        let runtime = ctx.to_runtime_state();
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
+        self.config = config;
+
+        info!(
+            "Search automaton configured - indexing {} event types, max index size: {}",
+            self.config.searchable_event_types.len(),
+            self.config.max_index_size
+        );
+
+        Ok(())
+    }
+
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
         self.config = config;
 
         info!(

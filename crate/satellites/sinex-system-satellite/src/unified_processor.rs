@@ -4,6 +4,10 @@
 
 // Use local facade for common types
 use crate::common::*;
+use sinex_satellite_sdk::error_helpers::{parse_config_value, parse_typed_config};
+use sinex_satellite_sdk::stream_processor::{
+    EventEmitter, ProcessorInitContext, ProcessorRuntimeState, StreamProcessorContext,
+};
 
 // System-specific event payloads
 use sinex_core::types::events::{
@@ -75,9 +79,9 @@ pub struct SystemdStatus {
 /// Unified system processor implementing StatefulStreamProcessor
 ///
 /// Supports snapshot, historical, and continuous scanning modes for system events.
+#[derive(Default)]
 pub struct SystemProcessor {
-    /// Current processing context (set during initialization)
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
 
     /// System monitoring configuration
     config: SystemConfig,
@@ -90,9 +94,6 @@ pub struct SystemProcessor {
 
     /// Last captured system state for snapshots
     last_state: Option<SystemState>,
-
-    /// Checkpoint manager for state persistence
-    checkpoint_manager: Option<CheckpointManager>,
 }
 
 impl SystemProcessor {
@@ -105,16 +106,66 @@ impl SystemProcessor {
         // - Track udev hardware changes (USB, network interfaces, storage)
 
         Self {
+            runtime: None,
             config: SystemConfig::default(),
-            ..Default::default()
+            dbus_watcher: None,
+            journal_watcher: None,
+            udev_watcher: None,
+            systemd_watcher: None,
+            last_state: None,
         }
     }
 
     /// Create processor with custom configuration
     pub fn with_config(config: SystemConfig) -> Self {
         Self {
+            runtime: None,
             config,
-            ..Default::default()
+            dbus_watcher: None,
+            journal_watcher: None,
+            udev_watcher: None,
+            systemd_watcher: None,
+            last_state: None,
+        }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::Lifecycle("Processor runtime not initialized".to_string())
+        })
+    }
+
+    fn emitter(&self) -> SatelliteResult<&EventEmitter> {
+        Ok(self.runtime()?.handles().emitter())
+    }
+
+    fn apply_config_overrides(&mut self, runtime: &ProcessorRuntimeState) {
+        if let Some(config) = parse_typed_config::<SystemConfig>("system", runtime) {
+            self.config = config;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool>("dbus_enabled", runtime) {
+            self.config.dbus_enabled = enabled;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool>("journal_enabled", runtime) {
+            self.config.journal_enabled = enabled;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool>("udev_enabled", runtime) {
+            self.config.udev_enabled = enabled;
+        }
+
+        if let Some(enabled) = parse_config_value::<bool>("systemd_enabled", runtime) {
+            self.config.systemd_enabled = enabled;
+        }
+
+        if let Some(buses) = parse_config_value::<String>("dbus_buses", runtime) {
+            self.config.dbus_buses = buses;
+        }
+
+        if let Some(timeout) = parse_config_value::<u64>("journal_timeout_secs", runtime) {
+            self.config.journal_timeout_secs = timeout;
         }
     }
 
@@ -226,33 +277,30 @@ impl SystemProcessor {
         // For now, stub implementation - will be implemented properly later
         // This would start the actual watchers and forward events
 
-        if let Some(ref context) = self.context {
-            info!("System monitoring context available");
+        let emitter = self.emitter()?;
 
-            // Create a sample event to show the interface works
-            let system_bootstrap_id = EventId::from_ulid(
-                Ulid::from_bytes([
-                    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00,
-                ])
-                .expect("hardcoded ULID bytes should be valid"),
-            );
-            let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+        let system_bootstrap_id = EventId::from_ulid(
+            Ulid::from_bytes([
+                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00,
+            ])
+            .expect("hardcoded ULID bytes should be valid"),
+        );
+        let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
 
-            let sample_event = Event::new(
-                SystemMonitoringStartedPayload {
-                    dbus_enabled: self.config.dbus_enabled,
-                    journal_enabled: self.config.journal_enabled,
-                    udev_enabled: self.config.udev_enabled,
-                    systemd_enabled: self.config.systemd_enabled,
-                    start_time: Utc::now(),
-                },
-                provenance,
-            )
-            .to_json_event()?;
+        let sample_event = Event::new(
+            SystemMonitoringStartedPayload {
+                dbus_enabled: self.config.dbus_enabled,
+                journal_enabled: self.config.journal_enabled,
+                udev_enabled: self.config.udev_enabled,
+                systemd_enabled: self.config.systemd_enabled,
+                start_time: Utc::now(),
+            },
+            provenance,
+        )
+        .to_json_event()?;
 
-            context.emit_event(sample_event).await?;
-        }
+        emitter.emit(sample_event).await?;
 
         Ok(())
     }
@@ -269,7 +317,7 @@ impl SystemProcessor {
 
         // Some system sources may have historical data (especially journal)
 
-        if let Some(ref context) = self.context {
+        if let Ok(emitter) = self.emitter() {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
                 let system_bootstrap_id = EventId::from_ulid(
@@ -291,7 +339,7 @@ impl SystemProcessor {
                 )
                 .to_json_event()?;
 
-                context.emit_event(event).await?;
+                emitter.emit(event).await?;
                 event_count += 1;
             }
 
@@ -316,7 +364,7 @@ impl SystemProcessor {
                 )
                 .to_json_event()?;
 
-                context.emit_event(event).await?;
+                emitter.emit(event).await?;
                 event_count += 1;
             }
 
@@ -341,7 +389,7 @@ impl SystemProcessor {
                 )
                 .to_json_event()?;
 
-                context.emit_event(event).await?;
+                emitter.emit(event).await?;
                 event_count += 1;
             }
         }
@@ -373,56 +421,10 @@ impl StatefulStreamProcessor for SystemProcessor {
             "Initializing system processor"
         );
 
-        // Initialize checkpoint manager
-        self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
-
-        // Parse configuration from processor context
-        if let Some(config_json) = ctx.config.get("system") {
-            match serde_json::from_value::<SystemConfig>(config_json.clone()) {
-                Ok(config) => {
-                    self.config = config;
-                }
-                Err(e) => {
-                    warn!("Failed to parse system config, using defaults: {}", e);
-                }
-            }
-        }
-
-        // Override with individual config values if present
-        if let Some(dbus_enabled_json) = ctx.config.get("dbus_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(dbus_enabled_json.clone()) {
-                self.config.dbus_enabled = enabled;
-            }
-        }
-
-        if let Some(journal_enabled_json) = ctx.config.get("journal_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(journal_enabled_json.clone()) {
-                self.config.journal_enabled = enabled;
-            }
-        }
-
-        if let Some(udev_enabled_json) = ctx.config.get("udev_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(udev_enabled_json.clone()) {
-                self.config.udev_enabled = enabled;
-            }
-        }
-
-        if let Some(systemd_enabled_json) = ctx.config.get("systemd_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(systemd_enabled_json.clone()) {
-                self.config.systemd_enabled = enabled;
-            }
-        }
-
-        if let Some(dbus_buses_json) = ctx.config.get("dbus_buses") {
-            if let Ok(buses) = serde_json::from_value::<String>(dbus_buses_json.clone()) {
-                self.config.dbus_buses = buses;
-            }
-        }
-
-        if let Some(journal_timeout_json) = ctx.config.get("journal_timeout_secs") {
-            if let Ok(timeout) = serde_json::from_value::<u64>(journal_timeout_json.clone()) {
-                self.config.journal_timeout_secs = timeout;
-            }
+        let runtime = ctx.to_runtime_state();
+        self.runtime = Some(runtime);
+        if let Some(runtime_ref) = self.runtime.as_ref() {
+            self.apply_config_overrides(runtime_ref);
         }
 
         info!(
@@ -435,7 +437,31 @@ impl StatefulStreamProcessor for SystemProcessor {
             "System processor configuration"
         );
 
-        self.context = Some(ctx);
+        Ok(())
+    }
+
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.runtime = Some(runtime);
+        self.config = config;
+        if let Some(runtime_ref) = self.runtime.as_ref() {
+            self.apply_config_overrides(runtime_ref);
+        }
+
+        info!(
+            dbus_enabled = self.config.dbus_enabled,
+            journal_enabled = self.config.journal_enabled,
+            udev_enabled = self.config.udev_enabled,
+            systemd_enabled = self.config.systemd_enabled,
+            dbus_buses = %self.config.dbus_buses,
+            journal_timeout_secs = self.config.journal_timeout_secs,
+            "System processor configuration"
+        );
+
         Ok(())
     }
 
@@ -486,34 +512,32 @@ impl StatefulStreamProcessor for SystemProcessor {
                 successful_targets.push("system_state_snapshot".to_string());
 
                 if !args.dry_run {
-                    // Emit a snapshot event
-                    if let Some(ref context) = self.context {
-                        // System snapshots are synthesis events (no source material)
-                        let system_bootstrap_id = EventId::from_ulid(
-                            Ulid::from_bytes([
-                                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                0x00, 0x00, 0x00, 0x00, 0x00,
-                            ])
-                            .unwrap(),
-                        );
-                        let provenance =
-                            Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
+                    let emitter = self.emitter()?;
 
-                        let snapshot_event = Event::new(
-                            SystemSnapshotPayload {
-                                active_watchers,
-                                dbus_enabled: self.config.dbus_enabled,
-                                journal_enabled: self.config.journal_enabled,
-                                udev_enabled: self.config.udev_enabled,
-                                systemd_enabled: self.config.systemd_enabled,
-                                snapshot_time: Utc::now(),
-                            },
-                            provenance,
-                        )
-                        .to_json_event()?;
+                    // System snapshots are synthesis events (no source material)
+                    let system_bootstrap_id = EventId::from_ulid(
+                        Ulid::from_bytes([
+                            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00,
+                        ])
+                        .unwrap(),
+                    );
+                    let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
 
-                        context.emit_event(snapshot_event).await?;
-                    }
+                    let snapshot_event = Event::new(
+                        SystemSnapshotPayload {
+                            active_watchers,
+                            dbus_enabled: self.config.dbus_enabled,
+                            journal_enabled: self.config.journal_enabled,
+                            udev_enabled: self.config.udev_enabled,
+                            systemd_enabled: self.config.systemd_enabled,
+                            snapshot_time: Utc::now(),
+                        },
+                        provenance,
+                    )
+                    .to_json_event()?;
+
+                    emitter.emit(snapshot_event).await?;
                 }
             }
 

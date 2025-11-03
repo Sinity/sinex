@@ -22,10 +22,11 @@ mod common {
             IngestionHistoryEntry, MissingItem, SourceState,
         },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            StreamProcessorContext, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies
@@ -88,20 +89,53 @@ impl Default for ContentAutomatonConfig {
 /// - Content classification and categorization
 /// - Content similarity detection
 pub struct ContentAutomaton {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: ContentAutomatonConfig,
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
 }
 
 impl ContentAutomaton {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: ContentAutomatonConfig::default(),
             event_sender: None,
             db_pool: None,
         }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(color_eyre::eyre::eyre!(
+                "Content automaton runtime not initialised"
+            ))
+        })
+    }
+
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: ContentAutomatonConfig,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = "content-automaton",
+            service = %runtime.service_info().service_name(),
+            "Initializing content automaton"
+        );
+
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.config = config;
+        self.runtime = Some(runtime);
+
+        info!(
+            "Content automaton configured - analyzing {} event types, max content size: {} bytes",
+            self.config.target_event_types.len(),
+            self.config.max_content_size_bytes
+        );
+
+        Ok(())
     }
 
     /// Process content events and generate content insights
@@ -137,7 +171,7 @@ impl ContentAutomaton {
                 // Generate content analysis if enabled
                 if self.config.enable_text_analysis {
                     if let Ok(analysis_event) = self.analyze_text_content(&content, event).await {
-                        if let Err(e) = event_sender.send(analysis_event).await {
+                        if let Err(e) = event_sender.send(analysis_event) {
                             warn!("Failed to send text analysis event: {}", e);
                         } else {
                             events_processed += 1;
@@ -148,7 +182,7 @@ impl ContentAutomaton {
                 // Generate content classification if enabled
                 if self.config.enable_content_classification {
                     if let Ok(classification_event) = self.classify_content(&content, event).await {
-                        if let Err(e) = event_sender.send(classification_event).await {
+                        if let Err(e) = event_sender.send(classification_event) {
                             warn!("Failed to send content classification event: {}", e);
                         } else {
                             events_processed += 1;
@@ -162,7 +196,7 @@ impl ContentAutomaton {
         if events.len() > 1 {
             if let Ok(similarity_events) = self.analyze_content_similarity(&events).await {
                 for similarity_event in similarity_events {
-                    if let Err(e) = event_sender.send(similarity_event).await {
+                    if let Err(e) = event_sender.send(similarity_event) {
                         warn!("Failed to send content similarity event: {}", e);
                     } else {
                         events_processed += 1;
@@ -419,21 +453,17 @@ impl StatefulStreamProcessor for ContentAutomaton {
         ctx: StreamProcessorContext,
         config: Self::Config,
     ) -> SatelliteResult<()> {
-        info!("Initializing content automaton");
+        let runtime = ctx.to_runtime_state();
+        self.initialise_with_runtime_state(runtime, config).await
+    }
 
-        // Get database pool from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
-        self.config = config;
-
-        info!(
-            "Content automaton configured - analyzing {} event types, max content size: {} bytes",
-            self.config.target_event_types.len(),
-            self.config.max_content_size_bytes
-        );
-
-        Ok(())
+    async fn initialize_with_runtime(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.initialise_with_runtime_state(runtime, config).await
     }
 
     async fn scan(
