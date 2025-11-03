@@ -4038,6 +4038,7 @@ dependencies = [
  "sinex-satellite-sdk",
  "sinex-test-utils",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "toml",

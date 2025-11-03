@@ -12,9 +12,11 @@ use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::ulid_to_uuid;
-use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
+use sinex_core::{
+    db::models::Event, db::DbPoolExt, types::ulid::Ulid, Blob as CoreBlob, Id, JsonValue,
+};
 use sinex_satellite_sdk::{
-    annex::AnnexKey,
+    annex::{AnnexConfig, BlobManager},
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
@@ -25,8 +27,8 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use sqlx::PgPool;
-use std::{collections::HashMap, time::Duration};
-use tokio::sync::mpsc;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{fs, sync::mpsc};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
@@ -85,6 +87,7 @@ pub struct DocumentProcessor {
     config: DocumentIngestorConfig,
     db_pool: Option<PgPool>,
     event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
+    blob_manager: Option<Arc<BlobManager>>,
 }
 
 impl DocumentProcessor {
@@ -94,6 +97,7 @@ impl DocumentProcessor {
             config: DocumentIngestorConfig::default(),
             db_pool: None,
             event_sender: None,
+            blob_manager: None,
         }
     }
 
@@ -234,9 +238,8 @@ impl DocumentProcessor {
                         tl.offset_start,
                         tl.offset_end,
                         tl.ts_capture,
-                        NULL::text as note,
-                        sm.optional_blob_id as "optional_blob_id?: Ulid",
-                        NULL::bytea as "inline_data?: Vec<u8>"
+                        sm.metadata as "metadata?: JsonValue",
+                        sm.optional_blob_id as "optional_blob_id?: Ulid"
                     FROM raw.temporal_ledger tl
                     LEFT JOIN raw.source_material_registry sm 
                         ON sm.id = tl.source_material_id
@@ -270,41 +273,35 @@ impl DocumentProcessor {
                                 continue;
                             }
 
-                            // Load data from storage
-                            let data = if let Some(inline_data) = record.inline_data {
-                                // Data is stored inline in the source_material_registry
-                                let start = record.offset_start as usize;
-                                let end = record.offset_end as usize;
-                                if start < inline_data.len() && end <= inline_data.len() && start <= end {
-                                    inline_data[start..end].to_vec()
-                                } else {
-                                    inline_data // Return full data if slice bounds are invalid
-                                }
-                            } else if let Some(blob_id) = record.optional_blob_id {
-                                // Load from blob storage
+                            let data = if let Some(blob_id) = record.optional_blob_id {
                                 match self.load_blob_data(blob_id, &pool).await {
-                                    Ok(blob_data) => {
-                                        // Extract slice from blob based on offsets
-                                        let start = record.offset_start as usize;
-                                        let end = record.offset_end as usize;
-                                        if end <= blob_data.len() && start <= end {
-                                            blob_data[start..end].to_vec()
+                                    Ok(blob_bytes) => {
+                                        let start = record.offset_start.max(0) as usize;
+                                        let end = record.offset_end.max(record.offset_start) as usize;
+                                        if end <= blob_bytes.len() && start <= end {
+                                            blob_bytes[start..end].to_vec()
                                         } else {
                                             error!(
-                                                "Blob data size {} is smaller than slice end offset {}",
-                                                blob_data.len(), end
+                                                material_id = %material_id,
+                                                blob_length = blob_bytes.len(),
+                                                start,
+                                                end,
+                                                "Slice bounds exceed blob size"
                                             );
-                                            vec![]
+                                            Vec::new()
                                         }
                                     }
                                     Err(e) => {
                                         error!("Failed to load blob {}: {}", blob_id, e);
-                                        vec![]
+                                        Vec::new()
                                     }
                                 }
                             } else {
-                                debug!("No data source found for material {}", material_id);
-                                vec![]
+                                warn!(
+                                    material_id = %material_id,
+                                    "Material slice missing blob reference; skipping data"
+                                );
+                                Vec::new()
                             };
 
                             let slice = MaterialSlice {
@@ -314,7 +311,7 @@ impl DocumentProcessor {
                                 ts_capture_start: record.ts_capture,
                                 ts_capture_end: record.ts_capture, // Same timestamp
                                 data,
-                                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
+                                metadata: record.metadata.unwrap_or_default(),
                             };
 
                             let mut next_offset = record.offset_end;
@@ -338,75 +335,28 @@ impl DocumentProcessor {
 
     /// Load blob data from storage backend
     async fn load_blob_data(&self, blob_id: Ulid, db_pool: &PgPool) -> Result<Vec<u8>> {
-        // First query the blob metadata
-        let blob = sqlx::query!(
-            r#"
-            SELECT 
-                annex_backend,
-                content_hash,
-                size_bytes
-            FROM core.blobs
-            WHERE id::uuid = $1::uuid
-            "#,
-            ulid_to_uuid(blob_id),
-        )
-        .fetch_optional(db_pool)
-        .await?
-        .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
+        let blob_repo = db_pool.blobs();
+        let blob_record = blob_repo
+            .get_by_id(Id::from_ulid(blob_id))
+            .await
+            .map_err(|e| eyre!("Failed to load blob {}: {}", blob_id, e))?
+            .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
 
-        match blob.annex_backend.as_str() {
-            backend if backend.starts_with("SHA") => {
-                let size = blob.size_bytes.max(0) as u64;
-                let annex_key = format!("{}-s{}--{}", blob.annex_backend, size, blob.content_hash);
-                let parsed_key = AnnexKey::parse(&annex_key)
-                    .map_err(|e| eyre!("Failed to parse annex key {}: {}", annex_key, e))?;
+        let blob: CoreBlob = blob_record.into();
+        let annex_key = blob.annex_key();
 
-                let repo_path = match std::env::var("SINEX_ANNEX_PATH") {
-                    Ok(path) => Utf8PathBuf::from(path),
-                    Err(_) => {
-                        let default_path = sinex_core::environment::environment()
-                            .work_directory("/tmp/sinex/annex");
-                        Utf8PathBuf::from_path_buf(default_path)
-                            .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
-                    }
-                };
-
-                let objects_path = repo_path.join(".git").join("annex").join("objects");
-
-                let hash_chars: Vec<char> = parsed_key.hash.chars().collect();
-                if hash_chars.len() < 4 {
-                    return Err(eyre!(
-                        "Annex key hash too short for material {}: {}",
-                        blob_id,
-                        parsed_key.hash
-                    ));
-                }
-
-                let dir1: String = hash_chars[0..2].iter().collect();
-                let dir2: String = hash_chars[2..4].iter().collect();
-                let candidate = objects_path.join(dir1).join(dir2).join(&parsed_key.key);
-
-                if !candidate.as_std_path().exists() {
-                    return Err(eyre!(
-                        "Annex object not found for material {} at {:?}",
-                        blob_id,
-                        candidate
-                    ));
-                }
-
-                tokio::fs::read(candidate.as_std_path())
-                    .await
-                    .map_err(|e| eyre!("Failed to read annex object for {}: {}", blob_id, e))
-            }
-            "filesystem" => {
-                let path = std::path::Path::new(&blob.annex_backend);
-                tokio::fs::read(path)
-                    .await
-                    .map_err(|e| eyre!("Failed to read file: {}", e))
-            }
-            "s3" => Err(eyre!("S3 storage backend not yet implemented")),
-            backend => Err(eyre!("Unknown storage backend: {}", backend)),
+        if let Some(manager) = &self.blob_manager {
+            return manager
+                .retrieve_content(&annex_key)
+                .await
+                .map_err(|e| eyre!("Failed to retrieve blob {} from annex: {}", blob_id, e));
         }
+
+        Err(eyre!(
+            "Blob manager unavailable; cannot retrieve blob {} (key {})",
+            blob_id,
+            annex_key
+        ))
     }
 
     /// Process a complete document and generate events
@@ -564,6 +514,45 @@ impl StatefulStreamProcessor for DocumentProcessor {
             .await
             .map_err(|e| SatelliteError::General(eyre!("Failed to connect to database: {}", e)))?;
 
+        let annex_repo = match std::env::var("SINEX_ANNEX_PATH") {
+            Ok(path) => Utf8PathBuf::from(path),
+            Err(_) => {
+                let default_path =
+                    sinex_core::environment::environment().work_directory("/tmp/sinex/annex");
+                Utf8PathBuf::from_path_buf(default_path)
+                    .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
+            }
+        };
+
+        fs::create_dir_all(annex_repo.as_std_path())
+            .await
+            .map_err(|e| {
+                SatelliteError::General(eyre!(
+                    "Failed to create annex directory {}: {}",
+                    annex_repo,
+                    e
+                ))
+            })?;
+
+        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(event) = blob_event_rx.recv().await {
+                debug!(?event, "Blob manager emitted event");
+            }
+        });
+
+        let annex_config = AnnexConfig {
+            repo_path: annex_repo.clone(),
+            num_copies: None,
+            large_files: None,
+        };
+
+        let blob_manager = Arc::new(
+            BlobManager::new(annex_config, db_pool.clone(), blob_event_tx).map_err(|e| {
+                SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
+            })?,
+        );
+
         // Use the context's event sender directly
         let event_sender = ctx.event_sender.clone();
 
@@ -572,6 +561,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
         self.db_pool = Some(db_pool);
         self.event_sender = Some(event_sender);
         self.context = Some(ctx);
+        self.blob_manager = Some(blob_manager);
 
         info!("Document ingestor initialized with sensd integration");
         Ok(())
@@ -764,6 +754,7 @@ impl Clone for DocumentProcessor {
             config: self.config.clone(),
             db_pool: self.db_pool.clone(),
             event_sender: self.event_sender.clone(),
+            blob_manager: self.blob_manager.clone(),
         }
     }
 }
