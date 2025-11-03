@@ -26,7 +26,7 @@ mod common {
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -1036,15 +1036,6 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
     type Config = TerminalCommandCanonicalizerConfig;
 
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

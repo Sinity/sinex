@@ -24,7 +24,7 @@ mod common {
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -212,19 +212,6 @@ impl StatefulStreamProcessor for AnalyticsAutomaton {
     type Config = AnalyticsAutomatonConfig;
 
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
-        Ok(())
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

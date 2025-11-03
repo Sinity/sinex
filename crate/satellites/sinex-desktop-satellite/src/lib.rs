@@ -36,7 +36,7 @@ mod common {
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };

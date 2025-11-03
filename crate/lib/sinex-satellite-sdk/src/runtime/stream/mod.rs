@@ -298,8 +298,12 @@ impl StreamProcessorContext {
 /// impl StatefulStreamProcessor for MyIngestor {
 ///     type Config = MyIngestorConfig;
 ///
-///     async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
-///         // Initialize with context and typed configuration
+///     async fn initialize(
+///         &mut self,
+///         init: ProcessorInitContext<Self::Config>,
+///     ) -> SatelliteResult<()> {
+///         let (_config, _raw_config, _service, _handles, _work_dir) = init.into_parts();
+///         // Initialize with runtime handles and typed configuration
 ///         Ok(())
 ///     }
 ///
@@ -326,51 +330,9 @@ pub trait StatefulStreamProcessor: Send + Sync {
     /// The 'de lifetime bound enables deserialization from any source.
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    /// Initialize the processor with the given context and typed configuration.
-    ///
-    /// The configuration is parsed once at the system boundary and passed as a
-    /// strongly-typed object, eliminating the need for processors to handle
-    /// configuration parsing and validation internally.
-    async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()>;
-
-    /// Initialize using the new runtime handles. Default implementation builds the
-    /// legacy context and defers to `initialize` for backward compatibility.
-    async fn initialize_with_runtime(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> SatelliteResult<()> {
-        let (config, raw_config, service, handles, work_dir_utf8) = init.into_parts();
-        let legacy_ctx =
-            StreamProcessorContext::from_runtime(&service, &handles, raw_config, work_dir_utf8);
-        self.initialize(legacy_ctx, config).await
-    }
-
-    /// Backward compatibility method for processors that need access to legacy config format.
-    ///
-    /// This method is called by the old initialization path and can be used to convert
-    /// from the legacy HashMap format. Most processors should implement the new
-    /// `initialize` method instead.
-    async fn initialize_legacy(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
-        // Extract processor-specific config from the legacy format
-        let config = if ctx.config.is_empty() {
-            Self::Config::default()
-        } else {
-            // Try to deserialize from the generic config map
-            let config_value = serde_json::to_value(&ctx.config).map_err(|e| {
-                SatelliteError::Configuration(format!("Failed to serialize legacy config: {}", e))
-            })?;
-
-            serde_json::from_value(config_value).map_err(|e| {
-                SatelliteError::Configuration(format!("Failed to parse legacy config: {}", e))
-            })?
-        };
-
-        self.initialize(ctx, config).await
-    }
+    /// Initialize the processor with the provided runtime handles and typed configuration.
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>)
+        -> SatelliteResult<()>;
 
     /// Core scan method - the heart of the unified architecture.
     ///
@@ -708,7 +670,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             work_dir_utf8.clone(),
         );
 
-        self.processor.initialize_with_runtime(init_context).await?;
+        self.processor.initialize(init_context).await?;
 
         self.handles = Some(handles);
         self.service_info = Some(service_info);

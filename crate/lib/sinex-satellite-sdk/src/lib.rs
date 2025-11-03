@@ -81,8 +81,7 @@ pub use sensors::{
 };
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
-    ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
-    StreamProcessorRunner, TimeHorizon,
+    ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorRunner, TimeHorizon,
 };
 pub use version::{SatelliteInstance, SatelliteVersion};
 

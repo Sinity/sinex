@@ -9,8 +9,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport,
+        StatefulStreamProcessor, TimeHorizon,
     },
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteError,
     SatelliteResult, SourceState,
@@ -85,13 +85,11 @@ impl Default for RpcDispatcherConfig {
 }
 
 /// RPC Dispatcher Processor using unified StatefulStreamProcessor architecture
-pub struct RpcDispatcherProcessor {
-    context: Option<StreamProcessorContext>,
-}
+pub struct RpcDispatcherProcessor;
 
 impl RpcDispatcherProcessor {
     pub fn new() -> Self {
-        Self { context: None }
+        Self
     }
 }
 
@@ -101,11 +99,10 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        info!("Initializing RPC dispatcher processor");
-        self.context = Some(ctx);
+        let (_config, _raw_config, service_info, _handles, _work_dir) = init.into_parts();
+        info!(service = %service_info.service_name(), "Initializing RPC dispatcher processor");
         Ok(())
     }
 

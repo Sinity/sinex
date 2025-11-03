@@ -22,8 +22,7 @@ use sinex_satellite_sdk::{
     },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
-        TimeHorizon,
+        ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -576,15 +575,6 @@ impl StatefulStreamProcessor for DocumentProcessor {
     type Config = DocumentIngestorConfig;
 
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

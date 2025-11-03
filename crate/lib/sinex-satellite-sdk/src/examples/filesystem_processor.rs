@@ -9,8 +9,8 @@ use crate::{
         SourceState,
     },
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
     SatelliteResult,
 };
@@ -39,13 +39,12 @@ pub struct FilesystemProcessorConfig {
 }
 
 /// Example filesystem processor implementing unified stream processor interface
-#[derive(Debug)]
 pub struct FilesystemProcessor {
     /// Base directories to monitor
     watch_paths: Vec<Utf8PathBuf>,
 
-    /// Current context (set during initialization)
-    context: Option<StreamProcessorContext>,
+    /// Runtime handles captured during initialization
+    runtime: Option<ProcessorRuntimeState>,
 
     /// Last known filesystem state
     last_state: Option<FilesystemState>,
@@ -72,7 +71,7 @@ impl FilesystemProcessor {
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
             watch_paths,
-            context: None,
+            runtime: None,
             last_state: None,
         }
     }
@@ -177,8 +176,8 @@ impl FilesystemProcessor {
                     continue;
                 };
 
-                if let Some(ref context) = self.context {
-                    context.emit_event(event).await?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.event_emitter().emit(event).await?;
                 }
             }
 
@@ -238,11 +237,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
+        let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
             processor = self.processor_name(),
+            service = %service_info.service_name(),
             watch_paths = ?self.watch_paths,
             "Initializing filesystem processor"
         );
@@ -254,7 +254,8 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             }
         }
 
-        self.context = Some(ctx);
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.runtime = Some(runtime);
         Ok(())
     }
 

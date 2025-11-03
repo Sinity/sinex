@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use sinex_satellite_sdk::prelude::*;
+use sinex_satellite_sdk::stream_processor::ProcessorInitContext;
 use sinex_satellite_sdk::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 use sinex_test_utils::TestContext;
 use std::collections::HashMap;
@@ -16,8 +17,7 @@ impl StatefulStreamProcessor for MockProcessor {
 
     async fn initialize(
         &mut self,
-        _ctx: StreamProcessorContext,
-        _config: Self::Config,
+        _init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
         Ok(())
     }

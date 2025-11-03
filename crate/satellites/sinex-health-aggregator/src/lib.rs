@@ -23,8 +23,7 @@ mod common {
         },
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
-            TimeHorizon,
+            ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
         SatelliteResult,
     };
@@ -748,29 +747,9 @@ impl StatefulStreamProcessor for HealthAggregator {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        info!("Initializing health aggregator");
-        let runtime = ctx.to_runtime_state();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
-
-        info!(
-            "Health aggregator configured - monitoring {} components, aggregation window: {}s",
-            self.config.component_check_intervals.len(),
-            self.config.aggregation_window_seconds
-        );
-
-        Ok(())
-    }
-
-    async fn initialize_with_runtime(
-        &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
+        info!("Initializing health aggregator");
         let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
         self.db_pool = Some(runtime.db_pool().clone());

@@ -23,7 +23,7 @@ mod common {
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -821,26 +821,6 @@ impl StatefulStreamProcessor for PKMAutomaton {
     type Config = PKMAutomatonConfig;
 
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
-
-        info!(
-            "PKM automaton configured - analyzing {} event types, window: {} hours",
-            self.config.knowledge_event_types.len(),
-            self.config.analysis_window_seconds / 3600
-        );
-
-        Ok(())
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

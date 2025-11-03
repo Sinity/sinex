@@ -10,8 +10,7 @@ use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{
     config::EventSourceConfig,
     stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
 };
 use sinex_test_utils::sinex_test;

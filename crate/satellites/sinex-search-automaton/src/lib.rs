@@ -23,7 +23,7 @@ mod common {
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -698,30 +698,10 @@ impl StatefulStreamProcessor for SearchAutomaton {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
         info!("Initializing search automaton");
 
-        let runtime = ctx.to_runtime_state();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
-
-        info!(
-            "Search automaton configured - indexing {} event types, max index size: {}",
-            self.config.searchable_event_types.len(),
-            self.config.max_index_size
-        );
-
-        Ok(())
-    }
-
-    async fn initialize_with_runtime(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> SatelliteResult<()> {
         let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
         self.db_pool = Some(runtime.db_pool().clone());

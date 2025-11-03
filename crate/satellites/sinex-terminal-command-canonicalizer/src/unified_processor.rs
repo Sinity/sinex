@@ -16,7 +16,7 @@ use sinex_satellite_sdk::{
     cli::{CoverageAnalysis, ExportFormat, IngestionHistoryEntry},
     stream_processor::{
         Checkpoint, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState, ProcessorType,
-        ScanArgs, ScanReport, StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
     ExplorationProvider, SatelliteError, SatelliteResult, SourceState,
 };
@@ -228,15 +228,6 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
     type Config = ();
 
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.initialise_with_runtime_state(runtime).await
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

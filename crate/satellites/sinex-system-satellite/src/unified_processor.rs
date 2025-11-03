@@ -6,7 +6,7 @@
 use crate::common::*;
 use sinex_satellite_sdk::error_helpers::{parse_config_value, parse_typed_config};
 use sinex_satellite_sdk::stream_processor::{
-    EventEmitter, ProcessorInitContext, ProcessorRuntimeState, StreamProcessorContext,
+    EventEmitter, ProcessorInitContext, ProcessorRuntimeState,
 };
 
 // System-specific event payloads
@@ -409,38 +409,8 @@ impl Default for SystemProcessor {
 impl StatefulStreamProcessor for SystemProcessor {
     type Config = SystemConfig;
 
-    #[instrument(skip(self, ctx), fields(processor = "system", service = %ctx.service_name))]
+    #[instrument(skip(self, init), fields(processor = "system", service = %init.service_info().service_name()))]
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
-    ) -> SatelliteResult<()> {
-        info!(
-            processor = self.processor_name(),
-            service = %ctx.service_name,
-            "Initializing system processor"
-        );
-
-        let runtime = ctx.to_runtime_state();
-        self.runtime = Some(runtime);
-        if let Some(runtime_ref) = self.runtime.as_ref() {
-            self.apply_config_overrides(runtime_ref);
-        }
-
-        info!(
-            dbus_enabled = self.config.dbus_enabled,
-            journal_enabled = self.config.journal_enabled,
-            udev_enabled = self.config.udev_enabled,
-            systemd_enabled = self.config.systemd_enabled,
-            dbus_buses = %self.config.dbus_buses,
-            journal_timeout_secs = self.config.journal_timeout_secs,
-            "System processor configuration"
-        );
-
-        Ok(())
-    }
-
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

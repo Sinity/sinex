@@ -31,7 +31,7 @@ use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
         ProcessorRuntimeState, ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        StatefulStreamProcessor, TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -330,18 +330,8 @@ impl Default for FilesystemProcessor {
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
 
-    #[instrument(skip(self, ctx), fields(processor = "filesystem", service = %ctx.service_name))]
+    #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let runtime = ctx.to_runtime_state();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    #[instrument(skip(self, init))]
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {

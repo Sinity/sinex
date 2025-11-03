@@ -24,7 +24,7 @@ use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, EventEmitter, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
         ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
+        TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -472,34 +472,8 @@ impl Default for TerminalProcessor {
 impl StatefulStreamProcessor for TerminalProcessor {
     type Config = TerminalConfig;
 
-    #[instrument(skip(self, ctx), fields(processor = "terminal", service = %ctx.service_name))]
+    #[instrument(skip(self, init), fields(processor = "terminal", service = %init.service_info().service_name()))]
     async fn initialize(
-        &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
-    ) -> SatelliteResult<()> {
-        let handles = ProcessorHandles::new(
-            ctx.db_pool.clone(),
-            ctx.checkpoint_manager.clone(),
-            EventEmitter::new(ctx.event_sender.clone(), ctx.dry_run),
-            ctx.transport.clone(),
-            ctx.lease_manager.clone(),
-            ctx.confirmation_buffer.clone(),
-        );
-
-        let service_info = ServiceInfo::new(
-            ctx.service_name.clone(),
-            ctx.host.clone(),
-            ctx.work_dir.clone(),
-            ctx.dry_run,
-        );
-
-        self.initialise_from_handles(config, handles, service_info)
-            .await
-    }
-
-    #[instrument(skip(self, init))]
-    async fn initialize_with_runtime(
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
