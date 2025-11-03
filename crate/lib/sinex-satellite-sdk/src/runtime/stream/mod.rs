@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/stream_processor.md")]
+#![doc = include_str!("../../../doc/stream_processor.md")]
 
 use crate::{
     checkpoint::CheckpointManager,

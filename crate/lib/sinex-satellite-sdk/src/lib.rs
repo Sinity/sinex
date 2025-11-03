@@ -15,7 +15,6 @@ pub mod acquisition_manager;
 pub mod annex;
 pub mod automaton_event_handler;
 pub mod checkpoint;
-pub mod cli;
 pub mod config;
 pub mod confirmation_handler;
 pub mod coordination;
@@ -33,14 +32,22 @@ pub mod nats_publisher;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
-pub mod processor_runner;
 pub mod replay;
 pub mod replay_control;
 pub mod replay_metrics;
 pub mod replay_progress;
+pub mod runtime;
 pub mod sensors;
 pub mod stage_as_you_go;
-pub mod stream_processor;
+pub mod cli {
+    pub use crate::runtime::cli::*;
+}
+pub mod processor_runner {
+    pub use crate::runtime::runner::*;
+}
+pub mod stream_processor {
+    pub use crate::runtime::stream::*;
+}
 pub mod version;
 
 pub use acquisition_manager::{
