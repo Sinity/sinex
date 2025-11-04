@@ -3,10 +3,7 @@
 //! Common error handling and configuration parsing utilities to reduce code duplication
 //! across satellites. These helpers provide consistent error context and conversion patterns.
 
-use crate::{
-    stream_processor::{ProcessorRuntimeState, StreamProcessorContext},
-    SatelliteError,
-};
+use crate::{stream_processor::ProcessorRuntimeState, SatelliteError};
 use std::collections::HashMap;
 use std::io;
 
@@ -57,15 +54,15 @@ pub trait ConfigAccessor {
     fn config_map(&self) -> &HashMap<String, serde_json::Value>;
 }
 
-impl ConfigAccessor for StreamProcessorContext {
-    fn config_map(&self) -> &HashMap<String, serde_json::Value> {
-        &self.config
-    }
-}
-
 impl ConfigAccessor for ProcessorRuntimeState {
     fn config_map(&self) -> &HashMap<String, serde_json::Value> {
         self.raw_config()
+    }
+}
+
+impl ConfigAccessor for HashMap<String, serde_json::Value> {
+    fn config_map(&self) -> &HashMap<String, serde_json::Value> {
+        self
     }
 }
 

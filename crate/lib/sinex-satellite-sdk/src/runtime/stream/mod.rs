@@ -120,140 +120,6 @@ pub struct ScanReport {
     pub warnings: Vec<String>,
 }
 
-/// Context provided to stream processors during operations
-pub struct StreamProcessorContext {
-    /// Service/processor name
-    pub service_name: String,
-
-    /// Hostname where the processor is running
-    pub host: String,
-
-    /// Working directory for temporary files
-    pub work_dir: std::path::PathBuf,
-
-    /// Whether running in dry-run mode
-    pub dry_run: bool,
-
-    /// Database connection pool
-    pub db_pool: PgPool,
-
-    /// Event transport mechanism (gRPC or NATS)
-    pub transport: crate::event_processor::EventTransport,
-
-    /// Checkpoint manager for state persistence
-    pub checkpoint_manager: Arc<CheckpointManager>,
-
-    /// Legacy processor-specific configuration (deprecated).
-    ///
-    /// This field is maintained for backward compatibility but should not be used
-    /// by new processors. Use the typed configuration passed to `initialize()` instead.
-    /// This will be removed in a future version.
-    pub config: HashMap<String, serde_json::Value>,
-
-    /// Event sender channel for scan operations
-    pub event_sender: EventSender,
-
-    /// Lease manager for leader election (automata only)
-    pub lease_manager: Option<Arc<crate::LeaseManager>>,
-
-    /// Confirmation buffer for provisional events (automata only)
-    pub confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
-}
-
-impl std::fmt::Debug for StreamProcessorContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StreamProcessorContext")
-            .field("service_name", &self.service_name)
-            .field("host", &self.host)
-            .field("work_dir", &self.work_dir)
-            .field("dry_run", &self.dry_run)
-            .finish()
-    }
-}
-
-impl StreamProcessorContext {
-    pub fn from_runtime(
-        service: &ServiceInfo,
-        handles: &ProcessorHandles,
-        config: HashMap<String, serde_json::Value>,
-        work_dir_utf8: Utf8PathBuf,
-    ) -> Self {
-        let sender_arc = handles.emitter().sender();
-        Self {
-            service_name: service.service_name().to_string(),
-            host: service.host().to_string(),
-            work_dir: work_dir_utf8.into_std_path_buf(),
-            dry_run: service.dry_run(),
-            db_pool: handles.db_pool().clone(),
-            transport: handles.transport().clone(),
-            checkpoint_manager: handles.checkpoint_manager(),
-            config,
-            event_sender: (*sender_arc).clone(),
-            lease_manager: handles.lease_manager(),
-            confirmation_buffer: handles.confirmation_buffer(),
-        }
-    }
-
-    pub fn to_runtime_state(&self) -> ProcessorRuntimeState {
-        let event_sender = self.event_sender.clone();
-        let emitter = EventEmitter::new(event_sender, self.dry_run);
-        let handles = ProcessorHandles::new(
-            self.db_pool.clone(),
-            self.checkpoint_manager.clone(),
-            emitter.clone(),
-            self.transport.clone(),
-            self.lease_manager.clone(),
-            self.confirmation_buffer.clone(),
-        );
-
-        let work_dir_utf8 = Utf8PathBuf::from_path_buf(self.work_dir.clone())
-            .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"));
-
-        let service_info = ServiceInfo::new(
-            self.service_name.clone(),
-            self.host.clone(),
-            self.work_dir.clone(),
-            self.dry_run,
-        );
-
-        ProcessorRuntimeState::new(service_info, handles, self.config.clone(), work_dir_utf8)
-    }
-
-    /// Send an event through the event channel
-    #[cfg_attr(
-        feature = "macros",
-        sinex_macros::auto_event_metrics(event_type = "emit")
-    )]
-    pub async fn emit_event(&self, event: Event<JsonValue>) -> SatelliteResult<()> {
-        let _start = std::time::Instant::now();
-        let event_type = event.event_type.clone();
-
-        if self.dry_run {
-            info!(
-                source = %event.source,
-                event_type = %event_type,
-                "DRY RUN: Would emit event"
-            );
-            return Ok(());
-        }
-
-        let result = self
-            .event_sender
-            .send(event)
-            .map_err(|_| SatelliteError::General(eyre!("Event channel closed")));
-
-        result
-    }
-
-    /// Send multiple events through the event channel
-    pub async fn emit_events(&self, events: Vec<Event<JsonValue>>) -> SatelliteResult<()> {
-        for event in events {
-            self.emit_event(event).await?;
-        }
-        Ok(())
-    }
-}
-
 /// Unified trait for all stream processors (ingestors and automata).
 ///
 /// This trait implements the "Deep Symmetry" architecture where both ingestors
@@ -267,7 +133,7 @@ impl StreamProcessorContext {
 /// # Implementation Notes
 /// - Implementations must be thread-safe (`Send + Sync`)
 /// - The `scan()` method is the core interface - other methods provide metadata
-/// - Checkpointing is handled externally via `StreamProcessorContext`
+/// - Checkpointing is handled externally via the shared runtime handles
 /// - Graceful shutdown should be implemented in `shutdown()`
 /// - Each processor defines its own `Config` type for type-safe configuration
 ///
@@ -356,7 +222,7 @@ pub trait StatefulStreamProcessor: Send + Sync {
     /// - Database errors are typically non-recoverable
     ///
     /// # Performance Notes
-    /// - Emit events incrementally via `StreamProcessorContext::emit_event()`
+    /// - Emit events incrementally via the provided runtime event emitter
     /// - Use `args.max_events` to limit processing scope
     /// - Respect `args.dry_run` for testing scenarios
     async fn scan(

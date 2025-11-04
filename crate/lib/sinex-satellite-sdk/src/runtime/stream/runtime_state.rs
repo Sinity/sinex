@@ -92,13 +92,4 @@ impl ProcessorRuntimeState {
             self.work_dir_utf8,
         )
     }
-
-    pub fn to_stream_context(&self) -> super::StreamProcessorContext {
-        super::StreamProcessorContext::from_runtime(
-            &self.service_info,
-            &self.handles,
-            self.raw_config.clone(),
-            self.work_dir_utf8.clone(),
-        )
-    }
 }
