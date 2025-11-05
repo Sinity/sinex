@@ -4,6 +4,7 @@ use crate::{
     checkpoint::CheckpointManager,
     confirmation_handler::ConfirmationBuffer,
     event_processor::EventTransport,
+    heartbeat::HeartbeatEmitter,
     lease_manager::LeaseManager,
 };
 use camino::Utf8PathBuf;
@@ -95,6 +96,10 @@ impl ProcessorRuntimeState {
         source_path: impl Into<String>,
     ) -> crate::SatelliteResult<AcquisitionManager> {
         AcquisitionManager::from_handles(self.handles(), rotation_policy, source_type, source_path)
+    }
+
+    pub fn heartbeat_emitter(&self, interval_seconds: u64) -> HeartbeatEmitter {
+        HeartbeatEmitter::from_runtime(self, interval_seconds)
     }
     pub fn raw_config(&self) -> &HashMap<String, Value> {
         &self.raw_config
