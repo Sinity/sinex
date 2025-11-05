@@ -4,6 +4,8 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
+use crate::stream_processor::ProcessorHandles;
+use crate::SatelliteResult;
 use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
@@ -192,6 +194,28 @@ impl AcquisitionManager {
             source_type,
             source_path,
         }
+    }
+
+    /// Create an acquisition manager directly from processor handles
+    pub fn from_handles(
+        handles: &ProcessorHandles,
+        rotation_policy: RotationPolicy,
+        source_type: impl Into<String>,
+        source_path: impl Into<String>,
+    ) -> SatelliteResult<Self> {
+        let nats_client = match handles.transport() {
+            crate::event_processor::EventTransport::Nats(publisher) => {
+                publisher.nats_client().clone()
+            }
+        };
+
+        Ok(Self::new(
+            nats_client,
+            handles.db_pool().clone(),
+            rotation_policy,
+            source_type.into(),
+            source_path.into(),
+        ))
     }
 
     /// Begin capturing a new source material

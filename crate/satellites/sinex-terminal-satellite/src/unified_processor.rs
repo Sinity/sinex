@@ -417,7 +417,6 @@ impl TerminalProcessor {
 
     fn build_history_contexts(&self) -> SatelliteResult<Vec<HistoryWatcherContext>> {
         let handles = self.handles()?;
-        let db_pool = handles.db_pool().clone();
         let nats_client = match handles.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
                 publisher.nats_client().clone()
@@ -432,13 +431,12 @@ impl TerminalProcessor {
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
-            let acquisition = AcquisitionManager::new(
-                nats_client.clone(),
-                db_pool.clone(),
+            let acquisition = AcquisitionManager::from_handles(
+                handles,
                 RotationPolicy::default(),
-                "terminal-history".to_string(),
+                "terminal-history",
                 source.path.to_string(),
-            );
+            )?;
 
             let state_path = state_dir.as_ref().map(|dir| {
                 let hash = blake3::hash(source.path.as_str().as_bytes())

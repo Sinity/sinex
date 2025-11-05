@@ -238,7 +238,6 @@ impl FilesystemProcessor {
     /// Build watch contexts for each configured path.
     fn build_watch_contexts(&self) -> SatelliteResult<HashMap<String, WatchContext>> {
         let runtime = self.runtime()?;
-        let db_pool = runtime.db_pool().clone();
         let stage_context = self
             .stage_context
             .clone()
@@ -252,13 +251,12 @@ impl FilesystemProcessor {
 
         let mut contexts = HashMap::new();
         for path in &self.config.watch_paths {
-            let acquisition = AcquisitionManager::new(
-                nats_client.clone(),
-                db_pool.clone(),
+            let acquisition = AcquisitionManager::from_handles(
+                runtime.handles(),
                 RotationPolicy::default(),
-                "fs-watcher".to_string(),
+                "fs-watcher",
                 path.clone(),
-            );
+            )?;
 
             contexts.insert(
                 path.clone(),
