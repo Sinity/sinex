@@ -240,16 +240,9 @@ impl FilesystemProcessor {
             .clone()
             .ok_or_else(|| SatelliteError::General(eyre::eyre!("Stage context not available")))?;
 
-        let nats_client = match runtime.transport() {
-            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
-                publisher.nats_client().clone()
-            }
-        };
-
         let mut contexts = HashMap::new();
         for path in &self.config.watch_paths {
-            let acquisition = AcquisitionManager::from_handles(
-                runtime.handles(),
+            let acquisition = runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "fs-watcher",
                 path.clone(),

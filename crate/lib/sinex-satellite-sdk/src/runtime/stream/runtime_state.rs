@@ -1,7 +1,10 @@
 use super::{EventEmitter, EventSender, ProcessorHandles, ServiceInfo};
 use crate::{
-    checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer,
-    event_processor::EventTransport, lease_manager::LeaseManager,
+    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    checkpoint::CheckpointManager,
+    confirmation_handler::ConfirmationBuffer,
+    event_processor::EventTransport,
+    lease_manager::LeaseManager,
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
@@ -83,6 +86,15 @@ impl ProcessorRuntimeState {
 
     pub async fn emit_event(&self, event: Event<JsonValue>) -> crate::SatelliteResult<()> {
         self.event_emitter().emit(event).await
+    }
+
+    pub fn acquisition_manager(
+        &self,
+        rotation_policy: RotationPolicy,
+        source_type: impl Into<String>,
+        source_path: impl Into<String>,
+    ) -> crate::SatelliteResult<AcquisitionManager> {
+        AcquisitionManager::from_handles(self.handles(), rotation_policy, source_type, source_path)
     }
     pub fn raw_config(&self) -> &HashMap<String, Value> {
         &self.raw_config

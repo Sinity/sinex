@@ -428,8 +428,7 @@ impl TerminalProcessor {
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
-            let acquisition = AcquisitionManager::from_handles(
-                handles,
+            let acquisition = runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "terminal-history",
                 source.path.to_string(),
