@@ -5,8 +5,10 @@ use crate::{
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
-use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::db::models::Event;
+use sinex_core::{db::SqlxPgPool as PgPool, JsonValue};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Captures runtime dependencies supplied to processors during initialization.
@@ -69,8 +71,25 @@ impl ProcessorRuntimeState {
         self.handles.confirmation_buffer()
     }
 
+    pub fn config_value<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        self.raw_config
+            .get(key)
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    pub fn raw_config_value(&self, key: &str) -> Option<&Value> {
+        self.raw_config.get(key)
+    }
+
+    pub async fn emit_event(&self, event: Event<JsonValue>) -> crate::SatelliteResult<()> {
+        self.event_emitter().emit(event).await
+    }
     pub fn raw_config(&self) -> &HashMap<String, Value> {
         &self.raw_config
+    }
+
+    pub fn work_dir(&self) -> &Path {
+        self.work_dir_utf8.as_std_path()
     }
 
     pub fn work_dir_utf8(&self) -> &Utf8PathBuf {
