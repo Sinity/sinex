@@ -1,6 +1,6 @@
 #![doc = include_str!("../doc/stage_as_you_go.md")]
 
-use crate::stream_processor::{EventEmitter, ProcessorRuntimeState};
+use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
 use crate::{
     annex::{AnnexConfig, BlobManager, BlobMetadata},
     SatelliteError, SatelliteResult,
@@ -38,9 +38,14 @@ struct StageMaterialInfo {
 }
 
 impl StageAsYouGoContext {
-    /// Create a Stage-as-You-Go context from a processor runtime
+    /// Create a Stage-as-You-Go context from processor runtime handles
     pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
         Self::from_emitter(runtime.db_pool().clone(), runtime.event_emitter().clone())
+    }
+
+    /// Create a Stage-as-You-Go context directly from processor handles
+    pub fn from_handles(handles: &ProcessorHandles) -> Self {
+        Self::from_emitter(handles.db_pool().clone(), handles.emitter().clone())
     }
 
     /// Create a Stage-as-You-Go context from explicit components

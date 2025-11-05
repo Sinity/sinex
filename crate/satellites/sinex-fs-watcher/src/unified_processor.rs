@@ -208,10 +208,7 @@ impl FilesystemProcessor {
             .await
             .map_err(SatelliteError::from)?;
 
-        let stage_context = StageAsYouGoContext::from_emitter(
-            runtime.db_pool().clone(),
-            runtime.event_emitter().clone(),
-        );
+        let stage_context = StageAsYouGoContext::from_runtime(runtime);
 
         self.config = config;
         self.stage_context = Some(stage_context);

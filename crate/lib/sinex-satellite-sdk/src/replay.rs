@@ -3,6 +3,7 @@
 use crate::replay_control::ReplayController;
 use crate::replay_metrics::ReplayMetrics;
 use crate::replay_progress::{ProgressTracker, ReplayPhase};
+use crate::stream_processor::ProcessorRuntimeState;
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,11 @@ impl ReplayManager {
             controller: None,
             metrics: None,
         }
+    }
+
+    /// Create a replay manager from the current processor runtime
+    pub fn from_runtime(runtime: &ProcessorRuntimeState, mode: ReplayMode) -> Self {
+        Self::new(runtime.db_pool().clone(), mode)
     }
 
     /// Set batch size for replay processing

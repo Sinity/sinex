@@ -403,10 +403,7 @@ impl TerminalProcessor {
         }
 
         self.state_dir = Some(state_dir);
-        self.stage_context = Some(StageAsYouGoContext::from_emitter(
-            handles.db_pool().clone(),
-            handles.emitter().clone(),
-        ));
+        self.stage_context = Some(StageAsYouGoContext::from_handles(handles));
         self.handles = Some(handles);
         self.service_info = Some(service_info);
         self.config = config;
