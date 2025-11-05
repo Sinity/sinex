@@ -208,7 +208,7 @@ impl FilesystemProcessor {
             .await
             .map_err(SatelliteError::from)?;
 
-        let stage_context = StageAsYouGoContext::from_handles(
+        let stage_context = StageAsYouGoContext::from_emitter(
             runtime.db_pool().clone(),
             runtime.event_emitter().clone(),
         );
@@ -894,7 +894,7 @@ mod tests {
         ));
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let stage_context = StageAsYouGoContext::new(ctx.pool.clone(), event_tx);
+        let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
 
         let watch_ctx = WatchContext {
             acquisition,

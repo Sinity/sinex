@@ -46,7 +46,7 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         shutdown_rx,
     );
 
-    let stage_context = StageAsYouGoContext::new(ctx.pool.clone(), event_tx);
+    let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
     let mut processor = LogFileStageProcessor::new(stage_context, "integration-e2e");
 
     let content = b"alpha\nbeta\ngamma\n";

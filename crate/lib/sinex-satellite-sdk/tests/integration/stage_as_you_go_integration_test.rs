@@ -45,7 +45,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         shutdown_rx,
     );
 
-    let context = StageAsYouGoContext::new(ctx.pool.clone(), event_tx);
+    let context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
     let mut processor = LogFileStageProcessor::new(context, "integration-log");
 
     let content = b"alpha\nbeta\ngamma\n";

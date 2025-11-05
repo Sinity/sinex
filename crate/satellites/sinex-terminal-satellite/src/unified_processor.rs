@@ -403,7 +403,7 @@ impl TerminalProcessor {
         }
 
         self.state_dir = Some(state_dir);
-        self.stage_context = Some(StageAsYouGoContext::from_handles(
+        self.stage_context = Some(StageAsYouGoContext::from_emitter(
             handles.db_pool().clone(),
             handles.emitter().clone(),
         ));
@@ -709,7 +709,7 @@ mod tests {
         ));
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let stage_context = StageAsYouGoContext::new(ctx.pool.clone(), event_tx);
+        let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
 
         let watcher_ctx = HistoryWatcherContext {
             acquisition,

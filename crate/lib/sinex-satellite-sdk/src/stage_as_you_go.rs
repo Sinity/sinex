@@ -1,6 +1,6 @@
 #![doc = include_str!("../doc/stage_as_you_go.md")]
 
-use crate::stream_processor::EventEmitter;
+use crate::stream_processor::{EventEmitter, ProcessorRuntimeState};
 use crate::{
     annex::{AnnexConfig, BlobManager, BlobMetadata},
     SatelliteError, SatelliteResult,
@@ -38,13 +38,13 @@ struct StageMaterialInfo {
 }
 
 impl StageAsYouGoContext {
-    /// Create a new Stage-as-You-Go context
-    pub fn new(db_pool: PgPool, event_sender: mpsc::UnboundedSender<Event<JsonValue>>) -> Self {
-        Self::from_handles(db_pool, EventEmitter::new(event_sender, false))
+    /// Create a Stage-as-You-Go context from a processor runtime
+    pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
+        Self::from_emitter(runtime.db_pool().clone(), runtime.event_emitter().clone())
     }
 
-    /// Create a Stage-as-You-Go context from runtime handles
-    pub fn from_handles(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
+    /// Create a Stage-as-You-Go context from explicit components
+    pub fn from_emitter(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
         let blob_manager = Self::init_blob_manager(&db_pool, &event_emitter);
 
         Self {
@@ -53,6 +53,15 @@ impl StageAsYouGoContext {
             blob_manager,
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Convenience helper to build a context from a sender channel (tests/tooling)
+    pub fn from_sender(
+        db_pool: PgPool,
+        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+        dry_run: bool,
+    ) -> Self {
+        Self::from_emitter(db_pool, EventEmitter::new(event_sender, dry_run))
     }
 
     /// Create a Stage-as-You-Go context with an explicitly provided blob manager
