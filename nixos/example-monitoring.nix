@@ -19,6 +19,7 @@
       host = "127.0.0.1";
       name = "sinex_obs";
       user = "sinex";
+      passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
     lifecycle.maintenance.enable = true;

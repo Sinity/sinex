@@ -19,6 +19,7 @@
       port = 5432;
       name = "sinex";
       user = "sinex_agent";
+      passwordFile = config.sinex.secrets.paths."sinex-remote-db";
     };
 
     core.enable = false; # ingestd/gateway run on central cluster
@@ -32,9 +33,9 @@
       defaults = {
         logLevel = "info";
         env = {
-          SINEX_NATS_CA_CERT = "/etc/sinex/nats/ca.pem";
-          SINEX_NATS_CLIENT_CERT = "/etc/sinex/nats/client.pem";
-          SINEX_NATS_CLIENT_KEY = "/etc/sinex/nats/client.key";
+          SINEX_NATS_CA_CERT = config.sinex.secrets.paths."sinex-remote-nats-ca";
+          SINEX_NATS_CLIENT_CERT = config.sinex.secrets.paths."sinex-remote-nats-cert";
+          SINEX_NATS_CLIENT_KEY = config.sinex.secrets.paths."sinex-remote-nats-key";
         };
       };
 
@@ -69,22 +70,6 @@
   users.users.agent = {
     isNormalUser = true;
     createHome = true;
-  };
-
-  # Placeholder secret material — replace with your own deployment mechanism (e.g. agenix, sops-nix)
-  environment.etc = {
-    "sinex/nats/ca.pem" = {
-      text = "# insert NATS CA certificate\n";
-      mode = "0400";
-    };
-    "sinex/nats/client.pem" = {
-      text = "# insert client certificate\n";
-      mode = "0400";
-    };
-    "sinex/nats/client.key" = {
-      text = "# insert client key\n";
-      mode = "0400";
-    };
   };
 
   environment.systemPackages = with pkgs; [ sinexCli jq ];

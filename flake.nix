@@ -7,6 +7,10 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    agenix = {
+      url = "github:ryantm/agenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -15,6 +19,7 @@
       self,
       nixpkgs,
       fenix,
+      agenix,
       flake-utils,
     }:
     let
@@ -451,10 +456,21 @@ PY
     systemOutputs
     // {
       # NixOS module
-      nixosModules = {
-        default = ./nixos;
-        sinex = ./nixos;
-      };
+      nixosModules =
+        let
+          baseModule = import ./nixos;
+        in
+        {
+          default = args:
+            let
+              base = baseModule args;
+              existingImports = base.imports or [ ];
+            in
+            base // {
+              imports = [ agenix.nixosModules.default ] ++ existingImports;
+            };
+          sinex = args: (self.nixosModules.default args);
+        };
 
       nixosConfigurations = {
         example = nixpkgs.lib.nixosSystem {

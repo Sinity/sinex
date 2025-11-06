@@ -35,6 +35,7 @@ shell_integration no-title
 in
 {
   imports = [
+    ./secrets.nix
     ./database.nix
     ./blob-storage.nix
     ./monitoring.nix

@@ -23,6 +23,7 @@
       port = 5432;
       name = "sinex";
       user = "sinex";
+      passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
     core.enable = true;
