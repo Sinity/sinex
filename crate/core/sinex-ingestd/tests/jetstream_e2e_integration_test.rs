@@ -41,7 +41,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     let events_raw_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_raw_stream.clone(),
-        subjects: vec![env.nats_subject("events.>")],
+        subjects: vec![env.nats_subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -213,7 +213,7 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
     let events_raw_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_raw_stream.clone(),
-        subjects: vec![env.nats_subject("events.>")],
+        subjects: vec![env.nats_subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,

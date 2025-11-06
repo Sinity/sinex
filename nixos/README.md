@@ -23,9 +23,9 @@ Key architectural decisions and implementation details are documented at their i
 
 ### Database Layer
 - **PostgreSQL Extensions Setup**: [`modules/database.nix`](modules/database.nix)
-  - pgx_ulid configuration for ULID primary keys
+  - pgx_ulid provisioning for ULID primary keys
   - TimescaleDB setup for hypertable partitioning  
-  - Optional monotonic ULID generation instructions
+  - Guidance for WAL/ulid tuning
 - **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
   - Chunk interval optimization guidelines
   - Compression strategy documentation

@@ -71,7 +71,7 @@ impl JetStreamTopology {
 
         Self {
             events_stream: base_stream.clone(),
-            events_subject: env.nats_subject("events.>"),
+            events_subject: env.nats_subject("events.raw.>"),
             confirmations_stream,
             confirmations_subject: env.nats_subject("events.confirmations.>"),
             confirmations_prefix,
@@ -237,11 +237,10 @@ impl JetStreamConsumer {
         let mut messages = consumer
             .batch()
             .max_messages(100)
-            .expires(Duration::from_secs(30))
+            .expires(Duration::from_secs(1))
             .messages()
             .await
             .map_err(|e| SinexError::network(format!("Failed to fetch messages: {}", e)))?;
-
         let mut batch = Vec::new();
 
         while let Some(msg) = messages.next().await {
@@ -464,7 +463,11 @@ impl JetStreamConsumer {
         .bind(&hosts)
         .bind(&payloads)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|err| {
+            error!("Failed to persist events batch: {}", err);
+            err
+        })?;
 
         // Extract persisted IDs from RETURNING clause
         let persisted_ids: Vec<String> = rows

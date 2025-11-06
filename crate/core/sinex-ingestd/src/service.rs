@@ -80,7 +80,7 @@ impl IngestService {
             let env = sinex_environment();
             let stream_config = jetstream::stream::Config {
                 name: config.nats_stream_name.clone(),
-                subjects: vec![env.nats_subject("events.>")],
+                subjects: vec![env.nats_subject("events.raw.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
                 max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days

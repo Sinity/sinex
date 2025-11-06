@@ -50,13 +50,13 @@ let
   extensionPackages = unique (
     optionals (postgresqlPackages ? timescaledb) [ postgresqlPackages.timescaledb ]
     ++ optionals (postgresqlPackages ? pgvector) [ postgresqlPackages.pgvector ]
-    ++ optionals (db.monotonicUlids && (postgresqlPackages ? pgx_ulid)) [ postgresqlPackages.pgx_ulid ]
+    ++ optionals (postgresqlPackages ? pgx_ulid) [ postgresqlPackages.pgx_ulid ]
   );
 
   sharedPreloadLibraries =
     let
       base = optionals (postgresqlPackages ? timescaledb) [ "timescaledb" ]
-        ++ optionals (db.monotonicUlids && (postgresqlPackages ? pgx_ulid)) [ "pgx_ulid" ];
+        ++ optionals (postgresqlPackages ? pgx_ulid) [ "pgx_ulid" ];
     in
     concatStringsSep "," (unique base);
 

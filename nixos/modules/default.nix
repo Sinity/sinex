@@ -176,12 +176,6 @@ in
             description = "Path to a file containing the database password.";
           };
 
-          monotonicUlids = mkOption {
-            type = bool;
-            default = true;
-            description = "Enable pgx_ulid in shared_preload_libraries for monotonic ULIDs.";
-          };
-
           package = mkOption {
             type = package;
             default = pkgs.postgresql_16;

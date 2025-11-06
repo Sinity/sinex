@@ -73,6 +73,7 @@ sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+gethostname = { workspace = true }
 
 [features]
 default = []

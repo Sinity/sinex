@@ -1,3 +1,4 @@
+use sinex_core::types::validation::config_validation::ConfigValidation;
 use sinex_ingestd::IngestdConfig;
 use sinex_test_utils::sinex_test;
 

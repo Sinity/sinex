@@ -25,7 +25,7 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: base_stream.clone(),
-        subjects: vec![env.nats_subject("events.>")],
+        subjects: vec![env.nats_subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -104,7 +104,7 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: base_stream.clone(),
-        subjects: vec![env.nats_subject("events.>")],
+        subjects: vec![env.nats_subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -168,7 +168,7 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: base_stream.clone(),
-        subjects: vec![env.nats_subject("events.>")],
+        subjects: vec![env.nats_subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,

@@ -2,10 +2,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
 use sinex_core::{types::ulid::Ulid, JsonValue};
-use sinex_satellite_sdk::stream_processor::{
-    EventEmitter, EventTransport, ProcessorHandles, ProcessorRuntimeState, ServiceInfo,
-};
 use sinex_satellite_sdk::{checkpoint::CheckpointManager, nats_publisher::NatsPublisher};
+use sinex_satellite_sdk::{
+    event_processor::EventTransport,
+    stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState, ServiceInfo},
+};
 use sinex_test_utils::{prelude::*, EphemeralNats};
 use tokio::sync::mpsc;
 

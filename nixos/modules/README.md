@@ -57,8 +57,8 @@ values derived from `stateRoot` and the global `logLevel`.
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
   Flip it on explicitly when you need the cluster even with the main service
 disabled (e.g. staging migrations).
-- Shared preload libraries include TimescaleDB and `pgx_ulid` when
-  `database.monotonicUlids = true`.
+- Shared preload libraries always include TimescaleDB and `pgx_ulid` to support
+  hypertables and ULID generation.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both
   Postgres `max_connections` and the CLI flags passed to service binaries.
 
