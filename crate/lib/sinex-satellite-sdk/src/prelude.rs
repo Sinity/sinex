@@ -22,13 +22,16 @@ pub use crate::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use crate::{SatelliteInstance, SatelliteVersion};
 
 // Lifecycle management
-pub use crate::{LifecycleManager, ProcessorMode, ProcessorRunner, ServiceStatus};
+pub use crate::{LifecycleManager, ServiceStatus};
 
-// Event handling
-pub use crate::{EventSender, EventStream, ReplayMode};
+// Event handling and replay
+pub use crate::{
+    EventSender, EventStream, MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters,
+    ReplayMetrics, ReplayMode, ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+};
 
 // CLI and utilities
-pub use crate::{ProcessorCli, ProcessorCommand, SatelliteArgs};
+pub use crate::SatelliteArgs;
 
 // Error types
 pub use crate::{SatelliteError, SatelliteResult};

@@ -12,7 +12,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_satellite_sdk::processor_main;
+use sinex_processor_runtime::processor_main;
 use sinex_terminal_command_canonicalizer::unified_processor::TerminalCommandCanonicalizer;
 
 processor_main!(TerminalCommandCanonicalizer);

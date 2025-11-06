@@ -136,7 +136,7 @@ impl SystemProcessor {
     }
 
     fn emitter(&self) -> SatelliteResult<&EventEmitter> {
-        Ok(self.runtime()?.handles().emitter())
+        Ok(self.runtime()?.event_emitter())
     }
 
     fn apply_config_overrides(&mut self, runtime: &ProcessorRuntimeState) {
@@ -414,8 +414,7 @@ impl StatefulStreamProcessor for SystemProcessor {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        let (config, runtime) = init.into_runtime();
         self.runtime = Some(runtime);
         self.config = config;
         if let Some(runtime_ref) = self.runtime.as_ref() {

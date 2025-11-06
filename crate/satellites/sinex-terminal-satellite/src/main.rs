@@ -11,4 +11,4 @@ use sinex_terminal_satellite::TerminalProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the new unified architecture with macro
-sinex_satellite_sdk::processor_main!(TerminalProcessor);
+sinex_processor_runtime::processor_main!(TerminalProcessor);

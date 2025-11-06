@@ -1,7 +1,7 @@
 use async_trait::async_trait;
+use sinex_processor_runtime::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 use sinex_satellite_sdk::prelude::*;
 use sinex_satellite_sdk::stream_processor::ProcessorInitContext;
-use sinex_satellite_sdk::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 use sinex_test_utils::TestContext;
 use std::collections::HashMap;
 

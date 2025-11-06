@@ -392,12 +392,9 @@ pub struct StreamProcessorRunner<T: StatefulStreamProcessor> {
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
     work_dir_utf8: Option<Utf8PathBuf>,
-    checkpoint_manager: Option<Arc<CheckpointManager>>,
     shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
     event_processor_handle: Option<tokio::task::JoinHandle<SatelliteResult<()>>>,
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    lease_manager: Option<Arc<crate::LeaseManager>>,
-    confirmation_buffer: Option<Arc<crate::ConfirmationBuffer>>,
     processing_model: ProcessingModel,
 }
 
@@ -410,14 +407,26 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             service_info: None,
             raw_config: None,
             work_dir_utf8: None,
-            checkpoint_manager: None,
             shutdown_receiver: None,
             event_processor_handle: None,
             event_processor_shutdown: None,
-            lease_manager: None,
-            confirmation_buffer: None,
             processing_model: ProcessingModel::StatelessWorker,
         }
+    }
+
+    /// Reconstruct the current runtime state if the runner has been initialised
+    pub fn runtime_state(&self) -> Option<ProcessorRuntimeState> {
+        let handles = self.handles.clone()?;
+        let service_info = self.service_info.clone()?;
+        let raw_config = self.raw_config.clone()?;
+        let work_dir_utf8 = self.work_dir_utf8.clone()?;
+
+        Some(ProcessorRuntimeState::new(
+            service_info,
+            handles,
+            raw_config,
+            work_dir_utf8,
+        ))
     }
 
     /// Initialize the processor with a specific transport
@@ -458,45 +467,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let transport_type = "NATS";
 
         // Set up LeaseManager and ConfirmationBuffer for Automatons BEFORE creating context
-        let processor_type = self.processor.processor_type();
         let (lease_manager_opt, confirmation_buffer_opt) =
-            if matches!(processor_type, ProcessorType::Automaton) {
-                match &transport {
-                    EventTransport::Nats(nats_publisher) => {
-                        let nats_client = nats_publisher.nats_client().clone();
-                        let env = sinex_core::environment().clone();
-
-                        let lease_config = crate::LeaseManagerConfig {
-                            processor_name: service_name.clone(),
-                            instance_id: format!(
-                                "{}-{}",
-                                gethostname::gethostname().to_string_lossy(),
-                                std::process::id()
-                            ),
-                            lease_ttl: std::time::Duration::from_secs(30),
-                            renewal_interval: std::time::Duration::from_secs(10),
-                        };
-                        let lease_manager =
-                            Arc::new(crate::LeaseManager::new(nats_client, env, lease_config));
-
-                        let confirmation_buffer = Arc::new(crate::ConfirmationBuffer::new(
-                            std::time::Duration::from_secs(60),
-                        ));
-
-                        self.processing_model = ProcessingModel::LeaderStandby;
-                        info!(
-                        "Automaton configured with LeaderStandby model and confirmation buffering"
-                    );
-
-                        (Some(lease_manager), Some(confirmation_buffer))
-                    }
-                }
-            } else {
-                (None, None)
-            };
-
-        self.lease_manager = lease_manager_opt.clone();
-        self.confirmation_buffer = confirmation_buffer_opt.clone();
+            self.build_automaton_support(&service_name, &transport)?;
 
         let event_emitter = EventEmitter::new(event_sender_raw, dry_run);
         let handles = ProcessorHandles::new(
@@ -542,7 +514,6 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         self.service_info = Some(service_info);
         self.raw_config = Some(raw_config.clone());
         self.work_dir_utf8 = Some(work_dir_utf8);
-        self.checkpoint_manager = Some(checkpoint_manager.clone());
 
         let processor_config = EventProcessorConfig::default();
         self.event_processor_handle = Some(spawn_event_processor(
@@ -703,7 +674,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         info!("Starting automaton continuous mode");
 
         // Start LeaseManager if configured (for LeaderStandby model)
-        if let Some(lease_manager) = &self.lease_manager {
+        let lease_manager = self.lease_manager();
+        if let Some(lease_manager) = lease_manager.as_ref() {
             info!("Starting lease manager for leader election");
             lease_manager.start().await?;
 
@@ -725,7 +697,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
             // Check lease status before processing (for LeaderStandby model)
             if self.processing_model == ProcessingModel::LeaderStandby {
-                if let Some(lease_manager) = &self.lease_manager {
+                if let Some(lease_manager) = lease_manager.as_ref() {
                     let status = lease_manager.status().await;
                     if status != crate::LeaseStatus::Leader {
                         info!(?status, "Not leader, skipping processing");
@@ -920,11 +892,60 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         info!("Shutting down stream processor runner");
 
         // Stop LeaseManager if running
-        if let Some(lease_manager) = &self.lease_manager {
+        if let Some(lease_manager) = self.lease_manager() {
             info!("Stopping lease manager");
             lease_manager.stop().await;
         }
 
         self.processor.shutdown().await
+    }
+
+    fn lease_manager(&self) -> Option<Arc<crate::LeaseManager>> {
+        self.handles
+            .as_ref()
+            .and_then(|handles| handles.lease_manager())
+    }
+
+    fn build_automaton_support(
+        &mut self,
+        service_name: &str,
+        transport: &EventTransport,
+    ) -> SatelliteResult<(
+        Option<Arc<crate::LeaseManager>>,
+        Option<Arc<crate::ConfirmationBuffer>>,
+    )> {
+        if !matches!(self.processor.processor_type(), ProcessorType::Automaton) {
+            self.processing_model = ProcessingModel::StatelessWorker;
+            return Ok((None, None));
+        }
+
+        match transport {
+            EventTransport::Nats(nats_publisher) => {
+                let nats_client = nats_publisher.nats_client().clone();
+                let env = sinex_core::environment().clone();
+
+                let lease_config = crate::LeaseManagerConfig {
+                    processor_name: service_name.to_string(),
+                    instance_id: format!(
+                        "{}-{}",
+                        gethostname::gethostname().to_string_lossy(),
+                        std::process::id()
+                    ),
+                    lease_ttl: std::time::Duration::from_secs(30),
+                    renewal_interval: std::time::Duration::from_secs(10),
+                };
+
+                let lease_manager =
+                    Arc::new(crate::LeaseManager::new(nats_client, env, lease_config));
+                let confirmation_buffer = Arc::new(crate::ConfirmationBuffer::new(
+                    std::time::Duration::from_secs(60),
+                ));
+
+                self.processing_model = ProcessingModel::LeaderStandby;
+                info!("Automaton configured with LeaderStandby model and confirmation buffering");
+
+                Ok((Some(lease_manager), Some(confirmation_buffer)))
+            }
+        }
     }
 }

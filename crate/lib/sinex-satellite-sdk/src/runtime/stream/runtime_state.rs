@@ -3,9 +3,13 @@ use crate::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     checkpoint::CheckpointManager,
     confirmation_handler::ConfirmationBuffer,
+    coordination::SatelliteCoordination,
     event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
+    job_manager::{JobManager, JobManagerConfig},
     lease_manager::LeaseManager,
+    lifecycle::LifecycleManager,
+    SatelliteResult,
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
@@ -101,6 +105,22 @@ impl ProcessorRuntimeState {
     pub fn heartbeat_emitter(&self, interval_seconds: u64) -> HeartbeatEmitter {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
     }
+
+    pub fn job_manager(&self, config: JobManagerConfig) -> JobManager {
+        JobManager::from_handles(self.handles(), config)
+    }
+
+    pub fn lifecycle_manager(&self) -> LifecycleManager {
+        LifecycleManager::from_runtime(self)
+    }
+
+    pub fn coordination(
+        &self,
+        instance_id: impl Into<String>,
+    ) -> SatelliteResult<SatelliteCoordination> {
+        SatelliteCoordination::from_runtime(self, instance_id.into())
+    }
+
     pub fn raw_config(&self) -> &HashMap<String, Value> {
         &self.raw_config
     }

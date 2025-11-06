@@ -1,6 +1,7 @@
 #![doc = include_str!("../doc/coordination.md")]
 
 use crate::heartbeat::HeartbeatEmitter;
+use crate::stream_processor::ProcessorRuntimeState;
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -141,6 +142,17 @@ impl SatelliteCoordination {
             work_tracker,
             heartbeat_handle: None,
         })
+    }
+
+    pub fn from_runtime(
+        runtime: &ProcessorRuntimeState,
+        instance_id: String,
+    ) -> crate::SatelliteResult<Self> {
+        Self::new(
+            runtime.service_info().service_name().to_string(),
+            instance_id,
+            runtime.db_pool().clone(),
+        )
     }
 
     /// Run the coordination loop - main entry point

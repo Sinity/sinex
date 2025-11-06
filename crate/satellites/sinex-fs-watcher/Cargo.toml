@@ -42,6 +42,7 @@ validator = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 
 [features]

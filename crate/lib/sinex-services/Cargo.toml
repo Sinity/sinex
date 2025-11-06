@@ -28,6 +28,8 @@ sea-query.workspace = true
 
 # Logging
 tracing.workspace = true
+parking_lot = "0.12"
+bon.workspace = true
 
 # Utilities
 chrono.workspace = true

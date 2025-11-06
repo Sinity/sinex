@@ -22,9 +22,8 @@ use sinex_satellite_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, EventEmitter, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
-        TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorType, ScanArgs,
+        ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor, TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -314,8 +313,7 @@ pub struct TerminalProcessor {
     config: TerminalConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    handles: Option<ProcessorHandles>,
-    service_info: Option<ServiceInfo>,
+    runtime: Option<ProcessorRuntimeState>,
     state_dir: Option<PathBuf>,
 }
 
@@ -325,8 +323,7 @@ impl TerminalProcessor {
             config: TerminalConfig::default(),
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            handles: None,
-            service_info: None,
+            runtime: None,
             state_dir: None,
         }
     }
@@ -336,8 +333,7 @@ impl TerminalProcessor {
             config,
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            handles: None,
-            service_info: None,
+            runtime: None,
             state_dir: None,
         }
     }
@@ -346,28 +342,24 @@ impl TerminalProcessor {
         &self.config
     }
 
-    fn handles(&self) -> SatelliteResult<&ProcessorHandles> {
-        self.handles.as_ref().ok_or_else(|| {
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
             SatelliteError::General(eyre::eyre!(
-                "Terminal processor handles not initialised prior to scan"
+                "Terminal processor runtime not initialised prior to scan"
             ))
         })
     }
 
     fn service_info(&self) -> SatelliteResult<&ServiceInfo> {
-        self.service_info.as_ref().ok_or_else(|| {
-            SatelliteError::General(eyre::eyre!(
-                "Terminal processor service info not initialised prior to scan"
-            ))
-        })
+        Ok(self.runtime()?.service_info())
     }
 
-    async fn initialise_from_handles(
+    async fn initialise_from_runtime(
         &mut self,
         config: TerminalConfig,
-        handles: ProcessorHandles,
-        service_info: ServiceInfo,
+        runtime: ProcessorRuntimeState,
     ) -> SatelliteResult<()> {
+        let service_info = runtime.service_info();
         info!(
             processor = self.processor_name(),
             service = %service_info.service_name(),
@@ -381,7 +373,7 @@ impl TerminalProcessor {
             ))
         })?;
 
-        let publisher = match handles.transport() {
+        let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
                 Arc::clone(publisher)
             }
@@ -403,9 +395,8 @@ impl TerminalProcessor {
         }
 
         self.state_dir = Some(state_dir);
-        self.stage_context = Some(StageAsYouGoContext::from_handles(handles));
-        self.handles = Some(handles);
-        self.service_info = Some(service_info);
+        self.stage_context = Some(StageAsYouGoContext::from_runtime(&runtime));
+        self.runtime = Some(runtime);
         self.config = config;
         self.watch_handles = Arc::new(Mutex::new(Vec::new()));
 
@@ -413,8 +404,8 @@ impl TerminalProcessor {
     }
 
     fn build_history_contexts(&self) -> SatelliteResult<Vec<HistoryWatcherContext>> {
-        let handles = self.handles()?;
-        let nats_client = match handles.transport() {
+        let runtime = self.runtime()?;
+        let nats_client = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
                 publisher.nats_client().clone()
             }
@@ -471,9 +462,8 @@ impl StatefulStreamProcessor for TerminalProcessor {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        let (config, _raw_config, service_info, handles, _work_dir_utf8) = init.into_parts();
-        self.initialise_from_handles(config, handles, service_info)
-            .await
+        let (config, runtime) = init.into_runtime();
+        self.initialise_from_runtime(config, runtime).await
     }
 
     async fn scan(
@@ -652,14 +642,21 @@ impl ExplorationProvider for TerminalProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod runtime_support {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../..",
+            "/lib/sinex-satellite-sdk/tests/support/runtime.rs"
+        ));
+    }
+    use runtime_support::TestRuntimeBuilder;
     use sinex_core::db::models::Provenance;
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_satellite_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::prelude::*;
-    use sinex_test_utils::{sinex_test, EphemeralNats};
+    use sinex_test_utils::sinex_test;
     use std::sync::Arc;
-    use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
     #[test]
@@ -689,21 +686,28 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
-        let nats = EphemeralNats::start().await?;
-        let nats_client = nats.connect().await?;
+        let runtime_support::TestRuntime {
+            runtime,
+            mut event_rx,
+            ..
+        } = TestRuntimeBuilder::new(&ctx, "terminal-satellite-test")
+            .build()
+            .await?;
 
-        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+        let publisher = match runtime.transport() {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
+                publisher.clone()
+            }
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
-        let acquisition = Arc::new(AcquisitionManager::new(
-            nats_client,
-            ctx.pool.clone(),
+        let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
-            "terminal-history".to_string(),
-            "/home/test/.bash_history".to_string(),
-        ));
+            "terminal-history",
+            "/home/test/.bash_history",
+        )?);
 
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
 
         let watcher_ctx = HistoryWatcherContext {
             acquisition,

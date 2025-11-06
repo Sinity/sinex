@@ -3878,6 +3878,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sqlx",
  "thiserror 2.0.17",
@@ -3903,6 +3904,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sqlx",
  "tokio",
@@ -3944,6 +3946,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sinex-test-utils",
  "sqlx",
@@ -4066,6 +4069,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-processor-runtime"
+version = "0.4.2"
+dependencies = [
+ "async-nats",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-satellite-sdk",
+ "sinex-test-utils",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-rpc-dispatcher"
 version = "0.1.0"
 dependencies = [
@@ -4079,6 +4101,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "tokio",
  "tracing",
@@ -4165,8 +4188,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
+ "bon",
  "chrono",
  "color-eyre",
+ "parking_lot",
  "sea-query 0.31.1",
  "serde",
  "serde_json",
@@ -4203,6 +4228,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "thiserror 2.0.17",
  "tokio",
@@ -4225,6 +4251,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sqlx",
  "thiserror 2.0.17",
@@ -4258,6 +4285,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sinex-test-utils",
  "sqlx",

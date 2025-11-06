@@ -11,4 +11,4 @@ use sinex_search_automaton::SearchProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the processor_main! macro for standardized CLI and lifecycle
-sinex_satellite_sdk::processor_main!(SearchProcessor);
+sinex_processor_runtime::processor_main!(SearchProcessor);

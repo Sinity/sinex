@@ -73,7 +73,22 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
 - **Async hygiene:** use bounded concurrency (`buffer_unordered`, semaphores),
   propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
 - **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
-  rather than re-creating bespoke data builders.
+  rather than re-creating bespoke data builders. When you need a satellite
+  runtime for integration coverage, include the shared builder from
+  `sinex-satellite-sdk/tests/support/runtime.rs` instead of wiring pools and
+  emitters manually:
+
+  ```rust
+  #[path = "support/runtime.rs"]
+  mod runtime;
+
+  use runtime::TestRuntimeBuilder;
+
+  let test_runtime = TestRuntimeBuilder::new(&ctx, "my-service")
+      .with_dry_run(true)
+      .build()
+      .await?;
+  ```
 - **Property tests:** place proptest suites alongside the crate they fuzz (see
   below). Capture any new failing seeds in that crate’s
   `tests/property/*.proptest-regressions` files.

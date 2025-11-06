@@ -162,7 +162,7 @@ impl HealthAggregator {
         self.consumer = None;
 
         let runtime = self.runtime()?;
-        let transport = runtime.handles().transport().clone();
+        let transport = runtime.transport().clone();
         let service_name = runtime.service_info().service_name().to_string();
 
         // Only NATS transport is supported in JetStream mode
@@ -750,8 +750,7 @@ impl StatefulStreamProcessor for HealthAggregator {
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
-        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        let (config, runtime) = init.into_runtime();
         self.db_pool = Some(runtime.db_pool().clone());
         self.event_sender = Some(runtime.event_sender());
         self.runtime = Some(runtime);

@@ -9,4 +9,4 @@ use sinex_analytics_automaton::AnalyticsProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the processor_main! macro for standardized CLI and lifecycle
-sinex_satellite_sdk::processor_main!(AnalyticsProcessor);
+sinex_processor_runtime::processor_main!(AnalyticsProcessor);

@@ -29,9 +29,9 @@ use sinex_satellite_sdk::{
     },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
-        ProcessorRuntimeState, ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo,
-        StatefulStreamProcessor, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
+        TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -224,10 +224,6 @@ impl FilesystemProcessor {
         })
     }
 
-    fn handles(&self) -> SatelliteResult<&ProcessorHandles> {
-        Ok(self.runtime()?.handles())
-    }
-
     fn service_info(&self) -> SatelliteResult<&ServiceInfo> {
         Ok(self.runtime()?.service_info())
     }
@@ -323,8 +319,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
 

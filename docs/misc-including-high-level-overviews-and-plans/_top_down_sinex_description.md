@@ -143,6 +143,10 @@ This pattern solves the real-time ingestion latency problem while maintaining pe
 * **Stateful Agent (The Specialist):** An imperative Rust satellite. Reserved only for tasks that are non-deterministic (LLMs), have highly complex procedural logic (paste-detection), or are Actuators.
 * **Ingestor/Actuator (The Bidirectional Bridge):** A satellite that both ingests observational events from an external source and subscribes to instructional events to act upon that same source.
 
+**8.4. Runtime Helpers & Replay Integration**
+
+All stateful processors are initialized through a shared `ProcessorRuntimeState` that collapses database pools, emitters, and coordination primitives behind ergonomic accessors. Satellites no longer wire raw handles manually: they receive the runtime from `ProcessorInitContext::into_runtime()` and obtain helpers via fluent methods such as `runtime.acquisition_manager(...)`, `runtime.job_manager(...)`, or `runtime.coordination(...)`. Replay orchestration lives under `sinex-satellite-sdk::replay`, and the CLI consumes the same `ReplayService::from_runtime` helper that satellites expose. Test fixtures rely on the fluent `TestRuntimeBuilder` to assemble NATS, pools, and event channels without hand-rolled scaffolding, giving the replay path a first-class, end-to-end exercise in integration tests.
+
 ---
 
 #### **Part IX: Operational Hardening & Developer Experience**
@@ -248,7 +252,7 @@ The `exo` Python script (`cli/exo.py`) is the **sole user-facing entry point for
 
 All satellites (Rust binaries in `crate/`) are built using the `sinex-satellite-sdk` and conform to the `StatefulStreamProcessor` trait.
 
-* **Unified Entrypoint:** Every satellite binary's `main.rs` must consist of a single line: `sinex_satellite_sdk::processor_main!(ProcessorType);`. This macro generates the standardized `service | scan | explore` CLI.
+* **Unified Entrypoint:** Every satellite binary's `main.rs` must consist of a single line: `sinex_processor_runtime::processor_main!(ProcessorType);`. This macro generates the standardized `service | scan | explore` CLI.
 * **Health Monitoring:** The `processor_main!` macro **must** also automatically spawn a `HeartbeatEmitter` task, ensuring all running satellites provide consistent, structured heartbeat logs to `journald` for consumption by the `health-aggregator`.
 
 ---

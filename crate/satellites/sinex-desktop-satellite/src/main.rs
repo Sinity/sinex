@@ -11,4 +11,4 @@ use sinex_desktop_satellite::DesktopProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the new unified architecture with macro
-sinex_satellite_sdk::processor_main!(DesktopProcessor);
+sinex_processor_runtime::processor_main!(DesktopProcessor);

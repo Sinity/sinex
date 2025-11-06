@@ -9,4 +9,4 @@ use sinex_rpc_dispatcher::RpcDispatcherProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the processor_main! macro for standardized CLI and lifecycle
-sinex_satellite_sdk::processor_main!(RpcDispatcherProcessor);
+sinex_processor_runtime::processor_main!(RpcDispatcherProcessor);

@@ -1,3 +1,4 @@
+use super::runtime_state::ProcessorRuntimeState;
 use crate::{
     checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer,
     event_processor::EventTransport, lease_manager::LeaseManager, SatelliteError,
@@ -209,5 +210,26 @@ impl<C> ProcessorInitContext<C> {
             self.handles,
             self.work_dir_utf8,
         )
+    }
+
+    /// Construct a runtime snapshot without consuming the context.
+    pub fn runtime_state(&self) -> ProcessorRuntimeState {
+        ProcessorRuntimeState::new(
+            self.service.clone(),
+            self.handles.clone(),
+            self.raw_config.clone(),
+            self.work_dir_utf8.clone(),
+        )
+    }
+
+    /// Consume the context, yielding processor config and its runtime state.
+    pub fn into_runtime(self) -> (C, ProcessorRuntimeState) {
+        let runtime = ProcessorRuntimeState::new(
+            self.service,
+            self.handles,
+            self.raw_config,
+            self.work_dir_utf8,
+        );
+        (self.config, runtime)
     }
 }

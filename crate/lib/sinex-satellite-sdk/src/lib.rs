@@ -33,18 +33,9 @@ pub mod nats_publisher;
 pub mod preflight;
 pub mod prelude;
 pub mod replay;
-pub mod replay_control;
-pub mod replay_metrics;
-pub mod replay_progress;
 pub mod runtime;
 pub mod sensors;
 pub mod stage_as_you_go;
-pub mod cli {
-    pub use crate::runtime::cli::*;
-}
-pub mod processor_runner {
-    pub use crate::runtime::runner::*;
-}
 pub mod stream_processor {
     pub use crate::runtime::stream::*;
 }
@@ -55,11 +46,6 @@ pub use acquisition_manager::{
 };
 pub use automaton_event_handler::AutomatonEventHandler;
 pub use checkpoint::{CheckpointManager, CheckpointState};
-pub use cli::{
-    parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
-    IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
-    SourceState,
-};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
@@ -73,8 +59,10 @@ pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, S
 pub use lease_manager::{LeaseManager, LeaseManagerConfig, LeaseStatus};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use nats_publisher::NatsPublisher;
-pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
-pub use replay::ReplayMode;
+pub use replay::{
+    MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
+    ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+};
 pub use sensors::{
     AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
     ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,

@@ -1039,8 +1039,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        let (config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
 

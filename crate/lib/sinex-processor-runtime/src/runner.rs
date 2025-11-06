@@ -3,12 +3,12 @@
 //! This module provides a consistent execution model for both ingestors and automata,
 //! implementing the three-phase startup for ingestors and direct continuous mode for automata.
 
-use crate::{
+use chrono::Utc;
+use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     stream_processor::{ProcessorType, ScanArgs, StatefulStreamProcessor, TimeHorizon},
     SatelliteResult,
 };
-use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};

@@ -1,6 +1,7 @@
 //! Service lifecycle management for satellite services
 
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
+use crate::stream_processor::ProcessorRuntimeState;
 use crate::SatelliteResult;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,6 +56,13 @@ impl LifecycleManager {
         }
     }
 
+    /// Construct a lifecycle manager for a given runtime, hydrating heartbeat handles
+    pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
+        let mut manager = Self::new(runtime.service_info().service_name().to_string());
+        manager.hydrate_heartbeat(runtime);
+        manager
+    }
+
     /// Set health check interval
     pub fn with_health_check_interval(mut self, interval: tokio::time::Duration) -> Self {
         self.health_check_interval = interval;
@@ -64,11 +72,12 @@ impl LifecycleManager {
     /// Enable heartbeat emission with custom interval
     pub fn with_heartbeat(mut self, interval_seconds: u64) -> Self {
         self.heartbeat_interval_seconds = interval_seconds;
-        self.heartbeat_emitter = Some(HeartbeatEmitter::new(
-            self.service_name.clone(),
-            interval_seconds,
-        ));
         self
+    }
+
+    /// Hydrate heartbeat configuration once runtime handles are available
+    pub fn hydrate_heartbeat(&mut self, runtime: &ProcessorRuntimeState) {
+        self.heartbeat_emitter = Some(runtime.heartbeat_emitter(self.heartbeat_interval_seconds));
     }
 
     /// Get heartbeat counter handle for tracking metrics

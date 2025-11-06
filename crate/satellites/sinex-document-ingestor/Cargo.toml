@@ -21,6 +21,7 @@ sqlx = { workspace = true }
 
 # Sinex dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 sinex-core = { path = "../../lib/sinex-core" }
 camino = { workspace = true }
 
