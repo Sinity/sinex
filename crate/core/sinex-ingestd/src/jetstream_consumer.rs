@@ -46,7 +46,6 @@ pub struct JetStreamConsumer {
     js: jetstream::Context,
     pool: DbPool,
     validator: Arc<RwLock<EventValidator>>,
-    env: SinexEnvironment,
     topology: JetStreamTopology,
     stats: ConsumerStats,
 }
@@ -118,13 +117,11 @@ impl JetStreamConsumer {
         topology: JetStreamTopology,
     ) -> Self {
         let js = jetstream::new(nats_client);
-        let env = sinex_core::environment().clone();
 
         Self {
             js,
             pool,
             validator,
-            env,
             topology,
             stats: ConsumerStats::default(),
         }
