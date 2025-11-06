@@ -100,12 +100,6 @@ impl DocumentProcessor {
         }
     }
 
-    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            SatelliteError::General(eyre!("Document processor runtime not initialised"))
-        })
-    }
-
     async fn initialise_with_runtime_state(
         &mut self,
         runtime: ProcessorRuntimeState,

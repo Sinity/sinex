@@ -187,7 +187,7 @@ impl TerminalCommandCanonicalizer {
         }
 
         use sinex_core::types::events::payloads::shell::CanonicalCommandPayload;
-        use sinex_core::types::{Id, Ulid as CoreUlid};
+        use sinex_core::types::Id;
         use sinex_core::{Event, Provenance};
 
         let source_event_ids: Vec<Id<Event<JsonValue>>> = command_data
@@ -243,8 +243,6 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let scan_start = Utc::now();
-
         match until {
             TimeHorizon::Continuous => {
                 // For automata, continuous mode is now handled by StreamProcessorRunner
@@ -279,29 +277,18 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                 // Query all terminal command events
                 let mut all_raw_events = Vec::new();
 
-                for source in &[
-                    "shell.kitty",
-                    "shell.atuin",
-                    "shell.history.bash",
-                    "shell.history.zsh",
-                    "shell.history.fish",
-                ] {
-                    let event_type = EventType::from_static("command.executed");
-                    let events = db_pool
-                        .events()
-                        .get_events_by_type_and_time_range(
-                            &event_type,
-                            start_time,
-                            end_time,
-                            Some(10000),
-                        )
-                        .await?;
+                let event_type = EventType::from_static("command.executed");
+                let events = db_pool
+                    .events()
+                    .get_events_by_type_and_time_range(
+                        &event_type,
+                        start_time,
+                        end_time,
+                        Some(10_000),
+                    )
+                    .await?;
 
-                    // Events are already Event<JsonValue> type
-                    for raw_event in events {
-                        all_raw_events.push(raw_event);
-                    }
-                }
+                all_raw_events.extend(events);
 
                 // Sort by timestamp
                 all_raw_events.sort_by_key(|e| e.ts_orig);

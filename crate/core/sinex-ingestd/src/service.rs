@@ -28,9 +28,6 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
-// Shared ingestor version as a compile-time constant
-const INGESTOR_VERSION: &str = "0.4.2";
-
 /// Helper function to create a shutdown signal future
 async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
     loop {

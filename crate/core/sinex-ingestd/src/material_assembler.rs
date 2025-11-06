@@ -108,10 +108,6 @@ impl AssemblerState {
     fn state_file(&self) -> PathBuf {
         self.state_dir.join(STATE_FILE_NAME)
     }
-
-    fn temp_file_path(&self) -> PathBuf {
-        self.temp_path.clone()
-    }
 }
 
 /// Material assembler service
