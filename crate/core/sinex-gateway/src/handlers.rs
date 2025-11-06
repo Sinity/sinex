@@ -60,12 +60,12 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
 
-    let mut decoded_bytes = BASE64_STANDARD
+    let decoded_bytes = BASE64_STANDARD
         .decode(content_b64)
         .wrap_err("Invalid base64 content")?;
 
-    let content = String::from_utf8(decoded_bytes.clone())
-        .wrap_err("Decoded note content is not valid UTF-8")?;
+    let content =
+        String::from_utf8(decoded_bytes).wrap_err("Decoded note content is not valid UTF-8")?;
 
     let tags = params
         .get("tags")
@@ -83,7 +83,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .unwrap_or("sinex-host");
 
     let annotation_id = service
-        .create_note(event_id, content, tags, created_by, None)
+        .create_note(event_id, &content, tags, created_by, None)
         .await?;
     Ok(json!({ "annotation_id": annotation_id.to_string() }))
 }

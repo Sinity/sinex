@@ -15,15 +15,16 @@ use sinex_core::{
     types::{domain::SanitizedPath, validate_path},
     Event as CoreEvent, Id, Provenance, Ulid,
 };
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 use sinex_satellite_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorType, ScanArgs,
-        ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
+        TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
@@ -375,7 +376,7 @@ impl TerminalProcessor {
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
-                Arc::clone(publisher)
+                publisher.clone()
             }
         };
 
@@ -405,11 +406,6 @@ impl TerminalProcessor {
 
     fn build_history_contexts(&self) -> SatelliteResult<Vec<HistoryWatcherContext>> {
         let runtime = self.runtime()?;
-        let nats_client = match runtime.transport() {
-            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
-                publisher.nats_client().clone()
-            }
-        };
 
         let stage = self
             .stage_context

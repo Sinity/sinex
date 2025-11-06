@@ -17,9 +17,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::{info, warn};
 
-use crate::replay::{
-    ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt, SatelliteError,
-};
+use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
 use sinex_satellite_sdk::stream_processor::StreamProcessorRunner;
 
 /// Standard CLI arguments for all stream processor satellites

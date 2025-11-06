@@ -4,9 +4,9 @@ pub mod cli;
 pub mod runner;
 
 pub use cli::{
-    parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
-    IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
-    SourceState,
+    parse_checkpoint, parse_time_horizon, ActivityEntry, CoverageAnalysis, ExplorationProvider,
+    ExportFormat, IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner,
+    ProcessorCommand, SourceState,
 };
 pub use runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 

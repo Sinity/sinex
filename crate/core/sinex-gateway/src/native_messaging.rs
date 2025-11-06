@@ -1,6 +1,6 @@
 #![doc = include_str!("../doc/native_messaging.md")]
 
-use color_eyre::eyre::{bail, eyre, Context, Result};
+use color_eyre::eyre::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
@@ -85,7 +85,7 @@ fn read_message_blocking() -> Result<Option<NativeMessage>> {
 async fn read_message() -> Result<Option<NativeMessage>> {
     task::spawn_blocking(read_message_blocking)
         .await
-        .map_err(|e| eyre::eyre!("read_message task panicked: {}", e))?
+        .map_err(|e| color_eyre::eyre::eyre!("read_message task panicked: {}", e))?
 }
 
 /// Write a message to stdout using native messaging protocol
@@ -111,7 +111,7 @@ async fn write_message(response: &NativeResponse) -> Result<()> {
     let response = response.clone();
     task::spawn_blocking(move || write_message_blocking(&response))
         .await
-        .map_err(|e| eyre::eyre!("write_message task panicked: {}", e))?
+        .map_err(|e| color_eyre::eyre::eyre!("write_message task panicked: {}", e))?
 }
 
 /// Process a single message and return response

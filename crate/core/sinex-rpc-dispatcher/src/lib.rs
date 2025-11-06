@@ -7,14 +7,14 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sinex_satellite_sdk::{
-    stream_processor::{
-        Checkpoint, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport,
-        StatefulStreamProcessor, TimeHorizon,
-    },
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteError,
-    SatelliteResult, SourceState,
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
+use sinex_satellite_sdk::stream_processor::{
+    Checkpoint, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
+    TimeHorizon,
+};
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use validator::Validate;
 
 // Standard library

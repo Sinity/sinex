@@ -79,7 +79,6 @@ pub struct SystemdStatus {
 /// Unified system processor implementing StatefulStreamProcessor
 ///
 /// Supports snapshot, historical, and continuous scanning modes for system events.
-#[derive(Default)]
 pub struct SystemProcessor {
     runtime: Option<ProcessorRuntimeState>,
 
@@ -139,33 +138,33 @@ impl SystemProcessor {
         Ok(self.runtime()?.event_emitter())
     }
 
-    fn apply_config_overrides(&mut self, runtime: &ProcessorRuntimeState) {
-        if let Some(config) = parse_typed_config::<SystemConfig>("system", runtime) {
-            self.config = config;
+    fn apply_config_overrides(config: &mut SystemConfig, runtime: &ProcessorRuntimeState) {
+        if let Some(overrides) = parse_typed_config::<SystemConfig, _>("system", runtime) {
+            *config = overrides;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("dbus_enabled", runtime) {
-            self.config.dbus_enabled = enabled;
+        if let Some(enabled) = parse_config_value::<bool, _>("dbus_enabled", runtime) {
+            config.dbus_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("journal_enabled", runtime) {
-            self.config.journal_enabled = enabled;
+        if let Some(enabled) = parse_config_value::<bool, _>("journal_enabled", runtime) {
+            config.journal_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("udev_enabled", runtime) {
-            self.config.udev_enabled = enabled;
+        if let Some(enabled) = parse_config_value::<bool, _>("udev_enabled", runtime) {
+            config.udev_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("systemd_enabled", runtime) {
-            self.config.systemd_enabled = enabled;
+        if let Some(enabled) = parse_config_value::<bool, _>("systemd_enabled", runtime) {
+            config.systemd_enabled = enabled;
         }
 
-        if let Some(buses) = parse_config_value::<String>("dbus_buses", runtime) {
-            self.config.dbus_buses = buses;
+        if let Some(buses) = parse_config_value::<String, _>("dbus_buses", runtime) {
+            config.dbus_buses = buses;
         }
 
-        if let Some(timeout) = parse_config_value::<u64>("journal_timeout_secs", runtime) {
-            self.config.journal_timeout_secs = timeout;
+        if let Some(timeout) = parse_config_value::<u64, _>("journal_timeout_secs", runtime) {
+            config.journal_timeout_secs = timeout;
         }
     }
 
@@ -414,12 +413,10 @@ impl StatefulStreamProcessor for SystemProcessor {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.runtime = Some(runtime);
+        let (mut config, runtime) = init.into_runtime();
+        Self::apply_config_overrides(&mut config, &runtime);
         self.config = config;
-        if let Some(runtime_ref) = self.runtime.as_ref() {
-            self.apply_config_overrides(runtime_ref);
-        }
+        self.runtime = Some(runtime);
 
         info!(
             dbus_enabled = self.config.dbus_enabled,

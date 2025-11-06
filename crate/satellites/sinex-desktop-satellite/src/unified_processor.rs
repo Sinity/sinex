@@ -139,19 +139,20 @@ impl DesktopProcessor {
         );
 
         // Allow overrides from the shared configuration map
-        if let Some(context_config) = parse_typed_config::<DesktopConfig>("desktop", &runtime) {
+        if let Some(context_config) = parse_typed_config::<DesktopConfig, _>("desktop", &runtime) {
             config = context_config;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("clipboard_enabled", &runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("clipboard_enabled", &runtime) {
             config.clipboard_enabled = enabled;
         }
 
-        if let Some(enabled) = parse_config_value::<bool>("window_manager_enabled", &runtime) {
+        if let Some(enabled) = parse_config_value::<bool, _>("window_manager_enabled", &runtime) {
             config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type_str) = parse_config_value::<String>("window_manager_type", &runtime) {
+        if let Some(wm_type_str) = parse_config_value::<String, _>("window_manager_type", &runtime)
+        {
             if let Ok(wm_type) = wm_type_str.parse::<WindowManagerType>() {
                 config.window_manager_type = wm_type;
             } else {
@@ -159,7 +160,8 @@ impl DesktopProcessor {
             }
         }
 
-        if let Some(interval) = parse_config_value::<u64>("clipboard_poll_interval_secs", &runtime)
+        if let Some(interval) =
+            parse_config_value::<u64, _>("clipboard_poll_interval_secs", &runtime)
         {
             config.clipboard_poll_interval_secs = interval;
         }

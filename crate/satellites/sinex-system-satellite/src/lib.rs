@@ -20,18 +20,17 @@ pub mod unified_processor;
 mod common {
     // Core types facade
 
+    pub use sinex_processor_runtime::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    };
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
-        checkpoint::CheckpointManager,
-        cli::{
-            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
-            IngestionHistoryEntry, MissingItem, SourceState,
-        },
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
             StatefulStreamProcessor, TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
     };
 
     // External dependencies
@@ -40,7 +39,7 @@ mod common {
         chrono::{DateTime, Utc},
         serde::{Deserialize, Serialize},
         std::{collections::HashMap, time::Duration},
-        tracing::{info, instrument, warn},
+        tracing::{info, instrument},
     };
 }
 

@@ -16,11 +16,11 @@ mod common {
         Event, JsonValue,
     };
 
-    // SDK facade for common processor types
+    // Runtime/SDK facades
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    };
     pub use sinex_satellite_sdk::{
-        cli::{
-            CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-        },
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
             ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,

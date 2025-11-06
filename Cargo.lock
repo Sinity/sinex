@@ -4005,6 +4005,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-core",
+ "sinex-processor-runtime",
  "sinex-satellite-sdk",
  "sqlx",
  "thiserror 2.0.17",

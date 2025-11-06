@@ -12,13 +12,15 @@ use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_core::EventType;
 use sinex_core::{Event, JsonValue};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 use sinex_satellite_sdk::{
-    cli::{CoverageAnalysis, ExportFormat, IngestionHistoryEntry},
     stream_processor::{
         Checkpoint, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState, ProcessorType,
         ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
-    ExplorationProvider, SatelliteError, SatelliteResult, SourceState,
+    SatelliteError, SatelliteResult,
 };
 use sqlx::PgPool;
 use std::collections::HashMap;

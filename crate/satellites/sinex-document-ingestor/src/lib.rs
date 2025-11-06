@@ -11,15 +11,14 @@ use color_eyre::eyre::{eyre, Result};
 use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::ulid_to_uuid;
 use sinex_core::{
     db::models::Event, db::DbPoolExt, types::ulid::Ulid, Blob as CoreBlob, Id, JsonValue,
 };
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 use sinex_satellite_sdk::{
     annex::{AnnexConfig, BlobManager},
-    cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
         ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,

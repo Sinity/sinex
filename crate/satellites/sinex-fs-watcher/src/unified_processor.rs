@@ -22,11 +22,11 @@ use sinex_core::{
     },
     Event as CoreEvent, HostName, JsonValue, Provenance,
 };
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 use sinex_satellite_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
@@ -208,7 +208,7 @@ impl FilesystemProcessor {
             .await
             .map_err(SatelliteError::from)?;
 
-        let stage_context = StageAsYouGoContext::from_runtime(runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
 
         self.config = config;
         self.stage_context = Some(stage_context);
