@@ -1,28 +1,29 @@
 > **Status:** Target architecture specification (aligned with `docs/way.md`)
-> **Last Updated:** 2025-10-24
-> This document describes the END-STATE architecture after JetStream migration (way.md Phases 1-5) completes.
-
+> **Last Updated:** 2025-02-21
+> This document describes the end-state architecture after the JetStream migration (way.md Phases 1–5) completes.
 
 Invariants Quick Reference (one-page)
-- Single-writer ingest: Satellites → ingestd → Postgres (commit) → publish to NATS (post-commit); no direct satellite writes to DB/bus for canonical events.
-- Dual-layer provenance: External (material_id, anchor/offsets) XOR Internal (source_event_ids) per event.
-- Idempotency for first-order events: UNIQUE(material_id, anchor_byte) when material_id present.
-- Ledger append-only: raw.temporal_ledger forbids UPDATE/DELETE; unique(material_id, offset_start).
-- Archive-on-delete: core.events deletions require operation_id; BEFORE DELETE trigger archives to audit.archived_events; application-immutable semantics.
-- No live→archived references: source_event_ids in live events must not reference archived IDs.
-- Replay discipline: preview (counts, cascades, anchor churn, time-quality flips), gates, then execute; always cascade.
-- NATS-only speed layer: post-commit publish by ingestd; consumers read from NATS with durable semantics.
-- Rebuild via replay: derived structures (KG, tags) are projections rebuildable by replay; events remain source of truth.
-- Namespacing: SINEX_ENVIRONMENT scopes DB/schema names, streams, sockets, and paths.
 
-> **Cross-reference (2025-07-24)**  
+- Single-writer storage: Satellites publish raw slices/events to JetStream. `sinex-ingestd` is the exclusive writer of canonical Postgres rows and the sole publisher of confirmation events (`events.confirmations.*`). Satellites never write to Postgres directly.
+- Dual-layer provenance: External (material_id, anchor/offsets) XOR internal (source_event_ids) per event.
+- Idempotency for first-order events: UNIQUE(material_id, anchor_byte) when material_id is present.
+- Ledger append-only: `raw.temporal_ledger` forbids UPDATE/DELETE; unique(material_id, offset_start).
+- Archive-on-delete: `core.events` deletions require `operation_id`; BEFORE DELETE trigger archives to `audit.archived_events`; rows are never mutated in place.
+- No live→archived references: `source_event_ids` in live events must not reference archived IDs.
+- Replay discipline: preview (counts, cascades, anchor churn, time-quality flips), enforce gates, then execute; always cascade.
+- JetStream speed layer: ingestd consumes `events.raw.*`, validates, commits, then publishes confirmations (`events.confirmations.*`). Durable consumers guard downstream ordering.
+- Rebuild via replay: derived structures (KG, tags, search indexes) are projections rebuildable by replay; events remain the source of truth.
+- Namespacing: `SINEX_ENVIRONMENT` scopes DB/schema names, JetStream streams, sockets, and paths.
+
+> **Cross-reference (2025-07-24)**
 > Interface-level implementation notes for the gateway and CLI now live in `crate/core/sinex-gateway/doc/overview.md` and `docs/architecture/UserInteraction_And_Query_Architecture.md`. Treat this document as the system-level target state.
 
 Contents
+
 1) Purpose and principles
 2) Architecture at a glance
 3) Data model and provenance
-4) Sensing (sensd) and stage‑as‑you‑go
+4) Material acquisition (Stage-as-You-Go)
 5) Ingester SDK and unified stream
 6) Replay discipline and evolution semantics
 7) Tagging and relations as event‑native
@@ -43,6 +44,7 @@ Contents
 Purpose: a local‑first exocortex that captures digital life as events, preserves original evidence (“Source Material”), and evolves beliefs via deterministic replay. The system is explainable, auditable, reversible, and personally useful.
 
 Core principles:
+
 - Capture‑first, structure‑later: Source Material is ground truth; events are interpretations.
 - Rebuildability via replay: derived state is reconstructed by replaying processors; tables/views are projections of event history, not separate sources of truth.
 - Provenance everywhere: dual‑layer provenance (external material/anchor and internal event lineage).
@@ -53,6 +55,7 @@ Core principles:
 
 2) Architecture at a glance
 Roles:
+
 - Satellites: capture Source Material using AcquisitionManager (Stage-as-You-Go), publish slices/events directly to NATS JetStream.
 - Ingestd: JetStream consumer that archives materials into git-annex, persists events to Postgres, publishes confirmations.
 - Automata: deterministic synthesizers producing higher‑order events from confirmed event streams.
@@ -61,33 +64,48 @@ Roles:
 - Explore (TUI/Web): timeline, provenance overlays, replay preview, source explorer, curation queue.
 
 Data plane:
+
 - Postgres (archive and serving store: core.events, raw.* registries, audit). Timescale/pgvector may be used; not required by doctrine.
 - Speed layer: NATS JetStream. Invariant is "post‑commit durable publish"; implementation can change without altering this property.
 - Content‑addressed store for large artifacts (git‑annex for blobs; git for text where applicable).
 
 Ingest discipline (JetStream-first):
+
 - Satellites → NATS JetStream → ingestd consumer → Postgres (commit) → confirmations published to NATS → Automata consume. Satellites publish slices/events directly; ingestd is the single writer to canonical tables.
-- ingestd validation cache (fail‑closed): ingestd maintains an in‑memory cache of active schemas keyed by (source, event_type). Events with unknown/inactive schema or violated provenance XOR are rejected before insert (fail‑closed). Database JSON Schema CHECK/trigger is a safety net; app‑side validation is authoritative. Ingest path remains: validate → batch insert → commit → post‑commit publish to NATS.
+- ingestd validation cache (fail-soft): ingestd consumes `events.raw.*`, keeps the latest active JSON Schemas keyed by (source, event_type), and validates payloads before persistence. Invalid payloads are NAKed and routed to the DLQ; missing/inactive schemas emit warnings but the event is still accepted so that database CHECK constraints and the provenance XOR invariant remain the final guardrails. Flow: consume → validate (warn-on-miss) → batch insert → commit → emit confirmations (`events.confirmations.*`).
 - Gateway request/response durability: Gateway may fast‑path responses to the client for UX, but all api.response.* must be persisted as events via ingestd (post‑commit property preserved). Failures are emitted as explicit error events.
-- Single‑writer enforcement (dev/CI): satellites must not link the canonical bus/DB write client for canonical events; integration tests assert canonical events only appear after DB commit (post‑commit publish).
+- Single‑writer enforcement: production credentials isolate canonical writes to ingestd (satellites carry read-only roles). In dev/CI we rely on the enforced JetStream path and an integration test that asserts the post‑commit publish property (events stay invisible on a separate connection until commit); we have not yet hard-disabled ad‑hoc direct database clients inside test fixtures.
 - Active inference safety (minimal): actuations execute only from trusted sources (deny‑by‑default); all actuations are events; side effects logged and auditable.
 
 3) Data model and provenance
 Source Material (ground truth):
+
 - Registry per capture material with status, rotation policy, timing model, metadata, storage path (annex or git for text).
 - Temporal ledger per slice (append‑only) recording capture time, precision (exact|bounded), clock (monotonic|wall), and source_type (realtime_capture|intrinsic_content|inferred_mtime|inferred_ctime|inferred_user).
 
 Events (core.events):
+
 - External provenance: material_id, offset_kind (byte|line|rowid|logical), offset_start/offset_end, anchor_byte.
 - Internal provenance: source_event_ids ULID[] (lineage for derived/synthesized events).
 - Bitemporal fields: ts_orig (semantic event time; derived per precedence below), ts_ingest (derived from ULID).
+
+Processor control plane:
+
+- `core.processor_manifests` is the manifest/catalog for every ingestor, satellite, and automaton. Each row tracks `{ processor_name, version, processor_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the legacy `raw.processor_registry`.
+- `core.processor_checkpoints` stores the resume position and opaque state for every processor. Recent schema work:
+  - 2025‑01: Added `checkpoint_data` (JSONB) for the unified checkpoint payload shared by ingestors and automata; retired the legacy `processor_offsets` table.
+  - 2025‑02: Added `checkpoint_version` (INT, default 1) and `created_at` so consumers can detect rewinds and we maintain a full audit trail.
+  - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(processor_name, consumer_group, consumer_name, checkpoint_version)`.
+- These columns replaced the old `processor_state` and `processor_offsets` shims. Any new checkpoint fields must be added here; there is no secondary table.
 - Archive‑on‑delete: BEFORE DELETE trigger moves rows to audit.archived_events; requires session operation_id; preserves superseded_by_event_id when applicable (application‑immutable: changes occur only via archive‑and‑replace).
 - Tie‑breaks: when ts_orig is equal, order by event_id (ULID) deterministically for replay and projections.
 
 ts_orig derivation precedence:
+
 - temporal ledger (realtime_capture) > intrinsic content timestamp > inferred_mtime > inferred_ctime > inferred_user > staged_at. Record time_quality accordingly; consumers should display/source this in provenance narratives.
 
 Constraints and invariants (readable form):
+
 - UNIQUE(material_id, anchor_byte) WHERE material_id IS NOT NULL (idempotency for first‑order events).
 - CHECK XOR: either external provenance present (material‑anchored) XOR internal provenance present (derived lineage).
 - No live event may reference an archived ID in source_event_ids (enforced by CI “always‑cascade” check).
@@ -95,24 +113,29 @@ Constraints and invariants (readable form):
 - Recommended indexes: BTREE(material_id, anchor_byte), GIN(source_event_ids).
 
 Projections:
+
 - Use replay semantics to reconstruct derived state. Knowledge graph and tags are event‑native and materialized as projections when needed.
 
 4) Material Acquisition (Stage-as-You-Go)
 Concept:
+
 - Satellites own material acquisition using AcquisitionManager from SDK. Each satellite creates Source Material registry rows, publishes slices to JetStream, computes hashes, and writes temporal ledger entries. Ingestd assembles slices into git-annex and finalizes materials. Zero‑gap invariant: open the next before finalizing current for continuous streams; recovered_partial is used only for crash recovery.
 
 AcquisitionManager API (in satellites):
+
 - `begin(MaterialKind, source_identifier)`: Creates in-flight registry row, publishes source_material.begin to JetStream, returns SourceMaterialHandle.
 - `handle.append(bytes)`: Publishes slice to source_material.slices.<material_id>, updates ledger, computes incremental hash.
 - `handle.finalize()`: Publishes source_material.end with final hash, closes material.
 
 MaterialAssembler (in ingestd):
+
 - Subscribes to source_material.* subjects
 - Maintains per-material state (temp file, next offset, slice count)
 - On source_material.end: verifies hash, moves to git-annex, updates registry status (sensing → completed), writes ledger
 - On hash mismatch: routes to events.dlq, marks material as failed
 
 Acquisition patterns (implemented by satellites):
+
 - append_stream (logs, sockets, JSONL) - continuous streaming
 - batched_pull (API pagination; cursor/ETag) - paginated fetch
 - replace_snapshot (CSV/SQLite snapshotting) - full snapshots
@@ -120,16 +143,19 @@ Acquisition patterns (implemented by satellites):
 - db_snapshot (DB backup API) - database snapshots
 
 Operational outputs:
+
 - raw.source_material_registry: identity, status, rotation policy, timing info, host/user, metadata.
 - raw.temporal_ledger: per‑slice capture times and offsets (append‑only).
 - core.blobs: git-annex metadata (hash, size, path).
 
 5) Ingester SDK and unified stream
-Unified stream API:
-- MaterialSliceStream yields Slice { material_id, offset_kind, offset_start/end, anchor_byte, bytes } and Control frames { RotationBoundary, EndOfMaterial, Gap{reason} }.
+Unified material stream contract:
+
+- JetStream `source_material.*` subjects yield Slice { material_id, offset_kind, offset_start/end, anchor_byte, bytes } and Control frames { RotationBoundary, EndOfMaterial, Gap{reason} }.
 - Works identically for in‑flight and finalized materials; mode is advisory.
 
 Helpers:
+
 - SliceAssembler for record reassembly (e.g., line or JSON delimiter).
 - LedgerReader + derive_ts_orig to compute ts_orig and time_quality.
 - IdempotenceKey(material_id, anchor_byte, event_type) helpers and insert_or_ignore semantics.
@@ -139,19 +165,23 @@ Helpers:
 - Anchor rules: deterministic slicing; each ingestor registers anchor_rule_id and anchor_rule_version in its processor manifest; replay planner fetches these from processor_manifests to compute “anchor churn” and MUST emit ingestion.anchor_mismatch with expected/observed details when recomputed‑vs‑prior anchors diverge; subject to planner gates.
 
 Ingester contract:
+
 - Deterministic slicing; populate external provenance for first‑order events; archive‑and‑replace on replay with cascades.
 
 6) Replay discipline and evolution semantics
 CLI verb:
+
 - exo replay --processor <name> [--blob <material_id> | --since/--until] [--dry-run]
   - Ingestor replay requires material_id; automaton replay requires a time window.
 - Gateway/exo replay RPC envelope (minimal): { processor, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }. This ensures operation_id and related session variables are wired correctly for archive triggers and audit.
 
 Replay planner and gates:
+
 - A non‑mutating replay planner (in gateway/exo) computes preview and enforces configurable gates. It does not mutate state; execution uses the same operation_id and scope established by the gateway. Defaults: anchor_churn_threshold_percent=5, time_quality_flip_threshold_percent=2, max_cascade_depth_warn=5, require_force_on_schema_mismatch=true. Reference values are also listed in Appendix E.6.
 - Preview shows: archive/replace counts, cascade depth histogram, anchor churn %, time‑quality flips, storage fetch cost.
 
 Execution:
+
 - Always cascade: new rows inserted, old rows archived via trigger, derived rows updated/archived as needed, ensuring no live→archived references remain (CI checks enforce).
 - operation_id required for any DELETE (archive), recorded in operations_log; execution reuses the planner’s scope and the same operation_id.
 - Ordering and idempotency: automata MUST process inputs ordered by (ts_orig ASC, id ASC); outputs MUST be idempotent (insert‑if‑absent by exact source_event_ids). Use small‑batch checkpoints to bound rework. Replays MUST keep this ordering and idempotency to enable safe replays.
@@ -159,61 +189,72 @@ Execution:
 
 7) Tagging and relations as event‑native
 Events:
+
 - tag.definition.created/updated/deleted
 - tag.assignment.proposed/confirmed/removed { tag_name|tag_id, taggable_type, taggable_id, confidence, evidence: source_event_ids, actor }
 - relation.proposed/confirmed/removed { from_event_id, to_event_id, relation_type, confidence, detection_source }
 
 Tables as projections:
+
 - core.tags, core.tagged_items (with rebuild via replay)
 - core.event_relations (+ clusters/members if used)
 - Finalizers write tables on confirmed events; all are rebuildable from event history.
 
 8) Agents and proposal/judgment/finalizer
 Agents:
+
 - Produce proposals/insights; include provenance minimums: agent_name, agent_version, model_name, model_version, prompt_hash | prompt_text, params_hash, run_id, tokens_in, tokens_out, cost_estimate (optional), and input_refs. These are carried in outputs and referenced by proposals/finalizers.
 - Gateway durability: responses can be fast‑pathed to clients for UX, but agent api.response.* MUST be persisted via ingestd; failures become explicit error events.
 - This document keeps roles generic to avoid locking old examples; provenance requirements remain strict.
 
 Proposal/judgment/finalizer loop:
+
 - Proposals: <domain>.proposal.* with targets, suggestion payload, confidence, evidence, rationale.
 - Judgments: user.curation.judgment { proposal_id, verdict, corrected_payload?, comment? }.
 - Finalizer: deterministic mapping to confirmed state; archives superseded syntheses; emits proposal.superseded.
 
 LD (Living Document):
+
 - MVP full‑text replacement with diff logging and provenance; future refinement (e.g., JSON Patch) is permissible under replay discipline.
 
 9) Browser and terminal reconciliation templates
 Browser:
+
 - Sensing: WebExtension + native messaging (append_stream) for live navigation; DB snapshot/WAL for history (SQLite) as feasible.
 - Reconciliation: windowed matching on URL + ts_orig, with source priority and time_quality marks.
 - Output: browser.pageview.canonical with source_event_ids, confidence, provenance.
 
 Terminal:
+
 - Sensing: Atuin DB snapshots, IPC, histfiles, asciinema.
 - Reconciliation: windowed matching (±2s), session/tty filters, field union rules (cwd, duration, exit_code) with priority order and normalization (argv canonicalization, secret masking).
 - Output: terminal.command.executed.canonical with source_event_ids, time_quality, confidence.
 
 10) Observability and telemetry (module-driven)
+
 - Use the existing telemetry module as the primary mechanism.
 - Capture, at minimum, examples (non‑exhaustive): ingestd commit‑to‑publish latency, NATS consumer lag, annex probe results, anchor churn %, coverage gaps/overlaps, replay preview vs execution latency.
 - operations_log: Every replay/archive/restore writes core.operations_log { operation_id ULID, actor, scope (processor, window/blob filters), preview summary (counts, cascades, churn, flips), started_at, finished_at, outcome (success|error) }. Explore links here for provenance narratives. Detailed schema is in Appendix E.
 - Presentation (e.g., Grafana) is an implementation detail; telemetry must make these measures queryable.
 
 11) Privacy posture (minimal invariant; TBD details)
+
 - Minimal invariant while detailed policy is TBD:
-  - Private mode emits an event and MUST be enforced by all processors (deny‑by‑default while private).
-  - sensd MUST NOT capture sources marked private while private mode is active.
+  - Private mode emits an event and MUST be enforced by all processors (deny-by-default while private).
+  - Satellites MUST NOT capture sources marked private while private mode is active.
   - All privacy toggles are auditable events.
   - Redaction/vaulting emits events; dependent syntheses are archived via replay using operation_id to preserve provenance integrity.
 - Detailed masking rules (e.g., Vector/VRL allowlist/masking) will be integrated later without violating archive‑on‑delete invariants or rebuildability.
 
 12) Inclusion Rule
+
 - Unless explicitly superseded or contradicted later, earlier concepts from the discussion history are considered integrated and valid within this final.
 - Appendices summarize integrated items that originated earlier for traceability; their presence here confirms inclusion.
 
 13) Appendices
 
 A) Natural Keys Registry (consolidated)
+
 - browser.page_visit: (host, tab_id, url, event_ts) with transition_type or navigation sequence when available.
 - focus.window: (host, pid, window_class, window_title, ts_bucket_short).
 - screen.text_ocr: (host, region_hash, text_hash, ts_bucket_short).
@@ -230,11 +271,13 @@ A) Natural Keys Registry (consolidated)
 - screen_recording_manual: (host, blob_sha256).
 
 B) Material lifecycle and recovery
+
 - Statuses: sensing → completed | recovered_partial | failed.
 - Zero‑gap invariant for continuous materials: satellite stages next material before finalizing current.
 - Recovery: ingestd MaterialAssembler rebuilds state from JetStream on restart; orphaned in‑flight segments are finalized as recovered_partial; replay can close gaps using historical slices from JetStream; ledger continuity remains append‑only.
 
 C) Recommended indexes and invariants (readable form)
+
 - core.events: BTREE(material_id, anchor_byte) WHERE material_id IS NOT NULL.
 - core.events: GIN(source_event_ids).
 - raw.temporal_ledger: UNIQUE(material_id, offset_start); BTREE(material_id, offset_start, offset_end); BTREE(timestamp_value, source_type).
@@ -245,6 +288,7 @@ C) Recommended indexes and invariants (readable form)
 D) Processor Contracts (succinct checklists)
 
 Satellite (Material Acquisition via AcquisitionManager)
+
 - [ ] Use AcquisitionManager to begin material (creates registry row, publishes source_material.begin)
 - [ ] Publish slices to source_material.slices.<material_id> with headers (Nats-Msg-Id, Slice-Index, Offset, Chunk-Hash)
 - [ ] Write temporal ledger entries for each slice (ts_capture, precision, source_type); append‑only
@@ -253,6 +297,7 @@ Satellite (Material Acquisition via AcquisitionManager)
 - [ ] Emit diagnostics for acquisition errors, backpressure
 
 Ingestd (MaterialAssembler)
+
 - [ ] Subscribe to source_material.* subjects with durable consumer
 - [ ] Maintain per-material state (temp file, offset tracking, slice count)
 - [ ] Assemble slices in order (handle out-of-order delivery)
@@ -261,7 +306,8 @@ Ingestd (MaterialAssembler)
 - [ ] Rebuild assembler state from JetStream on restart
 
 Ingestor (Event Processing)
-- [ ] Consume MaterialSliceStream; deterministic slicing; anchor rule id/version recorded (processor_manifests)
+
+- [ ] Consume JetStream `source_material.*` streams; deterministic slicing; anchor rule id/version recorded (processor_manifests)
 - [ ] Compute ts_orig from ledger/intrinsic; set time_quality
 - [ ] Populate external provenance (material_id, offset_kind, offsets, anchor_byte)
 - [ ] Insert with idempotency: UNIQUE(material_id, anchor_byte) for first‑order events
@@ -269,17 +315,20 @@ Ingestor (Event Processing)
 - [ ] Emit diagnostics for anchor mismatch, malformed slices
 
 Automaton
+
 - [ ] Deterministic transforms over event history; no external mutable state for correctness
 - [ ] Use internal provenance (source_event_ids) to reference inputs
 - [ ] On replay: insert then archive/replace downstream deterministically; preserve lineage
 - [ ] Respect invariants: no live→archived references; cascade updates as needed
 
 Agent
+
 - [ ] Produce proposals/insights with provenance: agent_name/version, model_name/version, params_hash, run_id, input_refs, optional costs
 - [ ] Use proposal/judgment/finalizer; finalizer writes confirmed state; archive superseded syntheses
 - [ ] Avoid hidden side effects; prefer idempotent writes via ingestd
 
 Gateway/CLI (exo)
+
 - [ ] Replay verb required; preview → gates → execute; requires operation_id for archival
 - [ ] RPC envelope (minimal): { processor, mode: ingestor|automaton, scope: { blob_id | time_window }, dry_run: bool, operation_id }
 - [ ] Blob/event archival commands always cascade; audit trail populated
@@ -288,64 +337,77 @@ Gateway/CLI (exo)
 F) Event Families Canon (canonical names and minimal payload fields)
 
 Input
+
 - input.key: { key, action (down|up|repeat), modifiers?, device?, ts_client? }
 - input.mouse: { kind (move|click|scroll), button?, delta?, position?, device?, ts_client? }
 
 Focus/Window
+
 - focus.window: { window_class, window_title, pid?, workspace?, app_id?, ts_client? }
 
 Browser
+
 - browser.page_visit: { url, transition_type?, referrer?, tab_id?, window_id?, title?, ts_client? }
 - browser.dom_event: { event_name, selector?, value_hash?, url?, tab_id?, ts_client? }
 - browser.media_event: { media_kind (audio|video), action (play|pause|seek|end), url?, tab_id?, position_s?, ts_client? }
 - browser.bookmark_added: { url, title?, folder_path?, source (manual|import), ts_client? }
 
 Webpage processing
+
 - webpage.snapshot_html: { source_url, blob_sha256, size_bytes?, mime?, charset?, title?, ts_client? }
 - webpage.text_extracted: { source_blob_sha256, extractor_id, extractor_version, text_hash, length_chars, ts_client? }
 - webpage.summary: { source_blob_sha256|source_text_hash, model_name, model_version, summary_hash, tokens_in?, tokens_out?, ts_client? }
 
 Audio
+
 - audio.segment_raw: { blob_sha256, mime?, duration_s?, sample_rate_hz?, channels?, ts_client? }
 - audio.transcript: { origin_blob_sha256, model_name, model_version, language?, text_hash, duration_s?, ts_client? }
 
 Screen/OCR
+
 - screen.text_ocr: { region_hash, text_hash, bbox?, page?, confidence?, ts_client? }
 
 Terminal
+
 - terminal.session_cast: { blob_sha256, tty?, shell?, duration_s?, cmds_count?, ts_client? }
 - terminal.command: { argv_norm_hash, argv?, cwd?, exit_code?, duration_ms?, tty?, session_id?, ts_client? }
 
 Bookmarks/Reading
+
 - bookmark.raindrop: { raindrop_id, url, title?, tags?, collection?, created_at?, ts_client? }
 
 Chats
+
 - chat.conversation_import: { platform, conversation_id_platform, title?, participants[], created_at? }
 - chat.message_import: { platform, conversation_id_platform, message_id_platform, role (user|assistant|system|tool), content_hash, parent_id?, attachments?, ts_client? }
 
 Self-tracking
+
 - self.mood_event: { mood (scale), context?, note?, ts_client? }
 - self.task_event: { task_id?, title?, status (created|started|done|blocked), project?, tags?, ts_client? }
 - self.substance_event: { substance, dose?, unit?, route?, note?, ts_client? }
 
 LD operations
+
 - ld.input: { section?, intent?, text_hash, cursor?, ts_client? }
 - ld.delta: { target_note_id, patch_hash|full_text_hash, model_name?, model_version?, rationale_hash?, ts_client? }
 
 Metrics/Diagnostics (internal)
+
 - system.heartbeat: { node, version?, uptime_s? }
 - ingestion.anchor_mismatch: { processor, material_id, anchor_byte, rule_id, expected?, observed? }
 - annex.probe: { sample_size, failures, bytes_missing, duration_ms }
 
 Notes
+
 - ts_client is optional client-side time if present; ts_orig is derived per doctrine from temporal ledger or intrinsic timing.
 - Minimal payloads carry identities and hashes; large text is expected to live in blobs or be referenced by hashes when appropriate.
 - These families name canonical event_type values and minimal payload keys; producers may add more fields, but canonical keys must exist when applicable.
 
 Minimal diagram (text)
-[Satellites] --(slices)--> [sensd: Source Material + Ledger]
-[sensd] --(materials)--> [Ingestors: MaterialSliceStream] --(validated events)--> [ingestd]
-[ingestd] --(commit)--> [Postgres] --(publish post‑commit)--> [NATS] --> [Automata/Agents]
+[Satellites (AcquisitionManager)] --(source_material.* + events.raw.*)--> [JetStream Streams]
+[JetStream Streams] --(materials + events)--> [ingestd (MaterialAssembler + Event Consumer)]
+[ingestd] --(commit)--> [Postgres/git-annex] --(post-commit publish)--> [NATS JetStream] --> [Automata/Agents]
 [Automata/Agents] --(derived events via ingestd)--> [Postgres]
 [Explore/Gateway/CLI] --(replay/curate)--> [ingestd] --(archive/replace)--> [Postgres + audit]
 
@@ -354,11 +416,13 @@ Minimal diagram (text)
 J) Explore UX Canon (MVP panels, required data hooks, minimal query surfaces)
 
 Purpose
+
 - Define a minimal, consistent Explore experience to inspect history, understand provenance and changes, and safely run replays/curations. Keep it bus/DB‑agnostic; rely only on committed events and the existing telemetry module.
 
 MVP Panels
 
 1) Timeline
+
 - Goal: Navigate events over time, filter by families/sources, and inspect provenance quickly.
 - Required data hooks:
   - Event stream: SELECT id, event_type, ts_orig, ts_ingest, payload_summary, material_id?, anchor_byte?, source_event_ids?
@@ -369,6 +433,7 @@ MVP Panels
   - Per‑event fetch for envelope, provenance, and payload preview
 
 2) Replay Preview
+
 - Goal: Show what would change before executing replay; highlight risk.
 - Required data hooks:
   - Replay planning service (or SQL estimator) to compute:
@@ -382,6 +447,7 @@ MVP Panels
   - Operation scope summary (processor, window/blob, filters)
 
 3) Source Explorer
+
 - Goal: Monitor Source Material lifecycles and ledger integrity.
 - Required data hooks:
   - raw.source_material_registry: id, source_identifier, status (sensing|completed|recovered_partial|failed), rotation_policy, staged_at/start_time/end_time, host/user
@@ -392,6 +458,7 @@ MVP Panels
   - Recovered segments listing
 
 4) Curation Queue
+
 - Goal: Review proposals, make judgments, and produce confirmed state.
 - Required data hooks:
   - Proposal events (<domain>.proposal.*) with evidence (source_event_ids), confidence, rationale
@@ -402,6 +469,7 @@ MVP Panels
   - Judgment submission via gateway/ingestd
 
 5) Provenance Narrative
+
 - Goal: Explain “why this event has this time and content”.
 - Required data hooks:
   - External provenance (material_id, anchor_byte, offsets)
@@ -415,15 +483,19 @@ MVP Panels
 Operator Workflows (MVP)
 
 A) Safe Replay
+
 - Select scope (processor + blob or time window) → Preview (counts, cascades, churn, flips) → If gates exceeded, require explicit confirm → Execute with operation_id → Show results and audit links.
 
 B) Gap Inspection
+
 - From Timeline or Source Explorer: highlight gaps/recovered_partial materials → Jump to relevant material/ledger slice → Optionally trigger historical replay to close gaps.
 
 C) Proposal Review
+
 - Open Curation Queue → Inspect proposal evidence and provenance narrative → Accept/Reject/Modify → Finalizer writes confirmed state → Link any superseded syntheses.
 
 Data Model Notes for Explore
+
 - Planner location: the replay planner runs in gateway/exo (non‑mutating) to compute previews; execution reuses the same scope+operation_id.
 - No new tables required; Explore reads from:
   - core.events (and optional projections for KG/tags)
@@ -434,6 +506,7 @@ Data Model Notes for Explore
 - Heavy previews (replay planning) are performed by a service/command returning a summary payload; Explore renders the result.
 
 Minimal Telemetry Hooks (examples, non‑prescriptive)
+
 - commit→publish latency (ingestd)
 - NATS consumer lag (per group)
 - annex probe stats
@@ -441,10 +514,10 @@ Minimal Telemetry Hooks (examples, non‑prescriptive)
 - replay preview vs execution latency
 
 Non‑goals (MVP)
+
 - Full‑fidelity diffs for large payloads (use sample + narrative)
 - Cross‑environment aggregation (respect SINEX_ENVIRONMENT scoping)
 - UI framework choice (TUI vs Web is an implementation concern)
-
 
 E) DDL and CI checks (executable invariants)
 
@@ -647,6 +720,7 @@ E.6 Replay gates (configuration defaults)
 -- require_force_if_any_schema_mismatch = true
 
 Notes
+
 - The JSON schema validation trigger is a safety net; primary validation occurs in ingestd against an active schema cache (Architecture: ingestd validates schema, enforces provenance XOR, batches to Postgres, then publishes to NATS after commit).
 - The archive trigger relies on session settings:
   - sinex.operation_id (REQUIRED)

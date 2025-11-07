@@ -143,6 +143,10 @@ This pattern solves the real-time ingestion latency problem while maintaining pe
 * **Stateful Agent (The Specialist):** An imperative Rust satellite. Reserved only for tasks that are non-deterministic (LLMs), have highly complex procedural logic (paste-detection), or are Actuators.
 * **Ingestor/Actuator (The Bidirectional Bridge):** A satellite that both ingests observational events from an external source and subscribes to instructional events to act upon that same source.
 
+**8.4. Runtime Helpers & Replay Integration**
+
+All stateful processors are initialized through a shared `ProcessorRuntimeState` that collapses database pools, emitters, and coordination primitives behind ergonomic accessors. Satellites no longer wire raw handles manually: they receive the runtime from `ProcessorInitContext::into_runtime()` and obtain helpers via fluent methods such as `runtime.acquisition_manager(...)`, `runtime.job_manager(...)`, or `runtime.coordination(...)`. Replay orchestration lives under `sinex-satellite-sdk::replay`, and the CLI consumes the same `ReplayService::from_runtime` helper that satellites expose. Test fixtures rely on the fluent `TestRuntimeBuilder` to assemble NATS, pools, and event channels without hand-rolled scaffolding, giving the replay path a first-class, end-to-end exercise in integration tests.
+
 ---
 
 #### **Part IX: Operational Hardening & Developer Experience**
@@ -248,7 +252,7 @@ The `exo` Python script (`cli/exo.py`) is the **sole user-facing entry point for
 
 All satellites (Rust binaries in `crate/`) are built using the `sinex-satellite-sdk` and conform to the `StatefulStreamProcessor` trait.
 
-* **Unified Entrypoint:** Every satellite binary's `main.rs` must consist of a single line: `sinex_satellite_sdk::processor_main!(ProcessorType);`. This macro generates the standardized `service | scan | explore` CLI.
+* **Unified Entrypoint:** Every satellite binary's `main.rs` must consist of a single line: `sinex_processor_runtime::processor_main!(ProcessorType);`. This macro generates the standardized `service | scan | explore` CLI.
 * **Health Monitoring:** The `processor_main!` macro **must** also automatically spawn a `HeartbeatEmitter` task, ensuring all running satellites provide consistent, structured heartbeat logs to `journald` for consumption by the `health-aggregator`.
 
 ---
@@ -507,9 +511,9 @@ Your memory is correct. My previous description was incomplete. A satellite runn
 Your point about recovering "in-flight" records is critical for data integrity.
 
 * **The In-Flight Record:** When a continuous processor starts sensing a stream, it creates an "in-flight" record in `source_material_registry`.
-* **The Checkpoint:** The processor's own internal checkpoint (in `core.automaton_checkpoints`) **must** store the `blob_id` of its current in-flight record and the current byte offset within its local buffer file.
+* **The Checkpoint:** The processor's own internal checkpoint (in `core.processor_checkpoints`) **must** store the `blob_id` of its current in-flight record and the current byte offset within its local buffer file.
 * **Crash Recovery:** On restart, the processor's startup sequence is:
-    1. Load its last checkpoint from `core.automaton_checkpoints`.
+    1. Load its last checkpoint from `core.processor_checkpoints`.
     2. See that it was in the middle of writing an in-flight blob (`blob_id: XYZ`).
     3. Find the corresponding local buffer file (`/var/lib/sinex/.../XYZ.tmp`).
     4. **Finalize this recovered chunk:** It stages this partial chunk as a new, complete `Source Material` record (with a status like `'recovered_partial'`).

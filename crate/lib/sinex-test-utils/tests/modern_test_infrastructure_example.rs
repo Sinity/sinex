@@ -1,3 +1,5 @@
+#![cfg(feature = "rstest-preview")]
+
 //! Example of using the modern test infrastructure with rstest, insta, and tracing-test
 
 #![allow(dead_code, unused_imports)]

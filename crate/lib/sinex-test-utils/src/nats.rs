@@ -73,7 +73,11 @@ impl EphemeralNats {
                 "NATS_SERVER_BIN points to missing binary: {explicit}"
             ));
         }
-        which("nats-server").map_err(|_| eyre!("nats-server binary not found on PATH"))
+        which("nats-server").map_err(|_| {
+            eyre!(
+                "nats-server binary not found on PATH. Install it (e.g. `nix-env -iA nixpkgs.nats-server` or `brew install nats-server`) or set NATS_SERVER_BIN to the binary path."
+            )
+        })
     }
 
     fn reserve_port() -> Result<u16> {

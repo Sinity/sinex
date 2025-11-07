@@ -1,5 +1,7 @@
 //! Shared RPC method handlers
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
@@ -53,10 +55,17 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .map(Id::<Event<JsonValue>>::from_ulid)
         .wrap_err("Invalid or missing event_id")?;
 
-    let content = params
+    let content_b64 = params
         .get("content")
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
+
+    let decoded_bytes = BASE64_STANDARD
+        .decode(content_b64)
+        .wrap_err("Invalid base64 content")?;
+
+    let content =
+        String::from_utf8(decoded_bytes).wrap_err("Decoded note content is not valid UTF-8")?;
 
     let tags = params
         .get("tags")
@@ -74,7 +83,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .unwrap_or("sinex-host");
 
     let annotation_id = service
-        .create_note(event_id, content, tags, created_by, None)
+        .create_note(event_id, &content, tags, created_by, None)
         .await?;
     Ok(json!({ "annotation_id": annotation_id.to_string() }))
 }
@@ -163,10 +172,14 @@ pub async fn handle_search_events(service: &SearchService, params: Value) -> Res
 // Content handlers
 
 pub async fn handle_store_blob(service: &ContentService, params: Value) -> Result<Value> {
-    let content = params
+    let content_b64 = params
         .get("content")
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
+
+    let content = BASE64_STANDARD
+        .decode(content_b64)
+        .wrap_err("Invalid base64 content")?;
 
     let filename = params
         .get("filename")
@@ -184,7 +197,7 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .unwrap_or("sinex-host");
 
     let annex_key = service
-        .store_content(content.as_bytes(), filename, content_type, source)
+        .store_content(&content, filename, content_type, source)
         .await?;
 
     Ok(json!({ "annex_key": annex_key }))
@@ -197,7 +210,40 @@ pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Re
         .wrap_err("Missing annex_key")?;
 
     let content = service.retrieve_content(annex_key).await?;
-    let content_str = String::from_utf8(content).unwrap_or_else(|_| "<binary content>".to_string());
+    let metadata = service.get_content_metadata(annex_key).await?;
 
-    Ok(json!({ "content": content_str }))
+    Ok(blob_response_payload(&content, &metadata))
+}
+
+fn blob_response_payload(
+    content: &[u8],
+    metadata: &sinex_satellite_sdk::annex::BlobMetadata,
+) -> Value {
+    json!({
+        "content_base64": BASE64_STANDARD.encode(content),
+        "mime_type": metadata.mime_type.clone(),
+        "size_bytes": metadata.size_bytes,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core::Blob;
+
+    #[test]
+    fn blob_response_payload_encodes_base64() {
+        let blob = Blob::builder()
+            .annex_backend("SHA256".into())
+            .content_hash("deadbeef".into())
+            .original_filename("blob.bin".into())
+            .size_bytes(2)
+            .mime_type("application/octet-stream".into())
+            .build();
+
+        let json = blob_response_payload(b"hi", &blob);
+        assert_eq!(json["content_base64"], "aGk=");
+        assert_eq!(json["mime_type"], "application/octet-stream");
+        assert_eq!(json["size_bytes"], 2);
+    }
 }

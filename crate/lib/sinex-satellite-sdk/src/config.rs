@@ -35,6 +35,10 @@
 //! - URLs must be well-formed
 
 use camino::Utf8PathBuf;
+use figment::{
+    providers::{Env, Format, Serialized, Toml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 use sinex_core::types::validate_path;
 use std::collections::HashMap;
@@ -211,6 +215,57 @@ pub struct ReplayConfig {
 }
 
 impl SatelliteConfig {
+    fn defaults(service_name: &str) -> Self {
+        Self {
+            service_name: service_name.to_string(),
+            log_level: default_log_level(),
+            nats_url: default_nats_url(),
+            database_url: None,
+            database_pool_size: default_pool_size(),
+            work_dir: default_work_dir(),
+            dry_run: false,
+            replay: None,
+        }
+    }
+
+    fn figment_base(service_name: &str) -> Figment {
+        Figment::from(Serialized::defaults(Self::defaults(service_name)))
+            .merge(Toml::file(format!("{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file("satellite.toml").nested())
+            .merge(Toml::file("/etc/sinex/satellite.toml").nested())
+    }
+
+    fn env_prefix(service_name: &str) -> String {
+        service_name.to_uppercase().replace('-', "_")
+    }
+
+    fn apply_env(figment: Figment, service_name: &str) -> Figment {
+        let env_prefix = Self::env_prefix(service_name);
+        figment
+            .merge(Env::prefixed(&format!("{}_", env_prefix)).split('_'))
+            .merge(Env::prefixed("SINEX_").split('_'))
+    }
+
+    /// Load configuration using Figment from defaults, config files, and environment.
+    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
+        Self::apply_env(Self::figment_base(service_name), service_name).extract()
+    }
+
+    /// Load configuration from a specific TOML file merged with defaults and environment.
+    pub fn load_from_path(
+        service_name: &str,
+        path: impl AsRef<str>,
+    ) -> Result<Self, figment::Error> {
+        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
+        Self::apply_env(figment, service_name).extract()
+    }
+
+    /// Load configuration from an existing Figment instance.
+    pub fn from_figment(service_name: &str, figment: Figment) -> Result<Self, figment::Error> {
+        Self::apply_env(figment, service_name).extract()
+    }
+
     /// Load configuration from environment and defaults.
     ///
     /// Creates a configuration using environment variables with fallback to
@@ -243,21 +298,22 @@ impl SatelliteConfig {
     /// assert!(config.dry_run);
     /// ```
     pub fn load_from_env(service_name: &str) -> Self {
+        let defaults = Self::defaults(service_name);
         Self {
-            service_name: service_name.to_string(),
+            service_name: defaults.service_name,
             log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
             nats_url: env_var_or_default("NATS_URL", default_nats_url),
             database_url: std::env::var("DATABASE_URL").ok(),
             database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or_else(default_pool_size),
+                .unwrap_or(defaults.database_pool_size),
             work_dir: std::env::var("SINEX_WORK_DIR")
                 .map(Utf8PathBuf::from)
-                .unwrap_or_else(|_| default_work_dir()),
+                .unwrap_or(defaults.work_dir),
             dry_run: std::env::var("SINEX_DRY_RUN")
                 .map(|s| s.parse().unwrap_or(false))
-                .unwrap_or(false),
+                .unwrap_or(defaults.dry_run),
             replay: None,
         }
     }
@@ -284,6 +340,37 @@ impl SatelliteConfig {
 }
 
 impl EventSourceConfig {
+    fn defaults(service_name: &str) -> Self {
+        Self {
+            base: SatelliteConfig::defaults(service_name),
+            batch_size: default_batch_size(),
+            batch_timeout_secs: default_batch_timeout(),
+            source_config: HashMap::new(),
+        }
+    }
+
+    fn figment_base(service_name: &str) -> Figment {
+        Figment::from(Serialized::defaults(Self::defaults(service_name)))
+            .merge(Toml::file(format!("{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file("event-source.toml").nested())
+            .merge(Toml::file("/etc/sinex/event-source.toml").nested())
+    }
+
+    /// Load configuration for an event source satellite using Figment.
+    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
+        SatelliteConfig::apply_env(Self::figment_base(service_name), service_name).extract()
+    }
+
+    /// Load configuration for an event source satellite from a specific file.
+    pub fn load_from_path(
+        service_name: &str,
+        path: impl AsRef<str>,
+    ) -> Result<Self, figment::Error> {
+        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
+        SatelliteConfig::apply_env(figment, service_name).extract()
+    }
+
     /// Validate event source configuration
     pub fn validate_config(&self) -> Result<(), ConfigError> {
         use validator::Validate as ValidateTrait;
@@ -299,6 +386,40 @@ impl EventSourceConfig {
 }
 
 impl AutomatonConfig {
+    fn defaults(service_name: &str) -> Self {
+        Self {
+            base: SatelliteConfig::defaults(service_name),
+            consumer_group: format!("{service_name}-group"),
+            consumer_name: Self::default_consumer_name(),
+            topics: Vec::new(),
+            processing_batch_size: default_processing_batch_size(),
+            checkpoint_interval_secs: default_checkpoint_interval(),
+            automaton_config: HashMap::new(),
+        }
+    }
+
+    fn figment_base(service_name: &str) -> Figment {
+        Figment::from(Serialized::defaults(Self::defaults(service_name)))
+            .merge(Toml::file(format!("{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file("automaton.toml").nested())
+            .merge(Toml::file("/etc/sinex/automaton.toml").nested())
+    }
+
+    /// Load configuration for an automaton satellite using Figment.
+    pub fn load(service_name: &str) -> Result<Self, figment::Error> {
+        SatelliteConfig::apply_env(Self::figment_base(service_name), service_name).extract()
+    }
+
+    /// Load configuration for an automaton satellite from a specific file.
+    pub fn load_from_path(
+        service_name: &str,
+        path: impl AsRef<str>,
+    ) -> Result<Self, figment::Error> {
+        let figment = Self::figment_base(service_name).merge(Toml::file(path.as_ref()).nested());
+        SatelliteConfig::apply_env(figment, service_name).extract()
+    }
+
     /// Validate automaton configuration
     pub fn validate_config(&self) -> Result<(), ConfigError> {
         use validator::Validate as ValidateTrait;

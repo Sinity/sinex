@@ -656,21 +656,36 @@ impl DatabasePool {
                             }
 
                             if !needs_recreate {
-                                match sqlx::query_scalar::<_, bool>(
+                                let events_has_blobs = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                                      WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
                                 )
                                 .fetch_one(&db_pool)
-                                .await
-                                {
-                                    Ok(true) => {}
-                                    Ok(false) => {
+                                .await;
+
+                                let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
+                                    "SELECT COUNT(*) = 2 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
+                                       AND column_name IN ('checkpoint_version', 'created_at')",
+                                )
+                                .fetch_one(&db_pool)
+                                .await;
+
+                                match (events_has_blobs, checkpoints_has_metadata) {
+                                    (Ok(true), Ok(true)) => {}
+                                    (Ok(false), _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing core.events.associated_blob_ids; recreating"
                                         );
                                     }
-                                    Err(err) => {
+                                    (_, Ok(false)) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Database {name} missing core.processor_checkpoints metadata columns; recreating"
+                                        );
+                                    }
+                                    (Err(err), _) | (_, Err(err)) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Failed to inspect columns in {name} ({err}); recreating"
@@ -1076,7 +1091,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
                 let err_str = err.to_string();
                 if !err_str.to_lowercase().contains("too many clients") {
                     return Err(SinexError::database(format!(
-                        "Admin connection failed: {err_str}"
+                        "Admin connection failed: {err_str}. Ensure the local PostgreSQL instance is running and accessible (try `just db-setup`, `pg_ctl start`, or set DATABASE_URL to a reachable server)."
                     )));
                 }
                 last_error = Some(err);
@@ -1088,7 +1103,9 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
                 );
             }
             Err(_) => {
-                return Err(SinexError::database("Admin connection timeout"));
+                return Err(SinexError::database(
+                    "Admin connection timeout. Ensure PostgreSQL is running locally.",
+                ));
             }
         }
 
@@ -1097,7 +1114,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
     }
 
     Err(SinexError::database(format!(
-        "Admin connection failed after retries: {}",
+        "Admin connection failed after retries: {}. Ensure PostgreSQL is running and reachable for tests.",
         last_error
             .map(|e| e.to_string())
             .unwrap_or_else(|| "unknown error".to_string())
@@ -1225,25 +1242,39 @@ async fn ensure_template_database(
                                 };
 
                                 if version_matches_default {
-                                    match sqlx::query_scalar::<_, bool>(
+                                    let events_has_blobs = sqlx::query_scalar::<_, bool>(
                                         "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                                          WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
                                     )
                                     .fetch_one(&pool)
-                                    .await
-                                    {
-                                        Ok(true) => {
+                                    .await;
+
+                                    let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
+                                        "SELECT COUNT(*) = 2 FROM information_schema.columns \
+                                         WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
+                                           AND column_name IN ('checkpoint_version', 'created_at')",
+                                    )
+                                    .fetch_one(&pool)
+                                    .await;
+
+                                    match (events_has_blobs, checkpoints_has_metadata) {
+                                        (Ok(true), Ok(true)) => {
                                             eprintln!(
                                                 "✅ Template database {template_name} reused (migrations unchanged)"
                                             );
                                             reuse_allowed = true;
                                         }
-                                        Ok(false) => {
+                                        (Ok(false), _) => {
                                             eprintln!(
                                                 "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
                                             );
                                         }
-                                        Err(err) => {
+                                        (_, Ok(false)) => {
+                                            eprintln!(
+                                                "♻️  Template {template_name} missing core.processor_checkpoints metadata columns; recreating"
+                                            );
+                                        }
+                                        (Err(err), _) | (_, Err(err)) => {
                                             eprintln!(
                                                 "⚠️  Failed to inspect template schema ({err}); forcing recreation"
                                             );
@@ -1506,7 +1537,10 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
 
         if available.is_none() {
             missing_required.push(format!("{ext_name} ({description})"));
+            continue;
         }
+
+        ensure_extension_installed(pool, ext_name).await?;
     }
 
     if !missing_required.is_empty() {
@@ -1525,6 +1559,15 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
                 .await?;
 
         if available.is_none() {
+            missing_optional.push((ext_name.to_string(), description.to_string()));
+            continue;
+        }
+
+        if let Err(err) = ensure_extension_installed(pool, ext_name).await {
+            warn!(
+                "Failed to auto-install optional extension '{}': {}",
+                ext_name, err
+            );
             missing_optional.push((ext_name.to_string(), description.to_string()));
         }
     }
@@ -1564,6 +1607,25 @@ async fn collect_extension_versions(pool: &DbPool) -> Result<HashMap<String, Str
 /// Check whether an optional database extension was unavailable during setup.
 pub fn optional_extension_missing(name: &str) -> bool {
     OPTIONAL_EXTENSION_MISSING.lock().contains_key(name)
+}
+
+async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()> {
+    let installed: Option<String> =
+        sqlx::query_scalar("SELECT extname FROM pg_extension WHERE extname = $1")
+            .bind(extension)
+            .fetch_optional(pool)
+            .await?;
+
+    if installed.is_some() {
+        return Ok(());
+    }
+
+    let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
+    sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
+        SinexError::database(format!("Failed to create extension {extension}: {e}"))
+    })?;
+
+    Ok(())
 }
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)

@@ -1,30 +1,120 @@
 #![doc = include_str!("../doc/stage_as_you_go.md")]
 
-use crate::{SatelliteError, SatelliteResult};
+use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
+use crate::{
+    annex::{AnnexConfig, BlobManager, BlobMetadata},
+    SatelliteError, SatelliteResult,
+};
+use camino::Utf8PathBuf;
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::{ulid::Ulid, Id};
-use sinex_core::{DbPoolExt, JsonValue};
+use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt, JsonValue};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
     db_pool: PgPool,
-    event_sender: Arc<Mutex<mpsc::UnboundedSender<Event<JsonValue>>>>,
+    event_emitter: EventEmitter,
+    blob_manager: Option<Arc<BlobManager>>,
+    material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
+}
+
+#[derive(Debug, Clone)]
+struct StageMaterialInfo {
+    material_type: String,
+    source_uri: Option<String>,
+    started_at: DateTime<Utc>,
 }
 
 impl StageAsYouGoContext {
-    /// Create a new Stage-as-You-Go context
-    pub fn new(db_pool: PgPool, event_sender: mpsc::UnboundedSender<Event<JsonValue>>) -> Self {
+    /// Create a Stage-as-You-Go context from processor runtime handles
+    pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
+        Self::from_emitter(runtime.db_pool().clone(), runtime.event_emitter().clone())
+    }
+
+    /// Create a Stage-as-You-Go context directly from processor handles
+    pub fn from_handles(handles: &ProcessorHandles) -> Self {
+        Self::from_emitter(handles.db_pool().clone(), handles.emitter().clone())
+    }
+
+    /// Create a Stage-as-You-Go context from explicit components
+    pub fn from_emitter(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
+        let blob_manager = Self::init_blob_manager(&db_pool, &event_emitter);
+
         Self {
             db_pool,
-            event_sender: Arc::new(Mutex::new(event_sender)),
+            event_emitter,
+            blob_manager,
+            material_registry: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Convenience helper to build a context from a sender channel (tests/tooling)
+    pub fn from_sender(
+        db_pool: PgPool,
+        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+        dry_run: bool,
+    ) -> Self {
+        Self::from_emitter(db_pool, EventEmitter::new(event_sender, dry_run))
+    }
+
+    /// Create a Stage-as-You-Go context with an explicitly provided blob manager
+    pub fn with_blob_manager(
+        db_pool: PgPool,
+        event_emitter: EventEmitter,
+        blob_manager: Arc<BlobManager>,
+    ) -> Self {
+        Self {
+            db_pool,
+            event_emitter,
+            blob_manager: Some(blob_manager),
+            material_registry: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn init_blob_manager(
+        db_pool: &PgPool,
+        event_emitter: &EventEmitter,
+    ) -> Option<Arc<BlobManager>> {
+        let path = match std::env::var("SINEX_ANNEX_PATH") {
+            Ok(path) => path,
+            Err(_) => return None,
+        };
+
+        let repo_path = match Utf8PathBuf::from(path) {
+            path => path,
+        };
+
+        let annex_config = AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        };
+
+        match BlobManager::new(
+            annex_config,
+            db_pool.clone(),
+            (*event_emitter.sender()).clone(),
+        ) {
+            Ok(manager) => {
+                info!("Stage-as-You-Go blob manager initialised");
+                Some(Arc::new(manager))
+            }
+            Err(e) => {
+                warn!("Failed to initialise blob manager: {}", e);
+                None
+            }
         }
     }
 
@@ -54,6 +144,14 @@ impl StageAsYouGoContext {
             material_type = material_type,
             "Registered in-flight source material"
         );
+
+        let info = StageMaterialInfo {
+            material_type: material_type.to_string(),
+            source_uri: source_uri.map(|s| s.to_string()),
+            started_at: Utc::now(),
+        };
+
+        self.material_registry.lock().await.insert(result.id, info);
 
         Ok(result.id)
     }
@@ -93,11 +191,7 @@ impl StageAsYouGoContext {
             .ok_or_else(|| SatelliteError::Processing("Event must have an ID".to_string()))?
             .as_ulid();
 
-        self.event_sender
-            .lock()
-            .await
-            .send(event)
-            .map_err(|_| SatelliteError::Processing("Event channel closed".to_string()))?;
+        self.event_emitter.emit(event).await?;
 
         debug!(
             event_id = %event_id,
@@ -127,12 +221,39 @@ impl StageAsYouGoContext {
             None
         };
 
+        let material_info = {
+            let mut registry = self.material_registry.lock().await;
+            registry.remove(&id)
+        };
+
         let source_material_repo = self.db_pool.source_materials();
 
-        // Note: Blob storage is handled separately in the annex system
-        // For now, we don't store the actual content in the database
-        let blob_id = None;
-        let total_bytes = Some(content.len() as i64);
+        let mut blob_id = None;
+        let mut total_bytes = content.len() as i64;
+
+        if let Some(manager) = &self.blob_manager {
+            match self
+                .ingest_blob(manager.clone(), id, material_info.as_ref(), content)
+                .await
+            {
+                Ok(blob_metadata) => {
+                    blob_id = Some(blob_metadata.id.clone());
+                    total_bytes = blob_metadata.size_bytes;
+                }
+                Err(e) => {
+                    warn!(
+                        material_id = %id,
+                        "Failed to ingest blob into annex: {}",
+                        e
+                    );
+                }
+            }
+        } else {
+            warn!(
+                material_id = %id,
+                "Blob manager unavailable; optional_blob_id will remain unset"
+            );
+        }
 
         source_material_repo
             .finalize_in_flight(
@@ -140,16 +261,27 @@ impl StageAsYouGoContext {
                 blob_id,
                 encoding,
                 content_preview,
-                total_bytes,
+                Some(total_bytes),
             )
             .await
             .map_err(|e| {
                 SatelliteError::General(eyre!("Failed to finalize source material {}: {}", id, e))
             })?;
 
+        if let Err(e) = self
+            .record_ledger_entry(id, material_info.as_ref(), total_bytes)
+            .await
+        {
+            warn!(
+                material_id = %id,
+                "Failed to append temporal ledger entry: {}",
+                e
+            );
+        }
+
         info!(
-            blob_id = %id,
-            size_bytes = content.len(),
+            material_id = %id,
+            bytes = total_bytes,
             "Finalized source material with content details"
         );
 
@@ -196,6 +328,94 @@ pub struct StageAsYouGoResult {
 pub struct LogFileStageProcessor {
     context: StageAsYouGoContext,
     log_source: String, // "nginx", "apache", "syslog", etc.
+}
+
+impl StageAsYouGoContext {
+    async fn ingest_blob(
+        &self,
+        manager: Arc<BlobManager>,
+        material_id: Ulid,
+        info: Option<&StageMaterialInfo>,
+        content: &[u8],
+    ) -> SatelliteResult<BlobMetadata> {
+        let temp_path = std::env::temp_dir().join(format!("stage-{}", material_id));
+        let mut file = fs::File::create(&temp_path).await.map_err(|e| {
+            SatelliteError::General(eyre!("Failed to create temp file for blob ingest: {}", e))
+        })?;
+        file.write_all(content)
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to write temp blob file: {}", e)))?;
+        file.flush()
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to flush temp blob file: {}", e)))?;
+
+        let temp_utf8 = Utf8PathBuf::from_path_buf(temp_path.clone()).map_err(|_| {
+            SatelliteError::General(eyre!("Temporary path {:?} is not valid UTF-8", temp_path))
+        })?;
+
+        let original_filename = Self::infer_original_filename(info, material_id);
+
+        let ingest_result = manager
+            .ingest_file(&temp_utf8, Some(&original_filename))
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Blob ingestion failed: {}", e)))?;
+
+        if let Err(e) = fs::remove_file(&temp_path).await {
+            warn!(
+                path = %temp_path.display(),
+                "Failed to remove temporary blob file: {}",
+                e
+            );
+        }
+
+        Ok(ingest_result)
+    }
+
+    fn infer_original_filename(info: Option<&StageMaterialInfo>, material_id: Ulid) -> String {
+        if let Some(info) = info {
+            if let Some(uri) = &info.source_uri {
+                if let Some(name) = uri.rsplit('/').next() {
+                    if !name.is_empty() {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+        format!("material-{}.bin", material_id)
+    }
+
+    async fn record_ledger_entry(
+        &self,
+        material_id: Ulid,
+        info: Option<&StageMaterialInfo>,
+        total_bytes: i64,
+    ) -> SatelliteResult<()> {
+        let (source_type, started_at) = info
+            .map(|info| (info.material_type.as_str(), info.started_at))
+            .unwrap_or(("stage-as-you-go", Utc::now()));
+
+        sqlx::query(
+            r#"
+            INSERT INTO raw.temporal_ledger
+                (material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+            VALUES
+                (($1::uuid)::ulid, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(ulid_to_uuid(material_id))
+        .bind(0_i64)
+        .bind(total_bytes)
+        .bind("byte")
+        .bind(started_at)
+        .bind("millisecond")
+        .bind("system")
+        .bind(source_type)
+        .execute(&self.db_pool)
+        .await
+        .map_err(|e| SatelliteError::General(eyre!("Failed to append temporal ledger entry: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 impl LogFileStageProcessor {

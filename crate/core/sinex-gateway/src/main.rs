@@ -22,6 +22,7 @@ mod native_messaging;
 mod rpc_server;
 mod service_container;
 
+use crate::rpc_server::DEFAULT_SOCKET_PATH;
 use service_container::ServiceContainer;
 
 /// Validate and parse socket path for RPC server
@@ -45,7 +46,7 @@ enum Commands {
     /// Start RPC server for CLI communication
     RpcServer {
         /// Socket path (default; set SINEX_GATEWAY_HOST to bind TCP)
-        #[arg(long, default_value = "/tmp/sinex-host.sock", value_parser = validate_socket_path)]
+        #[arg(long, default_value = DEFAULT_SOCKET_PATH, value_parser = validate_socket_path)]
         socket: SanitizedPath,
 
         /// Database URL

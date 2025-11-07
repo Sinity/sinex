@@ -1,4 +1,4 @@
-use sinex_satellite_sdk::replay_control::ReplayController;
+use sinex_satellite_sdk::replay::ReplayController;
 
 #[tokio::test]
 async fn pause_and_resume_toggle_state() {

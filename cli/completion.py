@@ -68,7 +68,7 @@ def get_automata() -> List[str]:
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT DISTINCT processor_name FROM sinex_schemas.processor_manifests WHERE processor_type = 'automaton' ORDER BY processor_name")
+                cur.execute("SELECT DISTINCT processor_name FROM core.processor_manifests WHERE processor_type = 'automaton' ORDER BY processor_name")
                 return [row['processor_name'] for row in cur.fetchall()]
     except Exception:
         return []

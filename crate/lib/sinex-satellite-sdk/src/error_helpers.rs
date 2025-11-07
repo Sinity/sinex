@@ -3,7 +3,8 @@
 //! Common error handling and configuration parsing utilities to reduce code duplication
 //! across satellites. These helpers provide consistent error context and conversion patterns.
 
-use crate::{stream_processor::StreamProcessorContext, SatelliteError};
+use crate::{stream_processor::ProcessorRuntimeState, SatelliteError};
+use std::collections::HashMap;
 use std::io;
 
 /// Convert IO errors to SatelliteError with context
@@ -49,11 +50,28 @@ pub fn processing_error_fmt(args: std::fmt::Arguments<'_>) -> SatelliteError {
 ///
 /// let value: Option<bool> = parse_config_value("enabled", &context);
 /// ```
-pub fn parse_config_value<T: serde::de::DeserializeOwned>(
+pub trait ConfigAccessor {
+    fn config_map(&self) -> &HashMap<String, serde_json::Value>;
+}
+
+impl ConfigAccessor for ProcessorRuntimeState {
+    fn config_map(&self) -> &HashMap<String, serde_json::Value> {
+        self.raw_config()
+    }
+}
+
+impl ConfigAccessor for HashMap<String, serde_json::Value> {
+    fn config_map(&self) -> &HashMap<String, serde_json::Value> {
+        self
+    }
+}
+
+pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     key: &str,
-    ctx: &StreamProcessorContext,
+    source: &S,
 ) -> Option<T> {
-    ctx.config
+    source
+        .config_map()
         .get(key)
         .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
 }
@@ -72,11 +90,12 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned>(
 ///
 /// let config: Option<MyConfig> = parse_typed_config("my_service", &context);
 /// ```
-pub fn parse_typed_config<T: serde::de::DeserializeOwned>(
+pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     config_key: &str,
-    ctx: &StreamProcessorContext,
+    source: &S,
 ) -> Option<T> {
-    ctx.config
+    source
+        .config_map()
         .get(config_key)
         .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
 }

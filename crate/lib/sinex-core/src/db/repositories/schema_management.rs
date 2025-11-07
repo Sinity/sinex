@@ -4,7 +4,7 @@
 //! the structure and validation rules for event payloads in the Sinex system.
 
 use crate::db::db_error;
-use crate::types::Id;
+use crate::types::{Id, Ulid};
 use crate::{DbResult, Event, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use sqlx::PgPool;
 /// Event payload schema record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventPayloadSchema {
-    pub id: String, // Store as string to avoid ULID type issues
+    pub id: Ulid,
     pub source: String,
     pub event_type: String,
     pub schema_version: String,
@@ -35,20 +35,16 @@ pub struct NewEventSchema {
 impl NewEventSchema {
     /// Calculate the content hash for the schema
     pub fn calculate_content_hash(&self) -> String {
-        let content = format!(
-            "{}:{}:{}:{}",
-            self.source,
-            self.event_type,
-            self.schema_version,
-            serde_json::to_string(&self.schema_content).unwrap()
-        );
-
-        // Simple hash using std::hash
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(self.source.as_bytes());
+        hasher.update(b":");
+        hasher.update(self.event_type.as_bytes());
+        hasher.update(b":");
+        hasher.update(self.schema_version.as_bytes());
+        hasher.update(b":");
+        let serialized = serde_json::to_vec(&self.schema_content).unwrap();
+        hasher.update(&serialized);
+        hasher.finalize().to_hex().to_string()
     }
 }
 
@@ -85,26 +81,46 @@ impl<'a> SchemaManagementRepository<'a> {
     ) -> DbResult<EventPayloadSchema> {
         let id_ulid = sinex_schema::ulid::Ulid::new();
         let id_uuid = id_ulid.to_uuid();
-        let content_hash = new_schema.calculate_content_hash();
+        let NewEventSchema {
+            source,
+            event_type,
+            schema_version,
+            schema_content,
+        } = new_schema;
+        let content_hash = NewEventSchema {
+            source: source.clone(),
+            event_type: event_type.clone(),
+            schema_version: schema_version.clone(),
+            schema_content: schema_content.clone(),
+        }
+        .calculate_content_hash();
 
         // Check if this exact schema already exists
         if let Ok(existing) = self.find_schema_by_hash(&content_hash).await {
             return Ok(existing);
         }
 
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema registration transaction"))?;
+
         // Deactivate existing active schemas for this source/event_type
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.event_payload_schemas
             SET is_active = false, updated_at = NOW()
-            WHERE source = $1 AND event_type = $2 AND is_active = true
+            WHERE source = $1
+              AND event_type = $2
+              AND is_active = true
             "#,
-            new_schema.source,
-            new_schema.event_type
+            source.as_str(),
+            event_type.as_str()
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "deactivate existing schemas"))?;
+        .map_err(|e| db_error(e, "deactivate previous schemas"))?;
 
         // Insert the new schema
         let row = sqlx::query!(
@@ -116,7 +132,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 $1::uuid::ulid, $2, $3, $4, $5, $6, true
             )
             RETURNING 
-                id::text as id,
+                id as "id!: Ulid",
                 source,
                 event_type,
                 schema_version,
@@ -126,18 +142,22 @@ impl<'a> SchemaManagementRepository<'a> {
                 updated_at
             "#,
             id_uuid,
-            new_schema.source,
-            new_schema.event_type,
-            new_schema.schema_version,
-            new_schema.schema_content,
+            source.as_str(),
+            event_type.as_str(),
+            schema_version,
+            schema_content,
             content_hash
         )
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| db_error(e, "register schema"))?;
 
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit schema registration transaction"))?;
+
         Ok(EventPayloadSchema {
-            id: row.id.unwrap_or_default(),
+            id: row.id,
             source: row.source,
             event_type: row.event_type,
             schema_version: row.schema_version,
@@ -153,7 +173,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::text as id,
+                id as "id!: Ulid",
                 source,
                 event_type,
                 schema_version,
@@ -171,7 +191,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "find schema by hash"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id.unwrap_or_default(),
+            id: row.id,
             source: row.source,
             event_type: row.event_type,
             schema_version: row.schema_version,
@@ -191,7 +211,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::text as id,
+                id as "id!: Ulid",
                 source,
                 event_type,
                 schema_version,
@@ -212,7 +232,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "get active schema"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id.unwrap_or_default(),
+            id: row.id,
             source: row.source,
             event_type: row.event_type,
             schema_version: row.schema_version,
@@ -224,11 +244,11 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Get a schema by ID
-    pub async fn get_schema_by_id(&self, schema_id: &str) -> DbResult<EventPayloadSchema> {
+    pub async fn get_schema_by_id(&self, schema_id: &Ulid) -> DbResult<EventPayloadSchema> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                id::text as id,
+                id as "id!: Ulid",
                 source,
                 event_type,
                 schema_version,
@@ -237,16 +257,16 @@ impl<'a> SchemaManagementRepository<'a> {
                 is_active,
                 updated_at
             FROM sinex_schemas.event_payload_schemas
-            WHERE id::text = $1
+            WHERE id = $1::uuid::ulid
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "get schema by id"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id.unwrap_or_default(),
+            id: row.id,
             source: row.source,
             event_type: row.event_type,
             schema_version: row.schema_version,
@@ -267,7 +287,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let rows = sqlx::query!(
             r#"
             SELECT 
-                id::text as id,
+                id as "id!: Ulid",
                 source,
                 event_type,
                 schema_version,
@@ -289,17 +309,15 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(rows
             .into_iter()
-            .filter_map(|row| {
-                row.id.map(|id| EventPayloadSchema {
-                    id,
-                    source: row.source,
-                    event_type: row.event_type,
-                    schema_version: row.schema_version,
-                    schema_content: row.schema_content,
-                    content_hash: row.content_hash,
-                    is_active: row.is_active,
-                    updated_at: row.updated_at,
-                })
+            .map(|row| EventPayloadSchema {
+                id: row.id,
+                source: row.source,
+                event_type: row.event_type,
+                schema_version: row.schema_version,
+                schema_content: row.schema_content,
+                content_hash: row.content_hash,
+                is_active: row.is_active,
+                updated_at: row.updated_at,
             })
             .collect())
     }
@@ -364,7 +382,7 @@ impl<'a> SchemaManagementRepository<'a> {
     pub async fn validate_event_payload(
         &self,
         event: &Event<JsonValue>,
-        schema_id: Option<String>,
+        schema_id: Option<Ulid>,
     ) -> DbResult<ValidationResult> {
         // Get the appropriate schema
         let schema = if let Some(sid) = schema_id {
@@ -413,14 +431,14 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Deprecate a schema
-    pub async fn deprecate_schema(&self, schema_id: &str) -> DbResult<()> {
+    pub async fn deprecate_schema(&self, schema_id: &Ulid) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE sinex_schemas.event_payload_schemas
             SET is_active = false, updated_at = NOW()
-            WHERE id::text = $1
+            WHERE id = $1::uuid::ulid
             "#,
-            schema_id
+            schema_id.as_uuid()
         )
         .execute(self.pool)
         .await
@@ -457,15 +475,15 @@ impl<'a> SchemaManagementRepository<'a> {
     pub async fn set_event_schema(
         &self,
         event_id: &Id<Event<JsonValue>>,
-        schema_id: &str,
+        schema_id: &Ulid,
     ) -> DbResult<()> {
         sqlx::query!(
             r#"
             UPDATE core.events 
-            SET payload_schema_id = $1::text::uuid
+            SET payload_schema_id = $1::uuid
             WHERE id = $2::uuid::ulid
             "#,
-            schema_id,
+            schema_id.as_uuid(),
             event_id.as_ulid().as_uuid()
         )
         .execute(self.pool)

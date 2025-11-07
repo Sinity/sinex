@@ -1,4 +1,3 @@
-# Sinex NixOS Module - Modularized Structure
 { config, lib, pkgs, ... }:
 
 with lib;
@@ -16,564 +15,1104 @@ let
       '';
 
   defaultCliPackage =
-    if pkgs ? sinexCli then
-      pkgs.sinexCli
-    else
-      pkgs.python3;
+    if pkgs ? sinexCli then pkgs.sinexCli else null;
+
+  defaultKittySnippet = ''
+# Enable shell integration boundaries for session capture
+shell_integration enabled
+
+# Allow remote control for event collection (unix socket only)
+allow_remote_control socket-only
+
+# Socket path used by Sinex listeners
+listen_on unix:/tmp/kitty-$USER
+
+# Preserve editor cursor and titles while still emitting events
+shell_integration no-cursor
+shell_integration no-title
+'';
 
 in
 {
   imports = [
-    # Core configuration modules
+    ./secrets.nix
     ./database.nix
     ./blob-storage.nix
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    
-    # New consolidated service management (recommended)
-    ./services
-    
-    # Satellite architecture services
     ./satellite-services.nix
   ];
 
-  options.services.sinex = {
+  options.services.sinex = with types; let
+    positive = ints.positive;
+    unsigned = ints.unsigned;
+    batchModule = { defaultSize, defaultTimeout }:
+      submodule {
+        options = {
+          size = mkOption {
+            type = positive;
+            default = defaultSize;
+            description = "Processing batch size.";
+          };
+          timeoutSec = mkOption {
+            type = positive;
+            default = defaultTimeout;
+            description = "Maximum seconds to wait before flushing a partial batch.";
+          };
+        };
+      };
+    resourceModule = { defaultMemory, defaultCpu }:
+      submodule {
+        options = {
+          memoryMax = mkOption {
+            type = str;
+            default = defaultMemory;
+            description = "systemd MemoryMax limit.";
+          };
+          cpuQuota = mkOption {
+            type = str;
+            default = defaultCpu;
+            description = "systemd CPUQuota limit.";
+          };
+        };
+      };
+    envModule = attrsOf str;
+    strList = listOf str;
+    pathList = listOf path;
+  in {
     enable = mkEnableOption "Sinex Exocortex event capture system";
 
     package = mkOption {
-      type = types.package;
+      type = package;
       default = defaultSinexPackage;
       defaultText = literalExpression "pkgs.sinex";
-      description = "Sinex package to use";
+      description = "Sinex package that provides all binaries.";
     };
 
     cliPackage = mkOption {
-      type = types.package;
+      type = nullOr package;
       default = defaultCliPackage;
-      defaultText = literalExpression "pkgs.sinexCli";
-      description = "Sinex CLI package to use";
+      defaultText = literalExpression "pkgs.sinexCli or null";
+      description = "Optional CLI package that will be placed on PATH when present.";
     };
 
-    # Simplified target user configuration
-    targetUser = mkOption {
-      type = types.str;
-      description = "Username whose files to monitor for events";
-      example = "myuser";
+    stateRoot = mkOption {
+      type = path;
+      default = "/var/lib/sinex";
+      description = "Root directory for Sinex state and derived paths.";
     };
 
-    # Satellite architecture user
-    satelliteUser = mkOption {
-      type = types.str;
-      default = "sinex";
-      description = "System user for satellite services";
+    logLevel = mkOption {
+      type = enum [ "trace" "debug" "info" "warn" "error" ];
+      default = "info";
+      description = "Global log level propagated to Sinex services.";
     };
 
-    shell = mkOption {
-      type = types.submodule {
+    users = mkOption {
+      type = submodule {
         options = {
-          asciinema = mkOption {
-            type = types.submodule {
-              options = {
-                autoRecord = mkOption {
-                  type = types.bool;
-                  default = false;
-                  description = "Automatically start asciinema recording for interactive shells.";
-                };
-
-                recordingsPath = mkOption {
-                  type = types.str;
-                  default = "~/.local/share/asciinema";
-                  description = "Directory where automatic asciinema recordings are stored.";
-                };
-              };
-            };
-            default = {
-              autoRecord = false;
-              recordingsPath = "~/.local/share/asciinema";
-            };
-            description = "Per-shell asciinema capture settings.";
+          target = mkOption {
+            type = nullOr str;
+            default = null;
+            description = "Interactive user whose environment is captured (optional).";
           };
 
-          kitty = mkOption {
-            type = types.submodule {
-              options = {
-                enable = mkOption {
-                  type = types.bool;
-                  default = true;
-                  description = "Enable Kitty shell integration helpers.";
-                };
-
-                autoConfigure = mkOption {
-                  type = types.bool;
-                  default = true;
-                  description = "Automatically manage Kitty configuration for Sinex integration.";
-                };
-
-                userConfigPath = mkOption {
-                  type = types.str;
-                  default = "~/.config/kitty/kitty.conf";
-                  description = "Path to the user's Kitty configuration.";
-                };
-              };
-            };
-            default = {
-              enable = true;
-              autoConfigure = true;
-              userConfigPath = "~/.config/kitty/kitty.conf";
-            };
-            description = "Kitty-specific integration settings.";
+          satellites = mkOption {
+            type = str;
+            default = "sinex";
+            description = "System account used to run Sinex services.";
           };
         };
       };
       default = {};
-      description = "Local shell helper configuration (asciinema, Kitty, etc.).";
+      description = "User and identity configuration.";
     };
 
-    # Simplified directories - monitoring.nix compatibility
-    directories = {
-      state = mkOption {
-        type = types.path;
-        default = "/var/lib/sinex";
-        description = "Directory for persistent state data";
-      };
+    database = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption {
+            type = bool;
+            default = true;
+            description = "Manage the PostgreSQL cluster for Sinex.";
+          };
 
-      logs = mkOption {
-        type = types.path;
-        default = "/var/log/sinex";
-        description = "Directory for log files";
-      };
-    };
+          autoSetup = mkOption {
+            type = bool;
+            default = false;
+            description = ''
+              Automatically provision PostgreSQL when enabled. Defaults to true when
+              services.sinex.enable = true, but stays disabled otherwise unless explicitly set.
+            '';
+          };
 
-    # Log level configuration (applies to all services)
-    logLevel = mkOption {
-      type = types.enum [ "trace" "debug" "info" "warn" "error" ];
-      default = "info";
-      description = "Global log level for Sinex services";
-    };
+          host = mkOption {
+            type = str;
+            default = "127.0.0.1";
+            description = "PostgreSQL host that Sinex services connect to.";
+          };
 
-    # DLQ configuration (used by satellite services)
-    dlq = {
-      enable = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Enable Dead Letter Queue for failed events";
-      };
+          port = mkOption {
+            type = port;
+            default = 5432;
+            description = "PostgreSQL port.";
+          };
 
-      failureStoragePath = mkOption {
-        type = types.str;
-        default = "/var/lib/sinex/failures";
-        description = ''
-          Directory for DLQ files and critical failure logs when database is down.
-          Contains both failed event files and critical meta-failure logs.
-        '';
-      };
+          name = mkOption {
+            type = str;
+            default = "sinex";
+            description = "Database name used by Sinex.";
+          };
 
-      maxRetries = mkOption {
-        type = types.int;
-        default = 3;
-        description = "Maximum retry attempts for failed events";
-      };
+          user = mkOption {
+            type = str;
+            default = "sinex";
+            description = "Database role used by Sinex services.";
+          };
 
-      retryDelaySecs = mkOption {
-        type = types.int;
-        default = 60;
-        description = "Delay between retry attempts in seconds";
-      };
+          passwordFile = mkOption {
+            type = nullOr path;
+            default = null;
+            description = "Path to a file containing the database password.";
+          };
 
-      cleanup = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable automatic DLQ file cleanup";
-        };
+          package = mkOption {
+            type = package;
+            default = pkgs.postgresql_16;
+            defaultText = literalExpression "pkgs.postgresql_16";
+            description = "PostgreSQL package to deploy.";
+          };
 
-        maxAge = mkOption {
-          type = types.str;
-          default = "7d";
-          description = "Maximum age of DLQ files before cleanup";
-        };
-
-        maxFiles = mkOption {
-          type = types.int;
-          default = 10000;
-          description = "Maximum number of DLQ files before cleanup";
-        };
-      };
-    };
-
-
-    # Resource limits configuration for satellite services
-    resources = {
-      # Core services
-      ingestd = {
-        memoryMax = mkOption {
-          type = types.str;
-          default = "1G";
-          description = "Maximum memory for ingestion daemon";
-        };
-
-        cpuQuota = mkOption {
-          type = types.str;
-          default = "100%";
-          description = "CPU quota for ingestion daemon";
-        };
-      };
-
-      gateway = {
-        memoryMax = mkOption {
-          type = types.str;
-          default = "512M";
-          description = "Maximum memory for API gateway";
-        };
-
-        cpuQuota = mkOption {
-          type = types.str;
-          default = "50%";
-          description = "CPU quota for API gateway";
-        };
-      };
-
-      # Default resources for satellites
-      defaultSatellite = {
-        memoryMax = mkOption {
-          type = types.str;
-          default = "256M";
-          description = "Default maximum memory for satellite services";
-        };
-
-        cpuQuota = mkOption {
-          type = types.str;
-          default = "50%";
-          description = "Default CPU quota for satellite services";
-        };
-      };
-    };
-
-    # Security configuration
-    #
-    # The Sinex security model implements defense-in-depth with multiple layers:
-    #
-    # ## Process Isolation
-    # Each satellite runs with minimal privileges through systemd hardening:
-    # - NoNewPrivileges: Prevents privilege escalation
-    # - ProtectSystem: Read-only system directories
-    # - SystemCallFilter: Restricts available system calls
-    # - PrivateTmp: Isolated temporary directories
-    #
-    # ## Trust Boundaries
-    # Clear separation between components:
-    # - Satellites → ingestd: gRPC with Unix socket permissions
-    # - ingestd → PostgreSQL: Database role separation
-    # - Automata → Redis: Consumer group isolation
-    # - User → Gateway: API authentication (future)
-    #
-    # ## Resource Limits
-    # Prevents resource exhaustion attacks:
-    # - Memory limits per service (MemoryMax)
-    # - CPU quotas (CPUQuota)
-    # - File descriptor limits
-    # - Rate limiting on event ingestion
-    #
-    # ## Data Sanitization
-    # Multiple layers of privacy protection:
-    # - Input sanitization: Redact secrets before storage
-    # - Environment variable filtering
-    # - Command argument scrubbing
-    # - Access control: Source-based permissions
-    #
-    security = {
-      level = mkOption {
-        type = types.enum [ "minimal" "balanced" "strict" ];
-        default = "balanced";
-        description = ''
-          Security level for SystemD hardening:
-          - minimal: Basic security, maximum functionality
-          - balanced: Reasonable security with event monitoring capabilities
-          - strict: Maximum security, may restrict some monitoring features
-          
-          Each level applies different systemd hardening options:
-          
-          Minimal:
-          - Basic sandboxing (PrivateTmp, ProtectHome)
-          - No network isolation
-          - Full filesystem access for monitoring
-          
-          Balanced (recommended):
-          - Process isolation (NoNewPrivileges, ProtectSystem)
-          - Limited system call filtering
-          - Restricted but functional device access
-          - Memory and CPU limits enforced
-          
-          Strict:
-          - Full sandboxing (PrivateDevices, ProtectKernelTunables)
-          - Aggressive system call filtering
-          - Minimal filesystem access
-          - May break some event sources
-        '';
-      };
-
-      allowFileSystemAccess = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Allow filesystem monitoring access (disabling may break file events)";
-      };
-
-      allowSocketAccess = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Allow access to Unix sockets for terminal and window manager monitoring";
-      };
-
-      allowDeviceAccess = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Allow device access for hardware event monitoring";
-      };
-
-      # Privacy features configuration
-      sanitization = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable automatic sanitization of sensitive data";
-        };
-
-        secretPatterns = mkOption {
-          type = types.listOf types.str;
-          default = [
-            "password[=:]\\s*\\S+"
-            "token[=:]\\s*\\S+"
-            "api[_-]?key[=:]\\s*\\S+"
-            "secret[=:]\\s*\\S+"
-          ];
-          description = "Regex patterns for detecting secrets to redact";
-        };
-
-        envVarFilter = mkOption {
-          type = types.listOf types.str;
-          default = [
-            "PASSWORD"
-            "TOKEN"
-            "SECRET"
-            "API_KEY"
-            "PRIVATE_KEY"
-          ];
-          description = "Environment variables to filter from command captures";
-        };
-      };
-
-      # Access control
-      accessControl = {
-        enable = mkOption {
-          type = types.bool;
-          default = false;
-          description = "Enable source-based access control";
-        };
-
-        rules = mkOption {
-          type = types.listOf (types.submodule {
-            options = {
-              source = mkOption {
-                type = types.str;
-                description = "Event source pattern to match";
-              };
-              allow = mkOption {
-                type = types.listOf types.str;
-                default = [ "*" ];
-                description = "Allowed users/roles for this source";
+          connectionPool = mkOption {
+            type = submodule {
+              options = {
+                maxConnections = mkOption {
+                  type = positive;
+                  default = 40;
+                  description = "Maximum connections per Sinex process.";
+                };
+                minConnections = mkOption {
+                  type = positive;
+                  default = 10;
+                  description = "Minimum number of pooled connections.";
+                };
+                connectionTimeout = mkOption {
+                  type = positive;
+                  default = 30;
+                  description = "Connection acquisition timeout in seconds.";
+                };
+                idleTimeout = mkOption {
+                  type = positive;
+                  default = 600;
+                  description = "Idle connection timeout in seconds.";
+                };
               };
             };
-          });
-          default = [];
-          description = "Access control rules by event source";
+            default = {};
+            description = "Connection pool tuning for Sinex services.";
+          };
+
+          migration = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Run database migrations automatically.";
+                };
+                binary = mkOption {
+                  type = str;
+                  default = "sinex-db-migration";
+                  description = "Migration binary name.";
+                };
+                package = mkOption {
+                  type = nullOr package;
+                  default = null;
+                  description = "Package that provides the migration binary (defaults to services.sinex.package).";
+                };
+                timeout = mkOption {
+                  type = positive;
+                  default = 300;
+                  description = "Migration timeout in seconds.";
+                };
+              };
+            };
+            default = {};
+            description = "Database migration configuration.";
+          };
         };
       };
-
-      # Audit configuration
-      audit = {
-        enable = mkOption {
-          type = types.bool;
-          default = true;
-          description = "Enable security audit logging";
-        };
-
-        logLevel = mkOption {
-          type = types.enum [ "info" "warn" "error" ];
-          default = "warn";
-          description = "Security audit log level";
-        };
-
-        retentionDays = mkOption {
-          type = types.int;
-          default = 90;
-          description = "Days to retain security audit logs";
-        };
-      };
+      default = {};
+      description = "PostgreSQL provisioning and connection configuration.";
     };
 
-    # Update configuration
-    update = {
-      enable = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Enable coordinated update process";
-      };
+    storage = mkOption {
+      type = submodule {
+        options = {
+          dlq = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable the Dead Letter Queue.";
+                };
+                path = mkOption {
+                  type = path;
+                  default = cfg.stateRoot + "/failures";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/failures\"";
+                  description = "Directory used to store DLQ payloads.";
+                };
+                cleanup = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption {
+                        type = bool;
+                        default = true;
+                        description = "Enable scheduled DLQ cleanup.";
+                      };
+                      maxAge = mkOption {
+                        type = str;
+                        default = "30d";
+                        description = "Delete DLQ entries older than this duration.";
+                      };
+                      maxFiles = mkOption {
+                        type = positive;
+                        default = 10000;
+                        description = "Delete DLQ entries when file count exceeds this number.";
+                      };
+                      schedule = mkOption {
+                        type = str;
+                        default = "daily";
+                        description = "systemd.timer OnCalendar expression for cleanup.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "DLQ maintenance configuration.";
+                };
+              };
+            };
+            default = {};
+            description = "Dead Letter Queue settings.";
+          };
 
-      gracePeriod = mkOption {
-        type = types.int;
-        default = 30;
-        description = "Grace period in seconds for services to complete work before update";
+          blob = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable git-annex backed blob storage.";
+                };
+                repositoryPath = mkOption {
+                  type = path;
+                  default = cfg.stateRoot + "/blob-repository";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/blob-repository\"";
+                  description = "Path to the git-annex repository.";
+                };
+                autoInit = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Automatically initialize the repository if missing.";
+                };
+                numCopies = mkOption {
+                  type = positive;
+                  default = 2;
+                  description = "Default git-annex numcopies value.";
+                };
+                backend = mkOption {
+                  type = str;
+                  default = "SHA256E";
+                  description = "git-annex backend used for new blobs.";
+                };
+                maintenance = mkOption {
+                  type = submodule {
+                    options = {
+                      gc = mkOption {
+                        type = submodule {
+                          options = {
+                            enable = mkOption {
+                              type = bool;
+                              default = true;
+                              description = "Enable git-annex garbage collection timer.";
+                            };
+                            schedule = mkOption {
+                              type = str;
+                              default = "weekly";
+                              description = "OnCalendar schedule for git-annex GC.";
+                            };
+                          };
+                        };
+                        default = {};
+                        description = "git-annex garbage collection.";
+                      };
+                      fsck = mkOption {
+                        type = submodule {
+                          options = {
+                            enable = mkOption {
+                              type = bool;
+                              default = true;
+                              description = "Enable git-annex fsck timer.";
+                            };
+                            schedule = mkOption {
+                              type = str;
+                              default = "monthly";
+                              description = "OnCalendar schedule for git-annex fsck.";
+                            };
+                          };
+                        };
+                        default = {};
+                        description = "git-annex fsck configuration.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Blob maintenance tasks.";
+                };
+                health = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption {
+                        type = bool;
+                        default = false;
+                        description = "Enable periodic blob repository health checks.";
+                      };
+                      intervalSec = mkOption {
+                        type = positive;
+                        default = 3600;
+                        description = "Interval in seconds between health checks.";
+                      };
+                      warnAtBytes = mkOption {
+                        type = nullOr unsigned;
+                        default = null;
+                        description = "Emit warnings when repository exceeds this size (bytes).";
+                      };
+                      warnAtPercent = mkOption {
+                        type = float;
+                        default = 0.8;
+                        description = "Emit warnings when usage exceeds this fraction of warnAtBytes.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Blob repository health monitoring.";
+                };
+              };
+            };
+            default = {};
+            description = "Blob storage configuration.";
+          };
+        };
       };
+      default = {};
+      description = "Storage configuration.";
+    };
 
-      healthCheckTimeout = mkOption {
-        type = types.int;
-        default = 60;
-        description = "Maximum time to wait for health checks after update";
+    core = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption {
+            type = bool;
+            default = true;
+            description = "Enable core Sinex services (ingestd and gateway).";
+          };
+
+          ingestd = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable the ingestion daemon.";
+                };
+                spoolDir = mkOption {
+                  type = path;
+                  default = cfg.stateRoot + "/spool/ingestd";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/spool/ingestd\"";
+                  description = "Spool directory for ingestd.";
+                };
+                logLevel = mkOption {
+                  type = str;
+                  default = cfg.logLevel;
+                  defaultText = literalExpression "config.services.sinex.logLevel";
+                  description = "Log level for ingestd.";
+                };
+                batch = mkOption {
+                  type = batchModule { defaultSize = 1000; defaultTimeout = 5; };
+                  default = {};
+                  description = "Batch settings for ingestd.";
+                };
+                resources = mkOption {
+                  type = resourceModule { defaultMemory = "1G"; defaultCpu = "100%"; };
+                  default = {};
+                  description = "Resource limits for ingestd.";
+                };
+                extraArgs = mkOption {
+                  type = strList;
+                  default = [];
+                  description = "Additional command-line arguments for ingestd.";
+                };
+              };
+            };
+            default = {};
+            description = "Ingestion daemon configuration.";
+          };
+
+          gateway = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = true;
+                  description = "Enable the RPC gateway.";
+                };
+                logLevel = mkOption {
+                  type = str;
+                  default = cfg.logLevel;
+                  defaultText = literalExpression "config.services.sinex.logLevel";
+                  description = "Log level for the gateway.";
+                };
+                resources = mkOption {
+                  type = resourceModule { defaultMemory = "512M"; defaultCpu = "75%"; };
+                  default = {};
+                  description = "Resource limits for the gateway.";
+                };
+                extraArgs = mkOption {
+                  type = strList;
+                  default = [];
+                  description = "Additional command-line arguments for the gateway.";
+                };
+              };
+            };
+            default = {};
+            description = "Gateway configuration.";
+          };
+        };
       };
+      default = {};
+      description = "Core service configuration.";
+    };
 
-      rollbackOnFailure = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Automatically rollback if health checks fail";
+    satellites = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption {
+            type = bool;
+            default = true;
+            description = "Enable satellite services.";
+          };
+
+          nats = mkOption {
+            type = submodule {
+              options = {
+                servers = mkOption {
+                  type = strList;
+                  default = [ "nats://127.0.0.1:4222" ];
+                  description = "List of NATS server URLs.";
+                };
+                monitoringPort = mkOption {
+                  type = port;
+                  default = 8222;
+                  description = "NATS monitoring port.";
+                };
+              };
+            };
+            default = {};
+            description = "NATS client configuration.";
+          };
+
+          defaults = mkOption {
+            type = submodule {
+              options = {
+                instances = mkOption {
+                  type = positive;
+                  default = 2;
+                  description = "Default number of instances per satellite.";
+                };
+                logLevel = mkOption {
+                  type = str;
+                  default = cfg.logLevel;
+                  defaultText = literalExpression "config.services.sinex.logLevel";
+                  description = "Default log level for satellites.";
+                };
+                batch = mkOption {
+                  type = batchModule { defaultSize = 100; defaultTimeout = 5; };
+                  default = {};
+                  description = "Default batching configuration.";
+                };
+                resources = mkOption {
+                  type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
+                  default = {};
+                  description = "Default resource limits.";
+                };
+                env = mkOption {
+                  type = envModule;
+                  default = {};
+                  description = "Environment variables applied to every satellite.";
+                };
+              };
+            };
+            default = {};
+            description = "Satellite defaults.";
+          };
+
+          filesystem = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable filesystem satellite."; };
+                watchPaths = mkOption { type = strList; default = [ "~/" ]; description = "Paths to watch."; };
+                instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
+                batch = mkOption {
+                  type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
+                  default = null;
+                  description = "Batch override (null ⇒ inherit defaults).";
+                };
+                resources = mkOption {
+                  type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; });
+                  default = null;
+                  description = "Resource override (null ⇒ inherit defaults).";
+                };
+                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+              };
+            };
+            default = {};
+            description = "Filesystem satellite.";
+          };
+
+          terminal = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable terminal satellite."; };
+                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+              };
+            };
+            default = {};
+            description = "Terminal satellite.";
+          };
+
+          desktop = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable desktop satellite."; };
+                instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+                batch = mkOption { type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; }); default = null; description = "Batch override."; };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+                clipboard = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption {
+                        type = bool;
+                        default = true;
+                        description = "Enable clipboard integration.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "Desktop clipboard integration.";
+                };
+              };
+            };
+            default = {};
+            description = "Desktop satellite.";
+          };
+
+          system = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable system satellite."; };
+                instances = mkOption { type = nullOr positive; default = 1; description = "Instance override (default 1)."; };
+                batch = mkOption {
+                  type = nullOr (batchModule { defaultSize = 200; defaultTimeout = 10; });
+                  default = { size = 200; timeoutSec = 10; };
+                  description = "Batch override (defaults to a slower cadence).";
+                };
+                resources = mkOption { type = nullOr (resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; }); default = null; description = "Resource override."; };
+                env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                extraArgs = mkOption { type = strList; default = []; description = "Extra CLI args."; };
+              };
+            };
+            default = {};
+            description = "System satellite.";
+          };
+
+          automata = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable automata services."; };
+
+                canonicalizer = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable canonical command synthesizer."; };
+                      subjects = mkOption { type = strList; default = [ "events.terminal.*" ]; description = "Subject filters to consume."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = {};
+                  description = "Canonical command synthesizer automaton.";
+                };
+
+                healthAggregator = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable health aggregator automaton."; };
+                      subjects = mkOption { type = strList; default = [ "events.system.*" ]; description = "Subject filters to consume."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = {}; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = {};
+                  description = "Health aggregator automaton.";
+                };
+
+                profiles = mkOption {
+                  type = attrsOf (submodule {
+                    options = {
+                      batch = mkOption {
+                        type = batchModule { defaultSize = 100; defaultTimeout = 5; };
+                        default = {};
+                        description = "Batch parameters for this automata profile.";
+                      };
+                      resources = mkOption {
+                        type = resourceModule { defaultMemory = "256M"; defaultCpu = "50%"; };
+                        default = {};
+                        description = "Resource limits for this automata profile.";
+                      };
+                    };
+                  });
+                  default = {
+                    light = {
+                      batch = { size = 50; timeoutSec = 2; };
+                      resources = { memoryMax = "128M"; cpuQuota = "25%"; };
+                    };
+                    standard = {
+                      batch = { size = 100; timeoutSec = 5; };
+                      resources = { memoryMax = "256M"; cpuQuota = "50%"; };
+                    };
+                    heavy = {
+                      batch = { size = 500; timeoutSec = 5; };
+                      resources = { memoryMax = "512M"; cpuQuota = "100%"; };
+                    };
+                  };
+                  description = "Named automata performance profiles.";
+                };
+              };
+            };
+            default = {};
+            description = "Automata configuration.";
+          };
+
+          coordination = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = false; description = "Enable satellite coordination."; };
+                heartbeatSec = mkOption { type = positive; default = 5; description = "Heartbeat interval in seconds."; };
+                leadershipTimeoutSec = mkOption { type = positive; default = 30; description = "Leadership timeout in seconds."; };
+                handoffTimeoutSec = mkOption { type = positive; default = 10; description = "Handoff timeout in seconds."; };
+              };
+            };
+            default = {};
+            description = "Coordination settings.";
+          };
+
+          generatedUnits = mkOption {
+            type = listOf str;
+            default = [];
+            internal = true;
+            description = "Systemd units generated for satellite services.";
+          };
+        };
       };
+      default = {};
+      description = "Satellite constellation configuration.";
+    };
 
-      preserveData = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Preserve DLQ and failure data during updates";
+    observability = mkOption {
+      type = submodule {
+        options = {
+          enable = mkOption { type = bool; default = true; description = "Enable observability features."; };
+          logDir = mkOption {
+            type = path;
+            default = cfg.stateRoot + "/logs";
+            defaultText = literalExpression "config.services.sinex.stateRoot + \"/logs\"";
+            description = "Directory used for log files.";
+          };
+
+          monitoring = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable Prometheus/Grafana stack."; };
+
+                prometheus = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable Prometheus."; };
+                      listen = mkOption { type = str; default = "127.0.0.1"; description = "Prometheus bind address."; };
+                      port = mkOption { type = port; default = 9090; description = "Prometheus port."; };
+                      retention = mkOption { type = str; default = "30d"; description = "Prometheus retention window."; };
+                      extraScrapeConfigs = mkOption { type = listOf attrs; default = []; description = "Additional scrape configs merged in."; };
+                    };
+                  };
+                  default = {};
+                  description = "Prometheus configuration.";
+                };
+
+                grafana = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable Grafana."; };
+                      port = mkOption { type = port; default = 3000; description = "Grafana port."; };
+                    };
+                  };
+                  default = {};
+                  description = "Grafana configuration.";
+                };
+
+                exporters = mkOption {
+                  type = submodule {
+                    options = {
+                      node = mkOption { type = bool; default = true; description = "Enable node exporter."; };
+                      postgres = mkOption { type = bool; default = true; description = "Enable postgres exporter."; };
+                    };
+                  };
+                  default = {};
+                  description = "Exporter configuration.";
+                };
+              };
+            };
+            default = {};
+            description = "Monitoring stack.";
+          };
+
+          logging = mkOption {
+            type = submodule {
+              options = {
+                structured = mkOption { type = bool; default = true; description = "Enable structured JSON logging."; };
+                retention = mkOption {
+                  type = submodule {
+                    options = {
+                      files = mkOption { type = positive; default = 10; description = "Max rotated files."; };
+                      size = mkOption { type = str; default = "100M"; description = "Max size per log file."; };
+                      age = mkOption { type = str; default = "30d"; description = "Maximum log age."; };
+                    };
+                  };
+                  default = {};
+                  description = "Log retention policy.";
+                };
+              };
+            };
+            default = {};
+            description = "Logging configuration.";
+          };
+
+          alerts = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = false; description = "Enable Prometheus alert rules."; };
+                rulesFiles = mkOption { type = pathList; default = []; description = "Alert rule files to include."; };
+              };
+            };
+            default = {};
+            description = "Alerting configuration.";
+          };
+        };
       };
+      default = {};
+      description = "Observability configuration.";
+    };
 
-      units = mkOption {
-        type = types.listOf types.str;
-        default = [];
-        description = ''
-          Systemd services to cycle during coordinated updates. When left
-          empty, the preflight module derives the list from the enabled
-          satellite services.
+    lifecycle = mkOption {
+      type = submodule {
+        options = {
+          preflight = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable preflight verification gates."; };
+                timeoutSec = mkOption { type = positive; default = 120; description = "Preflight timeout in seconds."; };
+                skip = mkOption {
+                  type = listOf (enum [
+                    "database"
+                    "extensions"
+                    "migrations"
+                    "resources"
+                    "configuration"
+                    "services"
+                    "integration"
+                  ]);
+                  default = [];
+                  description = "Phases to skip during preflight verification.";
+                };
+                failureAction = mkOption {
+                  type = enum [ "abort" "warn" "ignore" ];
+                  default = "abort";
+                  description = "Action when preflight fails.";
+                };
+              };
+            };
+            default = {};
+            description = "Preflight verification configuration.";
+          };
+
+          updates = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable coordinated updates."; };
+                gracePeriodSec = mkOption { type = positive; default = 30; description = "Grace period before restarting units."; };
+                healthCheckTimeoutSec = mkOption { type = positive; default = 60; description = "Time to wait for units to become healthy."; };
+                rollbackOnFailure = mkOption { type = bool; default = true; description = "Rollback units if update fails."; };
+                preserveData = mkOption { type = bool; default = true; description = "Preserve DLQ data during update."; };
+                units = mkOption { type = strList; default = []; description = "Explicit list of units to manage (empty derives)."; };
+              };
+            };
+            default = {};
+            description = "Coordinated update configuration.";
+          };
+
+          maintenance = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable maintenance timers."; };
+                tasks = mkOption {
+                  type = submodule {
+                    options = {
+                      dlq = mkOption { type = bool; default = true; description = "Run DLQ cleanup timer."; };
+                      blobGc = mkOption { type = bool; default = true; description = "Run blob garbage collection."; };
+                      blobFsck = mkOption { type = bool; default = true; description = "Run blob fsck timer."; };
+                      custom = mkOption { type = strList; default = []; description = "Additional maintenance units to start."; };
+                    };
+                  };
+                  default = {};
+                  description = "Maintenance task selection.";
+                };
+              };
+            };
+            default = {};
+            description = "Maintenance configuration.";
+          };
+        };
+      };
+      default = {};
+      description = "Lifecycle management configuration.";
+    };
+
+    shell = mkOption {
+      type = submodule {
+        options = {
+          asciinema = mkOption {
+            type = submodule {
+              options = {
+                autoRecord = mkOption { type = bool; default = false; description = "Automatically record shell sessions with asciinema."; };
+                recordingsPath = mkOption {
+                  type = str;
+                  default = cfg.stateRoot + "/asciinema";
+                  defaultText = literalExpression "config.services.sinex.stateRoot + \"/asciinema\"";
+                  description = "Path where recordings are stored.";
+                };
+              };
+            };
+            default = {};
+            description = "Shell recording configuration.";
+          };
+
+          kitty = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable Kitty integration."; };
+                autoConfigure = mkOption { type = bool; default = true; description = "Automatically patch kitty.conf."; };
+                configFile = mkOption { type = str; default = "~/.config/kitty/kitty.conf"; description = "Path to kitty configuration file."; };
+                snippet = mkOption {
+                  type = lines;
+                  default = defaultKittySnippet;
+                  defaultText = literalExpression "defaultKittySnippet";
+                  description = "Configuration snippet to inject.";
+                };
+              };
+            };
+            default = {};
+            description = "Kitty terminal integration.";
+          };
+        };
+      };
+      default = {};
+      description = "Developer ergonomics configuration.";
+    };
+
+    secrets = mkOption {
+      type = submodule {
+        options = {
+          enableAgenix = mkOption {
+            type = bool;
+            default = false;
+            description = "Enable agenix integration for secret management (planned).";
+          };
+        };
+      };
+      default = {};
+      description = "Secret management integration.";
+    };
+  };
+
+  config =
+    let
+      stateRoot = cfg.stateRoot;
+      runtimeDir = "${stateRoot}/run";
+      spoolBase = "${stateRoot}/spool";
+      satellitesSpool = "${spoolBase}/satellites";
+      ingestSpool = cfg.core.ingestd.spoolDir;
+      logDir = cfg.observability.logDir;
+      dlqDir = cfg.storage.dlq.path;
+      blobDir = cfg.storage.blob.repositoryPath;
+      sinexUser = cfg.users.satellites;
+      targetUser = cfg.users.target;
+      dbUser = cfg.database.user;
+      dbCfg = cfg.database;
+      databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
+      dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
+        set -euo pipefail
+
+        CLI_BIN="${cfg.cliPackage}/bin/sinex-cli"
+        if [ ! -x "$CLI_BIN" ]; then
+          echo "sinex-cli not found at $CLI_BIN" >&2
+          exit 1
+        fi
+
+        "$CLI_BIN" dlq cleanup \
+          --older-than ${cfg.storage.dlq.cleanup.maxAge} \
+          --max-files ${toString cfg.storage.dlq.cleanup.maxFiles} \
+          --confirm
+      '';
+      asciinemaDir = cfg.shell.asciinema.recordingsPath;
+      asciiPath = toString asciinemaDir;
+
+      directoryRules =
+        [
+          { path = stateRoot; mode = "0755"; }
+          { path = runtimeDir; mode = "0755"; }
+          { path = spoolBase; mode = "0755"; }
+          { path = satellitesSpool; mode = "0755"; }
+          { path = ingestSpool; mode = "0755"; }
+          { path = logDir; mode = "0755"; }
+        ]
+        ++ optionals (cfg.storage.dlq.enable) [ { path = dlqDir; mode = "0750"; } ]
+        ++ optionals (cfg.storage.blob.enable) [ { path = blobDir; mode = "0750"; } ]
+        ++ optionals (cfg.shell.asciinema.autoRecord && targetUser != null && hasPrefix "/" asciiPath) [
+          { path = asciiPath; mode = "0770"; user = targetUser; group = targetUser; }
+        ];
+      tmpRule = rule:
+        let
+          owner = rule.user or sinexUser;
+          group = rule.group or sinexUser;
+        in
+        "d ${rule.path} ${rule.mode} ${owner} ${group} -";
+    in
+    mkMerge [
+      (mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = cfg.package != null;
+            message = "services.sinex.package must be set when services.sinex.enable = true.";
+          }
+        ];
+        environment.systemPackages = mkAfter (
+          [ pkgs.dbus ]
+          ++ optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
+        );
+      })
+
+      (mkIf (cfg.cliPackage != null) {
+        environment.systemPackages = mkAfter [ cfg.cliPackage ];
+      })
+
+      (mkIf (cfg.enable || (cfg.database.enable && cfg.database.autoSetup) || cfg.storage.blob.enable) {
+        users.groups.${dbUser} = {};
+        users.users.${dbUser} = {
+          isSystemUser = true;
+          group = dbUser;
+          description = "Sinex database account";
+          home = stateRoot;
+          createHome = true;
+        };
+      })
+
+      (mkIf ((cfg.enable || cfg.storage.blob.enable || cfg.lifecycle.maintenance.enable) && cfg.users.satellites != dbUser) {
+        users.groups.${sinexUser} = {};
+        users.users.${sinexUser} = {
+          isSystemUser = true;
+          group = sinexUser;
+          description = "Sinex service account";
+          home = stateRoot;
+          createHome = true;
+        };
+      })
+
+      (mkIf (cfg.enable || cfg.storage.dlq.enable || cfg.storage.blob.enable) {
+        systemd.tmpfiles.rules = mkAfter (map tmpRule directoryRules);
+      })
+
+      (mkIf (cfg.enable && cfg.shell.asciinema.autoRecord) {
+        programs.bash.promptInit = ''
+          # Automatic asciinema recording for Sinex
+          if [[ -z "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+            export ASCIINEMA_REC=1
+            ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+            if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+              ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+            fi
+            mkdir -p "$ASCIINEMA_DIR"
+            exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+          fi
         '';
-      };
-    };
+        programs.zsh.promptInit = ''
+          # Automatic asciinema recording for Sinex
+          if [[ -z "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
+            export ASCIINEMA_REC=1
+            ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
+            if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
+              ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
+            fi
+            mkdir -p "$ASCIINEMA_DIR"
+            exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
+          fi
+        '';
+      })
 
-  };
+      (mkIf cfg.enable {
+        services.sinex.database.autoSetup = mkDefault true;
+      })
 
-  config = mkIf cfg.enable {
-    services.sinex.satellite.enable =
-      mkDefault (cfg.serviceManagement.serviceGroups.core or true);
-    services.sinex.monitoring.enable =
-      mkDefault (cfg.serviceManagement.serviceGroups.monitoring or true);
+      (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
+        systemd.services.sinex-dlq-cleanup = {
+          description = "Sinex DLQ cleanup";
+          serviceConfig = {
+            Type = "oneshot";
+            User = sinexUser;
+            Group = sinexUser;
+            Environment = [
+              "DATABASE_URL=${databaseUrl}"
+              "SINEX_DLQ_PATH=${dlqDir}"
+            ];
+            ExecStart = dlqCleanupScript;
+          };
+        };
 
-    # Environment packages
-    environment.systemPackages = with pkgs; [
-      asciinema
-      cfg.cliPackage
-      dbus
+        systemd.timers.sinex-dlq-cleanup = {
+          description = "Timer for Sinex DLQ cleanup";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = cfg.storage.dlq.cleanup.schedule;
+            Persistent = true;
+          };
+        };
+      })
     ];
-
-
-    # Satellite architecture is now the default
-    # Legacy collector/worker services have been removed
-    # Use satellite services via satellite-services.nix module
-
-
-    # User and group creation
-    users.users = {
-      ${cfg.database.user} = {
-        isSystemUser = true;
-        group = cfg.database.user;
-        description = "Sinex database user";
-        home = "/var/lib/${cfg.database.user}";
-        createHome = true;
-      };
-    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
-      ${cfg.satelliteUser} = {
-        isSystemUser = true;
-        group = cfg.satelliteUser;
-        description = "Sinex satellite services user";
-        home = "/var/lib/sinex";
-        createHome = true;
-      };
-    };
-
-    users.groups = {
-      ${cfg.database.user} = {};
-    } // lib.optionalAttrs (cfg.satellite.enable && cfg.satelliteUser != cfg.database.user) {
-      ${cfg.satelliteUser} = {};
-    };
-
-    # Directory setup and configuration
-    systemd.tmpfiles.rules = [
-      # Basic directories for monitoring.nix compatibility  
-      "d ${cfg.directories.state} 0755 ${cfg.database.user} ${cfg.database.user} -"
-      "d ${cfg.directories.logs} 0755 ${cfg.database.user} ${cfg.database.user} -"
-      # Configuration directory
-      "d /etc/sinex 0755 root root -"
-    ] ++ lib.optionals cfg.dlq.enable [
-      # DLQ failure storage directory
-      "d ${cfg.dlq.failureStoragePath} 0755 ${cfg.database.user} ${cfg.database.user} -"
-    ];
-
-    # Database setup (if enabled)
-    services.postgresql = mkIf cfg.database.autoSetup {
-      enable = true;
-      ensureDatabases = [ cfg.database.name ];
-      ensureUsers = [
-        {
-          name = cfg.database.user;
-          ensureDBOwnership = true;
-        }
-      ];
-    };
-
-    # Terminal auto-recording for all users
-    programs.bash.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
-      # Automatic asciinema recording for Sinex
-      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
-        export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
-        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
-          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
-        fi
-        mkdir -p "$ASCIINEMA_DIR"
-        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
-          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
-      fi
-    '';
-
-    programs.zsh.promptInit = mkIf cfg.shell.asciinema.autoRecord ''
-      # Automatic asciinema recording for Sinex
-      if [[ ! -n "$ASCIINEMA_REC" ]] && command -v asciinema >/dev/null 2>&1; then
-        export ASCIINEMA_REC=1
-        ASCIINEMA_DIR="${cfg.shell.asciinema.recordingsPath}"
-        if [[ "$ASCIINEMA_DIR" == "~/"* ]]; then
-          ASCIINEMA_DIR="$HOME/''${ASCIINEMA_DIR#~/}"
-        fi
-        mkdir -p "$ASCIINEMA_DIR"
-        exec asciinema rec --quiet --idle-time-limit 3600 --command "$SHELL" \
-          "$ASCIINEMA_DIR/$(hostname)-$(date +%Y%m%d-%H%M%S)-$$.cast"
-      fi
-    '';
-
-    # Assertions for configuration validation
-    assertions = [
-      {
-        assertion = cfg.enable -> cfg.targetUser != "";
-        message = "services.sinex.targetUser must be set when Sinex is enabled";
-      }
-      {
-        assertion =
-          let userDefs = config.users.users or {};
-          in cfg.enable -> lib.hasAttr cfg.targetUser userDefs;
-        message = "services.sinex.targetUser must reference an existing users.users entry";
-      }
-      {
-        assertion = cfg.monitoring.observabilityStack.enable -> cfg.database.autoSetup || config.services.postgresql.enable;
-        message = "PostgreSQL must be enabled for Sinex observability stack";
-      }
-      {
-        assertion = cfg.monitoring.dashboards.grafana.enable -> cfg.monitoring.observabilityStack.enable;
-        message = "Grafana dashboards require the observability stack to be enabled";
-      }
-    ];
-  };
 }

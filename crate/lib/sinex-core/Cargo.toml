@@ -91,3 +91,4 @@ tempfile = { workspace = true }
 sinex-test-utils = { path = "../sinex-test-utils" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 proptest = { workspace = true }
+async-nats = { workspace = true }

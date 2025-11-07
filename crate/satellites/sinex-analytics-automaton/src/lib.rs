@@ -17,15 +17,16 @@ mod common {
 
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
-        cli::{
-            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
-            IngestionHistoryEntry, MissingItem, SourceState,
-        },
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            TimeHorizon,
         },
-        SatelliteResult,
+        SatelliteError, SatelliteResult,
+    };
+    pub use sinex_processor_runtime::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
     };
 
     // External dependencies
@@ -79,32 +80,77 @@ impl Default for AnalyticsAutomatonConfig {
 /// - Cross-domain correlation analysis
 /// - Usage insights and behavioral patterns
 pub struct AnalyticsAutomaton {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: AnalyticsAutomatonConfig,
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
 }
 
 impl AnalyticsAutomaton {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: AnalyticsAutomatonConfig::default(),
             event_sender: None,
             db_pool: None,
         }
     }
 
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(color_eyre::eyre::eyre!(
+                "Analytics automaton runtime not initialised"
+            ))
+        })
+    }
+
+    fn db_pool(&self) -> SatelliteResult<&PgPool> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.db_pool())
+        } else if let Some(pool) = self.db_pool.as_ref() {
+            Ok(pool)
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Database pool not initialized"
+            )))
+        }
+    }
+
+    fn event_sender(&self) -> SatelliteResult<mpsc::UnboundedSender<Event<JsonValue>>> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            Ok(runtime.event_sender())
+        } else if let Some(sender) = self.event_sender.as_ref() {
+            Ok(sender.clone())
+        } else {
+            Err(SatelliteError::General(color_eyre::eyre::eyre!(
+                "Event sender not initialized"
+            )))
+        }
+    }
+
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: AnalyticsAutomatonConfig,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = "analytics-automaton",
+            service = %runtime.service_info().service_name(),
+            "Initializing analytics automaton"
+        );
+
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.config = config;
+        self.runtime = Some(runtime);
+
+        Ok(())
+    }
+
     /// Analyze events and produce analytics insights
     async fn analyze_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
-        let event_sender = self
-            .event_sender
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?;
+        let db_pool = self.db_pool()?;
+        let event_sender = self.event_sender()?;
 
         // Query recent events for analysis
         let events = self.query_events_for_analysis(db_pool, from).await?;
@@ -115,7 +161,7 @@ impl AnalyticsAutomaton {
         // Generate frequency analysis if enabled
         if self.config.enable_frequency_analysis && !events.is_empty() {
             if let Ok(analysis_event) = self.generate_frequency_analysis(&events).await {
-                if let Err(e) = event_sender.send(analysis_event).await {
+                if let Err(e) = event_sender.send(analysis_event) {
                     warn!("Failed to send frequency analysis event: {}", e);
                 } else {
                     events_processed += 1;
@@ -129,7 +175,7 @@ impl AnalyticsAutomaton {
         {
             if let Ok(pattern_events) = self.detect_patterns(&events).await {
                 for pattern_event in pattern_events {
-                    if let Err(e) = event_sender.send(pattern_event).await {
+                    if let Err(e) = event_sender.send(pattern_event) {
                         warn!("Failed to send pattern detection event: {}", e);
                     } else {
                         events_processed += 1;
@@ -158,6 +204,81 @@ impl AnalyticsAutomaton {
         };
 
         Ok(query)
+    }
+}
+
+#[async_trait]
+impl StatefulStreamProcessor for AnalyticsAutomaton {
+    type Config = AnalyticsAutomatonConfig;
+
+    async fn initialize(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> SatelliteResult<()> {
+        let (config, runtime) = init.into_runtime();
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
+        self.config = config;
+        Ok(())
+    }
+
+    async fn scan(
+        &mut self,
+        from: Checkpoint,
+        until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = Utc::now();
+
+        let events_processed = match until {
+            TimeHorizon::Snapshot => self.analyze_events(&from).await.unwrap_or(0),
+            TimeHorizon::Historical { .. } => self.analyze_events(&from).await.unwrap_or(0),
+            TimeHorizon::Continuous => self.analyze_events(&from).await.unwrap_or(0),
+        };
+
+        let duration = Utc::now().signed_duration_since(start_time);
+
+        Ok(ScanReport {
+            events_processed,
+            duration: Duration::from_millis(duration.num_milliseconds().max(0) as u64),
+            final_checkpoint: Checkpoint::None,
+            time_range: Some((start_time, Utc::now())),
+            processor_stats: HashMap::from([
+                (
+                    "target_event_types".to_string(),
+                    serde_json::Value::Number((self.config.target_event_types.len() as u64).into()),
+                ),
+                (
+                    "analysis_window_seconds".to_string(),
+                    serde_json::Value::Number(self.config.analysis_window_seconds.into()),
+                ),
+            ]),
+            successful_targets: vec!["analytics".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "analytics-automaton"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Automaton
+    }
+
+    fn capabilities(&self) -> ProcessorCapabilities {
+        ProcessorCapabilities {
+            supports_snapshot: true,
+            supports_historical: true,
+            supports_continuous: true,
+            ..ProcessorCapabilities::default()
+        }
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 

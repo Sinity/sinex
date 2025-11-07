@@ -276,24 +276,28 @@ impl BlobManager {
             return Ok(existing);
         }
 
-        // Create a temporary file with the content
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(format!("sinex_blob_{}.tmp", &blake3_hash[..8]));
+        // Create a unique temporary file without predictable naming to avoid symlink attacks
+        let mut temp_file = tempfile::Builder::new()
+            .prefix("sinex_blob_")
+            .suffix(".tmp")
+            .tempfile_in(std::env::temp_dir())
+            .wrap_err("Failed to create secure temporary file")?;
 
-        tokio::fs::write(&temp_file, content)
-            .await
-            .wrap_err("Failed to write temporary file")?;
+        use std::io::Write;
+        temp_file
+            .write_all(content)
+            .wrap_err("Failed to write blob bytes to temporary file")?;
+        temp_file
+            .flush()
+            .wrap_err("Failed to flush temporary blob file")?;
 
         // Convert to Utf8PathBuf for git-annex
-        let utf8_temp_file = Utf8PathBuf::from_path_buf(temp_file.clone())
+        let utf8_temp_file = Utf8PathBuf::from_path_buf(temp_file.path().to_path_buf())
             .map_err(|_| eyre!("Temp file path is not UTF-8"))?;
 
         // Add to git-annex
         let annex_key = self.annex.add_file(&utf8_temp_file).await?;
         info!("Added to git-annex with key: {}", annex_key.key);
-
-        // Clean up temp file (git-annex has moved it)
-        let _ = tokio::fs::remove_file(&temp_file).await;
 
         // Create blob record in database
         let size_bytes = content.len() as i64;
@@ -328,6 +332,11 @@ impl BlobManager {
             &blob_metadata,
         )
         .await?;
+
+        // Drop the temp file explicitly so it is removed now that git-annex has moved it.
+        if let Err(e) = temp_file.close() {
+            debug!(error = %e, "Failed to remove temporary blob file after ingest");
+        }
 
         Ok(blob_metadata)
     }

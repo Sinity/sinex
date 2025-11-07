@@ -130,7 +130,7 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 , sinexCli ? null
 , ... }:
 
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-my-test";
   
   nodes.machine = { config, pkgs, lib, ... }: {
@@ -139,6 +139,9 @@ pkgs.nixosTest {
         inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
       })
     ];
+
+    # Provide sinexCli when the scenario needs maintenance timers or
+    # sinex-cli tooling. Leaving it null skips those timers gracefully.
     
     # Override VM profile if needed
     virtualisation.vmProfile = "performance";

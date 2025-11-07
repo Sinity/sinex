@@ -9,15 +9,13 @@ use color_eyre::eyre::Result;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{
     config::EventSourceConfig,
-    grpc_client::IngestClient,
     stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
 };
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::prelude::*;
-use tracing::{info, warn};
+use tracing::info;
 
 #[sinex_test]
 async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -26,18 +24,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> color_e
     // Phase 1.1: Test that both ingestors and automata implement same trait
     // This validates the unified processing primitive requirement
     
-    // Test 1: Verify IngestClient for single-writer pattern
-    let ingest_result = IngestClient::new("/run/sinex/ingest.sock").await;
-    match ingest_result {
-        Err(_) => {
-            info!("✓ IngestClient properly fails when ingestd is not running");
-        }
-        Ok(_) => {
-            warn!("IngestClient connected unexpectedly - is ingestd running?");
-        }
-    }
-
-    // Test 2: Verify unified checkpoint types work across both processor types
+    // Test 1: Verify unified checkpoint types work across both processor types
     let external_checkpoint = Checkpoint::external(
         serde_json::json!({"file": "/var/log/test.log", "offset": 1024}),
         "File position for ingestor"
@@ -60,7 +47,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> color_e
     
     info!("✓ Unified checkpoint types validated for Phase 1");
 
-    // Test 3: Verify TimeHorizon modes (replacing sensor/scanner split)
+    // Test 2: Verify TimeHorizon modes (replacing sensor/scanner split)
     let snapshot = TimeHorizon::Snapshot;
     let historical = TimeHorizon::Historical { end_time: chrono::Utc::now() };
     let continuous = TimeHorizon::Continuous;
@@ -72,7 +59,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> color_e
     
     info!("✓ TimeHorizon modes validated for Phase 1");
 
-    // Test 4: Test checkpoint persistence for state recovery
+    // Test 3: Test checkpoint persistence for state recovery
     let checkpoint_test_result = test_checkpoint_functionality(&ctx.pool).await;
     assert!(
         checkpoint_test_result.is_ok(),

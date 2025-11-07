@@ -4,11 +4,13 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use sinex_core::{
     db::create_pool,
+    environment as sinex_environment,
     types::{domain::SanitizedPath, error::SinexError},
 };
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
+use tracing::debug;
 // (no mpsc channel needed here)
 
 /// Container holding all service instances
@@ -34,8 +36,14 @@ impl ServiceContainer {
         let pool = create_pool(&db_url).await?;
 
         // Create blob manager for content service
-        let annex_path_str =
-            std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string());
+        let annex_path_str = match std::env::var("SINEX_ANNEX_PATH") {
+            Ok(value) => value,
+            Err(_) => {
+                let default_path =
+                    sinex_environment::environment().work_directory("/tmp/sinex/annex");
+                default_path.to_string_lossy().into_owned()
+            }
+        };
         let annex_path = SanitizedPath::from_str_validated(&annex_path_str)
             .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {}", e)))?;
         let annex_path = Utf8PathBuf::from(annex_path.as_str());
@@ -48,8 +56,14 @@ impl ServiceContainer {
         })?;
 
         // Create event channel for BlobManager
-        let (event_sender, _event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        // TODO: Connect event_receiver to proper event processing pipeline
+        let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(event) = event_receiver.recv().await {
+                // In lieu of a dedicated processing pipeline, drain events to avoid backpressure.
+                debug!(?event, "Blob manager emitted event");
+            }
+        });
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,

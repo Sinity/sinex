@@ -12,13 +12,15 @@ use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_core::EventType;
 use sinex_core::{Event, JsonValue};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 use sinex_satellite_sdk::{
-    cli::{CoverageAnalysis, ExportFormat, IngestionHistoryEntry},
     stream_processor::{
-        Checkpoint, ProcessingStats, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState, ProcessorType,
+        ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
-    ExplorationProvider, SatelliteError, SatelliteResult, SourceState,
+    SatelliteError, SatelliteResult,
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -67,16 +69,36 @@ struct CommandData {
 
 /// Terminal Command Canonicalizer as a unified StatefulStreamProcessor
 pub struct TerminalCommandCanonicalizer {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     deduplication_window_secs: i64,
 }
 
 impl TerminalCommandCanonicalizer {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             deduplication_window_secs: 5, // 5 second window for deduplication
         }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre!("Terminal canonicalizer runtime not initialised"))
+        })
+    }
+
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+    ) -> SatelliteResult<()> {
+        info!(
+            processor = "terminal-command-canonicalizer",
+            service = %runtime.service_info().service_name(),
+            "Initializing Terminal Command Canonicalizer"
+        );
+
+        self.runtime = Some(runtime);
+        Ok(())
     }
 
     /// Safely extract ULID from event ID with proper error handling
@@ -158,13 +180,14 @@ impl TerminalCommandCanonicalizer {
         &self,
         command_data: &CommandData,
     ) -> SatelliteResult<Event<CanonicalCommandPayload>> {
-        let ctx = self
-            .context
-            .as_ref()
-            .ok_or_else(|| SatelliteError::General(eyre!("Context not initialized")))?;
+        if self.runtime.is_none() {
+            return Err(SatelliteError::General(eyre!(
+                "Canonicalizer runtime not initialized"
+            )));
+        }
 
         use sinex_core::types::events::payloads::shell::CanonicalCommandPayload;
-        use sinex_core::types::{Id, Ulid as CoreUlid};
+        use sinex_core::types::Id;
         use sinex_core::{Event, Provenance};
 
         let source_event_ids: Vec<Id<Event<JsonValue>>> = command_data
@@ -208,12 +231,10 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        info!("Initializing Terminal Command Canonicalizer");
-        self.context = Some(ctx);
-        Ok(())
+        let (_config, runtime) = init.into_runtime();
+        self.initialise_with_runtime_state(runtime).await
     }
 
     async fn scan(
@@ -222,8 +243,6 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let scan_start = Utc::now();
-
         match until {
             TimeHorizon::Continuous => {
                 // For automata, continuous mode is now handled by StreamProcessorRunner
@@ -246,8 +265,8 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
             }
             TimeHorizon::Historical { end_time } => {
                 info!("Processing historical terminal commands up to {}", end_time);
-
-                let ctx = self.context.as_ref().unwrap();
+                let runtime = self.runtime()?;
+                let db_pool = runtime.db_pool();
 
                 // Determine start time
                 let start_time = match from {
@@ -258,30 +277,18 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                 // Query all terminal command events
                 let mut all_raw_events = Vec::new();
 
-                for source in &[
-                    "shell.kitty",
-                    "shell.atuin",
-                    "shell.history.bash",
-                    "shell.history.zsh",
-                    "shell.history.fish",
-                ] {
-                    let event_type = EventType::from_static("command.executed");
-                    let events = ctx
-                        .db_pool
-                        .events()
-                        .get_events_by_type_and_time_range(
-                            &event_type,
-                            start_time,
-                            end_time,
-                            Some(10000),
-                        )
-                        .await?;
+                let event_type = EventType::from_static("command.executed");
+                let events = db_pool
+                    .events()
+                    .get_events_by_type_and_time_range(
+                        &event_type,
+                        start_time,
+                        end_time,
+                        Some(10_000),
+                    )
+                    .await?;
 
-                    // Events are already Event<JsonValue> type
-                    for raw_event in events {
-                        all_raw_events.push(raw_event);
-                    }
-                }
+                all_raw_events.extend(events);
 
                 // Sort by timestamp
                 all_raw_events.sort_by_key(|e| e.ts_orig);
@@ -339,6 +346,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         let mut skipped = 0;
         let mut failed = 0;
         let mut errors = Vec::new();
+        let db_pool = self.runtime()?.db_pool().clone();
 
         for event in events {
             // Work directly with Event<JsonValue>
@@ -359,51 +367,39 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                 }
             };
 
-            // Check for existing canonical command
-            if let Some(ctx) = &self.context {
-                match self
-                    .find_existing_canonical_command(
-                        &ctx.db_pool,
-                        &command_data.command,
-                        command_data.start_time,
-                        self.deduplication_window_secs,
-                    )
-                    .await
-                {
-                    Ok(Some(existing_id)) => {
-                        debug!(
-                            "Found existing canonical command {} for '{}'",
-                            existing_id, command_data.command
-                        );
-                        processed += 1;
-                        continue;
-                    }
-                    Ok(None) => {
-                        // No existing canonical command, create one
-                    }
-                    Err(e) => {
-                        warn!("Error checking for existing command: {}", e);
-                        // Continue anyway - better to have duplicates than miss commands
-                    }
+            match self
+                .find_existing_canonical_command(
+                    &db_pool,
+                    &command_data.command,
+                    command_data.start_time,
+                    self.deduplication_window_secs,
+                )
+                .await
+            {
+                Ok(Some(existing_id)) => {
+                    debug!(
+                        "Found existing canonical command {} for '{}'",
+                        existing_id, command_data.command
+                    );
+                    processed += 1;
+                    continue;
                 }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!("Error checking for existing command: {}", e);
+                }
+            }
 
-                // Create canonical command
-                match self.create_canonical_command(&command_data).await {
-                    Ok(synthesis_event) => {
-                        // For now, we'll just log the event creation
-                        // In a real implementation, this would be sent via the event channel
-                        info!("Created canonical command for '{}'", command_data.command);
-                        processed += 1;
-                    }
-                    Err(e) => {
-                        warn!("Failed to create canonical command: {}", e);
-                        failed += 1;
-                        errors.push(format!("Event {}: {}", event_id, e));
-                    }
+            match self.create_canonical_command(&command_data).await {
+                Ok(_synthesis_event) => {
+                    info!("Created canonical command for '{}'", command_data.command);
+                    processed += 1;
                 }
-            } else {
-                failed += 1;
-                errors.push(format!("Event {}: Context not initialized", event_id));
+                Err(e) => {
+                    warn!("Failed to create canonical command: {}", e);
+                    failed += 1;
+                    errors.push(format!("Event {}: {}", event_id, e));
+                }
             }
         }
 

@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! The checkpoint system provides:
-//! - **Unified Storage**: All checkpoints stored in `core.automaton_checkpoints` table
+//! - **Unified Storage**: All checkpoints stored in `core.processor_checkpoints` table
 //! - **Type Safety**: Strongly typed checkpoint variants for different use cases
 //! - **Persistence**: Atomic checkpoint updates with optimistic concurrency
 //!
@@ -19,7 +19,7 @@
 //!
 //! # Database Schema
 //!
-//! The `core.automaton_checkpoints` table stores:
+//! The `core.processor_checkpoints` table stores:
 //! - `automaton_name`: Processor identifier
 //! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
@@ -58,11 +58,10 @@ struct CheckpointRecord {
     pub consumer_name: String,
     pub last_processed_id: Option<String>,
     pub processed_count: i64,
-    pub last_activity: chrono::DateTime<chrono::Utc>,
-    pub state_data: Option<serde_json::Value>,
     pub checkpoint_version: i32,
     pub checkpoint_data: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_activity: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -218,7 +217,7 @@ impl From<LegacyCheckpointState> for CheckpointState {
 /// Manager for unified checkpoint persistence (both ingestors and automata).
 ///
 /// This manager handles checkpoint storage, retrieval, and migration in the
-/// `core.automaton_checkpoints` table. It supports both ingestors and automata
+/// `core.processor_checkpoints` table. It supports both ingestors and automata
 ///
 /// # Usage Pattern
 /// ```rust

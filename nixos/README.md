@@ -23,10 +23,10 @@ Key architectural decisions and implementation details are documented at their i
 
 ### Database Layer
 - **PostgreSQL Extensions Setup**: [`modules/database.nix`](modules/database.nix)
-  - pgx_ulid configuration for ULID primary keys
+  - pgx_ulid provisioning for ULID primary keys
   - TimescaleDB setup for hypertable partitioning  
-  - Optional monotonic ULID generation instructions
-- **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
+  - Guidance for WAL/ulid tuning
+- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs`](../crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
 - **ULID Implementation**: [`crate/lib/sinex-schema/doc/ulid.md`](../crate/lib/sinex-schema/doc/ulid.md)
@@ -67,7 +67,7 @@ Add to your NixOS configuration:
 
   services.sinex = {
     enable = true;
-    targetUser = "yourusername";  # REQUIRED: match the user defined above
+    users.target = "yourusername";  # REQUIRED: match the user defined above
   };
 }
 ```
@@ -77,7 +77,7 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` and `pkgs.sinexCli` are available:
+> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` is available (the module installs it by default). The CLI package is picked up automatically when present, but is optional.
 > ```nix
 > {
 >   inputs.sinex.url = "github:.../sinex";
@@ -740,7 +740,7 @@ sudo systemctl start sinex-satellite-system
 ```bash
 # Reset checkpoints on corruption
 sudo -u sinex psql sinex_dev -c "
-UPDATE core.automaton_checkpoints 
+UPDATE core.processor_checkpoints 
 SET last_processed_id = NULL 
 WHERE automaton_name = 'terminal-command-canonicalizer';"
 

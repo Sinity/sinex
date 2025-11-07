@@ -8,6 +8,7 @@ fn base_config() -> FilesystemConfig {
         follow_symlinks: false,
         batch_size: 100,
         processing_interval_ms: 1_000,
+        max_capture_bytes: 8 * 1024 * 1024,
     }
 }
 

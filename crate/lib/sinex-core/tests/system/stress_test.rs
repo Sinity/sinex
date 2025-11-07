@@ -443,7 +443,7 @@ impl DeadlockStressWorker {
         sqlx::query!(
             "UPDATE core.processor_checkpoints
              SET last_processed_id = $2::uuid,
-                 state_data = state_data || jsonb_build_object('last_processed_event', $2::text, 'worker_id', $3::text),
+                 checkpoint_data = checkpoint_data || jsonb_build_object('last_processed_event', $2::text, 'worker_id', $3::text),
                  updated_at = NOW()
              WHERE processor_name = $1::text",
             self.processor_name,
@@ -469,7 +469,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
     let checkpoint_id = Ulid::new();
     let initial_event_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
          VALUES ($1::uuid, $2, $3::uuid, $4)",
         checkpoint_id.to_uuid(),
         agent_name,
@@ -507,10 +507,10 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
         let checkpoint_id = Ulid::new();
         let deadlock_event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
              VALUES ($1::uuid, $2, $3::uuid, $4)
              ON CONFLICT (processor_name) DO UPDATE SET
-                state_data = EXCLUDED.state_data,
+                checkpoint_data = EXCLUDED.checkpoint_data,
                 updated_at = NOW()",
             checkpoint_id.to_uuid(),
             agent_name,
@@ -558,7 +558,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
             let stuck_checkpoints: Vec<(String, String)> = sqlx::query!(
                 "SELECT id::text, processor_name FROM core.processor_checkpoints
                  WHERE processor_name = $1
-                   AND state_data->>'status' = 'processing'
+                   AND checkpoint_data->>'status' = 'processing'
                    AND updated_at < NOW() - INTERVAL '3 seconds'",
                 detection_agent
             )
@@ -578,7 +578,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
             let active_checkpoints: HashSet<String> = sqlx::query_scalar!(
                 "SELECT processor_name FROM core.processor_checkpoints
                  WHERE processor_name = $1
-                   AND state_data->>'status' = 'processing'",
+                   AND checkpoint_data->>'status' = 'processing'",
                 detection_agent
             )
             .fetch_all(&detection_pool)
@@ -591,7 +591,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
             // Count checkpoint status for satellite architecture
             let total_pending: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.processor_checkpoints
-                 WHERE processor_name = $1 AND state_data->>'status' = 'pending'",
+                 WHERE processor_name = $1 AND checkpoint_data->>'status' = 'pending'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -601,7 +601,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
 
             let total_processing: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.processor_checkpoints
-                 WHERE processor_name = $1 AND state_data->>'status' = 'processing'",
+                 WHERE processor_name = $1 AND checkpoint_data->>'status' = 'processing'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -624,10 +624,10 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
                 // Recover stuck checkpoints by resetting their status
                 let recovered_count = sqlx::query!(
                     "UPDATE core.processor_checkpoints
-                     SET state_data = jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                     SET checkpoint_data = jsonb_set(checkpoint_data, '{status}', '\"failed_retryable\"'),
                          updated_at = NOW()
                      WHERE processor_name = $1
-                       AND state_data->>'status' = 'processing'
+                       AND checkpoint_data->>'status' = 'processing'
                        AND updated_at < NOW() - INTERVAL '3 seconds'
                      RETURNING id::text",
                     detection_agent
@@ -679,7 +679,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -688,7 +688,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
 
     let final_abandoned: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' IN ('failed', 'failed_retryable')",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)
@@ -856,8 +856,8 @@ impl RaceConditionWorker {
         // Satellite architecture: claim checkpoint for processing
         let claimed_checkpoint = sqlx::query!(
             "UPDATE core.processor_checkpoints
-             SET state_data = jsonb_set(
-                 jsonb_set(state_data, '{status}', '\"processing\"'),
+             SET checkpoint_data = jsonb_set(
+                 jsonb_set(checkpoint_data, '{status}', '\"processing\"'),
                  '{worker_id}', $2::text::jsonb
              ),
              updated_at = NOW()
@@ -865,8 +865,8 @@ impl RaceConditionWorker {
                  SELECT id
                  FROM core.processor_checkpoints
                  WHERE processor_name = $1
-                   AND state_data->>'status' = 'pending'
-                   AND (state_data->>'attempts')::int < 3
+                   AND checkpoint_data->>'status' = 'pending'
+                   AND (checkpoint_data->>'attempts')::int < 3
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
@@ -902,8 +902,8 @@ impl RaceConditionWorker {
         if rand::random::<f64>() < 0.05 {
             sqlx::query!(
                 "UPDATE core.processor_checkpoints
-                 SET state_data = jsonb_set(
-                     jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                 SET checkpoint_data = jsonb_set(
+                     jsonb_set(checkpoint_data, '{status}', '\"failed_retryable\"'),
                      '{worker_id}', 'null'
                  ),
                  updated_at = NOW()
@@ -919,8 +919,8 @@ impl RaceConditionWorker {
         // Mark checkpoint as successfully processed
         sqlx::query!(
             "UPDATE core.processor_checkpoints
-             SET state_data = jsonb_set(
-                 jsonb_set(state_data, '{status}', '\"succeeded\"'),
+             SET checkpoint_data = jsonb_set(
+                 jsonb_set(checkpoint_data, '{status}', '\"succeeded\"'),
                  '{processed_by}', $2::text::jsonb
              ),
              updated_at = NOW()
@@ -947,7 +947,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
     let checkpoint_id = Ulid::new();
     let initial_event_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
          VALUES ($1::uuid, $2, $3::uuid, $4)",
         checkpoint_id.to_uuid(),
         agent_name,
@@ -986,10 +986,10 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
         let checkpoint_id = Ulid::new();
         let race_event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
              VALUES ($1::uuid, $2, $3::uuid, $4)
              ON CONFLICT (processor_name) DO UPDATE SET
-                state_data = EXCLUDED.state_data,
+                checkpoint_data = EXCLUDED.checkpoint_data,
                 updated_at = NOW()",
             checkpoint_id.to_uuid(),
             agent_name,
@@ -1013,7 +1013,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
             let current_succeeded: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.processor_checkpoints
-                 WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+                 WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1023,7 +1023,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
             let processing_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.processor_checkpoints
-                 WHERE processor_name = $1 AND state_data->>'status' = 'processing'",
+                 WHERE processor_name = $1 AND checkpoint_data->>'status' = 'processing'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1038,7 +1038,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
             let duplicate_check: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) - COUNT(DISTINCT last_processed_id)
                  FROM core.processor_checkpoints
-                 WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+                 WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
                 detection_agent
             )
             .fetch_one(&detection_pool)
@@ -1049,11 +1049,11 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
             // Check for worker conflicts in checkpoint processing
             let worker_conflicts: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM (
-                   SELECT state_data->>'worker_id' as worker_id, COUNT(*) as cnt
+                   SELECT checkpoint_data->>'worker_id' as worker_id, COUNT(*) as cnt
                    FROM core.processor_checkpoints
-                   WHERE processor_name = $1 AND state_data->>'status' = 'processing'
-                     AND state_data->>'worker_id' IS NOT NULL
-                   GROUP BY state_data->>'worker_id'
+                   WHERE processor_name = $1 AND checkpoint_data->>'status' = 'processing'
+                     AND checkpoint_data->>'worker_id' IS NOT NULL
+                   GROUP BY checkpoint_data->>'worker_id'
                    HAVING COUNT(*) > 1
                  ) conflicts",
                 detection_agent
@@ -1149,7 +1149,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1158,7 +1158,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
     let unique_completed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(DISTINCT last_processed_id) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1375,10 +1375,10 @@ impl StressTestWorker {
         // Claim checkpoint with deadlock detection for satellite architecture
         let claimed_checkpoint = sqlx::query!(
             "UPDATE core.processor_checkpoints
-             SET state_data = jsonb_set(
+             SET checkpoint_data = jsonb_set(
                  jsonb_set(
-                     jsonb_set(state_data, '{status}', '\"processing\"'),
-                     '{attempts}', (COALESCE((state_data->>'attempts')::int, 0) + 1)::text::jsonb
+                     jsonb_set(checkpoint_data, '{status}', '\"processing\"'),
+                     '{attempts}', (COALESCE((checkpoint_data->>'attempts')::int, 0) + 1)::text::jsonb
                  ),
                  '{worker_id}', $2::text::jsonb
              ),
@@ -1387,14 +1387,14 @@ impl StressTestWorker {
                  SELECT id
                  FROM core.processor_checkpoints
                  WHERE processor_name = $1
-                   AND state_data->>'status' = 'pending'
-                   AND (state_data->>'attempts')::int < 3
-                   AND (state_data->>'worker_id' IS NULL OR state_data->>'worker_id' != $2)
+                   AND checkpoint_data->>'status' = 'pending'
+                   AND (checkpoint_data->>'attempts')::int < 3
+                   AND (checkpoint_data->>'worker_id' IS NULL OR checkpoint_data->>'worker_id' != $2)
                  ORDER BY created_at
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING id::text, last_processed_id::text, (state_data->>'attempts')::int as attempts",
+             RETURNING id::text, last_processed_id::text, (checkpoint_data->>'attempts')::int as attempts",
             self.processor_name,
             serde_json::to_string(&self.worker_id).unwrap()
         )
@@ -1436,8 +1436,8 @@ impl StressTestWorker {
         if self.aggressive_claiming && rand::random::<f64>() < 0.05 {
             sqlx::query!(
                 "UPDATE core.processor_checkpoints
-                 SET state_data = jsonb_set(
-                     jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                 SET checkpoint_data = jsonb_set(
+                     jsonb_set(checkpoint_data, '{status}', '\"failed_retryable\"'),
                      '{worker_id}', 'null'
                  ),
                  updated_at = NOW()
@@ -1453,8 +1453,8 @@ impl StressTestWorker {
         // Mark checkpoint as successfully processed
         sqlx::query!(
             "UPDATE core.processor_checkpoints
-             SET state_data = jsonb_set(
-                 jsonb_set(state_data, '{status}', '\"succeeded\"'),
+             SET checkpoint_data = jsonb_set(
+                 jsonb_set(checkpoint_data, '{status}', '\"succeeded\"'),
                  '{processed_by}', $2::text::jsonb
              ),
              updated_at = NOW()
@@ -1485,7 +1485,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
     let checkpoint_id = Ulid::new();
     let initial_event_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
          VALUES ($1::uuid, $2, $3::uuid, $4)",
         checkpoint_id.to_uuid(),
         agent_name,
@@ -1525,10 +1525,10 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
             let checkpoint_id = Ulid::new();
             let stress_event_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
+                "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
                  VALUES ($1::uuid, $2, $3::uuid, $4)
                  ON CONFLICT (processor_name) DO UPDATE SET
-                    state_data = EXCLUDED.state_data,
+                    checkpoint_data = EXCLUDED.checkpoint_data,
                     updated_at = NOW()",
                 checkpoint_id.to_uuid(),
                 &create_agent,
@@ -1577,7 +1577,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
             let stuck_items: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.processor_checkpoints
                  WHERE processor_name = $1
-                   AND state_data->>'status' = 'processing'
+                   AND checkpoint_data->>'status' = 'processing'
                    AND updated_at < NOW() - INTERVAL '10 seconds'",
                 monitor_agent
             )
@@ -1592,13 +1592,13 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
 
                 let recovered = sqlx::query!(
                     "UPDATE core.processor_checkpoints
-                     SET state_data = jsonb_set(
-                         jsonb_set(state_data, '{status}', '\"failed_retryable\"'),
+                     SET checkpoint_data = jsonb_set(
+                         jsonb_set(checkpoint_data, '{status}', '\"failed_retryable\"'),
                          '{worker_id}', 'null'
                      ),
                      updated_at = NOW()
                      WHERE processor_name = $1
-                       AND state_data->>'status' = 'processing'
+                       AND checkpoint_data->>'status' = 'processing'
                        AND updated_at < NOW() - INTERVAL '10 seconds'
                      RETURNING id::text",
                     monitor_agent
@@ -1673,7 +1673,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
 
     let final_succeeded: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' = 'succeeded'",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' = 'succeeded'",
         agent_name
     )
     .fetch_one(pool)
@@ -1682,7 +1682,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
 
     let final_pending: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' = 'pending'",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' = 'pending'",
         agent_name
     )
     .fetch_one(pool)
@@ -1691,7 +1691,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
 
     let final_failed: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_checkpoints
-         WHERE processor_name = $1 AND state_data->>'status' IN ('failed', 'failed_retryable')",
+         WHERE processor_name = $1 AND checkpoint_data->>'status' IN ('failed', 'failed_retryable')",
         agent_name
     )
     .fetch_one(pool)

@@ -54,7 +54,7 @@
       "type": ["object", "null"],
       "description": "Additional checkpoint-specific data"
     },
-    "state_data": {
+    "checkpoint_data": {
       "type": ["object", "null"],
       "description": "Processor state data for resume operations"
     }

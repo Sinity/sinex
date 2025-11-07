@@ -3,6 +3,22 @@ use sinex_core::db::repositories::schema_management::NewEventSchema;
 use sinex_core::repositories::DbPoolExt;
 use sinex_test_utils::{sinex_test, TestContext};
 
+#[test]
+fn schema_content_hash_has_sufficient_entropy() {
+    let schema = NewEventSchema {
+        source: "hash-source".to_string(),
+        event_type: "hash.event".to_string(),
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({ "type": "object", "properties": { "id": { "type": "string" } } }),
+    };
+
+    let hash = schema.calculate_content_hash();
+    assert!(
+        hash.len() >= 32,
+        "expected a stable cryptographic hash, got `{hash}`"
+    );
+}
+
 #[sinex_test]
 async fn register_new_schema_records_metadata(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let repo = ctx.pool.schemas();
@@ -151,5 +167,81 @@ async fn schema_statistics_aggregates_counts(ctx: TestContext) -> color_eyre::ey
     assert_eq!(stats.active_schemas, 6);
     assert_eq!(stats.unique_sources, 2);
     assert_eq!(stats.unique_event_types, 3);
+    Ok(())
+}
+
+#[sinex_test]
+async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyre::Result<()> {
+    let repo = ctx.pool.schemas();
+    let schema = repo
+        .register_schema(NewEventSchema {
+            source: "reactivate-source".to_string(),
+            event_type: "reactivate.event".to_string(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object" }),
+        })
+        .await?;
+
+    repo.deprecate_schema(&schema.id).await?;
+    let inactive = repo
+        .find_schema_by_hash(&schema.content_hash)
+        .await
+        .expect("schema should exist");
+    assert!(
+        !inactive.is_active,
+        "expected schema to be inactive after deprecation"
+    );
+
+    let reactivated = repo
+        .register_schema(NewEventSchema {
+            source: "reactivate-source".to_string(),
+            event_type: "reactivate.event".to_string(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object" }),
+        })
+        .await?;
+
+    assert!(
+        reactivated.is_active,
+        "expected identical schema re-registration to reactivate entry"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn failed_schema_registration_does_not_clear_active(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let repo = ctx.pool.schemas();
+    let original = repo
+        .register_schema(NewEventSchema {
+            source: "conflict-source".to_string(),
+            event_type: "conflict.event".to_string(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object", "properties": { "legacy": { "type": "string" } }, "required": ["legacy"] }),
+        })
+        .await?;
+
+    let conflict = repo
+        .register_schema(NewEventSchema {
+            source: "conflict-source".to_string(),
+            event_type: "conflict.event".to_string(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object", "properties": { "modern": { "type": "string" } } }),
+        })
+        .await;
+
+    assert!(
+        conflict.is_err(),
+        "expected duplicate schema version to raise an error"
+    );
+
+    let active = repo
+        .get_active_schema("conflict-source", "conflict.event")
+        .await?;
+    assert_eq!(
+        active.id, original.id,
+        "original schema should remain active when new registration fails"
+    );
     Ok(())
 }

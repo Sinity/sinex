@@ -48,6 +48,14 @@ struct Args {
     /// Validate configuration and exit
     #[arg(long)]
     validate_config: bool,
+
+    /// Path to the git-annex repository for material storage
+    #[arg(long, env = "SINEX_ANNEX_PATH")]
+    annex_path: Option<String>,
+
+    /// Directory used to persist assembler state between restarts
+    #[arg(long, env = "SINEX_ASSEMBLER_STATE_DIR")]
+    assembler_state_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -72,6 +80,8 @@ async fn main() -> Result<()> {
         args.batch_size,
         args.batch_timeout_secs,
         args.dry_run,
+        args.annex_path,
+        args.assembler_state_dir,
     );
 
     if args.validate_config {

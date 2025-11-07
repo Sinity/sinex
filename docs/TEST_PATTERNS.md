@@ -1095,7 +1095,9 @@ WHERE datname LIKE 'sinex_test%';
 ```
 
 ### Issue: "Migration fingerprint mismatch"
-**Solution**: Delete template stamp to force rebuild
+**Solution**: The harness automatically rebuilds the shared template whenever
+migrations or required extensions change. Manual deletion should only be
+necessary when debugging local Postgres issues:
 ```bash
 rm target/sinex-test-utils/template_stamp.json
 cargo test
@@ -1136,4 +1138,3 @@ println!("Healthy: {}/{}", report.healthy_slots, report.total_slots);
 let stats = get_pool_stats();
 println!("Avg wait: {}ms", stats.average_wait_time_ms);
 ```
-

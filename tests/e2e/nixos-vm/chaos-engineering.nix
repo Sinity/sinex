@@ -7,7 +7,7 @@
 , ...
 }:
 
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-chaos-engineering";
 
   nodes.machine = { pkgs, config, lib, ... }: {

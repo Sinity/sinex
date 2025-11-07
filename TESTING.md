@@ -22,8 +22,30 @@ just pre-commit
 ```
 
 **Prerequisites:** run `nix develop` (or source your local toolchain) so that
-TimescaleDB, NATS, and the Cargo toolchain are available. Test helpers rely on
-environment variables such as `DATABASE_URL` that the dev shell provides.
+TimescaleDB/PostgreSQL, the `nats-server` binary, and the Cargo toolchain are
+available. `TestContext` connects to the local Postgres socket at
+`/run/postgresql` and spins up an ephemeral JetStream instance by shelling out
+to `nats-server`, so both services must be reachable before running `just test`.
+
+If you are inside the Nix dev shell (`nix develop`), `nats-server` is already
+on `PATH` (see `flake.nix` exporting `NATS_SERVER_BIN`). For other toolchains,
+install NATS manually:
+
+```bash
+# macOS (Homebrew)
+brew install nats-server
+
+# Linux (Debian/Ubuntu)
+sudo apt-get install -y nats-server
+
+# Or download a release binary
+curl -L https://github.com/nats-io/nats-server/releases/latest/download/nats-server-amd64.zip -o /tmp/nats.zip
+unzip /tmp/nats.zip -d /tmp/nats
+sudo mv /tmp/nats/nats-server /usr/local/bin/
+```
+
+You can override the binary path with `NATS_SERVER_BIN=/custom/path/nats-server`
+if you prefer to keep it outside `$PATH`.
 
 ## Test Layout at a Glance
 
@@ -51,7 +73,22 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
 - **Async hygiene:** use bounded concurrency (`buffer_unordered`, semaphores),
   propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
 - **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
-  rather than re-creating bespoke data builders.
+  rather than re-creating bespoke data builders. When you need a satellite
+  runtime for integration coverage, include the shared builder from
+  `sinex-satellite-sdk/tests/support/runtime.rs` instead of wiring pools and
+  emitters manually:
+
+  ```rust
+  #[path = "support/runtime.rs"]
+  mod runtime;
+
+  use runtime::TestRuntimeBuilder;
+
+  let test_runtime = TestRuntimeBuilder::new(&ctx, "my-service")
+      .with_dry_run(true)
+      .build()
+      .await?;
+  ```
 - **Property tests:** place proptest suites alongside the crate they fuzz (see
   below). Capture any new failing seeds in that crate’s
   `tests/property/*.proptest-regressions` files.

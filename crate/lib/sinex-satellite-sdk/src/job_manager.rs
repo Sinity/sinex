@@ -11,7 +11,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::{SatelliteError, SatelliteResult};
+use crate::{
+    stream_processor::{ProcessorHandles, ProcessorRuntimeState},
+    SatelliteError, SatelliteResult,
+};
 
 /// Sensor type enumeration
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +103,16 @@ impl JobManager {
             active_jobs: Arc::new(RwLock::new(Vec::new())),
             executors: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Create a job manager from processor handles
+    pub fn from_handles(handles: &ProcessorHandles, config: JobManagerConfig) -> Self {
+        Self::new(handles.db_pool().clone(), config)
+    }
+
+    /// Create a job manager from a processor runtime
+    pub fn from_runtime(runtime: &ProcessorRuntimeState, config: JobManagerConfig) -> Self {
+        Self::from_handles(runtime.handles(), config)
     }
 
     /// Register a sensor executor

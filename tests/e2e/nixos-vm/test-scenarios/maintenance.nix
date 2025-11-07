@@ -11,7 +11,7 @@
 let
   inherit (pkgs) lib;
 in
-pkgs.nixosTest {
+pkgs.testers.nixosTest {
   name = "sinex-maintenance";
 
   nodes.machine = { config, pkgs, lib, ... }: {

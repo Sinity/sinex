@@ -8,14 +8,13 @@
 //!
 //! // Instead of:
 //! // use sinex_satellite_sdk::{StatefulStreamProcessor, CheckpointManager, SatelliteCoordination};
-//! // use sinex_satellite_sdk::{IngestClient, BatchResult, HealthStatus};
 //! // use sinex_satellite_sdk::{SatelliteConfig, TimeHorizon, Checkpoint};
 //! ```
 
 // Core processor traits and types
 pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 pub use crate::{ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport};
-pub use crate::{StatefulStreamProcessor, StreamProcessorContext, TimeHorizon};
+pub use crate::{StatefulStreamProcessor, TimeHorizon};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
@@ -23,13 +22,16 @@ pub use crate::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use crate::{SatelliteInstance, SatelliteVersion};
 
 // Lifecycle management
-pub use crate::{LifecycleManager, ProcessorMode, ProcessorRunner, ServiceStatus};
+pub use crate::{LifecycleManager, ServiceStatus};
 
-// Event handling
-pub use crate::{EventSender, EventStream, ReplayMode};
+// Event handling and replay
+pub use crate::{
+    EventSender, EventStream, MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters,
+    ReplayMetrics, ReplayMode, ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+};
 
 // CLI and utilities
-pub use crate::{ProcessorCli, ProcessorCommand, SatelliteArgs};
+pub use crate::SatelliteArgs;
 
 // Error types
 pub use crate::{SatelliteError, SatelliteResult};

@@ -5,6 +5,7 @@ members = [
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-satellite-sdk",
+  "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
   # Re-enabled to ensure tests compile
   "crate/lib/sinex-test-utils",
@@ -134,11 +135,6 @@ indexmap = "2.0"
 # Retry logic
 tokio-retry = "0.3"
 
-# gRPC and protocol buffers
-tonic = "0.11"
-prost = "0.12"
-tonic-build = "0.11"
-
 # Message bus
 async-nats = "0.33"
 
@@ -150,6 +146,7 @@ tokio-stream = "0.1"
 futures = "0.3"
 dirs = "5.0"
 lazy_static = "1.5"
+base64 = "0.22"
 
 # File system watching
 notify = "6.1"

@@ -1,19 +1,21 @@
 //! Ingestd configuration hardening tests migrated from the workspace harness.
 
-use serde_json::json;
+use serde_json::{json, Value};
 use sinex_ingestd::IngestdConfig;
 use sinex_test_utils::{sinex_test, TestContext};
+
+fn base_config_json() -> Value {
+    serde_json::to_value(IngestdConfig::default()).expect("serialize default ingestd config")
+}
 
 #[sinex_test]
 async fn test_ingestd_config_deserialization_security(
     _ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
-    let malicious_config = json!({
-        "database_url": "postgresql://localhost/test",
-        "nats_url": "nats://localhost:4222",
-        "socket_path": "/run/sinex/ingest.sock",
-        "work_dir": "../../../etc"
-    });
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("../../../etc"));
+    }
 
     let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
     assert!(
@@ -21,12 +23,10 @@ async fn test_ingestd_config_deserialization_security(
         "Malicious work_dir path should be rejected"
     );
 
-    let valid_config = json!({
-        "database_url": "postgresql://localhost/test",
-        "nats_url": "nats://localhost:4222",
-        "socket_path": "/run/sinex/ingest.sock",
-        "work_dir": "/tmp/sinex/ingestd"
-    });
+    let mut valid_config = base_config_json();
+    if let Value::Object(ref mut obj) = valid_config {
+        obj.insert("work_dir".to_string(), json!("/tmp/sinex/ingestd"));
+    }
 
     let result: Result<IngestdConfig, _> = serde_json::from_value(valid_config);
     assert!(result.is_ok(), "Valid configuration should pass validation");
@@ -44,12 +44,10 @@ async fn test_ingestd_default_path_security(_ctx: TestContext) -> color_eyre::ey
 
 #[sinex_test]
 async fn test_ingestd_null_byte_rejection(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let malicious_config = json!({
-        "database_url": "postgresql://localhost/test",
-        "nats_url": "nats://localhost:4222",
-        "socket_path": "/run/sinex/ingest.sock",
-        "work_dir": "/tmp/test\u{0000}/evil"
-    });
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("/tmp/test\u{0000}/evil"));
+    }
 
     let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
     assert!(result.is_err(), "Null byte in path should be rejected");
@@ -60,12 +58,10 @@ async fn test_ingestd_null_byte_rejection(_ctx: TestContext) -> color_eyre::eyre
 async fn test_ingestd_configuration_validation_error_messages(
     _ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
-    let malicious_config = json!({
-        "database_url": "postgresql://localhost/test",
-        "nats_url": "nats://localhost:4222",
-        "socket_path": "/run/sinex/ingest.sock",
-        "work_dir": "../../../etc/passwd"
-    });
+    let mut malicious_config = base_config_json();
+    if let Value::Object(ref mut obj) = malicious_config {
+        obj.insert("work_dir".to_string(), json!("../../../etc/passwd"));
+    }
 
     let result: Result<IngestdConfig, _> = serde_json::from_value(malicious_config);
     match result {

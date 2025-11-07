@@ -106,7 +106,6 @@ let
 
       dlq = {
         enable = true;
-        failureStoragePath = "/var/lib/sinex/failures";
         maxRetries = 2;
         retryDelaySecs = 10;
         cleanup = {

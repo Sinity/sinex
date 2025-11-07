@@ -361,7 +361,7 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
         prop::collection::hash_map(problematic_strings(), problematic_strings(), 0..50), // fields
         problematic_timestamps(),                // timestamp
         problematic_strings(),                   // state_type
-        malformed_json_values(),                 // state_data
+        malformed_json_values(),                 // checkpoint_data
         problematic_timestamps(),                // changed_at
     )
         .prop_map(
@@ -374,7 +374,7 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
                 fields,
                 timestamp,
                 state_type,
-                state_data,
+                checkpoint_data,
                 changed_at,
             )| {
                 serde_json::json!({
@@ -386,7 +386,7 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
                     "fields": fields,
                     "timestamp": timestamp,
                     "state_type": state_type,
-                    "state_data": state_data,
+                    "checkpoint_data": checkpoint_data,
                     "changed_at": changed_at,
                 })
             },

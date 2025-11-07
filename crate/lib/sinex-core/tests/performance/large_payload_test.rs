@@ -52,9 +52,10 @@ async fn jetstream_large_payload_roundtrip(_ctx: TestContext) -> color_eyre::eyr
     let ack = js.publish(&subject, data.into()).await?;
     ack.await?;
 
-    let consumer = js
+    let stream_handle = js.get_stream(&stream).await?;
+    let consumer = stream_handle
         .get_or_create_consumer(
-            &stream,
+            "large-payload-consumer",
             ConsumerConfig {
                 durable_name: Some("large-payload-consumer".to_string()),
                 name: Some("large-payload-consumer".to_string()),
@@ -91,7 +92,8 @@ async fn jetstream_large_payload_roundtrip(_ctx: TestContext) -> color_eyre::eyr
     );
 
     message.ack().await?;
-    js.delete_consumer(&stream, "large-payload-consumer").await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer("large-payload-consumer").await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }
@@ -115,9 +117,10 @@ async fn jetstream_large_batch_drain(_ctx: TestContext) -> color_eyre::eyre::Res
         js.publish(&subject, message.into()).await?.await?;
     }
 
-    let consumer = js
+    let stream_handle = js.get_stream(&stream).await?;
+    let consumer = stream_handle
         .get_or_create_consumer(
-            &stream,
+            "large-batch-consumer",
             ConsumerConfig {
                 durable_name: Some("large-batch-consumer".to_string()),
                 name: Some("large-batch-consumer".to_string()),
@@ -155,7 +158,8 @@ async fn jetstream_large_batch_drain(_ctx: TestContext) -> color_eyre::eyre::Res
 
     color_eyre::eyre::ensure!(total == 20, "expected to drain 20 large messages");
 
-    js.delete_consumer(&stream, "large-batch-consumer").await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer("large-batch-consumer").await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }

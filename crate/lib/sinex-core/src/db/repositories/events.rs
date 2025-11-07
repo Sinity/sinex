@@ -54,14 +54,21 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
     type Table = Events;
 }
 
+fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
+    records
+        .into_iter()
+        .map(|record| record.try_to_event())
+        .collect()
+}
+
 // Extension methods for EventRecord from sinex-migrations
 pub(crate) trait EventRecordExt {
-    fn to_event(self) -> Event<JsonValue>;
+    fn try_to_event(self) -> DbResult<Event<JsonValue>>;
 }
 
 impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
-    fn to_event(self) -> Event<JsonValue> {
+    fn try_to_event(self) -> DbResult<Event<JsonValue>> {
         use crate::db::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
 
         // Reconstruct provenance from separate fields
@@ -72,9 +79,14 @@ impl EventRecordExt for EventRecord {
         ) {
             (Some(event_ids), None, _) if !event_ids.is_empty() => {
                 let ids: Vec<EventId> = event_ids.into_iter().map(EventId::from_ulid).collect();
+                let non_empty = NonEmptyVec::from_vec(ids).ok_or_else(|| {
+                    db_error(
+                        sqlx::Error::Protocol("source_event_ids unexpectedly empty".into()),
+                        "convert event record provenance",
+                    )
+                })?;
                 Provenance::Synthesis {
-                    source_event_ids: NonEmptyVec::from_vec(ids)
-                        .expect("already checked non-empty"),
+                    source_event_ids: non_empty,
                     operation_id: None,
                 }
             }
@@ -101,20 +113,37 @@ impl EventRecordExt for EventRecord {
                     offset_kind,
                 }
             }
-            _ => {
-                // Default to material provenance with placeholder values if no provenance
-                // (shouldn't happen in production, but needed for type safety)
-                Provenance::Material {
-                    id: Id::<SourceMaterial>::new(),
-                    anchor_byte: 0,
-                    offset_start: None,
-                    offset_end: None,
-                    offset_kind: OffsetKind::default(),
-                }
+            (Some(_), Some(_), _) => {
+                return Err(db_error(
+                    sqlx::Error::Protocol(
+                        "event record contains both synthesis and material provenance".into(),
+                    ),
+                    "convert event record provenance",
+                ));
+            }
+            (None, Some(_), None) => {
+                return Err(db_error(
+                    sqlx::Error::Protocol("material provenance missing anchor_byte".into()),
+                    "convert event record provenance",
+                ));
+            }
+            (None, None, _) => {
+                return Err(db_error(
+                    sqlx::Error::Protocol("event record missing provenance".into()),
+                    "convert event record provenance",
+                ));
+            }
+            (Some(_event_ids), None, _) => {
+                return Err(db_error(
+                    sqlx::Error::Protocol(
+                        format!("source_event_ids present but empty for event {}", self.id).into(),
+                    ),
+                    "convert event record provenance",
+                ));
             }
         };
 
-        Event::<JsonValue> {
+        Ok(Event::<JsonValue> {
             id: Some(EventId::from_ulid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
@@ -127,7 +156,7 @@ impl EventRecordExt for EventRecord {
             associated_blob_ids: self
                 .associated_blob_ids
                 .map(|ids| ids.into_iter().collect()),
-        }
+        })
     }
 }
 
@@ -304,7 +333,7 @@ impl<'a> EventRepository<'a> {
                     timing_info_type,
                     metadata
                 ) VALUES (
-                    $1::text::ulid,
+                    $1,
                     'annex',
                     'test-material-bootstrap',
                     'completed',
@@ -314,7 +343,7 @@ impl<'a> EventRepository<'a> {
                 ON CONFLICT (id) DO NOTHING
                 "#,
             )
-            .bind(material_ulid.to_string())
+            .bind(material_ulid)
             .execute(self.pool)
             .await;
         }
@@ -370,7 +399,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "insert event"))?;
 
-        Ok(record.to_event())
+        Ok(record.try_to_event()?)
     }
 
     #[instrument(skip(self), fields(event_id = %id))]
@@ -385,7 +414,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
 
-        Ok(record.map(|r| r.to_event()))
+        Ok(record.map(|r| r.try_to_event()).transpose()?)
     }
 
     #[instrument(skip(self))]
@@ -410,7 +439,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get recent events"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self), fields(source = %source, limit = ?limit, offset = ?offset))]
@@ -435,7 +464,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by source"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self), fields(event_type = %event_type, limit = ?limit, offset = ?offset))]
@@ -460,7 +489,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by type"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self), fields(source = %source))]
@@ -514,7 +543,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by time range"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self), fields(start = %start, end = %end))]
@@ -562,7 +591,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by type and time range"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     pub async fn get_process_heartbeats(
@@ -583,7 +612,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get process heartbeats"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
@@ -752,7 +781,7 @@ impl<'a> EventRepository<'a> {
             .await
             .map_err(|e| db_error(e, "search events"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     #[instrument(skip(self), fields(interval = interval, start = %start, end = %end))]
@@ -895,7 +924,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "insert event with tx"))?;
 
-        Ok(record.to_event())
+        Ok(record.try_to_event()?)
     }
 
     #[instrument(skip(self, events), fields(batch_size = events.len()))]
@@ -1927,7 +1956,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by ids"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
     }
 
     /// Get recent events for multiple sources efficiently
@@ -1976,6 +2005,65 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get recent by sources"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records_to_events(records)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn base_record() -> EventRecord {
+        EventRecord {
+            id: sinex_schema::ulid::Ulid::new(),
+            source: "test.source".to_string(),
+            event_type: "test.event".to_string(),
+            host: "localhost".to_string(),
+            payload: json!({"ok": true}),
+            ts_orig: Utc::now(),
+            ts_ingest: Utc::now(),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: None,
+            associated_blob_ids: None,
+            payload_schema_id: None,
+            ingestor_version: None,
+        }
+    }
+
+    #[test]
+    fn missing_provenance_is_rejected() {
+        let record = base_record();
+        let err = record.try_to_event().expect_err("should fail");
+        assert!(format!("{err}").contains("missing provenance"));
+    }
+
+    #[test]
+    fn material_provenance_requires_anchor() {
+        let mut record = base_record();
+        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        let err = record.try_to_event().expect_err("should fail");
+        assert!(format!("{err}").contains("anchor"));
+    }
+
+    #[test]
+    fn valid_material_provenance_passes() {
+        let mut record = base_record();
+        record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
+        record.anchor_byte = Some(42);
+        assert!(record.try_to_event().is_ok());
+    }
+
+    #[test]
+    fn synthesis_provenance_requires_non_empty_sources() {
+        let mut record = base_record();
+        record.source_event_ids = Some(vec![]);
+        let err = record.try_to_event().expect_err("should fail");
+        assert!(format!("{err}").contains("source_event_ids"));
     }
 }

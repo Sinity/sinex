@@ -60,7 +60,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get events by source and time range"))?;
 
-        Ok(records.into_iter().map(|r| r.to_event()).collect())
+        records.into_iter().map(|r| r.try_to_event()).collect()
     }
 
     /// Count events by source and time range

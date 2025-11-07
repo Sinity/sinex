@@ -5,6 +5,7 @@
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
+use crate::stream_processor::ProcessorRuntimeState;
 use serde::{Deserialize, Serialize};
 use sinex_core::types::utils::CoordinationPrimitive;
 use std::sync::Arc;
@@ -70,6 +71,14 @@ impl HeartbeatEmitter {
             version,
             git_hash,
         }
+    }
+
+    /// Construct a heartbeat emitter for a runtime with the provided interval
+    pub fn from_runtime(runtime: &ProcessorRuntimeState, interval_seconds: u64) -> Self {
+        Self::new(
+            runtime.service_info().service_name().to_string(),
+            interval_seconds,
+        )
     }
 
     /// Expose configured service name for tests and diagnostics

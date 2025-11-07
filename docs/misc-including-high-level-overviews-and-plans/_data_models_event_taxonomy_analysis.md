@@ -151,7 +151,7 @@ Distributed processor management:
 - **Satellite Signals**: Inter-processor messaging
 - Automatic cleanup of stale instances
 
-#### Checkpointing System (`core.automaton_checkpoints`)
+#### Checkpointing System (`core.processor_checkpoints`)
 Reliable event processing:
 - Per-automaton processing state
 - Consumer group support for parallel processing

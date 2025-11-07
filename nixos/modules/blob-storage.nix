@@ -1,156 +1,170 @@
-# Git-annex blob storage configuration module
-{ lib, config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 with lib;
 
 let
   cfg = config.services.sinex;
-  repositoryUser =
-    if cfg.satellite.enable then cfg.satelliteUser else cfg.database.user;
+  blob = cfg.storage.blob;
+  dlq = cfg.storage.dlq;
+  maintenanceCfg = cfg.lifecycle.maintenance;
+  repoPath = blob.repositoryPath;
+  repositoryUser = cfg.users.satellites;
+
+  maintenanceEnabled = cfg.lifecycle.maintenance.enable;
+  runBlobGc = maintenanceEnabled && maintenanceCfg.tasks.blobGc && blob.maintenance.gc.enable;
+  runBlobFsck = maintenanceEnabled && maintenanceCfg.tasks.blobFsck && blob.maintenance.fsck.enable;
+  healthEnabled = maintenanceEnabled && blob.health.enable;
+
+  gcSchedule = blob.maintenance.gc.schedule;
+  fsckSchedule = blob.maintenance.fsck.schedule;
+  healthInterval = blob.health.intervalSec;
+
+  gitAnnex = "${pkgs.git-annex}/bin/git-annex";
+  gitBin = "${pkgs.git}/bin/git";
+  duBin = "${pkgs.coreutils}/bin/du";
+
+  initScript = pkgs.writeShellScript "sinex-blob-init" ''
+    set -euo pipefail
+    REPO_PATH="${repoPath}"
+
+    mkdir -p "$REPO_PATH"
+    cd "$REPO_PATH"
+
+    if [ ! -d .git ]; then
+      ${gitBin} init
+      ${gitBin} config user.name "Sinex System"
+      ${gitBin} config user.email "sinex@localhost"
+    fi
+
+    if [ ! -d .git/annex ]; then
+      ${gitAnnex} init "Sinex Blob Storage"
+      ${gitAnnex} numcopies ${toString blob.numCopies}
+      ${gitAnnex} config annex.backend ${blob.backend}
+      echo "# Sinex Blob Storage" > README.md
+      ${gitBin} add README.md
+      ${gitBin} commit -m "Initial commit"
+    fi
+  '';
+
+  gcScript = pkgs.writeShellScript "sinex-blob-gc" ''
+    set -euo pipefail
+    cd "${repoPath}"
+
+    ${gitAnnex} unused || true
+    ${gitAnnex} dropunused --force 1-100 || true
+    ${gitBin} gc --aggressive || ${gitBin} gc
+  '';
+
+  fsckScript = pkgs.writeShellScript "sinex-blob-fsck" ''
+    set -euo pipefail
+    cd "${repoPath}"
+
+    ${gitAnnex} fsck --incremental --fast || ${gitAnnex} fsck --fast
+  '';
+
+  healthScript = pkgs.writeShellScript "sinex-blob-health" ''
+    set -euo pipefail
+    repo_size=$(${duBin} -sb "${repoPath}" | cut -f1)
+    warn_at_bytes=${toString (blob.health.warnAtBytes or 0)}
+    warn_at_percent=${toString blob.health.warnAtPercent}
+
+    if [ "$warn_at_bytes" -gt 0 ]; then
+      threshold=$(printf '%.0f' "$(echo "$warn_at_bytes * $warn_at_percent" | ${pkgs.bc}/bin/bc -l)")
+      if [ "$repo_size" -ge "$threshold" ]; then
+        echo "Sinex blob repository warning: usage $repo_size bytes (threshold $threshold bytes)"
+      fi
+    fi
+  '';
+
 in
 {
-  options.services.sinex.blobStorage = {
-    enable = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable git-annex blob storage integration";
-    };
+  config = mkMerge [
+    (mkIf (blob.enable && blob.autoInit) {
+      systemd.services.sinex-blob-init = {
+        description = "Initialize Sinex blob repository";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "local-fs.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = repositoryUser;
+          Group = repositoryUser;
+          RemainAfterExit = true;
+          ExecStart = initScript;
+        };
+      };
+    })
 
-    repositoryPath = mkOption {
-      type = types.path;
-      default = "/realm/annex";
-      description = "Path to git-annex repository";
-    };
-
-    autoInit = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Automatically initialize git-annex repository";
-    };
-
-    numCopies = mkOption {
-      type = types.int;
-      default = 2;
-      description = "Minimum number of copies for git-annex";
-    };
-
-    backend = mkOption {
-      type = types.str;
-      default = "SHA256E";
-      description = "Git-annex backend to use for new files";
-    };
-
-    # Simplified maintenance options
-    maintenance = {
-      enableAutoGc = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Enable automatic garbage collection";
+    (mkIf (blob.enable && runBlobGc) {
+      systemd.services.sinex-blob-gc = {
+        description = "Sinex blob garbage collection";
+        after = [ "sinex-blob-init.service" ];
+        requires = [ "sinex-blob-init.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = repositoryUser;
+          Group = repositoryUser;
+          WorkingDirectory = repoPath;
+          ExecStart = gcScript;
+        };
       };
 
-      gcSchedule = mkOption {
-        type = types.str;
-        default = "weekly";
-        description = "Schedule for garbage collection";
+      systemd.timers.sinex-blob-gc = {
+        description = "Timer for Sinex blob garbage collection";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = gcSchedule;
+          Persistent = true;
+        };
+      };
+    })
+
+    (mkIf (blob.enable && runBlobFsck) {
+      systemd.services.sinex-blob-fsck = {
+        description = "Sinex blob fsck";
+        after = [ "sinex-blob-init.service" ];
+        requires = [ "sinex-blob-init.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = repositoryUser;
+          Group = repositoryUser;
+          WorkingDirectory = repoPath;
+          ExecStart = fsckScript;
+          TimeoutStartSec = 3600;
+        };
       };
 
-      enablePeriodicFsck = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Enable periodic file system consistency checks";
+      systemd.timers.sinex-blob-fsck = {
+        description = "Timer for Sinex blob fsck";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = fsckSchedule;
+          Persistent = true;
+        };
+      };
+    })
+
+    (mkIf (blob.enable && healthEnabled) {
+      systemd.services.sinex-blob-health = {
+        description = "Sinex blob health check";
+        after = [ "sinex-blob-init.service" ];
+        requires = [ "sinex-blob-init.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = repositoryUser;
+          Group = repositoryUser;
+          WorkingDirectory = repoPath;
+          ExecStart = healthScript;
+        };
       };
 
-      fsckSchedule = mkOption {
-        type = types.str;
-        default = "monthly";
-        description = "Schedule for periodic fsck";
+      systemd.timers.sinex-blob-health = {
+        description = "Timer for Sinex blob health check";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnUnitActiveSec = toString healthInterval;
+          Persistent = true;
+        };
       };
-    };
-
-    # Health monitoring
-    healthCheck = {
-      enable = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Enable git-annex repository health checks";
-      };
-
-      interval = mkOption {
-        type = types.int;
-        default = 3600;
-        description = "Health check interval in seconds";
-      };
-
-      wantedSize = mkOption {
-        type = types.nullOr types.str;
-        default = null;
-        description = ''
-          Repository size monitoring limit (e.g., "50G", "1T", "500M"). 
-          This is NOT preallocation - just logs warnings when exceeded.
-          Set to null for unlimited (no size monitoring).
-        '';
-      };
-
-      diskUsageWarning = mkOption {
-        type = types.float;
-        default = 0.8;
-        description = "Warn when repository uses this fraction of wantedSize (0.8 = 80%)";
-      };
-    };
-  };
-
-  config = mkIf (cfg.enable && cfg.blobStorage.enable) {
-    # Ensure repository directory exists
-    systemd.tmpfiles.rules = [
-      "d ${cfg.blobStorage.repositoryPath} 0755 ${repositoryUser} ${repositoryUser} -"
-    ];
-
-    # Git-annex initialization service
-    systemd.services.sinex-git-annex-init = mkIf cfg.blobStorage.autoInit {
-      description = "Initialize Sinex Git-Annex Repository";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "local-fs.target" ];
-      
-      serviceConfig = {
-        Type = "oneshot";
-        User = repositoryUser;
-        Group = repositoryUser;
-        RemainAfterExit = true;
-        
-        ExecStart = pkgs.writeShellScript "sinex-git-annex-init" ''
-          set -euo pipefail
-          
-          REPO_PATH="${cfg.blobStorage.repositoryPath}"
-          
-          # Create directory if it doesn't exist
-          mkdir -p "$REPO_PATH"
-          cd "$REPO_PATH"
-          
-          # Initialize git repo if not already done
-          if [ ! -d .git ]; then
-            ${pkgs.git}/bin/git init
-            ${pkgs.git}/bin/git config user.name "Sinex System"
-            ${pkgs.git}/bin/git config user.email "sinex@localhost"
-          fi
-          
-          # Initialize git-annex if not already done
-          if [ ! -d .git/annex ]; then
-            ${pkgs.git-annex}/bin/git annex init "Sinex Blob Storage"
-            ${pkgs.git-annex}/bin/git annex numcopies ${toString cfg.blobStorage.numCopies}
-            ${pkgs.git-annex}/bin/git annex config annex.backend ${cfg.blobStorage.backend}
-            
-            # Create initial commit
-            echo "# Sinex Blob Storage Repository" > README.md
-            ${pkgs.git}/bin/git add README.md
-            ${pkgs.git}/bin/git commit -m "Initial commit"
-          fi
-          
-          echo "Git-annex repository initialized successfully"
-        '';
-      };
-    };
-
-    # Maintenance services and timers are supplied by services/maintenance-services.nix
-    # to ensure a single implementation for git-annex lifecycle tasks.
-  };
+    })
+  ];
 }

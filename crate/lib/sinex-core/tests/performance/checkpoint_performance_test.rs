@@ -34,20 +34,22 @@ async fn spawn_consumer(
     subject: &str,
     durable: &str,
 ) -> Result<async_nats::jetstream::consumer::Consumer> {
-    js.get_or_create_consumer(
-        stream,
-        ConsumerConfig {
-            durable_name: Some(durable.to_string()),
-            name: Some(durable.to_string()),
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::Explicit,
-            filter_subject: subject.to_string(),
-            ack_wait: StdDuration::from_secs(30),
-            max_ack_pending: 512,
-            ..Default::default()
-        },
-    )
-    .await
+    let stream_handle = js.get_stream(stream).await?;
+    stream_handle
+        .get_or_create_consumer(
+            durable,
+            ConsumerConfig {
+                durable_name: Some(durable.to_string()),
+                name: Some(durable.to_string()),
+                deliver_policy: DeliverPolicy::All,
+                ack_policy: AckPolicy::Explicit,
+                filter_subject: subject.to_string(),
+                ack_wait: StdDuration::from_secs(30),
+                max_ack_pending: 512,
+                ..Default::default()
+            },
+        )
+        .await
 }
 
 #[sinex_bench]
@@ -152,7 +154,8 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         );
     }
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }
@@ -272,7 +275,8 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         "expected to recover 50 messages, processed {recovered}"
     );
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }

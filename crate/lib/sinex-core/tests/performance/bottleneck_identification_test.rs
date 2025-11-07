@@ -34,20 +34,22 @@ async fn create_consumer(
     durable: &str,
     ack_wait: StdDuration,
 ) -> Result<async_nats::jetstream::consumer::Consumer> {
-    js.get_or_create_consumer(
-        stream,
-        ConsumerConfig {
-            durable_name: Some(durable.to_string()),
-            name: Some(durable.to_string()),
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::Explicit,
-            filter_subject: subject.to_string(),
-            ack_wait,
-            max_ack_pending: 64,
-            ..Default::default()
-        },
-    )
-    .await
+    let stream_handle = js.get_stream(stream).await?;
+    stream_handle
+        .get_or_create_consumer(
+            durable,
+            ConsumerConfig {
+                durable_name: Some(durable.to_string()),
+                name: Some(durable.to_string()),
+                deliver_policy: DeliverPolicy::All,
+                ack_policy: AckPolicy::Explicit,
+                filter_subject: subject.to_string(),
+                ack_wait,
+                max_ack_pending: 64,
+                ..Default::default()
+            },
+        )
+        .await
 }
 
 #[sinex_bench]
@@ -114,7 +116,8 @@ async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> Result<()> {
         after
     );
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }
@@ -137,7 +140,7 @@ async fn jetstream_detect_publish_pressure(_ctx: TestContext) -> Result<()> {
     }
     let publish_duration = start.elapsed();
 
-    let info = js.stream_info(&stream).await?;
+    let info = js.get_stream(&stream).await?.info().await?;
     color_eyre::eyre::ensure!(
         publish_duration.as_secs_f64() < 2.0,
         "publish took too long: {:?}",
@@ -174,7 +177,8 @@ async fn jetstream_detect_publish_pressure(_ctx: TestContext) -> Result<()> {
 
     color_eyre::eyre::ensure!(consumed == 500, "expected to consume 500 messages");
 
-    js.delete_consumer(&stream, &durable).await?;
+    let stream_handle = js.get_stream(&stream).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }

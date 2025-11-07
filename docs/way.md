@@ -13,14 +13,17 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 
 ---
 
-## Implementation Status (Updated 2025-01-28)
+## Implementation Status (Updated 2025-02-21)
 
-**Overall Progress: Phase 1, 2, & 4 Complete | Phase 3 In Progress | Phase 5 Pending**
+**Overall Progress: Phases 1–5 Complete | Replay Tooling Hardening Pending**
 
 ### Completed ✅
 - **Phase 1 - Event Backbone**: NatsPublisher, JetStreamConsumer, confirmations, DLQ, idempotency
 - **Phase 2 - Confirmation-Aware Consumption**: ConfirmationBuffer, AutomatonEventHandler, DLQ retry
 - **Phase 4 - Coordination & Control Plane**: LeaseManager with NATS KV, leader election
+- ✅ Automaton bridge: health-aggregator now consumes JetStream confirmations via StreamProcessorRunner
+- **Phase 3 - Source Material Slices**: `AcquisitionManager` + Stage-as-You-Go capture git-annex materials, MaterialAssembler survives restarts, ledger + blob metadata populated
+- **Phase 5 - Cleanup**: gRPC surface removed, sensd code paths deleted, transactional outbox retired, docs updated
 
 **Satellites**: 6/8 modern and buildable (75% complete)
 - ✅ All using `processor_main!` and NATS JetStream
@@ -28,15 +31,17 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 - ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
 - 🔄 Blocked: analytics-automaton, search-automaton (deeper refactoring)
 
-**Testing**: E2E JetStream test created (`jetstream_e2e_integration_test.rs`)
-- Validates: Satellite → JetStream → ingestd → DB → confirmation → Automaton
-- Includes idempotency verification
+**Testing**
+- `just test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
+- Satellite coverage exercises filesystem + terminal pipelines using ephemeral JetStream servers.
+- ingestd JetStream integration/idempotency suites exist (`jetstream_*` tests) but are `#[ignore]`d by default; they assume a full pipeline and can be run manually when a long-lived NATS deployment is available.
 
 ### In Progress 🔄
-- **Phase 3 - Source Material Slices**: MaterialAssembler, git-annex integration, restart resilience
+- Replay tooling polish (`sinex.control.*` subjects) and analytics/search automaton migrations.
 
 ### Pending ⏳
-- **Phase 5 - Cleanup**: Remove gRPC ingestion, sensd crate, legacy configuration
+- Analytics/search automaton migrations to JetStream primitives.
+- Replay control surface (`sinex.control.*`) integration in CLI/gateway.
 
 ---
 
@@ -139,25 +144,25 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 - Expose `sinex.control.*` subjects for replay/preflight orchestration; update CLI/gateway where necessary.
 
 ### Phase 5 — Cleanup
-- Remove gRPC ingestion and the sensd crate, including schema tables (`raw.sensor_jobs`, `raw.sensor_states`) and SDK sensd helpers.
-- Audit code for any `ensure_not_sensor!` bypasses; satellites should operate purely via Stage-as-You-Go + JetStream.
-- Update docs, CLI help, and remove legacy configuration flags.
+- [x] Remove gRPC ingestion and the sensd crate, including schema tables (`raw.sensor_jobs`, `raw.sensor_states`) and SDK sensd helpers.
+- [x] Audit code for any `ensure_not_sensor!` bypasses; satellites operate purely via Stage-as-You-Go + JetStream.
+- [x] Update docs, CLI help, and remove legacy configuration flags for JetStream-only deployment.
 
 ---
 
 ## 4. Detailed Work Streams
 
 ### ingestd
-- [ ] Stream bootstrap (create/get JetStream streams with desired retention and acknowledgements).
-- [ ] Materials consumer: assembler state, hash verification, annex writes, ledger insert, DLQ on failure, idempotent retries.
-- [ ] Events consumer: schema validation, `UNNEST` batch insert, confirmation publish post-commit.
-- [ ] Feature-gate JetStream path initially; remove gate after Phase 2.
+- [x] Stream bootstrap (create/get JetStream streams with desired retention and acknowledgements).
+- [x] Materials consumer: assembler state, hash verification, annex writes, ledger insert, DLQ on failure, idempotent retries.
+- [x] Events consumer: schema validation, `UNNEST` batch insert, confirmation publish post-commit.
+- [x] Feature-gate JetStream path initially; remove gate after Phase 2.
 
 ### SDK
-- [ ] `AcquisitionManager` + Stage-as-You-Go finalize paths (sets `optional_blob_id`, writes ledger entries).
+- [x] `AcquisitionManager` + Stage-as-You-Go finalize paths (sets `optional_blob_id`, writes ledger entries).
 - [x] `EventPublisher` supporting dedupe headers, subject selection, tracing metadata. ✅ NatsPublisher implemented
 - [x] `StreamProcessorRunner` update: confirmation buffering, provisional handler, JetStream lease integration. ✅ Completed 2025-01
-- [ ] Remove sensd client + sensor guards once all satellites migrate.
+- [x] Remove sensd client + sensor guards once all satellites migrate.
 
 ### Satellites
 - [x] **All buildable satellites modernized (6/8 - 75% complete)** ✅ 2025-01
@@ -168,8 +173,8 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 - Migratory template for each satellite:
   1. Integrate `AcquisitionManager` + Stage-as-You-Go to capture materials.
   2. [x] Publish slices/events to JetStream; confirm ingestion locally. ✅ NatsPublisher integrated
-  3. Delete sensd job submission paths, configs, and CLI switches.
-  4. Ensure recovery (replay from JetStream) and checkpointing works.
+  3. [x] Delete sensd job submission paths, configs, and CLI switches.
+  4. Ensure recovery (replay from JetStream) and checkpointing works. (Ongoing validation per satellite)
 
 ### Automata & Replay
 - [x] Update automata to subscribe via `StreamProcessorRunner`. ✅ AutomatonEventHandler adapter created
@@ -306,11 +311,11 @@ Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 
 ## 8. Reference Checklist
 
-- [ ] Phase 1 complete (events consumer + confirmation)
-- [ ] Phase 2 complete (confirmation-aware runner)
-- [ ] Phase 3 complete (Stage-as-You-Go + materials consumer)
-- [ ] Phase 4 complete (leases/control plane)
-- [ ] Phase 5 complete (sensd removed, gRPC removed, docs updated)
+- [x] Phase 1 complete (events consumer + confirmation)
+- [x] Phase 2 complete (confirmation-aware runner)
+- [x] Phase 3 complete (Stage-as-You-Go + materials consumer)
+- [x] Phase 4 complete (leases/control plane)
+- [x] Phase 5 complete (sensd removed, gRPC removed, docs updated)
 
 Keep this checklist in the PR description or project board; update this document as major milestones land.
 

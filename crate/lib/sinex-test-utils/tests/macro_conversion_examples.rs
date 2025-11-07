@@ -1,3 +1,5 @@
+#![cfg(feature = "rstest-preview")]
+
 //! Example conversions showing how to modernize tests with macros
 //!
 //! This file demonstrates before/after examples of converting verbose
