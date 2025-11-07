@@ -3,6 +3,7 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
+use super::define_event_payload;
 use crate::types::domain::{CommandText, HostName, SanitizedPath, ShellName};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -11,68 +12,72 @@ use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
 // Kitty shell integration payloads
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.kitty", event_type = "command.executed")]
-pub struct KittyCommandExecutedPayload {
-    pub command: CommandText,
-    pub working_directory: Option<SanitizedPath>,
-    pub exit_status: Option<i32>,
-    pub execution_time_ms: Option<u64>,
-    pub shell_type: Option<ShellName>,
-    pub kitty_window_id: String,
-    pub kitty_tab_id: String,
+define_event_payload! {
+    /// Kitty command executed event emitted by shell integration.
+    pub struct KittyCommandExecutedPayload {
+        command: CommandText,
+        working_directory: Option<SanitizedPath>,
+        exit_status: Option<i32>,
+        execution_time_ms: Option<u64>,
+        shell_type: Option<ShellName>,
+        kitty_window_id: String,
+        kitty_tab_id: String,
+    } => ("shell.kitty", "command.executed");
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.kitty", event_type = "command.completed")]
-pub struct KittyCommandCompletedPayload {
-    pub command: CommandText,
-    pub working_directory: SanitizedPath,
-    pub exit_status: i32,
-    pub duration_ms: u64,
-    pub shell_pid: u32,
-    pub kitty_window_id: String,
-    pub kitty_tab_id: String,
-    pub output_lines: Option<u32>,
-    pub error_output: Option<String>,
+define_event_payload! {
+    /// Kitty command completion event.
+    pub struct KittyCommandCompletedPayload {
+        command: CommandText,
+        working_directory: SanitizedPath,
+        exit_status: i32,
+        duration_ms: u64,
+        shell_pid: u32,
+        kitty_window_id: String,
+        kitty_tab_id: String,
+        output_lines: Option<u32>,
+        error_output: Option<String>,
+    } => ("shell.kitty", "command.completed");
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal.kitty", event_type = "session.started")]
-pub struct KittySessionStartedPayload {
-    pub window_id: String,
-    pub tab_id: String,
-    pub shell_type: ShellName,
-    pub working_directory: SanitizedPath,
-    pub env_vars: Option<HashMap<String, String>>,
+define_event_payload! {
+    /// Kitty terminal session start.
+    pub struct KittySessionStartedPayload {
+        window_id: String,
+        tab_id: String,
+        shell_type: ShellName,
+        working_directory: SanitizedPath,
+        env_vars: Option<HashMap<String, String>>,
+    } => ("terminal.kitty", "session.started");
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "terminal.kitty", event_type = "session.ended")]
-pub struct KittySessionEndedPayload {
-    pub window_id: String,
-    pub tab_id: String,
-    pub duration_seconds: u64,
-    pub exit_code: Option<i32>,
+define_event_payload! {
+    /// Kitty terminal session end event.
+    pub struct KittySessionEndedPayload {
+        window_id: String,
+        tab_id: String,
+        duration_seconds: u64,
+        exit_code: Option<i32>,
+    } => ("terminal.kitty", "session.ended");
 }
 
 // Atuin history payloads
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.atuin", event_type = "command.executed")]
-pub struct AtuinCommandExecutedPayload {
-    pub command_string: CommandText,
-    pub cwd: SanitizedPath,
-    pub exit_code: i32,
-    pub duration_ns: i64,
-    pub atuin_history_id: String,
-    pub atuin_session_id: String,
-    pub timestamp: i64,
-    pub ts_start_orig: DateTime<Utc>,
-    pub ts_end_orig: DateTime<Utc>,
-    pub hostname: HostName,
-    pub terminal_session_ulid: Option<String>,
+define_event_payload! {
+    /// Atuin command execution captured from history ingestion.
+    pub struct AtuinCommandExecutedPayload {
+        command_string: CommandText,
+        cwd: SanitizedPath,
+        exit_code: i32,
+        duration_ns: i64,
+        atuin_history_id: String,
+        atuin_session_id: String,
+        timestamp: i64,
+        ts_start_orig: DateTime<Utc>,
+        ts_end_orig: DateTime<Utc>,
+        hostname: HostName,
+        terminal_session_ulid: Option<String>,
+    } => ("shell.atuin", "command.executed");
 }
 
 // Test helpers for external tests
@@ -110,84 +115,91 @@ impl AtuinCommandExecutedPayload {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.atuin", event_type = "command.completed")]
-pub struct AtuinCommandCompletedPayload {
-    pub command: String,
-    pub working_directory: String,
-    pub exit_status: i32,
-    pub duration_ms: u64,
-    pub hostname: String,
-    pub username: String,
-    pub shell: String,
-    pub atuin_id: String,
-    pub session_id: String,
+define_event_payload! {
+    /// Atuin command completion payload.
+    pub struct AtuinCommandCompletedPayload {
+        command: String,
+        working_directory: String,
+        exit_status: i32,
+        duration_ms: u64,
+        hostname: String,
+        username: String,
+        shell: String,
+        atuin_id: String,
+        session_id: String,
+    } => ("shell.atuin", "command.completed");
 }
 
 // Generic shell history import payloads
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.history", event_type = "command.imported")]
-pub struct HistoryCommandImportedPayload {
-    pub command: String,
-    pub timestamp: Option<DateTime<Utc>>,
-    pub shell_type: String,
-    pub source_file: String,
-    pub line_number: Option<u32>,
+define_event_payload! {
+    /// Shell history command imported event.
+    pub struct HistoryCommandImportedPayload {
+        command: String,
+        timestamp: Option<DateTime<Utc>>,
+        shell_type: String,
+        source_file: String,
+        line_number: Option<u32>,
+    } => ("shell.history", "command.imported");
 }
 
 // Atuin imported entry (from CSV/DB import)
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "atuin", event_type = "entry.imported")]
-pub struct AtuinEntryPayload {
-    pub id: String,
-    pub command: String,
-    pub timestamp: DateTime<Utc>,
-    pub duration_ms: u64,
-    pub exit_code: i32,
-    pub directory: String,
-    pub session: String,
-    pub hostname: String,
+define_event_payload! {
+    /// Atuin entry imported from external source.
+    pub struct AtuinEntryPayload {
+        id: String,
+        command: String,
+        timestamp: DateTime<Utc>,
+        duration_ms: u64,
+        exit_code: i32,
+        directory: String,
+        session: String,
+        hostname: String,
+    } => ("atuin", "entry.imported");
 }
 
 // Command imported from shell history
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell", event_type = "command.imported")]
-pub struct CommandImportedPayload {
-    pub command: String,
-    pub timestamp: DateTime<Utc>,
-    pub source_file: String,
-    pub line_number: Option<u64>,
-    pub shell_type: String,
+define_event_payload! {
+    /// Generic shell command import event.
+    pub struct CommandImportedPayload {
+        command: String,
+        timestamp: DateTime<Utc>,
+        source_file: String,
+        line_number: Option<u32>,
+        shell_type: String,
+    } => ("shell", "command.imported");
 }
 
 // Bash-specific history
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.bash_histfile", event_type = "entry.imported")]
-pub struct BashHistoryEntryPayload {
-    pub command: String,
-    pub timestamp: Option<DateTime<Utc>>,
-    pub histfile_path: String,
-    pub line_number: u32,
+define_event_payload! {
+    /// Entry parsed from a Bash history file.
+    pub struct BashHistoryEntryPayload {
+        command: String,
+        timestamp: Option<DateTime<Utc>>,
+        histfile_path: String,
+        line_number: u32,
+    } => ("shell.bash_histfile", "entry.imported");
 }
 
 // Real-time shell history file monitoring
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.bash_histfile", event_type = "command.historical")]
-pub struct BashHistoricalCommandPayload {
-    pub command_string: String,
-    pub source_file: String,
+define_event_payload! {
+    /// Historical command streamed from Bash histfile tailing.
+    pub struct BashHistoricalCommandPayload {
+        command_string: String,
+        source_file: String,
+    } => ("shell.bash_histfile", "command.historical");
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "shell.zsh_histfile", event_type = "command.historical")]
-pub struct ZshHistoricalCommandPayload {
-    pub command_string: String,
-    pub source_file: String,
+define_event_payload! {
+    /// Historical command streamed from Zsh history monitoring.
+    pub struct ZshHistoricalCommandPayload {
+        command_string: String,
+        source_file: String,
+    } => ("shell.zsh_histfile", "command.historical");
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

@@ -11,7 +11,41 @@
 }:
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
-  sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
+  sinexCliPackage = sinexCli;
+  sinexConfigBase = {
+    enable = true;
+    package = sinexPackage;
+    users.target = "test";
+
+    database = {
+      autoSetup = lib.mkDefault true;
+      name = lib.mkDefault "sinex";
+      user = lib.mkDefault "sinex";
+    };
+
+    lifecycle.preflight.enable = lib.mkForce false;
+
+    satellites = {
+      enable = lib.mkDefault true;
+      coordination.enable = lib.mkDefault false;
+      defaults.instances = lib.mkDefault 1;
+
+      filesystem = {
+        enable = lib.mkDefault true;
+        watchPaths = lib.mkDefault [ "/home/test/watched" ];
+      };
+
+      terminal.enable = lib.mkDefault false;
+      desktop.enable = lib.mkDefault false;
+      system.enable = lib.mkDefault false;
+
+      automata = {
+        enable = lib.mkDefault false;
+        canonicalizer.enable = lib.mkDefault false;
+        healthAggregator.enable = lib.mkDefault false;
+      };
+    };
+  };
 in
 {
   imports = [
@@ -21,46 +55,10 @@ in
   ];
 
   # Basic Sinex configuration
-  services.sinex = {
-    enable = true;
-    package = sinexPackage;
-    cliPackage = sinexCliPackage;
-    targetUser = "test";
-
-    serviceManagement.serviceGroups = {
-      core = lib.mkDefault true;
-      maintenance = lib.mkDefault false;
-      monitoring = lib.mkDefault false;
+  services.sinex = sinexConfigBase
+    // lib.optionalAttrs (sinexCliPackage != null) {
+      cliPackage = sinexCliPackage;
     };
-
-    preflightVerification.enable = lib.mkDefault false;
-
-    satellite = {
-      enable = lib.mkDefault true;
-      coordination.enable = lib.mkDefault false;
-      database.url = lib.mkDefault "postgresql:///sinex?host=/run/postgresql";
-
-      coreServices.enable = lib.mkDefault true;
-
-      eventSources = {
-        filesystem = {
-          enable = lib.mkDefault true;
-          instances = lib.mkDefault 1;
-          extraArgs = lib.mkDefault "";
-          watchPaths = lib.mkDefault [ "/home/test/watched" ];
-        };
-        terminal.enable = lib.mkDefault false;
-        desktop.enable = lib.mkDefault false;
-        system.enable = lib.mkDefault false;
-      };
-
-      automata = {
-        canonicalCommandSynthesizer.enable = lib.mkDefault false;
-        healthAggregator.enable = lib.mkDefault false;
-      };
-    };
-
-  };
 
   # Test user
   users.users.test = {
@@ -134,22 +132,30 @@ in
   ];
 
   # Minimal tmpfiles rules
-  systemd.tmpfiles.rules = [
-    "d /home/test/watched 0755 test users -"
-    "f /var/lib/sinex/.zsh_history 0644 sinex sinex -"
-    "f /var/lib/sinex/.bash_history 0644 sinex sinex -"
-  ];
+  systemd.tmpfiles.rules =
+    let
+      stateDir = config.services.sinex.stateRoot;
+    in [
+      "d /home/test/watched 0755 test users -"
+      "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+      "f ${stateDir}/.bash_history 0644 sinex sinex -"
+    ];
 
   # Package overlays
-  nixpkgs.overlays = [(final: prev: {
-    sinex-ingestd = sinex-ingestd;
-    sinex-gateway = sinex-gateway;
-    sinex = sinexPackage;
-    sinexCli = sinexCliPackage;
-    postgresql16Packages = prev.postgresql16Packages // {
-      pg_jsonschema = pg_jsonschema;
-    };
-  })];
+  nixpkgs.overlays = [
+    (final: prev:
+      ({
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
+        sinex = sinexPackage;
+        postgresql16Packages = prev.postgresql16Packages // {
+          pg_jsonschema = pg_jsonschema;
+        };
+      }
+      // lib.optionalAttrs (sinexCliPackage != null) {
+        sinexCli = sinexCliPackage;
+      }))
+  ];
 
   # Default VM configuration (standard profile)
   virtualisation = {

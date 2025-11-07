@@ -11,58 +11,49 @@
 
   services.sinex = {
     enable = true;
-    targetUser = "myuser"; # REQUIRED: replace with the user to observe
+    users.target = "myuser"; # REQUIRED: replace with the user to observe
 
     # Optional: select packages explicitly (module defaults work out of the box)
     # package = pkgs.sinex;
     # cliPackage = pkgs.sinexCli;
 
-    serviceManagement.serviceGroups = {
-      core = true;
-      maintenance = false; # enable when using DLQ/git-annex timers
-      monitoring = false;  # enable Prometheus/Grafana stack locally
-    };
-
     database = {
       autoSetup = true;
+      host = "127.0.0.1";
+      port = 5432;
       name = "sinex";
       user = "sinex";
-      listenAddress = "127.0.0.1";
-      port = 5432;
+      passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
-    satellite = {
+    core.enable = true;
+
+    satellites = {
       enable = true;
       coordination.enable = false;
-      database.url = "postgresql:///sinex?host=/run/postgresql";
-      logLevel = "info";
+      defaults.logLevel = "info";
 
-      coreServices.enable = true;
-
-      eventSources = {
-        filesystem = {
-          enable = true;
-          instances = 1;
-        };
-        terminal = {
-          enable = true;
-          instances = 1;
-        };
-        desktop.enable = false;
-        system.enable = false;
+      filesystem = {
+        enable = true;
+        instances = 1;
       };
+      terminal = {
+        enable = true;
+        instances = 1;
+      };
+      desktop.enable = false;
+      system.enable = false;
 
       automata = {
-        canonicalCommandSynthesizer.enable = true;
+        enable = true;
+        canonicalizer.enable = true;
         healthAggregator.enable = true;
       };
     };
 
-    monitoring.observabilityStack = {
+    observability = {
       enable = false;
-      listenAddress = "127.0.0.1";
-      prometheusPort = 9002;
-      grafanaPort = 9003;
+      monitoring.enable = false;
     };
 
     shell = {
@@ -77,9 +68,4 @@
     createHome = true;
     extraGroups = [ "wheel" ];
   };
-
-  systemd.tmpfiles.rules = [
-    "d /var/lib/sinex 0755 sinex sinex -"
-    "d /var/log/sinex 0755 sinex sinex -"
-  ];
 }

@@ -1,45 +1,52 @@
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::Ulid;
-use sinex_gateway::ServiceContainer;
-use sinex_satellite_sdk::grpc_client::IngestClient;
+use sinex_satellite_sdk::event_processor::{
+    spawn_event_processor, EventProcessorConfig, EventTransport,
+};
+use sinex_satellite_sdk::nats_publisher::NatsPublisher;
 use sinex_satellite_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
+use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::sleep;
 
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
-    // Boot a transient NATS instance for ingestd.
-    let nats = EphemeralNats::start().await?;
-    let nats_url = format!("nats://{}", nats.client_url());
+    let ctx = ctx.with_nats().await?;
+    let nats_client = ctx.nats_client();
+    let jetstream = jetstream::new(nats_client.clone());
 
-    // Prepare a Unix socket for ingestd's gRPC server.
-    let socket_dir = tempfile::tempdir()?;
-    let socket_path = socket_dir
-        .path()
-        .join(format!("ingestd-{}.sock", Ulid::new()));
-    let socket_path_string = socket_path.to_string_lossy().into_owned();
-
-    // Start ingestd wired into the shared test database.
-    let mut ingest_handle = start_test_ingestd_with_config(TestIngestdConfig {
-        socket_path: socket_path_string.clone(),
-        nats_url,
+    let ingest_config = TestIngestdConfig {
+        nats_url: format!(
+            "nats://{}",
+            ctx.nats_url()
+                .expect("with_nats should provide NATS connection information")
+        ),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
-    })
-    .await?;
+    };
 
-    // Allow the gRPC listener to bind before connecting.
-    sleep(Duration::from_millis(250)).await;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    sleep(Duration::from_millis(200)).await;
 
-    let ingest_client = IngestClient::new(&socket_path_string).await?;
-    let stage_context = StageAsYouGoContext::new(ctx.pool.clone(), ingest_client);
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
+    let processor_handle = spawn_event_processor(
+        EventTransport::Nats(publisher),
+        EventProcessorConfig::default(),
+        event_rx,
+        shutdown_rx,
+    );
+
+    let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
     let mut processor = LogFileStageProcessor::new(stage_context, "integration-e2e");
 
     let content = b"alpha\nbeta\ngamma\n";
@@ -49,34 +56,38 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         .await?;
     assert_eq!(stage_result.event_ids.len(), 3, "one event per log line");
 
-    // Give ingestd a brief moment to flush to Postgres.
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(250)).await;
 
-    // Verify the events landed in the database.
     let recent = ctx.pool.events().get_recent(10).await?;
     assert!(
         recent.len() >= 3,
-        "stage-as-you-go should emit three events"
+        "stage-as-you-go should emit at least three events"
     );
 
-    // Analytics service should surface the staged source.
     let analytics = AnalyticsService::new(ctx.pool.clone());
     let by_source = analytics.get_event_count_by_source(None, None).await?;
-    assert!(by_source.values().sum::<i64>() >= 3);
+    assert!(
+        by_source.values().sum::<i64>() >= 3,
+        "analytics should observe staged events"
+    );
 
-    // Wire up the gateway service container against the same environment.
-    let annex_dir = tempfile::tempdir()?;
-    std::env::set_var("SINEX_ANNEX_PATH", annex_dir.path());
-    std::env::set_var("SINEX_INGEST_SOCKET", &socket_path_string);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut found = false;
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = jetstream.get_stream(&ingest_handle.stream_name).await {
+            if let Ok(info) = stream.info().await {
+                if info.state.messages >= stage_result.event_ids.len() as u64 {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    assert!(found, "expected JetStream to acknowledge staged events");
 
-    let container = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
-
-    let aggregated = container
-        .analytics
-        .get_event_count_by_source(None, None)
-        .await?;
-    assert!(aggregated.values().sum::<i64>() >= 3);
-
+    let _ = shutdown_tx.send(());
+    processor_handle.await??;
     ingest_handle.stop().await?;
     Ok(())
 }

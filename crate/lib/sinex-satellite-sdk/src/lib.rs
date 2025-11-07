@@ -15,7 +15,6 @@ pub mod acquisition_manager;
 pub mod annex;
 pub mod automaton_event_handler;
 pub mod checkpoint;
-pub mod cli;
 pub mod config;
 pub mod confirmation_handler;
 pub mod coordination;
@@ -23,7 +22,6 @@ pub mod dlq_retry;
 pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
-pub mod figment_config;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod jetstream_consumer;
@@ -34,16 +32,13 @@ pub mod nats_publisher;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
-pub mod processor_runner;
 pub mod replay;
-pub mod replay_control;
-pub mod replay_metrics;
-pub mod replay_progress;
-pub mod sensd_client;
-pub mod sensor_guard;
+pub mod runtime;
 pub mod sensors;
 pub mod stage_as_you_go;
-pub mod stream_processor;
+pub mod stream_processor {
+    pub use crate::runtime::stream::*;
+}
 pub mod version;
 
 pub use acquisition_manager::{
@@ -51,11 +46,6 @@ pub use acquisition_manager::{
 };
 pub use automaton_event_handler::AutomatonEventHandler;
 pub use checkpoint::{CheckpointManager, CheckpointState};
-pub use cli::{
-    parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
-    IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
-    SourceState,
-};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
@@ -69,17 +59,17 @@ pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, S
 pub use lease_manager::{LeaseManager, LeaseManagerConfig, LeaseStatus};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use nats_publisher::NatsPublisher;
-pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
-pub use replay::ReplayMode;
-pub use sensor_guard::{EventProcessor, MaterialConsumer, NotASensor};
+pub use replay::{
+    MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
+    ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+};
 pub use sensors::{
     AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
     ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,
 };
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
-    ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
-    StreamProcessorRunner, TimeHorizon,
+    ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorRunner, TimeHorizon,
 };
 pub use version::{SatelliteInstance, SatelliteVersion};
 

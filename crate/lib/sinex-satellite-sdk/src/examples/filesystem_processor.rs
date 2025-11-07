@@ -4,13 +4,9 @@
 //! the new unified StatefulStreamProcessor interface from Part 16.
 
 use crate::{
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
-    },
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor, TimeHorizon,
     },
     SatelliteResult,
 };
@@ -39,13 +35,12 @@ pub struct FilesystemProcessorConfig {
 }
 
 /// Example filesystem processor implementing unified stream processor interface
-#[derive(Debug)]
 pub struct FilesystemProcessor {
     /// Base directories to monitor
     watch_paths: Vec<Utf8PathBuf>,
 
-    /// Current context (set during initialization)
-    context: Option<StreamProcessorContext>,
+    /// Runtime handles captured during initialization
+    runtime: Option<ProcessorRuntimeState>,
 
     /// Last known filesystem state
     last_state: Option<FilesystemState>,
@@ -72,7 +67,7 @@ impl FilesystemProcessor {
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
             watch_paths,
-            context: None,
+            runtime: None,
             last_state: None,
         }
     }
@@ -177,8 +172,8 @@ impl FilesystemProcessor {
                     continue;
                 };
 
-                if let Some(ref context) = self.context {
-                    context.emit_event(event).await?;
+                if let Some(runtime) = self.runtime.as_ref() {
+                    runtime.event_emitter().emit(event).await?;
                 }
             }
 
@@ -238,11 +233,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        _config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
+        let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
             processor = self.processor_name(),
+            service = %service_info.service_name(),
             watch_paths = ?self.watch_paths,
             "Initializing filesystem processor"
         );
@@ -254,7 +250,8 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             }
         }
 
-        self.context = Some(ctx);
+        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        self.runtime = Some(runtime);
         Ok(())
     }
 
@@ -386,6 +383,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             supports_interactive: false,
             max_scan_size: Some(10000), // Limit for large directories
             supports_concurrent: false,
+            manages_own_continuous_loop: false,
         }
     }
 
@@ -430,104 +428,5 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             warnings,
             confidence,
         })
-    }
-}
-
-impl ExplorationProvider for FilesystemProcessor {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        let recent_activity = if let Some(ref state) = self.last_state {
-            vec![ActivityEntry {
-                timestamp: state.captured_at,
-                description: format!(
-                    "Snapshot taken: {} files in {} directories",
-                    state.total_files,
-                    state.directories.len()
-                ),
-                data: Some(serde_json::to_value(state)?),
-            }]
-        } else {
-            vec![]
-        };
-
-        Ok(SourceState {
-            description: format!(
-                "Filesystem processor monitoring {} paths",
-                self.watch_paths.len()
-            ),
-            last_updated: self
-                .last_state
-                .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(Utc::now),
-            total_items: self.last_state.as_ref().map(|s| s.total_files),
-            metadata: HashMap::from([
-                (
-                    "watch_paths".to_string(),
-                    serde_json::to_value(&self.watch_paths)?,
-                ),
-                (
-                    "processor_type".to_string(),
-                    serde_json::Value::String("ingestor".to_string()),
-                ),
-            ]),
-            healthy: true,
-            recent_activity,
-        })
-    }
-
-    fn get_ingestion_history(
-        &self,
-        _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        // In a real implementation, this would query the database for scan history
-        Ok(vec![])
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        // In a real implementation, this would compare filesystem state with Sinex events
-        let now = Utc::now();
-        let hour_ago = now - chrono::Duration::hours(1);
-
-        Ok(CoverageAnalysis {
-            time_range: (hour_ago, now),
-            source_total: self.last_state.as_ref().map(|s| s.total_files).unwrap_or(0),
-            sinex_total: 0, // Would query from database
-            coverage_percentage: 0.0,
-            missing_count: 0,
-            missing_samples: vec![],
-            duplicate_count: 0,
-            recommendations: vec![
-                "Run a full snapshot scan to capture current state".to_string(),
-                "Enable continuous monitoring for real-time updates".to_string(),
-            ],
-        })
-    }
-
-    fn export_data(
-        &self,
-        path: &SanitizedPath,
-        format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
-        if let Some(ref state) = self.last_state {
-            let content = match format {
-                ExportFormat::Json => serde_json::to_string_pretty(state)?,
-                ExportFormat::Csv => {
-                    // Simple CSV export
-                    let mut csv = "path,file_count\n".to_string();
-                    for (path, count) in &state.file_counts {
-                        csv.push_str(&format!("{},{}\n", path.as_str(), count));
-                    }
-                    csv
-                }
-                ExportFormat::Raw => format!("{:#?}", state),
-            };
-
-            std::fs::write(path.as_str(), content)?;
-        }
-
-        Ok(())
     }
 }

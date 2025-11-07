@@ -31,6 +31,7 @@ mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
 mod fixtures;
+mod jetstream;
 mod nats;
 mod path_validation;
 mod property_testing;
@@ -252,6 +253,7 @@ pub use deployment_scenario_utils::{
     ExternalDependency, PerformanceExpectations, PerformanceMetrics, ResourceConstraints,
     ValidationExpectation, ValidationStep, ValidationType,
 };
+pub use jetstream::ensure_material_streams;
 pub use nats::EphemeralNats;
 pub use satellite_management_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,

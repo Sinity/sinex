@@ -4,7 +4,9 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
-use async_nats::Client as NatsClient;
+use crate::stream_processor::ProcessorHandles;
+use crate::SatelliteResult;
+use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
@@ -20,6 +22,7 @@ use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 /// Rotation policy configuration (salvaged from sensd)
@@ -116,6 +119,56 @@ struct LedgerEntry {
 }
 
 impl AcquisitionManager {
+    /// Ensure JetStream streams required for material capture exist.
+    pub async fn bootstrap_streams(nats_client: &NatsClient) -> Result<()> {
+        let env = sinex_core::environment().clone();
+        let js = jetstream::new(nats_client.clone());
+
+        let mut attempt = 0;
+        loop {
+            match Self::ensure_streams_once(&js, &env).await {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    attempt += 1;
+                    if attempt >= 5 {
+                        return Err(err);
+                    }
+                    sleep(std::time::Duration::from_millis(100 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    async fn ensure_streams_once(js: &jetstream::Context, env: &SinexEnvironment) -> Result<()> {
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
+            subjects: vec![env.nats_subject("source_material.begin")],
+            storage: jetstream::stream::StorageType::File,
+            ..Default::default()
+        })
+        .await?;
+
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
+            subjects: vec![env.nats_subject("source_material.slices.>")],
+            storage: jetstream::stream::StorageType::File,
+            max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60),
+            max_message_size: 512 * 1024,
+            ..Default::default()
+        })
+        .await?;
+
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: env.nats_stream_name("SOURCE_MATERIAL_END"),
+            subjects: vec![env.nats_subject("source_material.end")],
+            storage: jetstream::stream::StorageType::File,
+            ..Default::default()
+        })
+        .await?;
+
+        Ok(())
+    }
+
     /// Create new acquisition manager
     pub fn new(
         nats_client: NatsClient,
@@ -141,6 +194,28 @@ impl AcquisitionManager {
             source_type,
             source_path,
         }
+    }
+
+    /// Create an acquisition manager directly from processor handles
+    pub fn from_handles(
+        handles: &ProcessorHandles,
+        rotation_policy: RotationPolicy,
+        source_type: impl Into<String>,
+        source_path: impl Into<String>,
+    ) -> SatelliteResult<Self> {
+        let nats_client = match handles.transport() {
+            crate::event_processor::EventTransport::Nats(publisher) => {
+                publisher.nats_client().clone()
+            }
+        };
+
+        Ok(Self::new(
+            nats_client,
+            handles.db_pool().clone(),
+            rotation_policy,
+            source_type.into(),
+            source_path.into(),
+        ))
     }
 
     /// Begin capturing a new source material
@@ -316,9 +391,9 @@ impl AcquisitionManager {
             offset_end: handle.bytes_written,
             offset_kind: "byte".to_string(),
             ts_capture: handle.started_at,
-            precision: "millisecond".to_string(),
-            clock: "system".to_string(),
-            source_type: self.source_type.clone(),
+            precision: "bounded".to_string(),
+            clock: "wall".to_string(),
+            source_type: "realtime_capture".to_string(),
         })
         .await?;
 
@@ -403,12 +478,13 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age = Utc::now()
+        let age_seconds = Utc::now()
             .signed_duration_since(handle.started_at)
-            .num_seconds() as u64;
+            .num_seconds()
+            .max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes
-            || age >= self.rotation_policy.max_age_seconds
+            || age_seconds >= self.rotation_policy.max_age_seconds
     }
 }
 

@@ -11,7 +11,7 @@ use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sqlx::FromRow;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use tracing::{debug, info, warn};
 
 /// Schema record from database
@@ -176,7 +176,7 @@ impl EventValidator {
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version DESC
+            ORDER BY source, event_type, updated_at DESC, schema_version DESC
             "#
         )
         .fetch_all(pool)
@@ -246,6 +246,80 @@ impl EventValidator {
         );
 
         Ok(validator)
+    }
+
+    /// Validate a payload using the latest schema mapping for a source/event type pair
+    pub fn validate_payload_for(
+        &self,
+        source: &str,
+        event_type: &str,
+        payload: &JsonValue,
+    ) -> Result<ValidationResult, Box<SinexError>> {
+        if !self.validation_enabled {
+            return Ok(ValidationResult::Skipped);
+        }
+
+        let source_key = Arc::new(source.to_string());
+        let event_type_key = Arc::new(event_type.to_string());
+
+        let schema_id = match self
+            .schema_lookup
+            .get(&(source_key.clone(), event_type_key.clone()))
+        {
+            Some(id) => id,
+            None => {
+                debug!(
+                    source = source,
+                    event_type = event_type,
+                    "No schema registered for source/event_type pair"
+                );
+                return Ok(ValidationResult::NoSchema);
+            }
+        };
+
+        let schema_ulid = Ulid::from_str(&schema_id).ok();
+
+        let cache_entry = match self.schema_cache.get(&schema_id) {
+            Some(entry) => entry,
+            None => {
+                if let Some(schema_ulid) = schema_ulid {
+                    warn!(
+                        source = source,
+                        event_type = event_type,
+                        schema = %schema_ulid,
+                        "Schema reference missing from cache"
+                    );
+                    return Ok(ValidationResult::SchemaNotFound {
+                        schema_id: schema_ulid,
+                    });
+                }
+
+                warn!(
+                    source = source,
+                    event_type = event_type,
+                    schema = %schema_id,
+                    "Schema reference missing from cache"
+                );
+                return Ok(ValidationResult::NoSchema);
+            }
+        };
+
+        let compiled_schema = cache_entry.compiled_schema.clone();
+        let validation = compiled_schema.validate(payload);
+
+        if let Err(errors) = validation {
+            let messages: Vec<String> = errors.map(|err| err.to_string()).collect();
+            warn!(
+                source = source,
+                event_type = event_type,
+                schema = %schema_id,
+                errors = ?messages,
+                "Payload validation failed"
+            );
+            Ok(ValidationResult::Invalid { errors: messages })
+        } else {
+            Ok(ValidationResult::Valid)
+        }
     }
 
     /// Validate an event

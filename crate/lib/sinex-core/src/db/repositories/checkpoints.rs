@@ -35,6 +35,8 @@ pub struct CheckpointRecord {
     pub last_processed_id: Option<Id<Event<JsonValue>>>,
     pub processed_count: i64,
     pub checkpoint_data: Option<JsonValue>,
+    pub checkpoint_version: i32,
+    pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -134,6 +136,8 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             "#,
@@ -164,6 +168,8 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             FROM core.processor_checkpoints 
@@ -195,6 +201,8 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
                 last_activity as "last_activity!",
                 updated_at as "updated_at!"
             FROM core.processor_checkpoints 
@@ -230,6 +238,7 @@ impl<'a> CheckpointRepository<'a> {
                     last_processed_id = $4::uuid,
                     checkpoint_data = $5,
                     processed_count = processed_count + 1,
+                    checkpoint_version = checkpoint_version + 1,
                     last_activity = NOW(),
                     updated_at = NOW()
                 WHERE processor_name = $1 
@@ -243,6 +252,8 @@ impl<'a> CheckpointRepository<'a> {
                     last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                     processed_count as "processed_count!",
                     checkpoint_data,
+                    checkpoint_version as "checkpoint_version!",
+                    created_at as "created_at!",
                     last_activity as "last_activity!",
                     updated_at as "updated_at!"
                 "#,
@@ -263,6 +274,7 @@ impl<'a> CheckpointRepository<'a> {
                 SET 
                     last_processed_id = $4::uuid,
                     checkpoint_data = $5,
+                    checkpoint_version = checkpoint_version + 1,
                     last_activity = NOW(),
                     updated_at = NOW()
                 WHERE processor_name = $1 
@@ -276,6 +288,8 @@ impl<'a> CheckpointRepository<'a> {
                     last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                     processed_count as "processed_count!",
                     checkpoint_data,
+                    checkpoint_version as "checkpoint_version!",
+                    created_at as "created_at!",
                     last_activity as "last_activity!",
                     updated_at as "updated_at!"
                 "#,
@@ -319,18 +333,21 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id = EXCLUDED.last_processed_id,
                 processed_count = EXCLUDED.processed_count,
                 checkpoint_data = EXCLUDED.checkpoint_data,
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
-                        id::uuid as "id!: Id<CheckpointRecord>",
+                id::uuid as "id!: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
-            last_activity as "last_activity!",
-            updated_at as "updated_at!"
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
+                last_activity as "last_activity!",
+                updated_at as "updated_at!"
             "#,
             id.to_uuid(),
             processor.as_str(),
@@ -392,6 +409,8 @@ impl<'a> CheckpointRepository<'a> {
                         last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
                         processed_count as "processed_count!",
                         checkpoint_data,
+                        checkpoint_version as "checkpoint_version!",
+                        created_at as "created_at!",
                         last_activity as "last_activity!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
@@ -413,6 +432,8 @@ impl<'a> CheckpointRepository<'a> {
                         last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
                         processed_count as "processed_count!",
                         checkpoint_data,
+                        checkpoint_version as "checkpoint_version!",
+                        created_at as "created_at!",
                         last_activity as "last_activity!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
@@ -439,6 +460,8 @@ impl<'a> CheckpointRepository<'a> {
                         last_processed_id as "last_processed_id: Id<Event<JsonValue>>",
                         processed_count as "processed_count!",
                         checkpoint_data,
+                        checkpoint_version as "checkpoint_version!",
+                        created_at as "created_at!",
                         last_activity as "last_activity!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
@@ -483,6 +506,7 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id = EXCLUDED.last_processed_id,
                 processed_count = EXCLUDED.processed_count,
                 checkpoint_data = EXCLUDED.checkpoint_data,
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1,
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
@@ -493,8 +517,10 @@ impl<'a> CheckpointRepository<'a> {
                 last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
                 processed_count as "processed_count!",
                 checkpoint_data,
-            last_activity as "last_activity!",
-            updated_at as "updated_at!"
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
+                last_activity as "last_activity!",
+                updated_at as "updated_at!"
             "#,
             id.to_uuid(),
             processor.as_str(),

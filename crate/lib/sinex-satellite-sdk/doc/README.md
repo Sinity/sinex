@@ -8,4 +8,9 @@ Markdown references embedded in rustdoc:
 - `coordination.md` – heartbeat/upgrade recovery flows.
 - `preflight.md` – satellite preflight verification categories and usage.
 - `annex.md` – annex subsystem architecture and workflows.
-- `grpc_client.md` – ingestd gRPC client usage patterns and retries.
+
+Key runtime entry points:
+
+- `ProcessorInitContext::into_runtime()` yields a `ProcessorRuntimeState` with ergonomic accessors for acquisition, job, lifecycle, coordination, heartbeat, and replay helpers. Satellites should stop threading raw pools or emitters and instead consume the runtime snapshot directly.
+- `replay::ReplayService::from_runtime` is the canonical way to construct replay pipelines for both the CLI and satellites. It exposes convenience methods such as `replay_into_emitter` to drive events back through the processor's emitter.
+- Tests can stand up fully wired processors through `tests::support::runtime::TestRuntimeBuilder`, which provisions ephemeral NATS, a PostgreSQL pool, and channel-backed emitters in a single fluent builder.

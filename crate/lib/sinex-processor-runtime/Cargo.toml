@@ -1,0 +1,27 @@
+[package]
+name = "sinex-processor-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Core runtime dependencies
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-core = { path = "../sinex-core" }
+
+# CLI & runtime utilities
+clap = { workspace = true, features = ["derive"] }
+color-eyre.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+# Message bus
+async-nats.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }

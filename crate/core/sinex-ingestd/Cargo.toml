@@ -61,10 +61,12 @@ blake3.workspace = true
 
 # System
 sd-notify.workspace = true
+libc = "0.2"
 
 # Local dependencies
 sinex-core = { path = "../../lib/sinex-core", features = [] }
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", default-features = false }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
-sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+tempfile.workspace = true

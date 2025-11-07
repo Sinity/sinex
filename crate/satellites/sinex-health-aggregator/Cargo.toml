@@ -12,6 +12,7 @@ mimalloc = { workspace = true }
 # Core Sinex dependencies
 sinex-core = { path = "../../lib/sinex-core" }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 
 # CLI parsing
 clap = { version = "4.0", features = ["derive", "env"] }

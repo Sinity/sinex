@@ -1,0 +1,27 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+/// Time horizon defines the scope and mode of scanning operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TimeHorizon {
+    Historical { end_time: DateTime<Utc> },
+    Continuous,
+    Snapshot,
+}
+
+impl TimeHorizon {
+    pub fn is_continuous(&self) -> bool {
+        matches!(self, TimeHorizon::Continuous)
+    }
+
+    pub fn is_bounded(&self) -> bool {
+        matches!(self, TimeHorizon::Historical { .. } | TimeHorizon::Snapshot)
+    }
+
+    pub fn end_time(&self) -> Option<DateTime<Utc>> {
+        match self {
+            TimeHorizon::Historical { end_time } => Some(*end_time),
+            _ => None,
+        }
+    }
+}

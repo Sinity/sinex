@@ -138,7 +138,7 @@ impl StreamingCascadeAnalyzer {
         info!("Analyzing cascades for {} events", event_ids.len());
 
         // Generate unique session ID for this analysis
-        let session_id = format!("{}", Utc::now().timestamp_nanos_opt().unwrap_or_default());
+        let session_id = sinex_core::types::ulid::Ulid::new().to_string();
 
         // Start a transaction for the entire analysis
         let mut tx = self
@@ -544,7 +544,7 @@ impl StreamingCascadeAnalyzer {
         let query = format!(
             r#"
             WITH archived_set AS (
-                SELECT id FROM {} WHERE depth = 0
+                SELECT id FROM {}
             ),
             violations AS (
                 SELECT 
@@ -591,6 +591,7 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<Vec<CircularDependency>> {
         // For now, use a simple SQL approach to find potential cycles
         // In production, would implement proper Tarjan's algorithm
+        let max_cycle_depth = self.config.max_depth.max(1);
         let query = format!(
             r#"
             WITH RECURSIVE cycle_check AS (
@@ -599,7 +600,7 @@ impl StreamingCascadeAnalyzer {
                     parent_ids,
                     ARRAY[id] as path,
                     FALSE as has_cycle
-                FROM {}
+                FROM {0}
                 WHERE depth = 0
                 
                 UNION ALL
@@ -609,17 +610,17 @@ impl StreamingCascadeAnalyzer {
                     t.parent_ids,
                     cc.path || t.id,
                     t.id = ANY(cc.path) as has_cycle
-                FROM {} t
+                FROM {0} t
                 JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
                 WHERE NOT cc.has_cycle
-                AND array_length(cc.path, 1) < 10
+                AND array_length(cc.path, 1) < {1}
             )
             SELECT path
             FROM cycle_check
             WHERE has_cycle
             LIMIT 10
             "#,
-            table_name, table_name
+            table_name, max_cycle_depth
         );
 
         let rows = sqlx::query_as::<_, (Vec<Ulid>,)>(&query)
@@ -769,7 +770,7 @@ impl StreamingCascadeAnalyzer {
         let query = format!(
             r#"
             SELECT COUNT(*) as count,
-                   AVG(octet_length(id::text) + 
+                   AVG(octet_length(ulid_to_bytea(id)) + 
                        COALESCE(array_length(parent_ids, 1) * 16, 0) + 
                        8) as avg_row_size
             FROM {}

@@ -15,16 +15,11 @@
 use async_nats::jetstream::{
     consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
     stream::{Config as StreamConfig, RetentionPolicy},
-    Context,
 };
 use color_eyre::eyre::Result;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::{
-    domain::{ConsumerGroup, ConsumerName, ProcessorName},
-    ulid::Ulid,
-};
+use sinex_core::types::ulid::Ulid;
 use sinex_test_utils::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -115,8 +110,9 @@ async fn simulate_work_processor(
         ..Default::default()
     };
 
-    let consumer = jetstream
-        .get_or_create_consumer(&stream_name, consumer_config)
+    let stream = jetstream.get_stream(&stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(&consumer_name, consumer_config)
         .await?;
 
     let mut processed_count = 0;
@@ -238,7 +234,7 @@ async fn test_work_queue_event_processing_pipeline(
     // Publish work items to the stream
     for (i, work_item) in work_items.iter().enumerate() {
         let work_json = serde_json::to_string(work_item)?;
-        let ack = jetstream.publish(&subject, work_json.into()).await?;
+        let ack = jetstream.publish(subject.clone(), work_json.into()).await?;
         ack.await?;
         debug!("Published work item {}: {}", i + 1, work_item["event_type"]);
     }
@@ -337,7 +333,7 @@ async fn test_concurrent_work_claiming_patterns(
         });
 
         let work_json = serde_json::to_string(&work_item)?;
-        jetstream.publish(&subject, work_json.into()).await?;
+        jetstream.publish(subject.clone(), work_json.into()).await?;
     }
 
     // Create work tracker
@@ -470,7 +466,7 @@ async fn test_work_queue_cleanup_and_tracking(
     // Publish work items
     for work_item in &work_items {
         let work_json = serde_json::to_string(work_item)?;
-        jetstream.publish(&subject, work_json.into()).await?;
+        jetstream.publish(subject.clone(), work_json.into()).await?;
     }
 
     // Create a single worker for cleanup processing
@@ -504,15 +500,17 @@ async fn test_work_queue_cleanup_and_tracking(
     );
 
     // Verify no remaining work in the queue
-    let remaining_consumer = jetstream
-        .create_consumer_on_stream(
+    let stream = jetstream.get_stream(&stream_name).await?;
+    let remaining_consumer_name = format!("remaining_check_{}", test_id);
+    let remaining_consumer = stream
+        .get_or_create_consumer(
+            &remaining_consumer_name,
             ConsumerConfig {
-                durable_name: Some(format!("remaining_check_{}", test_id)),
+                durable_name: Some(remaining_consumer_name.clone()),
                 deliver_policy: DeliverPolicy::All,
                 ack_policy: AckPolicy::Explicit,
                 ..Default::default()
             },
-            &stream_name,
         )
         .await?;
 
@@ -532,7 +530,9 @@ async fn test_work_queue_cleanup_and_tracking(
             while let Some(message) = message_stream.next().await {
                 remaining_count += 1;
                 if let Ok(msg) = message {
-                    msg.ack().await?;
+                    msg.ack()
+                        .await
+                        .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                 }
             }
 
@@ -632,21 +632,21 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
     for work_item in &high_priority_work {
         let work_json = serde_json::to_string(work_item)?;
         jetstream
-            .publish(&format!("{}.high", subject_base), work_json.into())
+            .publish(format!("{}.high", subject_base), work_json.into())
             .await?;
     }
 
     for work_item in &medium_priority_work {
         let work_json = serde_json::to_string(work_item)?;
         jetstream
-            .publish(&format!("{}.medium", subject_base), work_json.into())
+            .publish(format!("{}.medium", subject_base), work_json.into())
             .await?;
     }
 
     for work_item in &low_priority_work {
         let work_json = serde_json::to_string(work_item)?;
         jetstream
-            .publish(&format!("{}.low", subject_base), work_json.into())
+            .publish(format!("{}.low", subject_base), work_json.into())
             .await?;
     }
 

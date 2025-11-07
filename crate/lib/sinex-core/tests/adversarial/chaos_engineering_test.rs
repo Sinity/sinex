@@ -195,7 +195,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> col
             last_error_summary,
             registered_at,
             updated_at
-        FROM sinex_schemas.processor_manifests
+        FROM core.processor_manifests
         WHERE processor_name = $1 AND processor_type = 'automaton'
         "#,
         processor_name
@@ -272,7 +272,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> c
 
             // Attempt heartbeat update
             match sqlx::query!(
-                "UPDATE sinex_schemas.processor_manifests
+                "UPDATE core.processor_manifests
                  SET last_heartbeat_ts = $1, updated_at = $2
                  WHERE processor_name = $3 AND processor_type = 'automaton'",
                 Utc::now(),
@@ -363,7 +363,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             // Send some heartbeats
             for _ in 0..3 {
                 match sqlx::query!(
-                    "UPDATE sinex_schemas.processor_manifests
+                    "UPDATE core.processor_manifests
                      SET last_heartbeat_ts = $1, updated_at = $2
                      WHERE processor_name = $3 AND processor_type = 'automaton",
                     Utc::now(),
@@ -386,7 +386,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
             // Deregister agent
             match sqlx::query!(
-                "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton",
+                "DELETE FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton",
                 processor_name
             )
             .execute(&pool_clone)
@@ -418,7 +418,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
     // Verify final database state
     let remaining_agents = sqlx::query!(
-        "SELECT COUNT(*) as count FROM sinex_schemas.processor_manifests WHERE processor_name LIKE $1 AND processor_type = 'automaton",
+        "SELECT COUNT(*) as count FROM core.processor_manifests WHERE processor_name LIKE $1 AND processor_type = 'automaton",
         format!("{}%", base_processor_name)
     )
     .fetch_one(ctx.pool())
@@ -877,7 +877,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> color_eyr
 
                 // Try to update agent status
                 match sqlx::query!(
-                    "INSERT INTO sinex_schemas.processor_manifests
+                    "INSERT INTO core.processor_manifests
                      (processor_name, processor_type, version, status, registered_at, updated_at)
                      VALUES ($1, 'automaton', $2, $3, $4, $5)
                      ON CONFLICT (processor_name, version, git_commit_sha) DO UPDATE SET
@@ -920,7 +920,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> color_eyr
 
     // Check final state consistency
     let final_agents = sqlx::query!(
-        "SELECT processor_name as processor_name, status FROM sinex_schemas.processor_manifests WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"
+        "SELECT processor_name as processor_name, status FROM core.processor_manifests WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"
     )
     .fetch_all(ctx.pool())
     .await?;

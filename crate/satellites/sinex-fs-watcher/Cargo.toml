@@ -35,12 +35,14 @@ sqlx = { workspace = true }
 tokio-stream = { workspace = true, features = ["net"] }
 async-stream = "0.3"
 futures = { workspace = true }
+notify = { workspace = true }
 
 # Validation
 validator = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 
 [features]

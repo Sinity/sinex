@@ -82,6 +82,8 @@ mod serde_tests {
             last_processed_id: Some(Ulid::new()),
             processed_count: 42,
             checkpoint_data: Some(serde_json::json!({"offset": 100})),
+            checkpoint_version: 1,
+            created_at: Utc::now(),
             last_activity: Utc::now(),
             updated_at: Utc::now(),
         };

@@ -1,3 +1,5 @@
+#![cfg(feature = "rstest-preview")]
+
 //! Example showing the enhanced sinex_test macro with rstest integration
 //!
 //! This demonstrates TRUE integration where sinex_test automatically detects

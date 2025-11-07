@@ -46,6 +46,8 @@ pub struct SearchService {
     pool: DbPool,
 }
 
+const MAX_LIMIT: i32 = 1000;
+
 impl SearchService {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -53,6 +55,8 @@ impl SearchService {
 
     /// Search events based on criteria using parameterized SQLx query building
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
+        let query = normalize_query(query);
+
         // Base select. Score is a placeholder (1.0) to keep response shape stable.
         let mut sql = String::from(
             "SELECT id::text AS event_id, source, event_type, host, ts_ingest, payload, 1.0::float8 AS score \
@@ -215,5 +219,50 @@ impl SearchService {
 
         let substring: String = chars[start..end].iter().collect();
         format!("...{}...", substring)
+    }
+}
+
+fn normalize_query(mut query: SearchQuery) -> SearchQuery {
+    if query.limit <= 0 {
+        query.limit = 50;
+    }
+    query.limit = query.limit.min(MAX_LIMIT);
+    if query.offset < 0 {
+        query.offset = 0;
+    }
+    query
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_query_enforces_bounds() {
+        let query = SearchQuery {
+            text: None,
+            sources: vec![],
+            event_types: vec![],
+            start_time: None,
+            end_time: None,
+            limit: 10_000,
+            offset: -5,
+        };
+
+        let normalized = normalize_query(query);
+        assert_eq!(normalized.limit, MAX_LIMIT);
+        assert_eq!(normalized.offset, 0);
+
+        let query = SearchQuery {
+            text: None,
+            sources: vec![],
+            event_types: vec![],
+            start_time: None,
+            end_time: None,
+            limit: 0,
+            offset: 0,
+        };
+        let normalized = normalize_query(query);
+        assert_eq!(normalized.limit, 50);
     }
 }

@@ -684,7 +684,7 @@ fn generate_cli_integration(
 
             /// Get the processor main function for CLI integration
             pub fn processor_main() -> ! {
-                sinex_satellite_sdk::processor_main!(#struct_name)
+                sinex_processor_runtime::processor_main!(#struct_name)
             }
 
             /// Get the source name for this processor

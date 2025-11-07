@@ -655,7 +655,7 @@ async fn verify_schema_compatibility(
     info!("Verifying schema compatibility");
 
     // Check for existence of critical tables
-    let critical_tables = vec!["core.events", "core.automaton_checkpoints"];
+    let critical_tables = vec!["core.events", "core.processor_checkpoints"];
 
     let mut table_status = HashMap::new();
 

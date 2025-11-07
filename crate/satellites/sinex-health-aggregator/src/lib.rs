@@ -16,14 +16,14 @@ mod common {
         Event, JsonValue,
     };
 
-    // SDK facade for common processor types
+    // Runtime/SDK facades
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    };
     pub use sinex_satellite_sdk::{
-        cli::{
-            CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-        },
         stream_processor::{
-            Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-            StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
         SatelliteResult,
     };
@@ -36,12 +36,19 @@ mod common {
         serde_json,
         sqlx::PgPool,
         std::{collections::HashMap, time::Duration},
-        tracing::{info, warn},
+        tracing::{error, info, warn},
     };
 }
 
 // Use local facade for common types
 use crate::common::*;
+use sinex_satellite_sdk::{
+    confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+    jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
+    ProcessingModel, SatelliteError,
+};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 /// Configuration for Health Aggregator
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -83,7 +90,7 @@ pub struct ComponentHealth {
     pub last_seen: DateTime<Utc>,
     pub status: HealthStatus,
     pub metrics: HashMap<String, f64>,
-    pub recent_events: Vec<Id<Event<JsonValue>>>,
+    pub recent_events: Vec<EventId>,
 }
 
 /// Health status enumeration
@@ -103,22 +110,187 @@ pub enum HealthStatus {
 /// - Health trend analysis
 /// - Alert generation for unhealthy components
 pub struct HealthAggregator {
-    context: Option<StreamProcessorContext>,
+    runtime: Option<ProcessorRuntimeState>,
     config: HealthAggregatorConfig,
     event_sender: Option<tokio::sync::mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     component_health: HashMap<String, ComponentHealth>,
+    incoming_tx: Option<mpsc::UnboundedSender<ProvisionalEvent>>,
+    incoming_rx: Option<mpsc::UnboundedReceiver<ProvisionalEvent>>,
+    consumer: Option<Arc<JetStreamEventConsumer>>,
+    consumer_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl HealthAggregator {
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: HealthAggregatorConfig::default(),
             event_sender: None,
             db_pool: None,
             component_health: HashMap::new(),
+            incoming_tx: None,
+            incoming_rx: None,
+            consumer: None,
+            consumer_handle: None,
         }
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::Lifecycle("Processor runtime not initialized".to_string())
+        })
+    }
+
+    /// Initialize the confirmed event channel if needed.
+    fn ensure_event_channel(&mut self) {
+        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
+            let (tx, rx) = mpsc::unbounded_channel();
+            self.incoming_tx = Some(tx);
+            self.incoming_rx = Some(rx);
+        }
+    }
+
+    /// Lazily start a JetStream consumer that forwards confirmed events into the local channel.
+    async fn ensure_consumer(&mut self) -> SatelliteResult<()> {
+        if let Some(handle) = self.consumer_handle.as_ref() {
+            if !handle.is_finished() {
+                return Ok(());
+            }
+        }
+        self.consumer_handle = None;
+        self.consumer = None;
+
+        let runtime = self.runtime()?;
+        let transport = runtime.transport().clone();
+        let service_name = runtime.service_info().service_name().to_string();
+
+        // Only NATS transport is supported in JetStream mode
+        let nats_publisher = match transport {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => publisher,
+        };
+
+        self.ensure_event_channel();
+        let sender = self.incoming_tx.clone().ok_or_else(|| {
+            SatelliteError::Processing("Confirmed event channel unavailable".to_string())
+        })?;
+
+        let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
+        let env = sinex_core::environment().clone();
+        let config = JetStreamEventConsumerConfig {
+            processing_model: ProcessingModel::LeaderStandby,
+            batch_size: 128,
+            confirmation_timeout: Duration::from_secs(60),
+            consumer_name: format!("{}-health-aggregator", service_name.replace('.', "_")),
+            enable_provisional_processing: false,
+        };
+
+        let consumer = Arc::new(JetStreamEventConsumer::new(
+            nats_publisher.nats_client().clone(),
+            env,
+            config,
+            handler,
+            None,
+        ));
+
+        let consumer_run = consumer.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(err) = consumer_run.run().await {
+                error!("Health aggregator JetStream consumer exited: {err}");
+            }
+        });
+
+        self.consumer = Some(consumer);
+        self.consumer_handle = Some(handle);
+
+        Ok(())
+    }
+
+    /// Emit component/system health reports based on current state.
+    async fn emit_reports(
+        &self,
+        event_sender: &tokio::sync::mpsc::UnboundedSender<Event<JsonValue>>,
+    ) -> SatelliteResult<u64> {
+        let mut events_processed = 0u64;
+
+        if self.config.enable_component_health_reports {
+            for (component_name, health) in &self.component_health {
+                if let Ok(event) = self
+                    .generate_component_health_report(component_name, health)
+                    .await
+                {
+                    if let Err(err) = event_sender.send(event) {
+                        warn!(
+                            "Failed to send component health report for {}: {}",
+                            component_name, err
+                        );
+                    } else {
+                        events_processed += 1;
+                    }
+                }
+            }
+        }
+
+        if self.config.enable_system_health_status {
+            if let Ok(event) = self.generate_system_health_status().await {
+                if let Err(err) = event_sender.send(event) {
+                    warn!("Failed to send system health status: {}", err);
+                } else {
+                    events_processed += 1;
+                }
+            }
+        }
+
+        let alerts = self.generate_health_alerts().await?;
+        for alert in alerts {
+            if let Err(err) = event_sender.send(alert) {
+                warn!("Failed to send health alert: {}", err);
+            } else {
+                events_processed += 1;
+            }
+        }
+
+        Ok(events_processed)
+    }
+
+    /// Process a confirmed event flowing from JetStream.
+    async fn process_confirmed_event(
+        &mut self,
+        provisional: ProvisionalEvent,
+    ) -> SatelliteResult<u64> {
+        use sinex_core::db::repositories::DbPoolExt;
+
+        let db_pool = self.db_pool.as_ref().ok_or_else(|| {
+            SatelliteError::Processing("Database pool not initialized".to_string())
+        })?;
+        let event_sender = self
+            .event_sender
+            .as_ref()
+            .ok_or_else(|| SatelliteError::Processing("Event sender not initialized".to_string()))?
+            .clone();
+
+        let event_id = EventId::from_ulid(provisional.event_id);
+
+        let persisted_event = match db_pool.events().get_by_id(event_id.clone()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                warn!(
+                    event_id = %event_id,
+                    "Confirmed event not yet visible in database; skipping health update"
+                );
+                return Ok(0);
+            }
+            Err(err) => {
+                return Err(SatelliteError::Processing(format!(
+                    "Failed to load confirmed event {}: {}",
+                    event_id, err
+                )))
+            }
+        };
+
+        let events = vec![persisted_event];
+        self.update_component_health(&events).await;
+        self.emit_reports(&event_sender).await
     }
 
     /// Aggregate health events and produce health status reports
@@ -143,49 +315,7 @@ impl HealthAggregator {
         // Update component health status from events
         self.update_component_health(&health_events).await;
 
-        let mut events_processed = 0u64;
-
-        // Generate component health reports if enabled
-        if self.config.enable_component_health_reports {
-            for (component_name, health) in &self.component_health {
-                if let Ok(health_report) = self
-                    .generate_component_health_report(component_name, health)
-                    .await
-                {
-                    if let Err(e) = event_sender.send(health_report) {
-                        warn!(
-                            "Failed to send component health report for {}: {}",
-                            component_name, e
-                        );
-                    } else {
-                        events_processed += 1;
-                    }
-                }
-            }
-        }
-
-        // Generate system-wide health status if enabled
-        if self.config.enable_system_health_status {
-            if let Ok(system_health) = self.generate_system_health_status().await {
-                if let Err(e) = event_sender.send(system_health) {
-                    warn!("Failed to send system health status: {}", e);
-                } else {
-                    events_processed += 1;
-                }
-            }
-        }
-
-        // Generate health alerts for unhealthy components
-        let alert_events = self.generate_health_alerts().await?;
-        for alert_event in alert_events {
-            if let Err(e) = event_sender.send(alert_event) {
-                warn!("Failed to send health alert: {}", e);
-            } else {
-                events_processed += 1;
-            }
-        }
-
-        Ok(events_processed)
+        self.emit_reports(&event_sender).await
     }
 
     /// Query health-related events from the database
@@ -590,21 +720,40 @@ struct ComponentHealthInfo {
     metrics: HashMap<String, f64>,
 }
 
+#[derive(Clone)]
+struct ChannelConfirmedEventHandler {
+    sender: mpsc::UnboundedSender<ProvisionalEvent>,
+}
+
+impl ChannelConfirmedEventHandler {
+    fn new(sender: mpsc::UnboundedSender<ProvisionalEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+#[async_trait]
+impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
+    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> SatelliteResult<()> {
+        self.sender.send(event.clone()).map_err(|err| {
+            SatelliteError::Processing(format!("Failed to forward confirmed event: {}", err))
+        })?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
     type Config = HealthAggregatorConfig;
 
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
-
-        // Get database pool and event sender from context
-        self.db_pool = Some(ctx.db_pool.clone());
-        self.event_sender = Some(ctx.event_sender.clone());
-        self.context = Some(ctx);
+        let (config, runtime) = init.into_runtime();
+        self.db_pool = Some(runtime.db_pool().clone());
+        self.event_sender = Some(runtime.event_sender());
+        self.runtime = Some(runtime);
         self.config = config;
 
         info!(
@@ -634,8 +783,26 @@ impl StatefulStreamProcessor for HealthAggregator {
                 self.aggregate_health_events(&from).await.unwrap_or(0)
             }
             TimeHorizon::Continuous => {
-                // Continuous health monitoring
-                self.aggregate_health_events(&from).await.unwrap_or(0)
+                self.ensure_consumer().await?;
+
+                let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+                    SatelliteError::Processing(
+                        "Confirmed events channel not initialized".to_string(),
+                    )
+                })?;
+
+                let mut processed = self.aggregate_health_events(&from).await.unwrap_or(0);
+
+                while let Some(provisional) = receiver.recv().await {
+                    processed += self.process_confirmed_event(provisional).await?;
+                }
+
+                info!("Confirmed event channel closed; exiting continuous aggregation loop");
+                self.incoming_tx = None;
+                self.incoming_rx = None;
+                self.consumer_handle = None;
+                self.consumer = None;
+                processed
             }
         };
 
@@ -681,9 +848,40 @@ impl StatefulStreamProcessor for HealthAggregator {
         ProcessorType::Automaton
     }
 
+    fn capabilities(&self) -> ProcessorCapabilities {
+        ProcessorCapabilities {
+            supports_continuous: true,
+            supports_historical: true,
+            supports_snapshot: true,
+            supports_interactive: false,
+            max_scan_size: None,
+            supports_concurrent: false,
+            manages_own_continuous_loop: true,
+        }
+    }
+
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // Health aggregation operates on recent data, no persistent checkpoint needed
         Ok(Checkpoint::None)
+    }
+
+    async fn shutdown(&mut self) -> SatelliteResult<()> {
+        info!("Shutting down health aggregator");
+
+        if let Some(consumer) = self.consumer.take() {
+            consumer.stop().await;
+        }
+
+        if let Some(handle) = self.consumer_handle.take() {
+            if let Err(err) = handle.await {
+                warn!("Failed to join consumer task: {err}");
+            }
+        }
+
+        self.incoming_tx = None;
+        self.incoming_rx = None;
+
+        Ok(())
     }
 }
 

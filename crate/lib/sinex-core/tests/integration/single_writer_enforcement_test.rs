@@ -5,17 +5,17 @@
 //! - Satellites must go through ingestd for all event writes
 //! - Events only appear in DB after commit (post-commit publish property)
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use sinex_core::{
     types::domain::{EventSource, EventType},
     Event, JsonValue,
 };
-use sinex_test_utils::{fixtures::*, sinex_test, TestContext};
-use sqlx::PgPool;
+use sinex_test_utils::{sinex_test, TestContext};
+use sqlx::Row;
 
 /// Test that satellites cannot directly write to core.events table
 #[sinex_test]
-async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Result<()> {
+async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> EyreResult<()> {
     // This test would need to be run with different connection permissions
     // In a real CI environment, we'd have:
     // 1. A satellite connection with restricted permissions
@@ -44,7 +44,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
           AND source_event_ids IS NULL
         "#,
     )
-    .fetch_one(ctx.pool.as_ref())
+    .fetch_one(&ctx.pool)
     .await?;
 
     assert_eq!(
@@ -58,7 +58,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
 
 /// Test that ingestd is the only service that can write events
 #[sinex_test]
-async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
+async fn test_only_ingestd_writes_events(ctx: TestContext) -> EyreResult<()> {
     // In a proper setup, we would:
     // 1. Start a satellite service
     // 2. Have it attempt to write directly
@@ -74,7 +74,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
         WHERE source NOT LIKE 'test%'
         "#,
     )
-    .fetch_all(ctx.pool.as_ref())
+    .fetch_all(&ctx.pool)
     .await?;
 
     // All non-test events should come from known satellites
@@ -97,9 +97,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
 
 /// Test that events appear in DB only after commit (post-commit publish)
 #[sinex_test]
-async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
-    use sqlx::Transaction;
-
+async fn test_post_commit_publish_property(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool.clone();
 
     // Start a transaction
@@ -147,7 +145,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
         "#,
     )
     .bind(event_id.to_uuid())
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await?;
 
     assert_eq!(
@@ -168,7 +166,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
         "#,
     )
     .bind(event_id.to_uuid())
-    .fetch_one(pool.as_ref())
+    .fetch_one(&pool)
     .await?;
 
     assert_eq!(
@@ -184,7 +182,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
         "#,
     )
     .bind(event_id.to_uuid())
-    .execute(pool.as_ref())
+    .execute(&pool)
     .await?;
 
     Ok(())
@@ -192,7 +190,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
 
 /// CI check: Verify no live events reference archived events
 #[sinex_test]
-async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
+async fn test_no_live_to_archived_references(ctx: TestContext) -> EyreResult<()> {
     // This is the CI check from TARGET_final.md E.5
     let violations = sqlx::query(
         r#"
@@ -202,7 +200,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
         WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived)
         "#,
     )
-    .fetch_one(ctx.pool.as_ref())
+    .fetch_one(&ctx.pool)
     .await?;
 
     assert_eq!(
@@ -218,7 +216,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
 
 /// CI check: Verify XOR provenance constraint
 #[sinex_test]
-async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
+async fn test_provenance_xor_constraint(ctx: TestContext) -> EyreResult<()> {
     // This is the CI check from TARGET_final.md E.5
     let violations = sqlx::query(
         r#"
@@ -228,7 +226,7 @@ async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
            OR (source_material_id IS NOT NULL AND source_event_ids IS NOT NULL)
         "#,
     )
-    .fetch_one(ctx.pool.as_ref())
+    .fetch_one(&ctx.pool)
     .await?;
 
     assert_eq!(
@@ -244,7 +242,7 @@ async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
 
 /// CI check: Verify anchor uniqueness for first-order events
 #[sinex_test]
-async fn test_anchor_uniqueness(ctx: TestContext) -> Result<()> {
+async fn test_anchor_uniqueness(ctx: TestContext) -> EyreResult<()> {
     // This is the CI check from TARGET_final.md E.5
     let duplicates = sqlx::query(
         r#"
@@ -255,7 +253,7 @@ async fn test_anchor_uniqueness(ctx: TestContext) -> Result<()> {
         HAVING COUNT(*) > 1
         "#,
     )
-    .fetch_all(ctx.pool.as_ref())
+    .fetch_all(&ctx.pool)
     .await?;
 
     assert!(

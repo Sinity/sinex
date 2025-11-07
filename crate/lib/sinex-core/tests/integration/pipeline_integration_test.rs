@@ -12,17 +12,15 @@
 //! final processing, ensuring data integrity and correct processing semantics.
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use futures::future::join_all;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::domain::EventSource;
 use sinex_test_utils::prelude::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Mutex;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 // =============================================================================
 // Event Ingestion Pipeline Tests
@@ -30,7 +28,7 @@ use tokio::time::{sleep, timeout};
 
 /// Test complete event ingestion pipeline from raw input to database storage
 #[sinex_test]
-async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<()> {
     tracing::info!("Testing complete event ingestion pipeline");
 
     // Phase 1: Generate diverse test events representing different sources
@@ -89,10 +87,15 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> color_eyre:
             .await?;
         created_event_ids.push(event.id);
 
+        let event_id_display = event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "missing".to_string());
         tracing::debug!(
             source = source,
             event_type = event_type,
-            event_id = %event.id,
+            event_id = %event_id_display,
             "Event processed through ingestion pipeline"
         );
     }
@@ -108,8 +111,10 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> color_eyre:
     // Note: No batch get_by_ids method available, so query individually
     let mut stored_events = Vec::new();
     for event_id in &created_event_ids {
-        if let Some(event) = ctx.pool.events().get_by_id(*event_id).await? {
-            stored_events.push(event);
+        if let Some(id) = event_id {
+            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
+                stored_events.push(event);
+            }
         }
     }
 
@@ -171,7 +176,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> color_eyre:
 
 /// Test pipeline handling of concurrent event streams
 #[sinex_test]
-async fn test_concurrent_pipeline_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()> {
     tracing::info!("Testing concurrent pipeline processing");
 
     let concurrent_streams = 4;
@@ -204,11 +209,16 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> color_eyre::ey
                     .await
                 {
                     Ok(event) => {
+                        let event_id_display = event
+                            .id
+                            .as_ref()
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "missing".to_string());
                         stream_events.push(event.id);
                         tracing::trace!(
                             stream_id = stream_id,
                             event_idx = event_idx,
-                            event_id = %event.id,
+                            event_id = %event_id_display,
                             "Stream event processed"
                         );
                     }
@@ -285,8 +295,10 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> color_eyre::ey
     // Verify all events are in database and accessible
     let mut stored_events = Vec::new();
     for event_id in &all_processed_ids {
-        if let Some(event) = ctx.pool.events().get_by_id(*event_id).await? {
-            stored_events.push(event);
+        if let Some(id) = event_id {
+            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
+                stored_events.push(event);
+            }
         }
     }
 
@@ -338,7 +350,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> color_eyre::ey
 
 /// Test pipeline data transformation and enrichment
 #[sinex_test]
-async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_pipeline_data_transformation(ctx: TestContext) -> EyreResult<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
 
     // Create raw events that should be processed and enriched
@@ -378,10 +390,13 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
     let mut transformed_event_ids = Vec::new();
 
     for raw_event_id in &raw_event_ids {
+        let Some(ref id) = raw_event_id else {
+            continue;
+        };
         let raw_event = ctx
             .pool
             .events()
-            .get_by_id(*raw_event_id)
+            .get_by_id(id.clone())
             .await?
             .expect("Raw event should exist");
 
@@ -427,8 +442,10 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
     // Phase 3: Verify transformation results
     let mut transformed_events = Vec::new();
     for event_id in &transformed_event_ids {
-        if let Some(event) = ctx.pool.events().get_by_id(*event_id).await? {
-            transformed_events.push(event);
+        if let Some(id) = event_id {
+            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
+                transformed_events.push(event);
+            }
         }
     }
 
@@ -441,10 +458,10 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
     // Verify terminal command transformation
     let git_event = transformed_events
         .iter()
-        .find(|e| e.source == "terminal")
+        .find(|e| e.source.as_ref() == "terminal")
         .expect("Should find transformed terminal event");
 
-    assert_eq!(git_event.event_type, "command.raw.processed");
+    assert_eq!(git_event.event_type.as_ref(), "command.raw.processed");
     assert_eq!(git_event.payload["command"], "git");
     assert_eq!(git_event.payload["subcommand"], "commit");
     assert_eq!(git_event.payload["is_git_operation"], true);
@@ -453,10 +470,10 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
     // Verify filesystem transformation
     let file_event = transformed_events
         .iter()
-        .find(|e| e.source == "filesystem")
+        .find(|e| e.source.as_ref() == "filesystem")
         .expect("Should find transformed filesystem event");
 
-    assert_eq!(file_event.event_type, "file.raw.processed");
+    assert_eq!(file_event.event_type.as_ref(), "file.raw.processed");
     assert_eq!(file_event.payload["language"], "rust");
     assert_eq!(file_event.payload["is_source_code"], true);
     assert_eq!(file_event.payload["operation_type"], "file_modification");
@@ -477,9 +494,19 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
 
         assert!(raw_event_ids.contains(&source_event.id));
 
+        let transformed_id_display = transformed_event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "missing".to_string());
+        let source_id_display = source_event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "missing".to_string());
         tracing::debug!(
-            transformed_id = %transformed_event.id,
-            source_id = %source_event.id,
+            transformed_id = %transformed_id_display,
+            source_id = %source_id_display,
             "Pipeline provenance verified"
         );
     }
@@ -494,7 +521,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> color_eyre::eyre
 
 /// Test pipeline error handling and recovery mechanisms
 #[sinex_test]
-async fn test_pipeline_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_pipeline_error_handling(ctx: TestContext) -> EyreResult<()> {
     tracing::info!("Testing pipeline error handling and recovery");
 
     let pipeline_start = Instant::now();
@@ -550,11 +577,16 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> color_eyre::eyre::Res
         {
             Ok(event) => {
                 if should_succeed {
+                    let event_id_display = event
+                        .id
+                        .as_ref()
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "missing".to_string());
                     successful_events.push(event.id);
                     tracing::debug!(
                         source = source,
                         event_type = event_type,
-                        event_id = %event.id,
+                        event_id = %event_id_display,
                         "Event processed successfully"
                     );
                 } else {
@@ -589,8 +621,10 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> color_eyre::eyre::Res
     // Verify successful events are properly stored
     let mut stored_events = Vec::new();
     for event_id in &successful_events {
-        if let Some(event) = ctx.pool.events().get_by_id(*event_id).await? {
-            stored_events.push(event);
+        if let Some(id) = event_id {
+            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
+                stored_events.push(event);
+            }
         }
     }
 
@@ -617,13 +651,18 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> color_eyre::eyre::Res
     let recovery_stored = ctx
         .pool
         .events()
-        .get_by_id(recovery_event.id)
+        .get_by_id(
+            recovery_event
+                .id
+                .clone()
+                .expect("recovery event should have id"),
+        )
         .await?
         .expect("Recovery event should exist");
 
     assert_eq!(recovery_stored.id, recovery_event.id);
-    assert_eq!(recovery_stored.source, "recovery");
-    assert_eq!(recovery_stored.event_type, "test.recovery");
+    assert_eq!(recovery_stored.source.as_ref(), "recovery");
+    assert_eq!(recovery_stored.event_type.as_ref(), "test.recovery");
 
     tracing::info!(
         successful_events = successful_events.len(),
@@ -640,7 +679,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> color_eyre::eyre::Res
 
 /// Test pipeline performance under sustained load
 #[sinex_test]
-async fn test_pipeline_performance_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_pipeline_performance_under_load(ctx: TestContext) -> EyreResult<()> {
     tracing::info!("Testing pipeline performance under sustained load");
 
     let events_to_process = 100;
@@ -746,8 +785,8 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> color_eyre::e
         .find(|e| all_event_ids.contains(&e.id))
         .expect("Should find at least one stored event");
 
-    assert_eq!(sample_event.source, "load_test");
-    assert_eq!(sample_event.event_type, "performance.test");
+    assert_eq!(sample_event.source.as_ref(), "load_test");
+    assert_eq!(sample_event.event_type.as_ref(), "performance.test");
     assert!(sample_event.payload.get("global_index").is_some());
 
     tracing::info!(

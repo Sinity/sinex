@@ -412,7 +412,7 @@ The migration history shows preparation for TimescaleDB compression:
 
 3. **Event Processing**
    ```sql
-   core.automaton_checkpoints -- Processing state for exactly-once delivery
+   core.processor_checkpoints -- Processing state for exactly-once delivery
    ├── automaton_name
    ├── last_processed_id
    ├── processed_count

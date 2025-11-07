@@ -11,4 +11,4 @@ use sinex_fs_watcher::FilesystemProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the new unified architecture with macro
-sinex_satellite_sdk::processor_main!(FilesystemProcessor);
+sinex_processor_runtime::processor_main!(FilesystemProcessor);

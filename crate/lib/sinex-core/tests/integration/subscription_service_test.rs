@@ -2,12 +2,12 @@
 //!
 //! Tests for agent subscription patterns and event routing functionality
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> EyreResult<()> {
     // Create multiple agents with different subscriptions
     let agents = vec![
         (
@@ -45,7 +45,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::
         .bind(name)
         .bind("1.0.0")
         .bind(&subscriptions)
-        .execute(ctx.pool())
+        .execute(&ctx.pool)
         .await
         .unwrap();
     }
@@ -56,7 +56,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::
          WHERE processor_type = 'automaton' AND consumes_event_types IS NOT NULL
          ORDER BY processor_name",
     )
-    .fetch_all(ctx.pool())
+    .fetch_all(&ctx.pool)
     .await
     .unwrap();
 
@@ -68,7 +68,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::
          WHERE processor_type = 'automaton' AND consumes_event_types ? 'core.events_feed_all'
          ORDER BY processor_name"#,
     )
-    .fetch_all(ctx.pool())
+    .fetch_all(&ctx.pool)
     .await
     .unwrap();
 
@@ -80,7 +80,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::
 }
 
 #[sinex_test]
-async fn test_subscription_pattern_matching(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_subscription_pattern_matching(ctx: TestContext) -> EyreResult<()> {
     // Create an agent with complex subscription patterns
     let complex_subscriptions = json!({
         "core.events_feed_all": [
@@ -98,7 +98,7 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> color_eyre::eyr
     .bind("pattern_matcher")
     .bind("1.0.0")
     .bind(&complex_subscriptions)
-    .execute(ctx.pool())
+    .execute(&ctx.pool)
     .await
     .unwrap();
 
@@ -108,7 +108,7 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> color_eyre::eyr
          WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("pattern_matcher")
-    .fetch_one(ctx.pool())
+    .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
@@ -122,7 +122,7 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> color_eyre::eyr
 }
 
 #[sinex_test]
-async fn test_subscription_routing_priorities(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_subscription_routing_priorities(ctx: TestContext) -> EyreResult<()> {
     // Create agents with overlapping subscriptions to test routing priorities
     let priority_agents = vec![
         (
@@ -160,7 +160,7 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> color_eyre::e
         .bind(name)
         .bind("1.0.0")
         .bind(&subscriptions)
-        .execute(ctx.pool())
+        .execute(&ctx.pool)
         .await
         .unwrap();
     }
@@ -171,7 +171,7 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> color_eyre::e
          WHERE processor_type = 'automaton' AND consumes_event_types IS NOT NULL
          ORDER BY processor_name",
     )
-    .fetch_all(ctx.pool())
+    .fetch_all(&ctx.pool)
     .await
     .unwrap();
 
@@ -184,7 +184,7 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn test_subscription_filter_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_subscription_filter_validation(ctx: TestContext) -> EyreResult<()> {
     // Test various filter patterns for validation
     let test_filters = vec![
         (
@@ -214,7 +214,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> color_eyre::ey
         .bind(format!("filter_test_{}", name))
         .bind("1.0.0")
         .bind(&subscription)
-        .execute(ctx.pool())
+        .execute(&ctx.pool)
         .await;
 
         assert!(result.is_ok(), "Filter pattern '{}' should be valid", name);
@@ -225,7 +225,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> color_eyre::ey
         "SELECT COUNT(*) FROM core.processor_manifests
          WHERE processor_type = 'automaton' AND processor_name LIKE 'filter_test_%'",
     )
-    .fetch_one(ctx.pool())
+    .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
@@ -235,7 +235,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn test_subscription_schema_references(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_subscription_schema_references(ctx: TestContext) -> EyreResult<()> {
     // Test subscriptions with schema references
     let schema_subscription = json!({
         "sinex.pkm.note_updated": [
@@ -255,7 +255,7 @@ async fn test_subscription_schema_references(ctx: TestContext) -> color_eyre::ey
     .bind("schema_subscriber")
     .bind("1.0.0")
     .bind(&schema_subscription)
-    .execute(ctx.pool())
+    .execute(&ctx.pool)
     .await
     .unwrap();
 
@@ -265,7 +265,7 @@ async fn test_subscription_schema_references(ctx: TestContext) -> color_eyre::ey
          WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("schema_subscriber")
-    .fetch_one(ctx.pool())
+    .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
@@ -285,7 +285,7 @@ async fn test_subscription_schema_references(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn test_subscription_updates_and_changes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_subscription_updates_and_changes(ctx: TestContext) -> EyreResult<()> {
     // Create an agent with initial subscriptions
     let initial_subscriptions = json!({
         "core.events_feed_all": [
@@ -301,7 +301,7 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> color_eyre::
     .bind("updatable_subscriber")
     .bind("1.0.0")
     .bind(&initial_subscriptions)
-    .execute(ctx.pool())
+    .execute(&ctx.pool)
     .await
     .unwrap();
 
@@ -321,7 +321,7 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> color_eyre::
     )
     .bind(&updated_subscriptions)
     .bind("1.1.0")
-    .execute(ctx.pool())
+    .execute(&ctx.pool)
     .await
     .unwrap();
 
@@ -331,7 +331,7 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> color_eyre::
          WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("updatable_subscriber")
-    .fetch_one(ctx.pool())
+    .fetch_one(&ctx.pool)
     .await
     .unwrap();
 

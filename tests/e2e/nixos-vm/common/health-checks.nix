@@ -52,9 +52,9 @@
       fi
 
       # Ensure filesystem satellites are alive when defined
-      FS_UNIT_FILES=$(systemctl list-unit-files 'sinex-fs-watcher-*.service' --no-legend --plain 2>/dev/null || true)
+      FS_UNIT_FILES=$(systemctl list-unit-files 'sinex-filesystem-*.service' --no-legend --plain 2>/dev/null || true)
       if [[ -n "$FS_UNIT_FILES" ]]; then
-        if echo "$SINEX_UNITS" | grep -q 'sinex-fs-watcher'; then
+        if echo "$SINEX_UNITS" | grep -q 'sinex-filesystem'; then
           echo "✅ Filesystem satellites active"
         else
           echo "❌ Filesystem satellites declared but not active"

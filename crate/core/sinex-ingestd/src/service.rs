@@ -3,29 +3,19 @@
 //! Main ingestion service implementation.
 
 // Local crate imports
-use crate::{config::IngestdConfig, validator::EventValidator, IngestdResult, SinexError};
+use crate::{
+    config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
+};
 
 // External crates
-use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
-use chrono::Utc;
 use sinex_core::environment as sinex_environment;
-use sinex_core::{
-    db::{
-        models::{event::EventId, Event, Provenance},
-        query_helpers::{ulid_to_uuid, uuid_to_ulid},
-    },
-    types::{
-        domain::{EventSource, EventType, HostName},
-        Ulid,
-    },
-    JsonValue, OffsetKind,
-};
+use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sqlx::PgPool;
 
 // Standard library and common crates
 use std::{
-    str::FromStr,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -33,13 +23,10 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
-    sync::{Mutex, RwLock},
+    sync::RwLock,
     time::{interval, Duration},
 };
-use tracing::{debug, error, info, instrument, warn};
-
-// Shared ingestor version as a compile-time constant
-const INGESTOR_VERSION: &str = "0.4.2";
+use tracing::{error, info, warn};
 
 /// Helper function to create a shutdown signal future
 async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
@@ -48,60 +35,6 @@ async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-/// Cache for NATS subject strings to avoid repeated allocations
-#[derive(Debug, Default)]
-pub struct SubjectCache {
-    cache: Mutex<AHashMap<(String, String), Arc<String>>>,
-}
-
-impl SubjectCache {
-    pub fn new() -> Self {
-        Self {
-            cache: Mutex::new(AHashMap::new()),
-        }
-    }
-
-    /// Get or create a cached subject string for the given source and event type
-    pub async fn get_subject(&self, source: &str, event_type: &str) -> Arc<String> {
-        let key = (source.to_string(), event_type.to_string());
-
-        // Fast path: check if already in cache
-        {
-            let cache = self.cache.lock().await;
-            if let Some(cached) = cache.get(&key) {
-                return cached.clone();
-            }
-        }
-
-        // Slow path: create and cache the subject, namespaced by environment
-        let env = sinex_environment();
-        let base = format!(
-            "events.{}.{}",
-            source.replace('.', "_"),
-            event_type.replace('.', "_")
-        );
-        let subject = Arc::new(env.nats_subject(&base));
-
-        let mut cache = self.cache.lock().await;
-        // Double-check in case another task inserted while we were waiting
-        if let Some(cached) = cache.get(&key) {
-            return cached.clone();
-        }
-
-        cache.insert(key, subject.clone());
-        subject
-    }
-
-    /// Get the current cache size for monitoring
-    pub async fn len(&self) -> usize {
-        self.cache.lock().await.len()
-    }
-
-    pub async fn is_empty(&self) -> bool {
-        self.len().await == 0
     }
 }
 
@@ -114,9 +47,6 @@ pub struct IngestService {
     validator: Arc<RwLock<EventValidator>>,
     stats: Arc<IngestStats>,
     shutdown_flag: Arc<AtomicBool>,
-    event_buffer: Arc<Mutex<Vec<Event<JsonValue>>>>,
-    last_flush: Arc<Mutex<SystemTime>>,
-    subject_cache: Arc<SubjectCache>,
 }
 
 impl IngestService {
@@ -150,7 +80,7 @@ impl IngestService {
             let env = sinex_environment();
             let stream_config = jetstream::stream::Config {
                 name: config.nats_stream_name.clone(),
-                subjects: vec![env.nats_subject("events.>")],
+                subjects: vec![env.nats_subject("events.raw.>")],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
                 max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days
@@ -159,13 +89,16 @@ impl IngestService {
                 ..Default::default()
             };
 
-            match js.get_or_create_stream(stream_config).await {
-                Ok(_) => info!(
-                    "Connected to NATS JetStream stream: {}",
-                    config.nats_stream_name
-                ),
-                Err(e) => error!("Failed to create/get stream: {}", e),
-            }
+            js.get_or_create_stream(stream_config).await.map_err(|e| {
+                SinexError::network(format!("Failed to create/get stream: {e}"))
+                    .with_operation("service.bootstrap_stream")
+                    .with_context("stream", config.nats_stream_name.clone())
+            })?;
+
+            info!(
+                "Connected to NATS JetStream stream: {}",
+                config.nats_stream_name
+            );
 
             (Some(client), Some(js))
         };
@@ -206,9 +139,6 @@ impl IngestService {
             validator: Arc::new(RwLock::new(validator)),
             stats: Arc::new(IngestStats::new()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            event_buffer: Arc::new(Mutex::new(Vec::with_capacity(config.batch_size))),
-            last_flush: Arc::new(Mutex::new(SystemTime::now())),
-            subject_cache: Arc::new(SubjectCache::new()),
         };
 
         info!("Ingestion service initialized successfully");
@@ -222,14 +152,6 @@ impl IngestService {
         // Start background tasks
         let stats = self.stats.clone();
         let shutdown_flag = self.shutdown_flag.clone();
-
-        // Start outbox processor task
-        if let Some(ref pool) = self.db_pool {
-            if let Some(ref js) = self.jetstream {
-                self.start_outbox_processor_task(pool.clone(), js.clone())
-                    .await;
-            }
-        }
 
         // Start JetStream consumer task
         if let Some(ref nats_client) = self.nats_client {
@@ -270,9 +192,6 @@ impl IngestService {
             }
         });
 
-        // Periodic flush task
-        self.start_flush_task().await;
-
         // Schema reload task
         if let Some(ref pool) = self.db_pool {
             self.start_schema_reload_task(pool.clone()).await;
@@ -290,115 +209,23 @@ impl IngestService {
         Ok(())
     }
 
-    /// Start periodic flush task
-    async fn start_flush_task(&self) {
-        let event_buffer = self.event_buffer.clone();
-        let last_flush = self.last_flush.clone();
-        let config = self.config.clone();
-        let db_pool = self.db_pool.clone();
-        // JetStream context not used here; outbox processor handles NATS publishing
-        let shutdown_flag = self.shutdown_flag.clone();
-        let stats = self.stats.clone();
-        let subject_cache = self.subject_cache.clone();
-        let validator = self.validator.clone();
-
-        tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(1));
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        // Check if we should flush
-                        let should_flush = {
-                            let buffer = event_buffer.lock().await;
-                            let last_flush_time = *last_flush.lock().await;
-
-                            buffer.len() >= config.batch_size
-                                || (!buffer.is_empty() && last_flush_time.elapsed().unwrap_or_default().as_secs() >= config.batch_timeout_secs)
-                        };
-
-                        if should_flush {
-                            let validator_guard = validator.read().await;
-                            Self::flush_events_static(
-                                &event_buffer,
-                                &last_flush,
-                                &config,
-                                db_pool.as_ref(),
-                                &stats,
-                                Some(&*subject_cache),
-                                Some(&*validator_guard),
-                                ).await;
-                        }
-                    }
-                    _ = shutdown_signal(&shutdown_flag) => {
-                        // Final flush on shutdown
-                        let validator_guard = validator.read().await;
-                        Self::flush_events_static(
-                            &event_buffer,
-                            &last_flush,
-                            &config,
-                            db_pool.as_ref(),
-                            &stats,
-                            Some(&*subject_cache),
-                            Some(&*validator_guard),
-                        ).await;
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
-    /// Start outbox processor task for transactional outbox pattern
-    async fn start_outbox_processor_task(&self, pool: PgPool, js: jetstream::Context) {
-        let shutdown_flag = self.shutdown_flag.clone();
-        let stats = self.stats.clone();
-
-        tokio::spawn(async move {
-            let mut interval = interval(Duration::from_millis(100));
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        match Self::process_outbox(&pool, &js).await {
-                            Ok(processed) => {
-                                if processed > 0 {
-                                    debug!("Processed {} outbox entries", processed);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to process outbox: {}", e);
-                                stats.nats_errors.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    _ = shutdown_signal(&shutdown_flag) => {
-                        // Final outbox processing on shutdown
-                        match Self::process_outbox(&pool, &js).await {
-                            Ok(processed) => {
-                                if processed > 0 {
-                                    info!("Final outbox processing: {} entries", processed);
-                                }
-                            }
-                            Err(e) => error!("Failed final outbox processing: {}", e),
-                        }
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
     /// Start the JetStream consumer task
     async fn start_jetstream_consumer_task(&self, nats_client: NatsClient, pool: PgPool) {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
+        let env = sinex_environment();
+        let topology = JetStreamTopology::new(
+            &env,
+            self.config.nats_stream_name.clone(),
+            self.config.nats_consumer_name.clone(),
+        );
 
         tokio::spawn(async move {
             let consumer = crate::JetStreamConsumer::new(
                 nats_client,
                 pool.clone(),
-                Arc::new(validator.read().await.clone()),
+                validator.clone(),
+                topology,
             );
 
             tokio::select! {
@@ -418,14 +245,38 @@ impl IngestService {
     /// Start the MaterialAssembler task
     async fn start_material_assembler_task(&self, nats_client: NatsClient, pool: PgPool) {
         let shutdown_flag = self.shutdown_flag.clone();
+        let annex_repo_path = self.config.annex_repo_path.clone();
+        let assembler_state_dir = self.config.assembler_state_dir.clone();
 
         tokio::spawn(async move {
-            // TODO: Make annex_path configurable via IngestdConfig
-            let annex_path = std::env::var("SINEX_ANNEX_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| std::env::temp_dir().join("sinex-annex"));
+            let annex_config = AnnexConfig {
+                repo_path: annex_repo_path.clone(),
+                num_copies: None,
+                large_files: None,
+            };
 
-            let assembler = crate::MaterialAssembler::new(nats_client, pool, annex_path);
+            let git_annex = match GitAnnex::new(annex_config) {
+                Ok(annex) => Arc::new(annex),
+                Err(e) => {
+                    error!(
+                        path = %annex_repo_path,
+                        "Failed to initialize git-annex repository: {}",
+                        e
+                    );
+                    return;
+                }
+            };
+
+            let state_dir: PathBuf = assembler_state_dir.into();
+
+            let assembler =
+                match crate::MaterialAssembler::new(nats_client, pool, git_annex, state_dir) {
+                    Ok(assembler) => assembler,
+                    Err(e) => {
+                        error!("Failed to create MaterialAssembler: {}", e);
+                        return;
+                    }
+                };
 
             tokio::select! {
                 result = assembler.run() => {
@@ -439,121 +290,6 @@ impl IngestService {
                 }
             }
         });
-    }
-
-    /// Process outbox entries: read, publish to NATS, delete
-    ///
-    /// Optimized version that batches NATS publishes and database operations
-    /// for better async performance and reduced latency.
-    /// Uses proper transactions to ensure atomicity between outbox reads and deletes.
-    async fn process_outbox(pool: &PgPool, js: &jetstream::Context) -> IngestdResult<u32> {
-        #[derive(sqlx::FromRow)]
-        struct OutboxEntry {
-            id: i64,
-            event_id: sqlx::types::Uuid,
-            subject: String,
-            payload: Vec<u8>,
-        }
-
-        // Begin transaction for atomic read-and-lock operation
-        let mut tx = pool.begin().await?;
-
-        // Read and lock pending outbox entries (limit 100 for batching)
-        // Use SELECT FOR UPDATE to prevent concurrent processing of same entries
-        let pending = sqlx::query_as::<_, OutboxEntry>(
-            "SELECT id, (event_id)::uuid AS event_id, destination as subject, payload
-             FROM core.transactional_outbox
-             WHERE status = 'pending'
-             ORDER BY created_at
-             LIMIT 100
-             FOR UPDATE SKIP LOCKED",
-        )
-        .fetch_all(&mut *tx)
-        .await?;
-
-        if pending.is_empty() {
-            tx.rollback().await?;
-            return Ok(0);
-        }
-
-        // Prepare all publish operations concurrently
-        let mut publish_futures = Vec::new();
-        let mut entry_data = Vec::new();
-
-        for entry in &pending {
-            let mut headers = async_nats::HeaderMap::new();
-            let msg_id = uuid_to_ulid(entry.event_id).to_string();
-            headers.insert("Nats-Msg-Id", msg_id.as_str());
-
-            let publish_future = js.publish_with_headers(
-                entry.subject.clone(),
-                headers,
-                entry.payload.clone().into(),
-            );
-            publish_futures.push(publish_future);
-            entry_data.push((entry.id, entry.subject.clone()));
-        }
-
-        // Execute all NATS publishes concurrently
-        let publish_results = futures::future::join_all(publish_futures).await;
-
-        // Collect IDs of successfully published entries for transactional deletion
-        let mut successful_ids = Vec::new();
-        let mut processed = 0;
-
-        for (result, (entry_id, subject)) in publish_results.into_iter().zip(entry_data.into_iter())
-        {
-            match result {
-                Ok(_) => {
-                    successful_ids.push(entry_id);
-                    processed += 1;
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to publish outbox entry {} (subject: {}) to NATS: {}",
-                        entry_id, subject, e
-                    );
-                    // Keep entry in outbox for retry - it will remain locked until tx ends
-                }
-            }
-        }
-
-        // Transactionally delete all successfully published entries
-        if !successful_ids.is_empty() {
-            match sqlx::query("DELETE FROM core.transactional_outbox WHERE id = ANY($1)")
-                .bind(&successful_ids)
-                .execute(&mut *tx)
-                .await
-            {
-                Ok(result) => {
-                    let deleted_count = result.rows_affected();
-                    if deleted_count != successful_ids.len() as u64 {
-                        warn!(
-                            "Expected to delete {} outbox entries but deleted {}",
-                            successful_ids.len(),
-                            deleted_count
-                        );
-                    }
-                    // Commit transaction - this makes the deletions atomic
-                    tx.commit().await?;
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to batch delete {} outbox entries: {}",
-                        successful_ids.len(),
-                        e
-                    );
-                    // Rollback transaction on delete failure
-                    tx.rollback().await?;
-                    return Err(e.into());
-                }
-            }
-        } else {
-            // No successful publishes, rollback to release locks
-            tx.rollback().await?;
-        }
-
-        Ok(processed)
     }
 
     /// Start schema reload task
@@ -580,300 +316,11 @@ impl IngestService {
         });
     }
 
-    /// Flush events to database using transactional outbox pattern
-    async fn flush_events_static(
-        event_buffer: &Arc<Mutex<Vec<Event<JsonValue>>>>,
-        last_flush: &Arc<Mutex<SystemTime>>,
-        config: &IngestdConfig,
-        db_pool: Option<&PgPool>,
-        stats: &IngestStats,
-        subject_cache: Option<&SubjectCache>,
-        _validator: Option<&EventValidator>,
-    ) {
-        // Take events from buffer
-        let events = {
-            let mut buffer = event_buffer.lock().await;
-            if buffer.is_empty() {
-                return;
-            }
-            std::mem::take(&mut *buffer)
-        };
-
-        let event_count = events.len();
-        debug!("Flushing {} events", event_count);
-
-        if config.dry_run {
-            info!("DRY RUN: Would flush {} events", event_count);
-            stats
-                .events_processed
-                .fetch_add(event_count as u64, Ordering::Relaxed);
-            *last_flush.lock().await = SystemTime::now();
-            return;
-        }
-
-        // Write to database with transactional outbox pattern
-        // This handles both event insertion and outbox entries for NATS publishing
-        if let Some(pool) = db_pool {
-            if let Err(e) = Self::batch_write_to_db(pool, &events, subject_cache).await {
-                error!("Failed to write events to database: {}", e);
-                // Note: This is in a static context, so telemetry is not available here
-                // Consider refactoring to pass telemetry if needed
-                stats.db_errors.fetch_add(1, Ordering::Relaxed);
-                let mut buffer = event_buffer.lock().await;
-                // Prepend failed events so they are retried on next flush
-                let mut requeue = events;
-                if requeue.is_empty() {
-                    return;
-                }
-                if buffer.is_empty() {
-                    *buffer = requeue;
-                } else {
-                    requeue.extend(buffer.drain(..));
-                    *buffer = requeue;
-                }
-                return;
-            }
-        }
-
-        stats
-            .events_processed
-            .fetch_add(event_count as u64, Ordering::Relaxed);
-        stats.batches_processed.fetch_add(1, Ordering::Relaxed);
-        *last_flush.lock().await = SystemTime::now();
-
-        debug!("Successfully flushed {} events", event_count);
-    }
-
-    /// Batch write events to database using UNNEST for true batching
-    ///
-    /// This implements:
-    /// - True batch insert using UNNEST instead of N+1 pattern
-    /// - Transactional outbox pattern: INSERT events and outbox entries in same transaction
-    async fn batch_write_to_db(
-        pool: &PgPool,
-        events: &[Event<JsonValue>],
-        subject_cache: Option<&SubjectCache>,
-    ) -> IngestdResult<()> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        // Begin transaction for atomicity
-        let mut tx = pool.begin().await?;
-        let event_count = events.len();
-        let mut outbox_entries = Vec::with_capacity(event_count);
-
-        for event in events {
-            let mut event = event.clone();
-            let event_id_ulid = if let Some(existing_id) = event.id.as_ref() {
-                *existing_id.as_ulid()
-            } else {
-                let new_id = Ulid::new();
-                event.id = Some(EventId::from_ulid(new_id));
-                new_id
-            };
-
-            if event.ts_orig.is_none() {
-                event.ts_orig = Some(Utc::now());
-            }
-
-            let ts_orig = event.ts_orig.expect("ts_orig ensured above");
-            let payload_schema_id = event.payload_schema_id.map(ulid_to_uuid);
-
-            let (
-                source_event_ids_db,
-                source_material_uuid,
-                anchor_byte,
-                offset_start,
-                offset_end,
-                offset_kind_db,
-            ) = match &event.provenance {
-                Provenance::Material {
-                    id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                } => (
-                    None,
-                    Some(ulid_to_uuid(*id.as_ulid())),
-                    Some(*anchor_byte),
-                    *offset_start,
-                    *offset_end,
-                    Some(Self::offset_kind_to_str(*offset_kind).to_string()),
-                ),
-                Provenance::Synthesis {
-                    source_event_ids, ..
-                } => {
-                    let ids = source_event_ids
-                        .iter()
-                        .map(|id| ulid_to_uuid(*id.as_ulid()))
-                        .collect::<Vec<_>>();
-                    (Some(ids), None, None, None, None, None)
-                }
-            };
-
-            let associated_blob_ids_db = event
-                .associated_blob_ids
-                .as_ref()
-                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
-
-            sqlx::query(
-                r#"
-                INSERT INTO core.events (
-                    id,
-                    source,
-                    event_type,
-                    host,
-                    payload,
-                    ts_orig,
-                    ingestor_version,
-                    payload_schema_id,
-                    source_event_ids,
-                    source_material_id,
-                    anchor_byte,
-                    offset_start,
-                    offset_end,
-                    offset_kind,
-                    associated_blob_ids
-                ) VALUES (
-                    ($1::uuid)::ulid,
-                    $2,
-                    $3,
-                    $4,
-                    $5,
-                    $6,
-                    $7,
-                    ($8::uuid)::ulid,
-                    $9::uuid[]::ulid[],
-                    ($10::uuid)::ulid,
-                    $11,
-                    $12,
-                    $13,
-                    $14,
-                    $15::uuid[]::ulid[]
-                )
-                "#,
-            )
-            .bind(ulid_to_uuid(event_id_ulid))
-            .bind(event.source.as_str())
-            .bind(event.event_type.as_str())
-            .bind(event.host.as_str())
-            .bind(&event.payload)
-            .bind(ts_orig)
-            .bind(event.ingestor_version.as_deref())
-            .bind(payload_schema_id)
-            .bind(source_event_ids_db)
-            .bind(source_material_uuid)
-            .bind(anchor_byte)
-            .bind(offset_start)
-            .bind(offset_end)
-            .bind(offset_kind_db)
-            .bind(associated_blob_ids_db)
-            .execute(&mut *tx)
-            .await?;
-
-            let subject = if let Some(cache) = subject_cache {
-                cache
-                    .get_subject(event.source.as_str(), event.event_type.as_str())
-                    .await
-            } else {
-                let env = sinex_environment();
-                let base = format!(
-                    "events.{}.{}",
-                    event.source.as_str().replace('.', "_"),
-                    event.event_type.as_str().replace('.', "_")
-                );
-                Arc::new(env.nats_subject(&base))
-            };
-
-            let serialized_event = serde_json::to_vec(&event)?;
-            outbox_entries.push((event_id_ulid, (*subject).clone(), serialized_event));
-        }
-
-        // Insert outbox entries for NATS publishing
-        for (event_id, subject, payload) in outbox_entries {
-            sqlx::query!(
-                r#"
-                INSERT INTO core.transactional_outbox (
-                    event_id, destination, payload, status, created_at
-                ) VALUES (
-                    $1::ulid, $2, $3, 'pending', NOW()
-                )
-                "#,
-                event_id as Ulid,
-                subject,
-                payload
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        // Commit transaction
-        tx.commit().await?;
-
-        debug!(
-            "Successfully wrote {} events to core.events with outbox entries",
-            events.len()
-        );
-        Ok(())
-    }
-
-    fn offset_kind_to_str(kind: OffsetKind) -> &'static str {
-        match kind {
-            OffsetKind::Byte => "byte",
-            OffsetKind::Line => "line",
-            OffsetKind::Record => "rowid",
-            OffsetKind::Character => "logical",
-        }
-    }
-
-    /// Add event to buffer
-    async fn add_event_to_buffer(&self, event: Event<JsonValue>) -> IngestdResult<()> {
-        let _event_type = &event.event_type;
-        let _start = std::time::Instant::now();
-
-        let mut buffer = self.event_buffer.lock().await;
-        buffer.push(event);
-
-        // Check if we should flush immediately
-        if buffer.len() >= self.config.batch_size {
-            drop(buffer); // Release lock before flushing
-
-            let validator_guard = self.validator.read().await;
-            Self::flush_events_static(
-                &self.event_buffer,
-                &self.last_flush,
-                &self.config,
-                self.db_pool.as_ref(),
-                &self.stats,
-                Some(&self.subject_cache),
-                Some(&*validator_guard),
-            )
-            .await;
-        }
-
-        Ok(())
-    }
-
     /// Graceful shutdown
     pub async fn shutdown(&mut self) -> IngestdResult<()> {
         info!("Initiating graceful shutdown");
 
         self.shutdown_flag.store(true, Ordering::Relaxed);
-
-        // Final flush
-        let validator_guard = self.validator.read().await;
-        Self::flush_events_static(
-            &self.event_buffer,
-            &self.last_flush,
-            &self.config,
-            self.db_pool.as_ref(),
-            &self.stats,
-            Some(&self.subject_cache),
-            Some(&*validator_guard),
-        )
-        .await;
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
@@ -895,9 +342,6 @@ impl Clone for IngestService {
             validator: self.validator.clone(),
             stats: self.stats.clone(),
             shutdown_flag: self.shutdown_flag.clone(),
-            event_buffer: self.event_buffer.clone(),
-            last_flush: self.last_flush.clone(),
-            subject_cache: self.subject_cache.clone(),
         }
     }
 }
@@ -954,12 +398,4 @@ impl IngestStats {
             "Ingestion service statistics"
         );
     }
-}
-
-#[doc(hidden)]
-pub async fn process_outbox_for_testing(
-    pool: &PgPool,
-    js: &jetstream::Context,
-) -> IngestdResult<u32> {
-    IngestService::process_outbox(pool, js).await
 }

@@ -203,12 +203,14 @@ pub struct PayloadSizeStats {
 async fn ensure_material_for_event(pool: &DbPool, event: &Event<JsonValue>) -> Result<()> {
     if let Provenance::Material { id, .. } = &event.provenance {
         let source_identifier = format!("test-material-{}", id);
-        sqlx::query!(
+        let update_result = sqlx::query!(
             r#"
-                INSERT INTO raw.source_material_registry
-                    (id, material_kind, source_identifier, status, timing_info_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                ON CONFLICT (id) DO NOTHING
+                UPDATE raw.source_material_registry
+                SET id = $1::uuid::ulid,
+                    material_kind = $2,
+                    status = $4,
+                    timing_info_type = $5
+                WHERE source_identifier = $3
             "#,
             id.to_uuid(),
             "annex",
@@ -218,6 +220,28 @@ async fn ensure_material_for_event(pool: &DbPool, event: &Event<JsonValue>) -> R
         )
         .execute(pool)
         .await?;
+
+        if update_result.rows_affected() == 0 {
+            sqlx::query!(
+                r#"
+                    INSERT INTO raw.source_material_registry
+                        (id, material_kind, source_identifier, status, timing_info_type)
+                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                    ON CONFLICT (id) DO UPDATE
+                    SET material_kind = EXCLUDED.material_kind,
+                        status = EXCLUDED.status,
+                        timing_info_type = EXCLUDED.timing_info_type,
+                        source_identifier = EXCLUDED.source_identifier
+                "#,
+                id.to_uuid(),
+                "annex",
+                source_identifier,
+                "completed",
+                "realtime"
+            )
+            .execute(pool)
+            .await?;
+        }
     }
 
     Ok(())
@@ -515,7 +539,7 @@ async fn create_user_session_fixture(
         TestCheckpointBuilder::new(&format!("test_processor_{user_id}"))
             .processed_count((event_count / checkpoint_interval * checkpoint_interval) as i64)
             .last_processed_id(Id::from(event_ids[checkpoint_interval - 1]))
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "user_id": user_id,
                 "session_start": session_start,
                 "events_processed": event_count / checkpoint_interval * checkpoint_interval
@@ -569,7 +593,7 @@ async fn create_populated_checkpoints_fixture(
         TestCheckpointBuilder::new(name)
             .processed_count(processed_count)
             .last_processed_id(Id::from(Ulid::new()))
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "processor_name": name,
                 "version": "1.0.0",
                 "status": "healthy",
@@ -644,8 +668,8 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
         let op_id = uuid_to_ulid(op_uuid);
 
         sqlx::query!(
-            r#"SELECT core.fail_operation($1::text::ulid, $2::jsonb)"#,
-            op_id.to_string(),
+            r#"SELECT core.fail_operation($1::uuid::ulid, $2::jsonb)"#,
+            op_id.to_uuid(),
             json!({
                 "error": format!("Test error {}", i),
                 "code": format!("E{}", 500 + i)
@@ -897,7 +921,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     for i in 0..checkpoint_count {
         TestCheckpointBuilder::new(&format!("pre_warmed_processor_{i}"))
             .processed_count((i * 500) as i64)
-            .state_data(json!({
+            .checkpoint_data(json!({
                 "fixture": "pre_warmed",
                 "index": i,
             }))
@@ -1125,10 +1149,31 @@ pub(crate) async fn large_event_dataset(
     Ok(LargeDatasetFixture {
         event_ids: perf_fixture.event_ids.clone(),
         event_count: perf_fixture.event_count,
-        source_distribution: HashMap::new(), // TODO: calculate from events
-        type_distribution: HashMap::new(),   // TODO: calculate from events
+        source_distribution: perf_fixture.source_distribution.clone(),
+        type_distribution: perf_fixture.type_distribution.clone(),
         time_range: perf_fixture.time_range,
     })
+}
+
+#[cfg(test)]
+mod large_dataset_tests {
+    use super::*;
+    use crate::{sinex_test, TestContext};
+
+    #[sinex_test]
+    async fn populates_distribution_maps(ctx: TestContext) -> Result<()> {
+        let fixture = large_event_dataset(&ctx, 5).await?;
+        assert_eq!(fixture.event_count, 5);
+        assert!(
+            !fixture.source_distribution.is_empty(),
+            "expected source distribution to be populated"
+        );
+        assert!(
+            !fixture.type_distribution.is_empty(),
+            "expected event type distribution to be populated"
+        );
+        Ok(())
+    }
 }
 
 pub(crate) async fn terminal_session(ctx: &TestContext) -> Result<TerminalSessionFixture> {

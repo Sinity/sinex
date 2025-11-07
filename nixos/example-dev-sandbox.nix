@@ -17,68 +17,96 @@
 
   services.sinex = {
     enable = true;
-    targetUser = "developer";
-
-    serviceManagement.serviceGroups = {
-      core = true;
-      maintenance = true;
-      monitoring = true;
-    };
+    users.target = "developer";
 
     database = {
       autoSetup = true;
+      host = "127.0.0.1";
       name = "sinex_dev";
       user = "sinex";
-      listenAddress = "127.0.0.1";
+      passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
-    satellite = {
-      enable = true;
-      logLevel = "debug";
+    lifecycle.maintenance.enable = true;
 
-      database.url = "postgresql:///sinex_dev?host=/run/postgresql";
+    core = {
+      enable = true;
+      ingestd = {
+        batch = {
+          size = 500;
+          timeoutSec = 3;
+        };
+      };
+    };
+
+    satellites = {
+      enable = true;
+      defaults.logLevel = "debug";
 
       coordination = {
         enable = true;
-        heartbeatInterval = 20;
-        leadershipTimeout = 60;
-        handoffTimeout = 30;
+        heartbeatSec = 20;
+        leadershipTimeoutSec = 60;
+        handoffTimeoutSec = 30;
       };
 
-      coreServices.enable = true;
-
-      ingestd = {
-        batchSize = 500;
-        batchTimeout = 3;
+      filesystem = {
+        enable = true;
+        instances = 2;
+        watchPaths = [ "/home/developer" "/var/lib/sinex" ];
+        resources = {
+          memoryMax = "384M";
+          cpuQuota = "60%";
+        };
       };
 
-      eventSources = {
-        filesystem = {
-          enable = true;
-          instances = 2;
-          memoryLimit = "384M";
-          watchPaths = [ "/home/developer" "/var/lib/sinex" ];
+      terminal = {
+        enable = true;
+        instances = 2;
+        resources = {
+          memoryMax = "256M";
+          cpuQuota = "60%";
         };
-        terminal = {
-          enable = true;
-          instances = 2;
-          memoryLimit = "256M";
+      };
+
+      desktop = {
+        enable = true;
+        instances = 1;
+        resources = {
+          memoryMax = "256M";
+          cpuQuota = "60%";
         };
-        desktop = {
-          enable = true;
-          instances = 1;
-          memoryLimit = "256M";
-        };
-        system = {
-          enable = true;
-          instances = 1;
-          memoryLimit = "384M";
+      };
+
+      system = {
+        enable = true;
+        instances = 1;
+        resources = {
+          memoryMax = "384M";
+          cpuQuota = "60%";
         };
       };
 
       automata = {
-        canonicalCommandSynthesizer.enable = true;
+        enable = true;
+        canonicalizer.enable = true;
         healthAggregator.enable = true;
+      };
+    };
+
+    observability = {
+      enable = true;
+      monitoring = {
+        enable = true;
+        prometheus = {
+          listen = "127.0.0.1";
+          port = 9090;
+          retention = "3d";
+        };
+        grafana = {
+          enable = true;
+          port = 3000;
+        };
       };
     };
 
@@ -90,19 +118,8 @@
       kitty = {
         enable = true;
         autoConfigure = true;
-        userConfigPath = "~/.config/kitty/kitty.conf";
+        configFile = "~/.config/kitty/kitty.conf";
       };
-    };
-
-    monitoring = {
-      observabilityStack = {
-        enable = true;
-        listenAddress = "127.0.0.1";
-        prometheusPort = 9090;
-        grafanaPort = 3000;
-        retentionTime = "3d";
-      };
-      dashboards.grafana.enable = true;
     };
   };
 
@@ -141,8 +158,6 @@
   };
 
   systemd.tmpfiles.rules = [
-    "d /var/lib/sinex 0755 sinex sinex -"
-    "d /var/log/sinex 0755 sinex sinex -"
     "d /home/developer/demo 0755 developer developer -"
   ];
 }

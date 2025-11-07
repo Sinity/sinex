@@ -75,20 +75,22 @@ async fn create_pull_consumer(
     ack_wait: StdDuration,
     max_ack_pending: i32,
 ) -> Result<Consumer> {
-    js.get_or_create_consumer(
-        stream_name,
-        ConsumerConfig {
-            durable_name: Some(durable_name.to_string()),
-            name: Some(durable_name.to_string()),
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::Explicit,
-            ack_wait,
-            filter_subject: subject.to_string(),
-            max_ack_pending,
-            ..Default::default()
-        },
-    )
-    .await
+    let stream = js.get_stream(stream_name).await?;
+    stream
+        .get_or_create_consumer(
+            durable_name,
+            ConsumerConfig {
+                durable_name: Some(durable_name.to_string()),
+                name: Some(durable_name.to_string()),
+                deliver_policy: DeliverPolicy::All,
+                ack_policy: AckPolicy::Explicit,
+                ack_wait,
+                filter_subject: subject.to_string(),
+                max_ack_pending,
+                ..Default::default()
+            },
+        )
+        .await
 }
 
 #[sinex_bench]
@@ -238,7 +240,8 @@ async fn jetstream_concurrent_consumer_distribution(
         );
     }
 
-    js.delete_consumer(&stream_name, &durable).await?;
+    let stream_handle = js.get_stream(&stream_name).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream_name).await?;
     Ok(())
 }
@@ -312,7 +315,8 @@ async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> color_eyre::e
 
     color_eyre::eyre::ensure!(redelivered, "expected message redelivery after ack wait");
 
-    js.delete_consumer(&stream_name, &durable).await?;
+    let stream_handle = js.get_stream(&stream_name).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream_name).await?;
     Ok(())
 }
@@ -388,7 +392,8 @@ async fn jetstream_sustained_publish_throughput(
         drained
     );
 
-    js.delete_consumer(&stream_name, &durable).await?;
+    let stream_handle = js.get_stream(&stream_name).await?;
+    stream_handle.delete_consumer(&durable).await?;
     js.delete_stream(&stream_name).await?;
     Ok(())
 }

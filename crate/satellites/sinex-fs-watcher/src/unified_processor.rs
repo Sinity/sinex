@@ -1,85 +1,74 @@
 #![doc = include_str!("../doc/unified_processor.md")]
 
-//! Unified filesystem processor using sensd `MaterialSliceStream`.
+//! Filesystem watcher processor using JetStream-first acquisition.
+//!
+//! This implementation replaces the legacy sensd pipeline with a direct
+//! Stage-as-You-Go + AcquisitionManager workflow:
+//! - File system events are captured via notify watchers.
+//! - Each event is staged as a dedicated source material and published to
+//!   JetStream using `AcquisitionManager`.
+//! - Structured events are emitted through `StageAsYouGoContext`, referencing
+//!   the captured material for provenance.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre;
+use notify::{event::RenameMode, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sinex_core::{
-    db::models::{event::OffsetKind, Event, Provenance},
-    events::{
-        DirCreatedPayload, DirDeletedPayload, DirDiscoveredPayload, FileCreatedPayload,
-        FileDeletedPayload, FileDiscoveredPayload, FileModifiedPayload, FileMovedPayload,
+    types::{
+        domain::SanitizedPath,
+        validation::{validate_watch_path, FileWatchingSecurityPolicy},
+        Id, Ulid,
     },
-    types::{domain::SanitizedPath, Id, Ulid},
-    JsonValue,
+    Event as CoreEvent, HostName, JsonValue, Provenance,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sinex_satellite_sdk::{
-    checkpoint::CheckpointManager,
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
+    acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, StatefulStreamProcessor,
+        TimeHorizon,
     },
     SatelliteError, SatelliteResult,
 };
-use sqlx::PgPool;
-use std::collections::HashMap;
-use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
-use tracing::{debug, error, info, instrument};
-use validator::{Validate, ValidationError};
+use std::{collections::HashMap, fs::Metadata as StdMetadata, path::Path, sync::Arc};
+use tokio::{
+    fs,
+    sync::{mpsc, Mutex},
+};
+use tracing::{debug, error, info, instrument, warn};
+use validator::ValidationError;
 
-// Test module removed or relocated; keep core tests within this file
+const DEFAULT_MAX_CAPTURE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
+const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
+const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
+const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
 
-// TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
-// MaterialSlice was removed with sensd - temporary stub for compilation
-
-#[derive(Debug, Clone)]
-pub struct MaterialSlice {
-    pub material_id: sinex_core::types::Ulid,
-    pub offset_start: i64,
-    pub offset_end: i64,
-    pub ts_capture_start: DateTime<Utc>,
-    pub ts_capture_end: DateTime<Utc>,
-    pub data: Vec<u8>,
-    pub metadata: JsonValue,
-}
-
-/// Filesystem monitoring configuration for sensd integration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+/// Filesystem monitoring configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemConfig {
     /// Directories to monitor for filesystem changes
-    #[validate(length(min = 1, message = "At least one watch path must be specified"))]
     pub watch_paths: Vec<String>,
 
     /// Maximum directory traversal depth (None = unlimited)
-    #[validate(custom(
-        function = "validate_max_depth",
-        message = "Max depth must be reasonable (1-100)"
-    ))]
     pub max_depth: Option<usize>,
 
     /// Follow symbolic links during monitoring
     pub follow_symlinks: bool,
 
-    /// Batch size for processing material slices
-    #[validate(range(min = 1, max = 1000, message = "Batch size must be between 1 and 1000"))]
+    /// Legacy field retained for compatibility (unused in JetStream mode)
     pub batch_size: usize,
 
-    /// Processing interval in milliseconds
-    #[validate(range(
-        min = 100,
-        max = 60000,
-        message = "Processing interval must be between 100ms and 60 seconds"
-    ))]
+    /// Legacy field retained for compatibility (unused in JetStream mode)
     pub processing_interval_ms: u64,
+
+    /// Maximum number of bytes captured per event
+    pub max_capture_bytes: u64,
 }
 
 impl Default for FilesystemConfig {
@@ -90,17 +79,36 @@ impl Default for FilesystemConfig {
             follow_symlinks: false,
             batch_size: 100,
             processing_interval_ms: 1000,
+            max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
 }
 
 impl FilesystemConfig {
-    /// Validate the configuration and return detailed error messages
+    /// Validate the configuration and return detailed error messages.
     pub fn validate_config(&self) -> Result<(), String> {
-        use validator::Validate as ValidateTrait;
+        if self.watch_paths.is_empty() {
+            return Err("At least one watch path must be specified".to_string());
+        }
 
-        ValidateTrait::validate(self)
-            .map_err(|e| format!("Filesystem configuration validation failed: {:?}", e))
+        if let Some(depth) = self.max_depth {
+            validate_max_depth(depth)
+                .map_err(|_| "Max depth must be reasonable (1-100)".to_string())?;
+        }
+
+        if !(1..=1000).contains(&self.batch_size) {
+            return Err("Batch size must be between 1 and 1000".to_string());
+        }
+
+        if !(100..=60_000).contains(&self.processing_interval_ms) {
+            return Err("Processing interval must be between 100ms and 60 seconds".to_string());
+        }
+
+        if !(1024..=512 * 1024 * 1024).contains(&self.max_capture_bytes) {
+            return Err("Max capture bytes must be between 1KB and 512MB".to_string());
+        }
+
+        Ok(())
     }
 }
 
@@ -119,71 +127,49 @@ fn validate_max_depth(depth: usize) -> Result<(), ValidationError> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemState {
     /// When the snapshot was taken
-    pub captured_at: DateTime<Utc>,
-
-    /// Active sensd jobs for filesystem monitoring
-    pub active_jobs: HashMap<Ulid, String>,
+    pub captured_at: chrono::DateTime<chrono::Utc>,
 
     /// Directories being monitored
     pub watch_paths: Vec<String>,
 
-    /// Last processed material offsets per job
-    pub job_offsets: HashMap<Ulid, i64>,
+    /// Host where the watcher is running
+    pub host: HostName,
 }
 
-/// Unified filesystem processor using sensd MaterialSliceStream
+#[derive(Clone)]
+struct WatchContext {
+    acquisition: Arc<AcquisitionManager>,
+    stage_context: StageAsYouGoContext,
+    max_capture_bytes: u64,
+    security_policy: FileWatchingSecurityPolicy,
+}
+
+/// Unified filesystem processor using JetStream acquisition.
 pub struct FilesystemProcessor {
-    /// Current processing context
-    context: Option<StreamProcessorContext>,
-
-    /// Filesystem monitoring configuration
+    runtime: Option<ProcessorRuntimeState>,
     config: FilesystemConfig,
-
-    /// Database connection pool
-    db_pool: Option<PgPool>,
-
-    /// Active sensd jobs
-    active_jobs: HashMap<Ulid, String>,
-
-    /// Last captured filesystem state for snapshots
-    last_state: Option<FilesystemState>,
-
-    /// Checkpoint manager for state persistence
-    checkpoint_manager: Option<CheckpointManager>,
-
-    /// Stage-as-you-go context for real-time provenance
     stage_context: Option<StageAsYouGoContext>,
-
-    /// Event channel for sending processed events
-    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
+    watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl FilesystemProcessor {
-    /// Create a new unified filesystem processor
+    /// Create a new filesystem processor with default configuration.
     pub fn new() -> Self {
         Self {
-            context: None,
+            runtime: None,
             config: FilesystemConfig::default(),
-            db_pool: None,
-            active_jobs: HashMap::new(),
-            last_state: None,
-            checkpoint_manager: None,
             stage_context: None,
-            event_sender: None,
+            watch_handles: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    /// Create processor with custom configuration
+    /// Create processor with custom configuration.
     pub fn with_config(config: FilesystemConfig) -> Self {
         Self {
-            context: None,
+            runtime: None,
             config,
-            db_pool: None,
-            active_jobs: HashMap::new(),
-            last_state: None,
-            checkpoint_manager: None,
             stage_context: None,
-            event_sender: None,
+            watch_handles: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -192,408 +178,128 @@ impl FilesystemProcessor {
         &self.config
     }
 
-    /// Submit a TreeWatch job to sensd for filesystem monitoring
-    #[instrument(skip(self), fields(processor = "filesystem", path = %path))]
-    async fn submit_tree_watch_job(&mut self, path: &str) -> SatelliteResult<Ulid> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| SatelliteError::General(eyre!("Database pool not initialized")))?;
-
-        let job_id = Ulid::new();
-        let source_identifier = format!("fs-watch:{}", path);
-
-        // Insert TreeWatch job into sensor_jobs table (current canonical schema)
-        sqlx::query!(
-            r#"
-            INSERT INTO raw.sensor_jobs (
-                id, sensor_type, target_uri, config
-            )
-            VALUES ($1::ulid, 'tree_watch', $2, $3)
-            "#,
-            job_id as Ulid,
-            path,
-            json!({
-                "mode": "continuous",
-                "recursive": true,
-                "follow_symlinks": self.config.follow_symlinks,
-                "max_depth": self.config.max_depth,
-                "source_identifier": source_identifier
-            }),
-        )
-        .execute(db_pool)
-        .await
-        .map_err(|e| SatelliteError::General(eyre!("Failed to submit TreeWatch job: {}", e)))?;
-
-        info!("Submitted TreeWatch job {} for path: {}", job_id, path);
-        self.active_jobs.insert(job_id, path.to_string());
-
-        Ok(job_id)
-    }
-
-    /// Process a material slice from sensd into filesystem events
-    #[instrument(skip(self, slice), fields(processor = "filesystem", material_id = %slice.material_id, offset_start = slice.offset_start, offset_end = slice.offset_end))]
-    async fn process_material_slice(
-        &self,
-        slice: MaterialSlice,
-    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
-        let mut events = Vec::new();
-
-        // Parse metadata from the slice
-        let path = slice
-            .metadata
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        let event_kind = slice
-            .metadata
-            .get("event_kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-
-        let file_size = slice
-            .metadata
-            .get("size")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-
-        let is_directory = slice
-            .metadata
-            .get("is_directory")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        // Create event with material provenance
-        let provenance = Provenance::Material {
-            id: Id::from(slice.material_id),
-            anchor_byte: slice.offset_start,
-            offset_kind: OffsetKind::Byte,
-            offset_start: Some(slice.offset_start),
-            offset_end: Some(slice.offset_end),
-        };
-
-        let sanitized_path = SanitizedPath::new(path);
-        let timestamp = slice.ts_capture_start;
-
-        // Create typed event based on event type
-        let event: Event<JsonValue> = if is_directory {
-            match event_kind {
-                kind if kind.contains("Create") => {
-                    let payload = DirCreatedPayload {
-                        path: sanitized_path,
-                        created_at: timestamp,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                kind if kind.contains("Remove") => {
-                    let payload = DirDeletedPayload {
-                        path: sanitized_path,
-                        deleted_at: timestamp,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                _ => {
-                    let payload = DirDiscoveredPayload {
-                        path: sanitized_path,
-                        modified_at: timestamp,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-            }
-        } else {
-            match event_kind {
-                kind if kind.contains("Create") => {
-                    let payload = FileCreatedPayload {
-                        path: sanitized_path,
-                        size: file_size as u64,
-                        created_at: timestamp,
-                        permissions: None,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                kind if kind.contains("Modify") => {
-                    let payload = FileModifiedPayload {
-                        path: sanitized_path,
-                        size: file_size as u64,
-                        modified_at: timestamp,
-                        modification_type: event_kind.to_string(),
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                kind if kind.contains("Remove") => {
-                    let payload = FileDeletedPayload {
-                        path: sanitized_path,
-                        deleted_at: timestamp,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                kind if kind.contains("Rename") => {
-                    // For rename, we need both old and new paths
-                    // This is a simplification - in reality we'd need to track the rename
-                    let payload = FileMovedPayload {
-                        old_path: sanitized_path.clone(),
-                        new_path: sanitized_path,
-                        moved_at: timestamp,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-                _ => {
-                    let payload = FileDiscoveredPayload {
-                        path: sanitized_path,
-                        size: file_size as u64,
-                        modified_at: timestamp,
-                        permissions: None,
-                    };
-                    Event::new(payload, provenance.clone())
-                        .at_time(timestamp)
-                        .to_json_event()?
-                }
-            }
-        };
-
-        events.push(event);
-
-        debug!(
-            "Generated filesystem event for path: {} (material: {}, offsets: {}-{})",
-            path, slice.material_id, slice.offset_start, slice.offset_end
-        );
-
-        Ok(events)
-    }
-
-    /// Create material stream for the given material_id
-    async fn create_material_stream(
-        &self,
-        material_id: Ulid,
-    ) -> Result<impl tokio_stream::Stream<Item = Result<MaterialSlice>> + '_> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| eyre!("Database pool not initialized"))?;
-
-        let stream = async_stream::stream! {
-            let mut offset = 0i64;
-
-            loop {
-                let slices = sqlx::query!(
-                    r#"
-                    SELECT 
-                        tl.source_material_id as "material_id: Ulid",
-                        tl.offset_start,
-                        tl.offset_end,
-                        tl.ts_capture,
-                        NULL::text as note,
-                        NULL::bytea as "inline_data?: Vec<u8>"
-                    FROM raw.temporal_ledger tl
-                    LEFT JOIN raw.source_material_registry sm 
-                        ON sm.id = tl.source_material_id
-                    WHERE tl.source_material_id = $1::ulid
-                    AND tl.offset_start >= $2
-                    ORDER BY tl.offset_start
-                    LIMIT $3
-                    "#,
-                    material_id as Ulid,
-                    offset,
-                    self.config.batch_size as i64,
-                )
-                .fetch_all(db_pool)
-                .await;
-
-                match slices {
-                    Ok(records) => {
-                        if records.is_empty() {
-                            break;
-                        }
-
-                        for record in records {
-                            let data = record.inline_data.unwrap_or_default();
-
-                            let slice = MaterialSlice {
-                                material_id: record.material_id,
-                                offset_start: record.offset_start,
-                                offset_end: record.offset_end,
-                                ts_capture_start: record.ts_capture,
-                                ts_capture_end: record.ts_capture,
-                                data,
-                                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
-                            };
-
-                            offset = record.offset_end;
-                            yield Ok(slice);
-                        }
-                    }
-                    Err(e) => {
-                        yield Err(eyre!("Failed to fetch slices: {}", e));
-                        break;
-                    }
-                }
-            }
-        };
-
-        Ok(stream)
-    }
-
-    /// Process completed sensd jobs and generate events from their materials
-    #[instrument(skip(self), fields(processor = "filesystem"))]
-    async fn process_completed_jobs(&mut self) -> SatelliteResult<u64> {
-        let db_pool = self
-            .db_pool
-            .as_ref()
-            .ok_or_else(|| SatelliteError::General(eyre!("Database pool not initialized")))?;
-
-        let mut total_events = 0;
-
-        // Query for retired TreeWatch jobs with matching source materials not yet processed
-        let completed_jobs = sqlx::query!(
-            r#"
-            SELECT 
-                sj.id as "job_id: Ulid",
-                sm.id as "material_id: Ulid",
-                sj.target_uri
-            FROM raw.sensor_jobs sj
-            LEFT JOIN raw.source_material_registry sm 
-                ON sm.source_identifier LIKE '%' || sj.target_uri || '%'
-            WHERE sj.status = 'retired'
-              AND sj.sensor_type = 'tree_watch'
-              AND sm.id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM core.events 
-                WHERE source_material_id = sm.id
-              )
-            ORDER BY sj.updated_at DESC
-            LIMIT 10
-            "#,
-        )
-        .fetch_all(db_pool)
-        .await
-        .map_err(|e| SatelliteError::General(eyre!("Failed to query completed jobs: {}", e)))?;
-
-        for job in completed_jobs {
-            let material_id = job.material_id;
-            info!(
-                "Processing material {} from TreeWatch job {} (path: {})",
-                material_id, job.job_id, job.target_uri
-            );
-
-            // Create material stream for this job's output
-            let stream = self
-                .create_material_stream(material_id)
-                .await
-                .map_err(|e| SatelliteError::General(e))?;
-            tokio::pin!(stream);
-
-            // Process all slices from this material
-            while let Some(slice_result) = stream.next().await {
-                match slice_result {
-                    Ok(slice) => {
-                        // Convert slice to filesystem events
-                        let events = self.process_material_slice(slice).await?;
-
-                        // Send events through the context or store them
-                        for event in events {
-                            if let Some(ref context) = self.context {
-                                context.emit_event(event).await?;
-                                total_events += 1;
-                            } else if let Some(ref sender) = self.event_sender {
-                                sender.send(event).await.map_err(|_| {
-                                    SatelliteError::General(eyre!("Failed to send event"))
-                                })?;
-                                total_events += 1;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Error processing slice from material {}: {}",
-                            material_id, e
-                        );
-                    }
-                }
-            }
-
-            info!(
-                "Completed processing material {} with {} events",
-                material_id, total_events
-            );
-        }
-
-        Ok(total_events)
-    }
-
-    /// Take a snapshot of current filesystem state
-    #[instrument(skip(self), fields(processor = "filesystem", jobs_count = self.active_jobs.len()))]
-    async fn take_snapshot(&mut self) -> SatelliteResult<FilesystemState> {
-        let state = FilesystemState {
-            captured_at: Utc::now(),
-            active_jobs: self.active_jobs.clone(),
-            watch_paths: self.config.watch_paths.clone(),
-            job_offsets: HashMap::new(), // Would be populated from database in real implementation
-        };
-
-        self.last_state = Some(state.clone());
-        Ok(state)
-    }
-
-    /// Start continuous monitoring by submitting jobs and processing materials
-    #[instrument(skip(self), fields(processor = "filesystem", paths_count = self.config.watch_paths.len()))]
-    async fn start_continuous_monitoring(&mut self) -> SatelliteResult<()> {
-        info!("Starting continuous filesystem monitoring via sensd");
-
-        // Submit TreeWatch jobs for all configured paths
-        for path in &self.config.watch_paths.clone() {
-            match self.submit_tree_watch_job(path).await {
-                Ok(job_id) => {
-                    info!(
-                        "Successfully submitted TreeWatch job {} for path: {}",
-                        job_id, path
-                    );
-                }
-                Err(e) => {
-                    error!("Failed to submit TreeWatch job for path {}: {}", path, e);
-                    return Err(e);
-                }
-            }
-        }
-
-        // Start processing loop
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
-            self.config.processing_interval_ms,
-        ));
+    async fn initialise_with_runtime_state(
+        &mut self,
+        runtime: ProcessorRuntimeState,
+        config: FilesystemConfig,
+    ) -> SatelliteResult<()> {
+        let service_name = runtime.service_info().service_name().to_string();
 
         info!(
-            "Starting material processing loop (interval: {}ms)",
-            self.config.processing_interval_ms
+            processor = self.processor_name(),
+            service = %service_name,
+            "Initializing filesystem processor"
         );
 
-        loop {
-            interval.tick().await;
+        config.validate_config().map_err(|e| {
+            SatelliteError::General(eyre::eyre!(
+                "Filesystem configuration validation failed: {}",
+                e
+            ))
+        })?;
 
-            match self.process_completed_jobs().await {
-                Ok(event_count) => {
-                    if event_count > 0 {
-                        debug!("Processed {} events from completed sensd jobs", event_count);
-                    }
-                }
-                Err(e) => {
-                    error!("Error processing completed jobs: {}", e);
-                    // Continue processing despite errors
-                }
+        let publisher = match runtime.transport() {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
+                Arc::clone(publisher)
             }
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(SatelliteError::from)?;
+
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+
+        self.config = config;
+        self.stage_context = Some(stage_context);
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+        self.runtime = Some(runtime);
+
+        Ok(())
+    }
+
+    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            SatelliteError::General(eyre::eyre!("Filesystem runtime handles not initialised"))
+        })
+    }
+
+    fn service_info(&self) -> SatelliteResult<&ServiceInfo> {
+        Ok(self.runtime()?.service_info())
+    }
+
+    /// Build watch contexts for each configured path.
+    fn build_watch_contexts(&self) -> SatelliteResult<HashMap<String, WatchContext>> {
+        let runtime = self.runtime()?;
+        let stage_context = self
+            .stage_context
+            .clone()
+            .ok_or_else(|| SatelliteError::General(eyre::eyre!("Stage context not available")))?;
+
+        let mut contexts = HashMap::new();
+        for path in &self.config.watch_paths {
+            let acquisition = runtime.acquisition_manager(
+                RotationPolicy::default(),
+                "fs-watcher",
+                path.clone(),
+            )?;
+
+            contexts.insert(
+                path.clone(),
+                WatchContext {
+                    acquisition: Arc::new(acquisition),
+                    stage_context: stage_context.clone(),
+                    max_capture_bytes: self.config.max_capture_bytes,
+                    security_policy: if self.config.follow_symlinks {
+                        FileWatchingSecurityPolicy::permissive()
+                    } else {
+                        FileWatchingSecurityPolicy::restrictive()
+                    },
+                },
+            );
+        }
+
+        Ok(contexts)
+    }
+
+    async fn spawn_watchers(&self) -> SatelliteResult<Vec<tokio::task::JoinHandle<()>>> {
+        let contexts = self.build_watch_contexts()?;
+
+        let mut handles = Vec::with_capacity(contexts.len());
+        for (root, watch_ctx) in contexts {
+            let root_path = root.clone();
+            let watch_ctx = watch_ctx.clone();
+
+            let handle = tokio::spawn(async move {
+                if let Err(e) = watch_path(root_path, watch_ctx).await {
+                    error!("Watcher terminated with error: {}", e);
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        Ok(handles)
+    }
+
+    async fn run_continuous_monitoring(&self) -> SatelliteResult<()> {
+        info!("Filesystem watcher running (continuous mode)");
+        // Wait forever while watchers stream events.
+        futures::future::pending::<()>().await;
+        Ok(())
+    }
+
+    /// Produce a snapshot of the current processor state.
+    fn snapshot_state(&self) -> FilesystemState {
+        let host = self
+            .service_info()
+            .map(|info| HostName::new(info.host().to_string()))
+            .unwrap_or_else(|_| HostName::new("unknown-host"));
+
+        FilesystemState {
+            captured_at: chrono::Utc::now(),
+            watch_paths: self.config.watch_paths.clone(),
+            host,
         }
     }
 }
@@ -608,165 +314,76 @@ impl Default for FilesystemProcessor {
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
 
-    #[instrument(skip(self, ctx), fields(processor = "filesystem", service = %ctx.service_name))]
+    #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
     async fn initialize(
         &mut self,
-        ctx: StreamProcessorContext,
-        config: Self::Config,
+        init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        info!(
-            processor = self.processor_name(),
-            service = %ctx.service_name,
-            "Initializing filesystem processor with sensd integration"
-        );
-
-        // Store configuration
-        self.config = config;
-
-        // Initialize database connection
-        self.db_pool = Some(ctx.db_pool.clone());
-
-        // Initialize checkpoint manager
-        self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
-
-        // Initialize stage-as-you-go context
-        self.stage_context = Some(StageAsYouGoContext::new(
-            ctx.db_pool.clone(),
-            ctx.event_sender.clone(),
-        ));
-
-        // Set up default watch paths if none specified
-        if self.config.watch_paths.is_empty() {
-            if let Some(home) = dirs::home_dir() {
-                self.config.watch_paths = vec![
-                    home.join("Documents").to_string_lossy().to_string(),
-                    home.join("Downloads").to_string_lossy().to_string(),
-                    home.join("Desktop").to_string_lossy().to_string(),
-                ];
-                info!("Using default watch paths: {:?}", self.config.watch_paths);
-            } else {
-                return Err(SatelliteError::General(eyre!(
-                    "No watch paths configured and could not determine home directory"
-                )));
-            }
-        }
-
-        // Validate configuration
-        self.config.validate_config().map_err(|e| {
-            SatelliteError::General(eyre!("Configuration validation failed: {}", e))
-        })?;
-
-        info!(
-            watch_paths = ?self.config.watch_paths,
-            max_depth = ?self.config.max_depth,
-            follow_symlinks = self.config.follow_symlinks,
-            batch_size = self.config.batch_size,
-            processing_interval_ms = self.config.processing_interval_ms,
-            "Filesystem processor configuration"
-        );
-
-        self.context = Some(ctx);
-        Ok(())
+        let (config, runtime) = init.into_runtime();
+        self.initialise_with_runtime_state(runtime, config).await
     }
 
-    #[instrument(skip(self), fields(processor = "filesystem", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,
         until: TimeHorizon,
-        args: ScanArgs,
+        _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let start_time = std::time::Instant::now();
-        let mut events_processed = 0;
-        let mut successful_targets = Vec::new();
-        let failed_targets = Vec::new();
-        let mut warnings = Vec::new();
-
-        info!(
-            processor = self.processor_name(),
-            from = %from.description(),
-            until = ?until,
-            targets = args.targets.len(),
-            dry_run = args.dry_run,
-            "Starting filesystem scan via sensd"
-        );
-
         match until {
             TimeHorizon::Snapshot => {
-                // Take current state snapshot
-                let _state = self.take_snapshot().await?;
-
-                // Process any completed jobs
-                if !args.dry_run {
-                    events_processed = self.process_completed_jobs().await?;
-                }
-
-                successful_targets = if args.targets.is_empty() {
-                    self.config.watch_paths.clone()
-                } else {
-                    args.targets.clone()
+                let state = self.snapshot_state();
+                let report = ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: from,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: vec!["snapshot".to_string()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
                 };
+
+                info!("Filesystem snapshot captured at {}", state.captured_at);
+                Ok(report)
             }
-
-            TimeHorizon::Historical { end_time: _ } => {
-                warnings.push(
-                    "Historical filesystem scanning via sensd depends on material capture times"
-                        .to_string(),
-                );
-
-                // Process any completed jobs within the time range
-                if !args.dry_run {
-                    events_processed = self.process_completed_jobs().await?;
-                }
-
-                successful_targets = if args.targets.is_empty() {
-                    self.config.watch_paths.clone()
-                } else {
-                    args.targets.clone()
-                };
+            TimeHorizon::Historical { .. } => {
+                warn!("Filesystem watcher does not support historical replay");
+                Ok(ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: from,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: Vec::new(),
+                    failed_targets: Vec::new(),
+                    warnings: vec!["Historical mode is not supported".to_string()],
+                })
             }
-
             TimeHorizon::Continuous => {
-                // Start continuous monitoring
-                info!("Starting continuous filesystem monitoring via sensd");
-                self.start_continuous_monitoring().await?;
-                events_processed = 0; // Continuous monitoring runs indefinitely
+                let handles = self.spawn_watchers().await?;
+                {
+                    let mut guard = self.watch_handles.lock().await;
+                    guard.extend(handles);
+                }
+
+                self.run_continuous_monitoring().await?;
+
+                Ok(ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: vec!["continuous".to_string()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
             }
         }
-
-        let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
-
-        Ok(ScanReport {
-            events_processed,
-            duration: start_time.elapsed(),
-            final_checkpoint,
-            time_range: Some((
-                match &from {
-                    Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => Utc::now() - chrono::Duration::hours(1),
-                },
-                Utc::now(),
-            )),
-            processor_stats: HashMap::from([
-                ("active_jobs".to_string(), self.active_jobs.len() as u64),
-                (
-                    "watch_paths".to_string(),
-                    self.config.watch_paths.len() as u64,
-                ),
-                (
-                    "successful_targets".to_string(),
-                    successful_targets.len() as u64,
-                ),
-                ("failed_targets".to_string(), failed_targets.len() as u64),
-            ]),
-            successful_targets,
-            failed_targets,
-            warnings,
-        })
     }
 
     fn processor_name(&self) -> &str {
-        "fs-processor-sensd"
+        "filesystem-watcher"
     }
 
     fn processor_type(&self) -> ProcessorType {
@@ -775,107 +392,71 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
     fn capabilities(&self) -> ProcessorCapabilities {
         ProcessorCapabilities {
-            supports_continuous: true,
-            supports_historical: true,
             supports_snapshot: true,
-            supports_interactive: false,
-            max_scan_size: Some(100000),
-            supports_concurrent: false,
+            supports_historical: false,
+            supports_continuous: true,
+            ..ProcessorCapabilities::default()
         }
     }
 
-    #[instrument(skip(self), fields(processor = "filesystem"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
-        Ok(Checkpoint::timestamp(Utc::now(), None))
+        Ok(Checkpoint::None)
     }
 
-    #[instrument(skip(self, args), fields(processor = "filesystem", from = %_from.description(), targets_count = args.targets.len()))]
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
-        until: &TimeHorizon,
-        args: &ScanArgs,
+        _until: &TimeHorizon,
+        _args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
-        let estimated_events = self.active_jobs.len() as u64 * 100; // Rough estimate
-        let warnings = vec!["Estimates are based on active sensd jobs".to_string()];
-
-        let (duration_factor, confidence) = match until {
-            TimeHorizon::Snapshot => (1.0, 0.7),
-            TimeHorizon::Historical { .. } => (0.5, 0.5),
-            TimeHorizon::Continuous => (f64::INFINITY, 0.2),
-        };
-
-        let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
-        let targets_count = if args.targets.is_empty() {
-            self.config.watch_paths.len()
-        } else {
-            args.targets.len()
-        };
-
         Ok(ScanEstimate {
-            estimated_events: adjusted_events,
-            estimated_duration: std::time::Duration::from_millis(adjusted_events * 5),
-            estimated_data_size: adjusted_events * 512,
-            estimated_targets: targets_count as u64,
-            warnings,
-            confidence,
+            estimated_events: (self.config.watch_paths.len() as u64) * 100,
+            estimated_duration: std::time::Duration::from_secs(5),
+            estimated_data_size: self.config.max_capture_bytes
+                * (self.config.watch_paths.len() as u64),
+            estimated_targets: self.config.watch_paths.len() as u64,
+            warnings: vec!["Filesystem activity estimation derived from watcher count".to_string()],
+            confidence: 0.3,
         })
+    }
+
+    async fn shutdown(&mut self) -> SatelliteResult<()> {
+        let mut guard = self.watch_handles.lock().await;
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
+
+        info!("Filesystem watcher shutdown complete");
+        Ok(())
     }
 }
 
-// Implementation of ExplorationProvider for diagnostics
 impl ExplorationProvider for FilesystemProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        let recent_activity = if let Some(ref state) = self.last_state {
-            vec![ActivityEntry {
-                timestamp: state.captured_at,
-                description: format!(
-                    "Snapshot taken: {} active jobs for {} watch paths",
-                    state.active_jobs.len(),
-                    state.watch_paths.len()
-                ),
-                data: Some(serde_json::to_value(state)?),
-            }]
-        } else {
-            vec![]
-        };
-
         Ok(SourceState {
-            description: format!(
-                "Filesystem processor via sensd monitoring {} paths with {} active jobs",
-                self.config.watch_paths.len(),
-                self.active_jobs.len()
-            ),
-            last_updated: self
-                .last_state
-                .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(Utc::now),
-            total_items: Some(self.active_jobs.len() as u64),
+            description: "Monitors filesystem changes and publishes events".to_string(),
+            last_updated: chrono::Utc::now(),
+            total_items: Some(self.config.watch_paths.len() as u64),
             metadata: HashMap::from([
                 (
+                    "max_capture_bytes".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.config.max_capture_bytes,
+                    )),
+                ),
+                (
                     "watch_paths".to_string(),
-                    serde_json::to_value(&self.config.watch_paths)?,
-                ),
-                (
-                    "max_depth".to_string(),
-                    serde_json::to_value(self.config.max_depth)?,
-                ),
-                (
-                    "follow_symlinks".to_string(),
-                    serde_json::to_value(self.config.follow_symlinks)?,
-                ),
-                (
-                    "batch_size".to_string(),
-                    serde_json::to_value(self.config.batch_size)?,
-                ),
-                (
-                    "processor_type".to_string(),
-                    serde_json::Value::String("sensd-ingestor".to_string()),
+                    serde_json::Value::Array(
+                        self.config
+                            .watch_paths
+                            .iter()
+                            .map(|p| serde_json::Value::String(p.clone()))
+                            .collect(),
+                    ),
                 ),
             ]),
             healthy: true,
-            recent_activity,
+            recent_activity: Vec::new(),
         })
     }
 
@@ -883,76 +464,461 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         _limit: u64,
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        // Would query database for job completion history
-        Ok(vec![])
+        Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+        time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        let (start_time, end_time) = time_range.unwrap_or_else(|| {
-            let now = Utc::now();
-            let hour_ago = now - chrono::Duration::hours(1);
-            (hour_ago, now)
+        let time_range = time_range.unwrap_or_else(|| {
+            let now = chrono::Utc::now();
+            (now - chrono::Duration::hours(1), now)
         });
 
         Ok(CoverageAnalysis {
-            time_range: (start_time, end_time),
-            source_total: self.active_jobs.len() as u64,
-            sinex_total: 0, // Would query from database
-            coverage_percentage: 0.0,
-            missing_count: self.active_jobs.len() as u64,
-            missing_samples: vec![MissingItem {
-                source_id: "sensd".to_string(),
-                timestamp: end_time,
-                description: "TreeWatch jobs pending completion".to_string(),
-                missing_reason: Some("Waiting for sensd job completion".to_string()),
-            }],
+            time_range,
+            coverage_percentage: 1.0,
+            missing_count: 0,
             duplicate_count: 0,
-            recommendations: vec![
-                "Monitor sensd job status for completion".to_string(),
-                "Check TreeWatch sensor configuration".to_string(),
-                "Verify material processing pipeline".to_string(),
-            ],
+            source_total: self.config.watch_paths.len() as u64,
+            sinex_total: 0,
+            missing_samples: Vec::new(),
+            recommendations: Vec::new(),
         })
     }
 
     fn export_data(
         &self,
-        path: &sinex_core::SanitizedPath,
-        format: ExportFormat,
+        _path: &SanitizedPath,
+        _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
-        if let Some(ref state) = self.last_state {
-            let content = match format {
-                ExportFormat::Json => serde_json::to_string_pretty(state)?,
-                ExportFormat::Csv => {
-                    let mut csv = "job_id,target_uri\n".to_string();
-                    for (job_id, path) in &state.active_jobs {
-                        csv.push_str(&format!("{},{}\n", job_id, path));
-                    }
-                    csv
-                }
-                ExportFormat::Raw => format!("{:#?}", state),
-            };
-            std::fs::write(path.as_str(), content)?;
-        } else {
-            let config_data = serde_json::json!({
-                "watch_paths": self.config.watch_paths,
-                "max_depth": self.config.max_depth,
-                "follow_symlinks": self.config.follow_symlinks,
-                "batch_size": self.config.batch_size,
-                "active_jobs": self.active_jobs
-            });
+        Err(eyre::eyre!(
+            "Filesystem watcher does not support data export"
+        ))
+    }
+}
 
-            let content = match format {
-                ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,
-                ExportFormat::Raw => format!("{:#?}", config_data),
-                ExportFormat::Csv => "No state data available\n".to_string(),
-            };
+async fn watch_path(root: String, ctx: WatchContext) -> SatelliteResult<()> {
+    let normalized = validate_watch_path(&root, &ctx.security_policy)
+        .map_err(|e| SatelliteError::General(eyre::eyre!(e)))?;
 
-            std::fs::write(path.as_str(), content)?;
+    info!("Watching path: {}", normalized.as_str());
+
+    let (tx, mut rx) = mpsc::channel::<Event>(256);
+    let mut watcher: RecommendedWatcher =
+        notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            if let Ok(event) = res {
+                let _ = tx.blocking_send(event);
+            }
+        })
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to create watcher: {}", e)))?;
+
+    watcher
+        .watch(Path::new(normalized.as_str()), RecursiveMode::Recursive)
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to watch path: {}", e)))?;
+
+    while let Some(event) = rx.recv().await {
+        if let Err(e) = handle_event(&ctx, &root, event).await {
+            warn!("Failed to process filesystem event: {}", e);
         }
+    }
+
+    Ok(())
+}
+
+#[instrument(skip(ctx, event))]
+async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> SatelliteResult<()> {
+    match event.kind {
+        EventKind::Create(_) => {
+            for path in event.paths {
+                handle_file_created(ctx, root, &path).await?;
+            }
+        }
+        EventKind::Modify(mod_kind) => {
+            use notify::event::ModifyKind;
+
+            match mod_kind {
+                ModifyKind::Name(RenameMode::Both) => {
+                    if event.paths.len() == 2 {
+                        let old = &event.paths[0];
+                        let new = &event.paths[1];
+                        handle_file_moved(ctx, root, old, new).await?;
+                    }
+                }
+                ModifyKind::Name(_) => {
+                    // Partial rename events - best effort handling
+                    if event.paths.len() == 2 {
+                        let old = &event.paths[0];
+                        let new = &event.paths[1];
+                        handle_file_moved(ctx, root, old, new).await?;
+                    }
+                }
+                ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any => {
+                    for path in event.paths {
+                        handle_file_modified(ctx, root, &path, "modified").await?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        EventKind::Remove(_) => {
+            for path in event.paths {
+                handle_file_deleted(ctx, root, &path).await?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> SatelliteResult<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let metadata = match fs::metadata(path).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            warn!("Failed to read metadata for {:?}: {}", path, e);
+            return Ok(());
+        }
+    };
+
+    let size = metadata.len();
+    if size > ctx.max_capture_bytes {
+        warn!(
+            "Skipping file {:?} ({} bytes) exceeding limit {} bytes",
+            path, size, ctx.max_capture_bytes
+        );
+        return Ok(());
+    }
+
+    let content = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!("Failed to read file {:?}: {}", path, e);
+            return Ok(());
+        }
+    };
+
+    let material_id = capture_material(ctx, path, MATERIAL_REASON_CREATED, Some(&content)).await?;
+
+    let payload = sinex_core::types::events::payloads::filesystem::FileCreatedPayload {
+        path: sanitize_path(path)?,
+        size,
+        created_at: file_created_at(&metadata),
+        permissions: file_permissions(&metadata),
+    };
+
+    emit_filesystem_event(
+        ctx,
+        material_id,
+        serde_json::to_value(payload)
+            .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
+        "file.created",
+        size as i64,
+    )
+    .await?;
+
+    debug!("Recorded file.created for {:?}", path);
+    Ok(())
+}
+
+async fn handle_file_modified(
+    ctx: &WatchContext,
+    _root: &str,
+    path: &Path,
+    modification_type: &str,
+) -> SatelliteResult<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let metadata = match fs::metadata(path).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            warn!("Failed to read metadata for {:?}: {}", path, e);
+            return Ok(());
+        }
+    };
+
+    let size = metadata.len();
+    if size > ctx.max_capture_bytes {
+        warn!(
+            "Skipping file {:?} ({} bytes) exceeding limit {} bytes",
+            path, size, ctx.max_capture_bytes
+        );
+        return Ok(());
+    }
+
+    let content = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!("Failed to read file {:?}: {}", path, e);
+            return Ok(());
+        }
+    };
+
+    let material_id = capture_material(ctx, path, MATERIAL_REASON_MODIFIED, Some(&content)).await?;
+
+    let payload = sinex_core::types::events::payloads::filesystem::FileModifiedPayload {
+        path: sanitize_path(path)?,
+        size,
+        modified_at: file_modified_at(&metadata),
+        modification_type: modification_type.to_string(),
+    };
+
+    emit_filesystem_event(
+        ctx,
+        material_id,
+        serde_json::to_value(payload)
+            .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
+        "file.modified",
+        size as i64,
+    )
+    .await?;
+
+    debug!("Recorded file.modified for {:?}", path);
+    Ok(())
+}
+
+async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> SatelliteResult<()> {
+    // For deletions no content is available; record zero-byte material.
+    let material_id = capture_material(ctx, path, MATERIAL_REASON_DELETED, None).await?;
+
+    let payload = sinex_core::types::events::payloads::filesystem::FileDeletedPayload {
+        path: sanitize_path(path)?,
+        deleted_at: chrono::Utc::now(),
+    };
+
+    emit_filesystem_event(
+        ctx,
+        material_id,
+        serde_json::to_value(payload)
+            .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
+        "file.deleted",
+        0,
+    )
+    .await?;
+
+    debug!("Recorded file.deleted for {:?}", path);
+    Ok(())
+}
+
+async fn handle_file_moved(
+    ctx: &WatchContext,
+    _root: &str,
+    old: &Path,
+    new: &Path,
+) -> SatelliteResult<()> {
+    let material_id = capture_material(ctx, new, MATERIAL_REASON_MOVED, None).await?;
+
+    let payload = sinex_core::types::events::payloads::filesystem::FileMovedPayload {
+        old_path: sanitize_path(old)?,
+        new_path: sanitize_path(new)?,
+        moved_at: chrono::Utc::now(),
+    };
+
+    emit_filesystem_event(
+        ctx,
+        material_id,
+        serde_json::to_value(payload)
+            .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
+        "file.moved",
+        0,
+    )
+    .await?;
+
+    debug!("Recorded file.moved from {:?} to {:?}", old, new);
+    Ok(())
+}
+
+async fn capture_material(
+    ctx: &WatchContext,
+    path: &Path,
+    reason: &str,
+    content: Option<&[u8]>,
+) -> SatelliteResult<Ulid> {
+    let identifier = path.to_string_lossy();
+    let mut handle = ctx
+        .acquisition
+        .begin_material(&identifier)
+        .await
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
+
+    let material_id = handle.material_id;
+
+    if let Some(bytes) = content {
+        ctx.acquisition
+            .append_slice(&mut handle, bytes)
+            .await
+            .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to append slice: {}", e)))?;
+    }
+
+    ctx.acquisition
+        .finalize(handle, reason)
+        .await
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
+
+    Ok(material_id)
+}
+
+async fn emit_filesystem_event(
+    ctx: &WatchContext,
+    material_id: Ulid,
+    payload: JsonValue,
+    event_type: &str,
+    total_bytes: i64,
+) -> SatelliteResult<()> {
+    let provenance = Provenance::Material {
+        id: Id::from_ulid(material_id),
+        anchor_byte: 0,
+        offset_start: Some(0),
+        offset_end: Some(total_bytes),
+        offset_kind: sinex_core::OffsetKind::Byte,
+    };
+
+    let event = CoreEvent::create(
+        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
+        sinex_core::types::domain::EventType::from(event_type),
+        payload,
+        provenance,
+    );
+
+    let mut event = event;
+    event.id = Some(Id::from_ulid(Ulid::new()));
+
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
+        .await
+        .map(|_| ())
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to emit event: {}", e)))
+}
+
+fn sanitize_path(path: &Path) -> SatelliteResult<SanitizedPath> {
+    SanitizedPath::from_str_validated(&path.to_string_lossy())
+        .map_err(|e| SatelliteError::General(eyre::eyre!("Path validation failed: {}", e)))
+}
+
+fn file_permissions(metadata: &StdMetadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Some(metadata.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+fn file_created_at(metadata: &StdMetadata) -> chrono::DateTime<chrono::Utc> {
+    metadata
+        .created()
+        .or_else(|_| metadata.modified())
+        .map(|ts| ts.into())
+        .unwrap_or_else(|_| chrono::Utc::now())
+}
+
+fn file_modified_at(metadata: &StdMetadata) -> chrono::DateTime<chrono::Utc> {
+    metadata
+        .modified()
+        .map(|ts| ts.into())
+        .unwrap_or_else(|_| chrono::Utc::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core::db::models::Provenance;
+    use sinex_core::db::query_helpers::ulid_to_uuid;
+    use sinex_core::Id;
+    use sinex_satellite_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, EphemeralNats};
+    use std::sync::Arc;
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
+    use tokio::time::{timeout, Duration};
+
+    #[test]
+    fn filesystem_config_validation_allows_basic_configuration() {
+        let mut config = FilesystemConfig::default();
+        config.watch_paths = vec!["/tmp".to_string()];
+        assert!(config.validate_config().is_ok());
+    }
+
+    #[test]
+    fn filesystem_config_validation_rejects_missing_paths() {
+        let config = FilesystemConfig {
+            watch_paths: vec![],
+            ..FilesystemConfig::default()
+        };
+
+        assert!(config.validate_config().is_err());
+    }
+
+    #[sinex_test]
+    async fn handle_file_created_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
+        let nats = EphemeralNats::start().await?;
+        let nats_client = nats.connect().await?;
+
+        AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+        let acquisition = Arc::new(AcquisitionManager::new(
+            nats_client,
+            ctx.pool.clone(),
+            RotationPolicy::default(),
+            "filesystem".to_string(),
+            "/tmp".to_string(),
+        ));
+
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
+
+        let watch_ctx = WatchContext {
+            acquisition,
+            stage_context,
+            max_capture_bytes: 1024 * 1024,
+            security_policy: FileWatchingSecurityPolicy::permissive(),
+        };
+
+        let temp_root = tempdir()?;
+        let file_path = temp_root.path().join("example.txt");
+        tokio::fs::write(&file_path, b"hello world").await?;
+
+        handle_file_created(&watch_ctx, temp_root.path().to_str().unwrap(), &file_path).await?;
+
+        let event = timeout(Duration::from_secs(5), event_rx.recv())
+            .await?
+            .expect("filesystem event emitted");
+
+        assert_eq!(event.event_type.as_str(), "file.created");
+
+        let material_ulid = match event.provenance {
+            Provenance::Material { ref id, .. } => *id.as_ulid(),
+            _ => panic!("expected material provenance"),
+        };
+
+        let record = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_ulid(material_ulid))
+            .await?
+            .expect("source material persisted");
+        assert_eq!(record.status.as_str(), "completed");
+
+        let total_bytes: Option<i64> = sqlx::query_scalar!(
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+            ulid_to_uuid(material_ulid)
+        )
+        .fetch_optional(&ctx.pool)
+        .await?;
+
+        assert_eq!(total_bytes.unwrap_or_default(), 11);
 
         Ok(())
     }

@@ -6,14 +6,14 @@
       "format": "date-time",
       "type": "string"
     },
-    "state_data": true,
+    "checkpoint_data": true,
     "state_type": {
       "type": "string"
     }
   },
   "required": [
     "changed_at",
-    "state_data",
+    "checkpoint_data",
     "state_type"
   ],
   "title": "SystemStatePayload",

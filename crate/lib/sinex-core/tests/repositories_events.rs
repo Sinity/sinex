@@ -84,3 +84,51 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> color_eyre:
     }
     Ok(())
 }
+
+#[sinex_test]
+async fn cleanup_test_events_does_not_match_production_names(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+            Some("prod-source-material"),
+            json!({ "note": "production" }),
+        )
+        .await?;
+    let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
+
+    let event = Event::dynamic(
+        EventSource::new("deployment"),
+        EventType::new("release.completed"),
+        json!({"severity": "info"}),
+    )
+    .with_provenance(Provenance::from_material(material_id, 0, None, None))
+    .build()
+    .with_host(HostName::new("latest-prod-node"));
+
+    let inserted = ctx.pool.events().insert(event).await?;
+    let deleted = ctx
+        .pool
+        .events()
+        .cleanup_test_events_with_context(None, None, "tester", "cleanup sweep")
+        .await?;
+
+    assert_eq!(
+        deleted, 0,
+        "cleanup should not delete events with production hostnames"
+    );
+
+    let fetched = ctx
+        .pool
+        .events()
+        .get_by_id(inserted.id.expect("event id"))
+        .await?;
+    assert!(
+        fetched.is_some(),
+        "event should still exist after cleanup guard"
+    );
+    Ok(())
+}

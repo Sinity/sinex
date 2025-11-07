@@ -65,13 +65,14 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
     }
 
     // Create consumer
-    let consumer = jetstream
-        .create_consumer_on_stream(
+    let stream = jetstream.get_stream(stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(
+            "test-basic-consumer",
             async_nats::jetstream::consumer::pull::Config {
                 durable_name: Some("test-basic-consumer".to_string()),
                 ..Default::default()
             },
-            stream_name,
         )
         .await?;
 
@@ -171,13 +172,14 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::e
     }
 
     // Create consumer
-    let consumer = jetstream
-        .create_consumer_on_stream(
+    let stream = jetstream.get_stream(stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(
+            "test-multi-subject-consumer",
             async_nats::jetstream::consumer::pull::Config {
                 durable_name: Some("test-multi-subject-consumer".to_string()),
                 ..Default::default()
             },
-            stream_name,
         )
         .await?;
 
@@ -271,14 +273,16 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
     
     let mut consumers = Vec::new();
     for i in 0..consumer_count {
-        let consumer = jetstream
-            .create_consumer_on_stream(
+        let stream = jetstream.get_stream(stream_name).await?;
+        let durable = format!("{}-{}", consumer_group, i);
+        let consumer = stream
+            .get_or_create_consumer(
+                &durable,
                 async_nats::jetstream::consumer::pull::Config {
-                    durable_name: Some(format!("{}-{}", consumer_group, i)),
+                    durable_name: Some(durable.clone()),
                     deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                     ..Default::default()
                 },
-                stream_name,
             )
             .await?;
         consumers.push(consumer);
@@ -402,14 +406,15 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
     println!("Published {} ordered events", sequence_length);
 
     // Create consumer
-    let consumer = jetstream
-        .create_consumer_on_stream(
+    let stream = jetstream.get_stream(stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(
+            "test-ordering-consumer",
             async_nats::jetstream::consumer::pull::Config {
                 durable_name: Some("test-ordering-consumer".to_string()),
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                 ..Default::default()
             },
-            stream_name,
         )
         .await?;
 
@@ -493,13 +498,14 @@ async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Resul
     }
 
     // Create consumer
-    let consumer = jetstream
-        .create_consumer_on_stream(
+    let stream = jetstream.get_stream(stream_name).await?;
+    let consumer = stream
+        .get_or_create_consumer(
+            "test-error-handling-consumer",
             async_nats::jetstream::consumer::pull::Config {
                 durable_name: Some("test-error-handling-consumer".to_string()),
                 ..Default::default()
             },
-            stream_name,
         )
         .await?;
 

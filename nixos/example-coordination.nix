@@ -11,61 +11,74 @@
 
   services.sinex = {
     enable = true;
-    targetUser = "sinex-prod"; # replace with the operator account to monitor
-
-    serviceManagement.serviceGroups = {
-      core = true;
-      maintenance = true;  # keep DLQ/git-annex timers active in production
-      monitoring = true;   # expose Prometheus + Grafana on loopback
-    };
+    users.target = "sinex-prod"; # replace with the operator account to monitor
 
     database = {
       autoSetup = true;
+      host = "127.0.0.1";
       name = "sinex_prod";
       user = "sinex";
-      listenAddress = "127.0.0.1";
+      passwordFile = config.sinex.secrets.paths."sinex-local-db";
     };
 
-    satellite = {
+    lifecycle.maintenance.enable = true;
+
+    core.enable = true;
+
+    satellites = {
       enable = true;
+      defaults.logLevel = "info";
+
       coordination = {
         enable = true;
-        heartbeatInterval = 30;
-        leadershipTimeout = 120;
-        handoffTimeout = 60;
+        heartbeatSec = 30;
+        leadershipTimeoutSec = 120;
+        handoffTimeoutSec = 60;
       };
 
-      database.url = "postgresql:///sinex_prod?host=/run/postgresql";
-      logLevel = "info";
+      filesystem = {
+        enable = true;
+        instances = 3;   # one leader + two standbys
+        watchPaths = [
+          "/home/sinex-prod"
+          "/var/lib/sinex"
+        ];
+      };
 
-      coreServices.enable = true;
+      terminal = {
+        enable = true;
+        instances = 2;
+      };
 
-      eventSources = {
-        filesystem = {
-          enable = true;
-          instances = 3;   # one leader + two standbys
-          watchPaths = [
-            "/home/sinex-prod"
-            "/var/lib/sinex"
-          ];
-        };
-        terminal = {
-          enable = true;
-          instances = 2;
-        };
-        desktop = {
-          enable = true;
-          instances = 2;
-        };
-        system = {
-          enable = true;
-          instances = 2;
-        };
+      desktop = {
+        enable = true;
+        instances = 2;
+      };
+
+      system = {
+        enable = true;
+        instances = 2;
       };
 
       automata = {
-        canonicalCommandSynthesizer.enable = true;
+        enable = true;
+        canonicalizer.enable = true;
         healthAggregator.enable = true;
+      };
+    };
+
+    observability = {
+      enable = true;
+      monitoring = {
+        enable = true;
+        prometheus = {
+          listen = "127.0.0.1";
+          port = 9002;
+        };
+        grafana = {
+          enable = true;
+          port = 9003;
+        };
       };
     };
 
@@ -77,18 +90,8 @@
       kitty = {
         enable = true;
         autoConfigure = true;
-        userConfigPath = "~/.config/kitty/kitty.conf";
+        configFile = "~/.config/kitty/kitty.conf";
       };
-    };
-
-    monitoring = {
-      observabilityStack = {
-        enable = true;
-        listenAddress = "127.0.0.1";
-        prometheusPort = 9002;
-        grafanaPort = 9003;
-      };
-      dashboards.grafana.enable = true;
     };
   };
 
@@ -120,9 +123,4 @@
     isNormalUser = true;
     extraGroups = [ "wheel" ];
   };
-
-  systemd.tmpfiles.rules = [
-    "d /var/lib/sinex 0755 sinex sinex -"
-    "d /var/log/sinex 0755 sinex sinex -"
-  ];
 }

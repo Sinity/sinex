@@ -1,385 +1,230 @@
-# Sinex Pre-Flight Verification Module
-# Implements the Pre-Flight Verification Model for safe, zero-downtime deployments
 { config, lib, pkgs, ... }:
 
 with lib;
 
 let
   cfg = config.services.sinex;
-  
-  # Pre-flight verification configuration
-  preflightCfg = cfg.preflightVerification;
-  
-in
-{
-  options.services.sinex.preflightVerification = {
-    enable = mkOption {
-      type = types.bool;
-      default = true;
-      description = ''
-        Enable pre-flight verification for all Sinex service deployments.
-        This ensures that new versions are thoroughly tested before activation.
-      '';
-    };
-    
-    timeout = mkOption {
-      type = types.int;
-      default = 120;
-      description = "Timeout for complete verification process in seconds";
-    };
-    
-    skipPhases = mkOption {
-      type = types.listOf (types.enum [ 
-        "database" "extensions" "migrations" "resources" 
-        "configuration" "services" "integration" 
-      ]);
-      default = [];
-      description = "Verification phases to skip (use with caution)";
-    };
-    
-    failureAction = mkOption {
-      type = types.enum [ "abort" "warn" "ignore" ];
-      default = "abort";
-      description = ''
-        Action to take when pre-flight verification fails:
-        - abort: Stop deployment (recommended)
-        - warn: Continue with warnings
-        - ignore: Continue anyway (dangerous)
-      '';
-    };
-    
-    recordResults = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Record verification results in database for monitoring";
-    };
-    
-    notifications = {
-      enable = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Enable notifications for verification results";
-      };
-      
-      onFailure = mkOption {
-        type = types.bool;
-        default = true;
-        description = "Send notifications on verification failure";
-      };
-      
-      onSuccess = mkOption {
-        type = types.bool;
-        default = false;
-        description = "Send notifications on verification success";
-      };
-    };
+  lifecycle = cfg.lifecycle;
+  preflight = lifecycle.preflight;
+  updates = lifecycle.updates;
 
-    requiredUnits = mkOption {
-      type = types.listOf types.str;
-      default = [];
-      description = ''
-        Systemd service names that must depend on a successful
-        sinex-preflight run before starting. When left empty, the module
-        derives the list from services.sinex.satellite.generatedUnits or falls
-        back to the core ingestion/gateway services.
-      '';
-    };
-  };
+  sinexEnabled = cfg.enable;
+  preflightEnabled = sinexEnabled && preflight.enable;
+  updatesEnabled = sinexEnabled && updates.enable;
 
-  config = mkIf (cfg.enable && preflightCfg.enable) (
-    let
-      generatedUnits = config.services.sinex.satellite.generatedUnits or [];
-      fallbackUnits = [ "sinex-ingestd" "sinex-gateway" ];
-      normalizeUnitName = unit:
-        let trimmed = if lib.hasSuffix ".service" unit then lib.removeSuffix ".service" unit else unit;
-        in trimmed;
-      defaultUnits = if generatedUnits != [] then generatedUnits else fallbackUnits;
-      rawRequiredUnits =
-        let explicit = preflightCfg.requiredUnits;
-        in if explicit != [] then explicit else defaultUnits;
-      requiredUnits = map normalizeUnitName rawRequiredUnits;
-      rawUpdateUnits =
-        let explicitUpdate = (cfg.update.units or []);
-        in if explicitUpdate != [] then explicitUpdate else rawRequiredUnits;
-      updateUnits = map normalizeUnitName rawUpdateUnits;
-      skipArgsString =
-        if preflightCfg.skipPhases == [] then ""
-        else " " + lib.concatStringsSep " " (map (phase: "--skip ${phase}") preflightCfg.skipPhases);
-      databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
-      psqlBin = "${cfg.database.package}/bin/psql";
-      recordResults = preflightCfg.recordResults;
-      preserveDataFlag = cfg.update.preserveData;
-      rollbackFlag = cfg.update.rollbackOnFailure;
-      dlqEnabled = cfg.dlq.enable or false;
-      dlqPath = cfg.dlq.failureStoragePath;
-      unitsShellList = lib.concatStringsSep " " (map (unit: lib.escapeShellArg "${unit}.service") updateUnits);
-      preflightCheckScript = unit: pkgs.writeShellScript "sinex-preflight-gate-${lib.strings.sanitizeDerivationName unit}" ''
-        set -euo pipefail
-        UNIT="${unit}.service"
+  generatedUnits = config.services.sinex.satellites.generatedUnits or [];
+  coreUnits = [ "sinex-ingestd" "sinex-gateway" ];
+  unitsToGuard = if generatedUnits != [] then generatedUnits else coreUnits;
 
-        if ! systemctl is-active --quiet sinex-preflight.service; then
-          echo "ERROR: sinex-preflight.service has not completed successfully; refusing to start $UNIT" >&2
-          exit 1
+  stateRoot = cfg.stateRoot;
+  logDir = cfg.observability.logDir;
+  ingestSpool = cfg.core.ingestd.spoolDir;
+  satelliteSpool = "${cfg.stateRoot}/spool/satellites";
+  dlqCfg = cfg.storage.dlq;
+
+  databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
+  sanitizeName = lib.strings.sanitizeDerivationName;
+
+  skipArgs = concatMapStringsSep " " (phase: "--skip ${phase}") preflight.skip;
+  preflightCommand = concatStringsSep " " (filter (arg: arg != "") [
+    "${cfg.package}/bin/sinex-preflight"
+    "verify"
+    "--timeout"
+    "${toString preflight.timeoutSec}"
+    (if preflight.skip == [] then "" else skipArgs)
+  ]);
+
+  runPreflightScript = pkgs.writeShellScript "sinex-preflight-run" ''
+    set -euo pipefail
+    echo "$(date): starting Sinex pre-flight verification"
+    if ${preflightCommand}; then
+      echo "Sinex pre-flight verification passed"
+      exit 0
+    fi
+
+    STATUS=$?
+    echo "Sinex pre-flight verification failed (exit code: $STATUS)"
+
+    case "${preflight.failureAction}" in
+      abort)
+        exit $STATUS
+        ;;
+      warn)
+        echo "WARNING: continuing despite verification failure"
+        exit 0
+        ;;
+      ignore)
+        echo "INFO: ignoring verification failure per configuration"
+        exit 0
+        ;;
+    esac
+  '';
+
+  unitsShellList = concatStringsSep " " (map (unit: escapeShellArg "${unit}.service") unitsToGuard);
+
+  updateScript = pkgs.writeShellScript "sinex-coordinated-update" ''
+    set -euo pipefail
+
+    UNITS=(${unitsShellList})
+    if [ "''${#UNITS[@]}" -eq 0 ]; then
+      echo "No units configured for coordinated update; nothing to do."
+      exit 0
+    fi
+
+    echo "$(date): running Sinex coordinated update"
+    if ! systemctl start sinex-preflight.service; then
+      echo "ERROR: pre-flight verification failed to start" >&2
+      exit 1
+    fi
+
+    if ! systemctl is-active --quiet sinex-preflight.service; then
+      echo "ERROR: pre-flight verification did not complete" >&2
+      exit 1
+    fi
+
+    ACTIVE_UNITS=()
+    for unit in "''${UNITS[@]}"; do
+      if systemctl is-active --quiet "$unit"; then
+        ACTIVE_UNITS+=("$unit")
+      fi
+    done
+
+    if [ "''${#ACTIVE_UNITS[@]}" -eq 0 ]; then
+      echo "No active units detected; update complete"
+      exit 0
+    fi
+
+    GRACE_PERIOD=${toString updates.gracePeriodSec}
+    HEALTH_TIMEOUT=${toString updates.healthCheckTimeoutSec}
+    ROLLBACK=${if updates.rollbackOnFailure then "1" else "0"}
+    PRESERVE_DATA=${if updates.preserveData then "1" else "0"}
+    DLQ_ENABLED=${if dlqCfg.enable then "1" else "0"}
+    DLQ_PATH="${dlqCfg.path}"
+
+    BACKUP_DIR=""
+    if [ "$PRESERVE_DATA" = "1" ] && [ "$DLQ_ENABLED" = "1" ] && [ -d "$DLQ_PATH" ]; then
+      BACKUP_DIR="${dlqCfg.path}.backup-$(date +%Y%m%d-%H%M%S)"
+      cp -a "$DLQ_PATH" "$BACKUP_DIR" || true
+    fi
+
+    for unit in "''${ACTIVE_UNITS[@]}"; do
+      systemctl stop "$unit" || true
+    done
+
+    if [ "''${#ACTIVE_UNITS[@]}" -gt 0 ]; then
+      sleep "$GRACE_PERIOD"
+    fi
+
+    for unit in "''${ACTIVE_UNITS[@]}"; do
+      systemctl start "$unit"
+    done
+
+    DEADLINE=$(( $(date +%s) + HEALTH_TIMEOUT ))
+    FAILED=()
+
+    for unit in "''${ACTIVE_UNITS[@]}"; do
+      while ! systemctl is-active --quiet "$unit"; do
+        if [ $(date +%s) -ge $DEADLINE ]; then
+          FAILED+=("$unit")
+          break
         fi
+        sleep 5
+      done
+    done
 
-        if ! systemctl show -p Result sinex-preflight.service | grep -q "Result=success"; then
-          echo "ERROR: last sinex-preflight run did not succeed; refusing to start $UNIT" >&2
-          exit 1
-        fi
-      '';
-      runPreflightScript = pkgs.writeShellScript "sinex-preflight-run" ''
-        set -euo pipefail
-
-        RECORD_RESULTS=${if recordResults then "1" else "0"}
-        NOTIFY_ENABLE=${if preflightCfg.notifications.enable then "1" else "0"}
-        NOTIFY_ON_FAILURE=${if preflightCfg.notifications.onFailure then "1" else "0"}
-        NOTIFY_ON_SUCCESS=${if preflightCfg.notifications.onSuccess then "1" else "0"}
-        PSQL_BIN="${psqlBin}"
-        DATABASE_URL="${databaseUrl}"
-
-        echo "$(date): starting Sinex pre-flight verification"
-
-        VERIFY_CMD="${cfg.package}/bin/sinex-preflight verify --timeout ${toString preflightCfg.timeout} --output json${skipArgsString}"
-        echo "Executing: $VERIFY_CMD"
-
-        if VERIFICATION_RESULT=$($VERIFY_CMD); then
-          echo "✓ Sinex pre-flight verification passed"
-          echo "$VERIFICATION_RESULT" | ${pkgs.jq}/bin/jq .
-
-          if [ "$NOTIFY_ENABLE" = "1" ] && [ "$NOTIFY_ON_SUCCESS" = "1" ]; then
-            logger "Sinex pre-flight verification succeeded"
-          fi
-
-          if [ "$RECORD_RESULTS" = "1" ]; then
-            HOST=$(hostname)
-            NOW=$(date +%s)
-            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', ''${HOST}-''${NOW}', 'success', '{"event":"preflight_pass"}'::jsonb, NOW())" || true
-          fi
-
-          exit 0
-        else
-          STATUS=$?
-          echo "✗ Sinex pre-flight verification failed (exit code: $STATUS)"
-
-          if [ -n "''${VERIFICATION_RESULT:-}" ]; then
-            echo "$VERIFICATION_RESULT" | ${pkgs.jq}/bin/jq . || echo "$VERIFICATION_RESULT"
-          fi
-
-          if [ "$NOTIFY_ENABLE" = "1" ] && [ "$NOTIFY_ON_FAILURE" = "1" ]; then
-            logger "Sinex pre-flight verification failed"
-          fi
-
-          if [ "$RECORD_RESULTS" = "1" ]; then
-            HOST=$(hostname)
-            NOW=$(date +%s)
-            "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-preflight', ''${HOST}-''${NOW}', 'failure', '{"event":"preflight_fail"}'::jsonb, NOW())" || true
-          fi
-
-          case "${preflightCfg.failureAction}" in
-            abort)
-              exit $STATUS
-              ;;
-            warn)
-              echo "WARNING: continuing despite verification failure"
-              exit 0
-              ;;
-            ignore)
-              echo "INFO: ignoring verification failure per configuration"
-              exit 0
-              ;;
-          esac
-        fi
-      '';
-      updateScript = pkgs.writeShellScript "sinex-coordinated-update" ''
-        set -euo pipefail
-
-        UNITS=(${unitsShellList})
-        if [ "''${#UNITS[@]}" -eq 0 ]; then
-          echo "No units configured for coordinated update; nothing to do."
-          exit 0
-        fi
-
-        echo "$(date): running pre-flight verification prior to coordinated update"
-        if ! systemctl start sinex-preflight.service; then
-          echo "ERROR: sinex-preflight.service failed to start" >&2
-          exit 1
-        fi
-
-        if ! systemctl is-active --quiet sinex-preflight.service; then
-          echo "ERROR: sinex-preflight.service is not active" >&2
-          exit 1
-        fi
-
-        ACTIVE_UNITS=()
-        for unit in "''${UNITS[@]}"; do
-          if systemctl is-active --quiet "$unit"; then
-            ACTIVE_UNITS+=("$unit")
-          fi
-        done
-
-        echo "Units participating in coordinated update: ''${#ACTIVE_UNITS[@]}"
-        if [ "''${#ACTIVE_UNITS[@]}" -eq 0 ]; then
-          exit 0
-        fi
-
-        PRESERVE_DATA=${if preserveDataFlag then "1" else "0"}
-        ROLLBACK_ENABLED=${if rollbackFlag then "1" else "0"}
-        DLQ_ENABLED=${if dlqEnabled then "1" else "0"}
-        DLQ_PATH="${dlqPath}"
-        PSQL_BIN="${psqlBin}"
-        DATABASE_URL="${databaseUrl}"
-        RECORD_RESULTS=${if recordResults then "1" else "0"}
-        HEALTH_TIMEOUT=${toString cfg.update.healthCheckTimeout}
-        GRACE_PERIOD=${toString cfg.update.gracePeriod}
-
-        BACKUP_DIR=""
-        if [ "$PRESERVE_DATA" = "1" ] && [ "$DLQ_ENABLED" = "1" ] && [ -d "$DLQ_PATH" ]; then
-          BACKUP_DIR="${dlqPath}.backup-$(date +%Y%m%d-%H%M%S)"
-          echo "Preserving DLQ data to $BACKUP_DIR"
-          cp -a "$DLQ_PATH" "$BACKUP_DIR" || true
-        fi
-
-        echo "Stopping active units..."
+    if [ "''${#FAILED[@]}" -gt 0 ]; then
+      echo "Update failed for units: ''${FAILED[*]}" >&2
+      if [ "$ROLLBACK" = "1" ]; then
         for unit in "''${ACTIVE_UNITS[@]}"; do
           systemctl stop "$unit" || true
         done
-
-        if [ "''${#ACTIVE_UNITS[@]}" -gt 0 ]; then
-          sleep "$GRACE_PERIOD"
-        fi
-
-        echo "Starting units..."
-        for unit in "''${ACTIVE_UNITS[@]}"; do
-          systemctl start "$unit"
-        done
-
-        DEADLINE=$(( $(date +%s) + HEALTH_TIMEOUT ))
-        FAILED_UNITS=()
-
-        for unit in "''${ACTIVE_UNITS[@]}"; do
-          while ! systemctl is-active --quiet "$unit"; do
-            if [ $(date +%s) -ge $DEADLINE ]; then
-              echo "ERROR: $unit failed to become active within timeout" >&2
-              FAILED_UNITS+=("$unit")
-              break
-            fi
-            sleep 5
-          done
-        done
-
-        if [ "''${#FAILED_UNITS[@]}" -gt 0 ]; then
-          echo "Update failed for units: ''${FAILED_UNITS[*]}" >&2
-          if [ "$ROLLBACK_ENABLED" = "1" ]; then
-            echo "Attempting rollback..."
-            for unit in "''${ACTIVE_UNITS[@]}"; do
-              systemctl stop "$unit" || true
-            done
-
-            if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-              rm -rf "$DLQ_PATH"
-              mv "$BACKUP_DIR" "$DLQ_PATH"
-            fi
-
-            if [ "$RECORD_RESULTS" = "1" ]; then
-              HOST=$(hostname)
-              NOW=$(date +%s)
-              FAILED_COUNT="''${#FAILED_UNITS[@]}"
-              "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', ''${HOST}-''${NOW}', 'rollback', ('{\"event\":\"update_rollback\",\"failed_count\":' || ''${FAILED_COUNT}::text || '}')::jsonb, NOW())" || true
-            fi
-          fi
-          exit 1
-        fi
-
         if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-          rm -rf "$BACKUP_DIR"
+          rm -rf "$DLQ_PATH"
+          mv "$BACKUP_DIR" "$DLQ_PATH"
         fi
+      fi
+      exit 1
+    fi
 
-        if [ "$RECORD_RESULTS" = "1" ]; then
-          HOST=$(hostname)
-          NOW=$(date +%s)
-          UNIT_COUNT="''${#ACTIVE_UNITS[@]}"
-          "$PSQL_BIN" "$DATABASE_URL" --command "INSERT INTO component_heartbeats (component_name, instance_id, status, metadata, last_seen) VALUES ('sinex-deployment', ''${HOST}-''${NOW}', 'success', ('{\"event\":\"update_completed\",\"unit_count\":' || ''${UNIT_COUNT}::text || '}')::jsonb, NOW())" || true
-        fi
+    if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
+      rm -rf "$BACKUP_DIR"
+    fi
 
-        echo "$(date): coordinated update completed successfully"
-      '';
-    in
-    {
-      systemd.services = lib.mkMerge (
-        [
-          {
-            sinex-preflight = {
-              description = "Sinex Pre-Flight Verification";
-              wantedBy = [ "multi-user.target" ];
-              after = [ "network-online.target" "postgresql.service" ];
-              requires = [ "postgresql.service" ];
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                TimeoutStartSec = preflightCfg.timeout;
-                User = cfg.database.user;
-                Group = cfg.database.user;
-                ProtectSystem = "strict";
-                ProtectHome = true;
-                PrivateTmp = true;
-                NoNewPrivileges = true;
-                RestrictSUIDSGID = true;
-                RemoveIPC = true;
-                ProtectKernelTunables = true;
-                ProtectControlGroups = true;
-                RestrictRealtime = true;
-                LockPersonality = true;
-                SystemCallFilter = [ "@system-service" "~@privileged" ];
-                ReadOnlyPaths = [
-                  "/etc/sinex"
-                  cfg.directories.state
-                  cfg.directories.logs
-                ];
-                Environment = [
-                  "DATABASE_URL=${databaseUrl}"
-                  "RUST_LOG=sinex_preflight=info"
-                ];
-                ExecStart = builtins.toString runPreflightScript;
-              };
+    echo "$(date): coordinated update completed successfully"
+  '';
+
+  guardUnit = unit: {
+    after = mkAfter [ "sinex-preflight.service" ];
+    requires = mkAfter [ "sinex-preflight.service" ];
+    serviceConfig.ExecStartPre = mkAfter [ (pkgs.writeShellScript "sinex-preflight-guard-${sanitizeName unit}" ''
+      set -euo pipefail
+      UNIT="${unit}.service"
+      if ! systemctl is-active --quiet sinex-preflight.service; then
+        echo "ERROR: sinex-preflight.service has not run successfully; refusing to start $UNIT" >&2
+        exit 1
+      fi
+    '') ];
+  };
+
+in
+{
+  config = mkMerge [
+    (mkIf preflightEnabled {
+      systemd.services =
+        let
+          guarded = genAttrs (map (u: removeSuffix ".service" u) unitsToGuard) guardUnit;
+        in
+        guarded // {
+          sinex-preflight = {
+            description = "Sinex pre-flight verification";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network-online.target" "postgresql.service" ];
+            requires = [ "postgresql.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              TimeoutStartSec = preflight.timeoutSec;
+              User = cfg.database.user;
+              Group = cfg.database.user;
+              ProtectSystem = "strict";
+              ProtectHome = true;
+              PrivateTmp = true;
+              NoNewPrivileges = true;
+              RestrictSUIDSGID = true;
+              RemoveIPC = true;
+              ProtectKernelTunables = true;
+              ProtectControlGroups = true;
+              RestrictRealtime = true;
+              LockPersonality = true;
+              SystemCallFilter = [ "@system-service" "~@privileged" ];
+              ReadOnlyPaths = [ stateRoot logDir ingestSpool satelliteSpool ];
+              Environment = [ "DATABASE_URL=${databaseUrl}" ];
+              ExecStart = runPreflightScript;
             };
-          }
-        ]
-        ++ lib.optionals (cfg.update.enable) [
-          {
-            sinex-update = {
-              description = "Sinex Coordinated Update";
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                ExecStart = builtins.toString updateScript;
-              };
-            };
-          }
-        ]
-        ++ [
-          (lib.listToAttrs (map (unit: lib.nameValuePair unit {
-            after = lib.mkAfter [ "sinex-preflight.service" ];
-            requires = lib.mkAfter [ "sinex-preflight.service" ];
-            serviceConfig.ExecStartPre = lib.mkAfter [ builtins.toString (preflightCheckScript unit) ];
-          }) requiredUnits))
-        ]
-      );
+          };
+        };
 
       assertions = [
         {
-          assertion = preflightCfg.enable -> (cfg.database.autoSetup || config.services.postgresql.enable);
+          assertion = cfg.database.autoSetup || config.services.postgresql.enable;
           message = "Pre-flight verification requires PostgreSQL to be enabled";
         }
         {
-          assertion = recordResults -> (cfg.database.autoSetup || config.services.postgresql.enable);
-          message = "Recording verification results requires database access";
-        }
-        {
-          assertion = requiredUnits != [];
+          assertion = unitsToGuard != [];
           message = "No services found to guard with pre-flight verification";
         }
       ];
-    }
-  );
+    })
 
+    (mkIf updatesEnabled {
+      systemd.services.sinex-update = {
+        description = "Sinex coordinated update";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = updateScript;
+        };
+      };
+    })
+  ];
 }

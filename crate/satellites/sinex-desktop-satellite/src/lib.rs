@@ -25,18 +25,18 @@ mod common {
         JsonValue,
     };
 
+    pub use sinex_processor_runtime::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    };
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
         annex::{AnnexConfig, BlobManager},
-        checkpoint::CheckpointManager,
-        cli::{
-            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
-            IngestionHistoryEntry, MissingItem, SourceState,
-        },
         error_helpers::{parse_config_value, parse_typed_config, path_utils, processing_error},
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
+            TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -46,6 +46,7 @@ mod common {
         async_trait::async_trait,
         camino::Utf8PathBuf,
         chrono::{DateTime, Utc},
+        color_eyre::eyre,
         serde::{Deserialize, Serialize},
         std::{
             collections::{HashMap, VecDeque},
