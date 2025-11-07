@@ -26,7 +26,7 @@ Key architectural decisions and implementation details are documented at their i
   - pgx_ulid provisioning for ULID primary keys
   - TimescaleDB setup for hypertable partitioning  
   - Guidance for WAL/ulid tuning
-- **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
+- **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs`](../crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
 - **ULID Implementation**: [`crate/lib/sinex-schema/doc/ulid.md`](../crate/lib/sinex-schema/doc/ulid.md)
@@ -67,7 +67,7 @@ Add to your NixOS configuration:
 
   services.sinex = {
     enable = true;
-    targetUser = "yourusername";  # REQUIRED: match the user defined above
+    users.target = "yourusername";  # REQUIRED: match the user defined above
   };
 }
 ```

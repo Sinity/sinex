@@ -4,8 +4,10 @@ use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::{db::DbPool, environment::SinexEnvironment, JsonValue};
+use sinex_core::{db::DbPool, environment::SinexEnvironment, types::ulid::Ulid, JsonValue};
 use sqlx::Row;
+use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -85,6 +87,7 @@ impl JetStreamTopology {
 
 struct PreparedEvent {
     raw: RawEvent,
+    parsed_id: sinex_core::types::ulid::Ulid,
     parsed_ts: DateTime<Utc>,
     message: jetstream::Message,
 }
@@ -311,8 +314,29 @@ impl JetStreamConsumer {
                 }
             };
 
+            let parsed_id = match Ulid::from_str(&raw_event.id) {
+                Ok(id) => id,
+                Err(e) => {
+                    error!(event_id = %raw_event.id, "Invalid ULID; routing to DLQ: {}", e);
+                    self.route_to_dlq(&msg, format!("Invalid ULID: {}", e))
+                        .await;
+                    msg.ack().await.map_err(|ack_err| {
+                        SinexError::network(format!(
+                            "Failed to ack invalid ULID message: {}",
+                            ack_err
+                        ))
+                    })?;
+                    self.stats
+                        .validation_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+            };
+
             batch.push(PreparedEvent {
                 raw: raw_event,
+                parsed_id,
                 parsed_ts,
                 message: msg,
             });
@@ -325,10 +349,13 @@ impl JetStreamConsumer {
         // Persist batch to database
         match self.persist_batch_optimized(&batch).await {
             Ok(persisted_ids) => {
-                // Publish confirmations for successfully persisted events
-                for event_id in &persisted_ids {
-                    if let Err(e) = self.publish_confirmation(event_id).await {
-                        warn!(event_id = %event_id, "Failed to publish confirmation: {}", e);
+                let persisted_set: HashSet<_> = persisted_ids.iter().cloned().collect();
+                // Publish confirmations for every message in the batch to guarantee downstream delivery
+                for prepared in &batch {
+                    if let Err(e) = self.publish_confirmation(&prepared.parsed_id).await {
+                        warn!(event_id = %prepared.parsed_id, "Failed to publish confirmation: {}", e);
+                    } else if !persisted_set.contains(&prepared.parsed_id) {
+                        debug!(event_id = %prepared.parsed_id, "Re-published confirmation for already persisted event");
                     }
                 }
 
@@ -406,15 +433,15 @@ impl JetStreamConsumer {
     }
 
     /// Persist batch using optimized UNNEST pattern
-    async fn persist_batch_optimized(&self, batch: &[PreparedEvent]) -> IngestdResult<Vec<String>> {
+    async fn persist_batch_optimized(&self, batch: &[PreparedEvent]) -> IngestdResult<Vec<Ulid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
         }
 
         // Extract arrays for UNNEST
-        let ids: Vec<&str> = batch
+        let ids: Vec<_> = batch
             .iter()
-            .map(|prepared| prepared.raw.id.as_str())
+            .map(|prepared| prepared.parsed_id.as_uuid())
             .collect();
         let sources: Vec<&str> = batch
             .iter()
@@ -445,7 +472,7 @@ impl JetStreamConsumer {
                 host,
                 payload
             FROM UNNEST(
-                $1::text[],
+                $1::uuid[],
                 $2::text[],
                 $3::text[],
                 $4::timestamptz[],
@@ -453,7 +480,7 @@ impl JetStreamConsumer {
                 $6::jsonb[]
             ) AS t(id, source, event_type, ts_orig, host, payload)
             ON CONFLICT (id) DO NOTHING
-            RETURNING (id)::text
+            RETURNING id as "id: Ulid"
             "#,
         )
         .bind(&ids)
@@ -470,10 +497,7 @@ impl JetStreamConsumer {
         })?;
 
         // Extract persisted IDs from RETURNING clause
-        let persisted_ids: Vec<String> = rows
-            .into_iter()
-            .map(|row| row.get::<String, _>(0))
-            .collect();
+        let persisted_ids: Vec<Ulid> = rows.into_iter().map(|row| row.get::<Ulid, _>(0)).collect();
 
         debug!(
             batch_size = batch.len(),
@@ -485,19 +509,20 @@ impl JetStreamConsumer {
     }
 
     /// Publish confirmation to NATS
-    async fn publish_confirmation(&self, event_id: &str) -> IngestdResult<()> {
+    async fn publish_confirmation(&self, event_id: &Ulid) -> IngestdResult<()> {
+        let event_id_str = event_id.to_string();
         let confirmation = Confirmation {
-            event_id: event_id.to_string(),
+            event_id: event_id_str.clone(),
             persisted: true,
             ts_ingest: Utc::now().to_rfc3339(),
         };
 
-        let subject = format!("{}{}", self.topology.confirmations_prefix, event_id);
+        let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
         let payload = serde_json::to_vec(&confirmation)?;
 
         // Add idempotency header
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", event_id);
+        headers.insert("Nats-Msg-Id", event_id_str.as_str());
 
         self.js
             .publish_with_headers(subject, headers, payload.into())

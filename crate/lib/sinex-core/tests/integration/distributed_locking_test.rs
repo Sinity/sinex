@@ -8,16 +8,16 @@
 //! - Lock cleanup and recovery
 //! - Version-based leadership election
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
 use sinex_satellite_sdk::{SatelliteInstance, SatelliteVersion};
 use sinex_test_utils::{sinex_test, TestContext};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 #[sinex_test]
-async fn test_advisory_lock_basic_acquisition(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_advisory_lock_basic_acquisition(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     // Test basic lock acquisition
@@ -39,7 +39,7 @@ async fn test_advisory_lock_basic_acquisition(ctx: TestContext) -> color_eyre::R
 }
 
 #[sinex_test]
-async fn test_advisory_lock_different_names(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_advisory_lock_different_names(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     // Different lock names should not interfere
@@ -56,7 +56,7 @@ async fn test_advisory_lock_different_names(ctx: TestContext) -> color_eyre::Res
 }
 
 #[sinex_test]
-async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
     let lock_name = "contention_test_lock";
 
@@ -107,7 +107,7 @@ async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> color_eyr
 }
 
 #[sinex_test]
-async fn test_advisory_lock_automatic_release_on_drop(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_advisory_lock_automatic_release_on_drop(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
     let lock_name = "drop_test_lock";
 
@@ -129,9 +129,7 @@ async fn test_advisory_lock_automatic_release_on_drop(ctx: TestContext) -> color
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_instance_registration(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
+async fn test_distributed_coordination_instance_registration(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     let instance = SatelliteInstance::new(
@@ -167,7 +165,7 @@ async fn test_distributed_coordination_instance_registration(
 #[sinex_test]
 async fn test_distributed_coordination_version_based_leadership(
     ctx: TestContext,
-) -> color_eyre::Result<()> {
+) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     // Create instances with different versions
@@ -209,9 +207,7 @@ async fn test_distributed_coordination_version_based_leadership(
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership_handoff(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
+async fn test_distributed_coordination_leadership_handoff(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     // Start with an older version as leader
@@ -249,9 +245,7 @@ async fn test_distributed_coordination_leadership_handoff(
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership_contention(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
+async fn test_distributed_coordination_leadership_contention(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     // Create multiple instances with the same version (same commit count)
@@ -299,7 +293,7 @@ async fn test_distributed_coordination_leadership_contention(
 }
 
 #[sinex_test]
-async fn test_advisory_lock_stress_test(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_advisory_lock_stress_test(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     let total_acquisitions = Arc::new(AtomicU32::new(0));
@@ -351,7 +345,7 @@ async fn test_advisory_lock_stress_test(ctx: TestContext) -> color_eyre::Result<
 }
 
 #[sinex_test]
-async fn test_lock_cleanup_on_connection_drop(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_lock_cleanup_on_connection_drop(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.db_pool();
     let lock_name = "connection_drop_test";
 
@@ -384,7 +378,7 @@ async fn test_lock_cleanup_on_connection_drop(ctx: TestContext) -> color_eyre::R
 #[sinex_test]
 async fn test_distributed_coordination_leader_heartbeat_simulation(
     ctx: TestContext,
-) -> color_eyre::Result<()> {
+) -> EyreResult<()> {
     let pool = ctx.db_pool();
 
     let instance = SatelliteInstance::new(

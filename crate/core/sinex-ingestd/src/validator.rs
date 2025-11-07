@@ -176,7 +176,7 @@ impl EventValidator {
                 content_hash as "content_hash!"
             FROM sinex_schemas.event_payload_schemas
             WHERE is_active = true
-            ORDER BY source, event_type, schema_version DESC
+            ORDER BY source, event_type, updated_at DESC, schema_version DESC
             "#
         )
         .fetch_all(pool)

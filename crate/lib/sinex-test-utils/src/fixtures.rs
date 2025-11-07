@@ -668,8 +668,8 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
         let op_id = uuid_to_ulid(op_uuid);
 
         sqlx::query!(
-            r#"SELECT core.fail_operation($1::text::ulid, $2::jsonb)"#,
-            op_id.to_string(),
+            r#"SELECT core.fail_operation($1::uuid::ulid, $2::jsonb)"#,
+            op_id.to_uuid(),
             json!({
                 "error": format!("Test error {}", i),
                 "code": format!("E{}", 500 + i)
@@ -1149,10 +1149,31 @@ pub(crate) async fn large_event_dataset(
     Ok(LargeDatasetFixture {
         event_ids: perf_fixture.event_ids.clone(),
         event_count: perf_fixture.event_count,
-        source_distribution: HashMap::new(), // TODO: calculate from events
-        type_distribution: HashMap::new(),   // TODO: calculate from events
+        source_distribution: perf_fixture.source_distribution.clone(),
+        type_distribution: perf_fixture.type_distribution.clone(),
         time_range: perf_fixture.time_range,
     })
+}
+
+#[cfg(test)]
+mod large_dataset_tests {
+    use super::*;
+    use crate::{sinex_test, TestContext};
+
+    #[sinex_test]
+    async fn populates_distribution_maps(ctx: TestContext) -> Result<()> {
+        let fixture = large_event_dataset(&ctx, 5).await?;
+        assert_eq!(fixture.event_count, 5);
+        assert!(
+            !fixture.source_distribution.is_empty(),
+            "expected source distribution to be populated"
+        );
+        assert!(
+            !fixture.type_distribution.is_empty(),
+            "expected event type distribution to be populated"
+        );
+        Ok(())
+    }
 }
 
 pub(crate) async fn terminal_session(ctx: &TestContext) -> Result<TerminalSessionFixture> {

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import click
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from rich.console import Console
 from rich.table import Table
 from rich.json import JSON
@@ -3614,44 +3614,44 @@ def scan(ctx, satellite: Optional[str], all_satellites: bool, since: Optional[st
             sys.exit(1)
         satellites_to_scan = [satellite]
     
-    # Log the operation (disabled for now - satellites don't have unified CLI yet)
     operation_id = None
-    console.print(f"[blue]Note: Operations logging temporarily disabled pending satellite CLI unification[/blue]")
-    
-    # TODO: Re-enable when satellites implement StatefulStreamProcessor with scan subcommand
-    # try:
-    #     with get_db_connection() as conn:
-    #         with conn.cursor() as cur:
-    #             # Use ULID() PostgreSQL function to generate a proper ULID
-    #             cur.execute("""
-    #                 INSERT INTO core.operations_log (
-    #                     operation_id, operation_type, status, invoked_by_user, parameters
-    #                 ) VALUES (ulid(), %s, %s, %s, %s)
-    #                 RETURNING operation_id
-    #             """, (
-    #                 'scan',
-    #                 'started',
-    #                 os.getenv('USER', 'unknown'),
-    #                 json.dumps({
-    #                     'satellites': satellites_to_scan,
-    #                     'since': since,
-    #                     'until': until,
-    #                     'targets': list(targets),
-    #                     'dry_run': dry_run,
-    #                     'estimate': estimate,
-    #                     'interactive': interactive,
-    #                     'max_events': max_events,
-    #                     'timeout': timeout,
-    #                     'parallel': parallel
-    #                 })
-    #             ))
-    #             
-    #             # Get the generated operation_id
-    #             row = cur.fetchone()
-    #             operation_id = str(row[0]) if row else None
-    #             conn.commit()
-    # except Exception as e:
-    #     console.print(f"[yellow]Warning: Could not log operation: {e}[/yellow]")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                scope = {
+                    'satellites': satellites_to_scan,
+                    'since': since,
+                    'until': until,
+                    'targets': list(targets),
+                    'dry_run': dry_run,
+                    'estimate': estimate,
+                    'interactive': interactive,
+                    'max_events': max_events,
+                    'timeout': timeout,
+                    'parallel': parallel,
+                }
+                cur.execute(
+                    """
+                    INSERT INTO core.operations_log (
+                        operation_type,
+                        operator,
+                        scope,
+                        result_status
+                    ) VALUES (%s, %s, %s::jsonb, %s)
+                    RETURNING id
+                    """,
+                    (
+                        'scan',
+                        os.getenv('USER', 'unknown'),
+                        Json(scope),
+                        'running',
+                    ),
+                )
+                row = cur.fetchone()
+                operation_id = str(row['id']) if row and 'id' in row else None
+                conn.commit()
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not log scan operation: {e}[/yellow]")
     
     start_time = time.time()
     
@@ -3791,31 +3791,35 @@ def scan(ctx, satellite: Optional[str], all_satellites: bool, since: Optional[st
                 console.print("[dim]Output:[/dim]")
                 console.print(result['stdout'])
     
-    # Update operation log (disabled for now)
-    # TODO: Re-enable when satellites implement unified CLI
-    # if operation_id:
-    #     try:
-    #         with get_db_connection() as conn:
-    #             with conn.cursor() as cur:
-    #                 cur.execute("""
-    #                     UPDATE core.operations_log 
-    #                     SET status = %s, completed_at = NOW(), 
-    #                         duration_ms = %s, summary = %s
-    #                     WHERE operation_id = %s
-    #                 """, (
-    #                     'completed' if failed_scans == 0 else 'failed',
-    #                     int(total_duration * 1000),
-    #                     json.dumps({
-    #                         'satellites_scanned': len(satellites_to_scan),
-    #                         'successful_scans': successful_scans,
-    #                         'failed_scans': failed_scans,
-    #                         'results': results
-    #                     }),
-    #                     operation_id
-    #                 ))
-    #                 conn.commit()
-    #     except Exception as e:
-    #         console.print(f"[yellow]Warning: Could not update operation log: {e}[/yellow]")
+    if operation_id:
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE core.operations_log 
+                        SET result_status = %s,
+                            result_message = %s,
+                            preview_summary = %s::jsonb,
+                            duration_ms = %s
+                        WHERE id = %s::uuid::ulid
+                        """,
+                        (
+                            'success' if failed_scans == 0 else 'failure',
+                            None,
+                            Json({
+                                'satellites_scanned': len(satellites_to_scan),
+                                'successful_scans': successful_scans,
+                                'failed_scans': failed_scans,
+                                'results': results,
+                            }),
+                            int(total_duration * 1000),
+                            operation_id,
+                        ),
+                    )
+                    conn.commit()
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not update operation log: {e}[/yellow]")
     
     # Exit with error if any scans failed
     if failed_scans > 0:

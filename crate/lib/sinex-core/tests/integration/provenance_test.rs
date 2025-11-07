@@ -1,4 +1,4 @@
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
@@ -12,9 +12,7 @@ use tracing::info;
 /// - Testing basic event properties and persistence
 
 #[sinex_test]
-async fn test_basic_event_creation_and_persistence(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
@@ -63,7 +61,7 @@ async fn test_basic_event_creation_and_persistence(
 
 /// Test event creation with different sources
 #[sinex_test]
-async fn test_multiple_event_sources(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_multiple_event_sources(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing multiple event sources");
@@ -119,7 +117,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> color_eyre::eyre::Resu
 
 /// Test event querying by type
 #[sinex_test]
-async fn test_event_querying_by_type(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_querying_by_type(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
@@ -164,7 +162,7 @@ async fn test_event_querying_by_type(ctx: TestContext) -> color_eyre::eyre::Resu
 
 /// Test batch event creation
 #[sinex_test]
-async fn test_batch_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_batch_event_creation(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -213,7 +211,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> color_eyre::eyre::Result
 
 /// Test event payload structure preservation
 #[sinex_test]
-async fn test_event_payload_preservation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_payload_preservation(ctx: TestContext) -> EyreResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");

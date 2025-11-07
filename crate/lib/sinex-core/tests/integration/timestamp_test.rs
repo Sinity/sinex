@@ -6,8 +6,8 @@
 //! - Timestamp precision and accuracy
 //! - Cross-timezone compatibility
 
-use chrono::{DateTime, TimeZone, Utc};
-use color_eyre::eyre::Result;
+use chrono::{DateTime, TimeZone, Timelike, Utc};
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
@@ -29,7 +29,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
     for (i, ts) in timestamp_cases.iter().enumerate() {
         let event = Event::test_event(
             EventSource::from("timestamp_test"),
-            EventType::from(&format!("boundary_{}", i)),
+            EventType::from(format!("boundary_{i}")),
             json!({
                 "timestamp": ts.to_rfc3339(),
                 "epoch": ts.timestamp(),
@@ -60,7 +60,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
             event.ts_orig.is_some(),
             "Original timestamp should be preserved"
         );
-        let ingest_ts = event.id.unwrap().timestamp();
+        let ingest_ts = event.id.as_ref().expect("event should have id").timestamp();
         assert!(
             ingest_ts > chrono::DateTime::from_timestamp(0, 0).unwrap(),
             "Ingestion (ULID) timestamp should be set"
@@ -106,8 +106,12 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
         let later = &inserted_events[i];
 
         // ULID ordering (ingestion order)
+        let earlier_id = earlier.id.as_ref().expect("ingestion id");
+        let later_id = later.id.as_ref().expect("ingestion id");
+        let earlier_str = earlier_id.to_string();
+        let later_str = later_id.to_string();
         assert!(
-            earlier.id.unwrap() < later.id.unwrap(),
+            earlier_str < later_str,
             "Events should maintain ingestion order by ULID"
         );
 
@@ -116,8 +120,8 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
             // This demonstrates that ingestion order != logical time order
             println!(
                 "Ingestion order: {} < {}, Logical order: {} vs {}",
-                earlier.id.unwrap(),
-                later.id.unwrap(),
+                earlier_str,
+                later_str,
                 earlier_orig.to_rfc3339(),
                 later_orig.to_rfc3339()
             );
@@ -364,7 +368,7 @@ async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::
     for (case_name, payload) in payload_cases {
         let event = Event::test_event(
             EventSource::from("payload_test"),
-            EventType::from(&format!("payload_{}", case_name)),
+            EventType::from(format!("payload_{case_name}")),
             payload,
         )
         .at_time(test_time);

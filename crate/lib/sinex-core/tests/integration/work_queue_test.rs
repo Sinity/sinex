@@ -15,16 +15,11 @@
 use async_nats::jetstream::{
     consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
     stream::{Config as StreamConfig, RetentionPolicy},
-    Context,
 };
 use color_eyre::eyre::Result;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::{
-    domain::{ConsumerGroup, ConsumerName, ProcessorName},
-    ulid::Ulid,
-};
+use sinex_core::types::ulid::Ulid;
 use sinex_test_utils::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

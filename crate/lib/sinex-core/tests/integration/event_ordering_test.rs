@@ -9,23 +9,23 @@
 //! - Clock skew detection and handling
 //! - Performance analysis of ordering operations
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
-use sinex_core::db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::EventSource;
-use sinex_core::types::{Id, Ulid};
+use sinex_core::types::Ulid;
+use sinex_core::DbPool;
 use sinex_test_utils::prelude::*;
-use std::collections::{HashMap, HashSet};
+use sqlx::Row;
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+use uuid::Uuid;
 
 // =============================================================================
 // ULID SEQUENCE ORDERING TESTS
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> {
+async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> EyreResult<()> {
     // Generate a sequence of events with known ordering
     let mut event_ulids = Vec::new();
 
@@ -46,7 +46,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
     let raw_ulids: Vec<Ulid> = event_ulids.iter().map(|id| id.into()).collect();
 
     // Verify ordering using the utility function
-    let ordering_result = ulid_verification::verify_ulid_sequence_ordering(&raw_ulids);
+    let ordering_result = verify_ulid_sequence_ordering(&raw_ulids);
     assert!(
         ordering_result.is_ok(),
         "ULID sequence should be properly ordered: {:?}",
@@ -54,7 +54,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
     );
 
     // Verify timestamps have reasonable progression
-    let timestamp_result = ulid_verification::verify_timestamp_progression(&raw_ulids, 1000);
+    let timestamp_result = verify_timestamp_progression(&raw_ulids, 1000);
     assert!(
         timestamp_result.is_ok(),
         "Timestamp progression should be reasonable: {:?}",
@@ -62,16 +62,16 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
     );
 
     // Verify database ordering matches ULID ordering
-    let db_ordered_ulids: Vec<String> = sqlx::query_scalar!(
-        "SELECT event_id::text FROM core.events WHERE source = 'ulid-ordering' ORDER BY event_id"
+    let db_ordered_ulids: Vec<Ulid> = sqlx::query!(
+        r#"SELECT id as "id!: Ulid" FROM core.events WHERE source = 'ulid-ordering' ORDER BY id"#
     )
     .fetch_all(&ctx.pool)
     .await?
     .into_iter()
-    .filter_map(|opt| opt)
+    .map(|row| row.id)
     .collect();
 
-    let expected_order: Vec<String> = event_ulids.iter().map(|id| id.to_string()).collect();
+    let expected_order: Vec<Ulid> = event_ulids.iter().map(|id| *id.as_ulid()).collect();
     assert_eq!(
         db_ordered_ulids, expected_order,
         "Database ordering should match ULID ordering"
@@ -81,7 +81,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
 }
 
 #[sinex_test]
-async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()> {
+async fn test_timestamp_progression_verification(ctx: TestContext) -> EyreResult<()> {
     // Create events with specific timestamp patterns
     let base_time = chrono::Utc::now() - chrono::TimeDelta::try_hours(1).unwrap();
     let mut test_ulids = Vec::new();
@@ -94,7 +94,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()>
     }
 
     // Test with reasonable tolerance
-    let result = ulid_verification::verify_timestamp_progression(&test_ulids, 5000);
+    let result = verify_timestamp_progression(&test_ulids, 5000);
     assert!(
         result.is_ok(),
         "Normal timestamp progression should pass: {:?}",
@@ -102,7 +102,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()>
     );
 
     // Test with unreasonable tolerance (should fail)
-    let strict_result = ulid_verification::verify_timestamp_progression(&test_ulids, 1);
+    let strict_result = verify_timestamp_progression(&test_ulids, 1);
     assert!(
         strict_result.is_err(),
         "Strict tolerance should detect progression issues"
@@ -114,8 +114,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()>
     let past_timestamp = base_time - chrono::TimeDelta::try_hours(1).unwrap();
     regression_ulids.push(Ulid::from_datetime(past_timestamp.into()));
 
-    let regression_result =
-        ulid_verification::verify_timestamp_progression(&regression_ulids, 1000);
+    let regression_result = verify_timestamp_progression(&regression_ulids, 1000);
     assert!(
         regression_result.is_err(),
         "Timestamp regression should be detected"
@@ -129,7 +128,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()>
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()> {
+async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> EyreResult<()> {
     // Test concurrent event insertion
     let num_concurrent_tasks = 10;
     let events_per_task = 20;
@@ -220,7 +219,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
+async fn test_database_ordering_consistency(ctx: TestContext) -> EyreResult<()> {
     // Insert events in batches with different timing patterns
     let mut all_event_ulids = Vec::new();
 
@@ -255,33 +254,24 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     }
 
     // Verify different ordering strategies produce consistent results
-    let ordering_queries = vec![
+    let ordering_results = vec![
         (
-            "ORDER BY event_id",
-            "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY event_id",
+            "ORDER BY id",
+            fetch_ordered_ulids(&ctx.pool, "db-ordering", "id").await?,
         ),
         (
             "ORDER BY ts_orig",
-            "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY ts_orig",
+            fetch_ordered_ulids(&ctx.pool, "db-ordering", "ts_orig").await?,
         ),
-        // ts_ingest is deprecated in favor of ULID; approximate by ordering by event_id
         (
             "ORDER BY ts_ingest",
-            "SELECT event_id::text FROM core.events WHERE source = 'db-ordering' ORDER BY event_id",
+            fetch_ordered_ulids(&ctx.pool, "db-ordering", "ts_ingest").await?,
         ),
     ];
 
-    let mut ordering_results = HashMap::new();
-
-    for (name, query) in ordering_queries {
-        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(&ctx.pool).await?;
-        ordering_results.insert(name, result);
-    }
-
-    // Compare ordering results
-    let id_order = ordering_results.get("ORDER BY event_id").unwrap();
-    let ts_orig_order = ordering_results.get("ORDER BY ts_orig").unwrap();
-    let ts_ingest_order = ordering_results.get("ORDER BY ts_ingest").unwrap();
+    let id_order = ordering_results[0].1.clone();
+    let ts_orig_order = ordering_results[1].1.clone();
+    let ts_ingest_order = ordering_results[2].1.clone();
 
     println!("Ordering comparison:");
     println!("  ID order length: {}", id_order.len());
@@ -347,9 +337,9 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
+async fn test_clock_skew_detection(ctx: TestContext) -> EyreResult<()> {
     // Generate test ULIDs with known ordering violations
-    let violation_test_ulids = ulid_verification::generate_ordering_violation_test_ulids();
+    let violation_test_ulids = generate_ordering_violation_test_ulids();
 
     for (ulid, description) in violation_test_ulids {
         println!("Testing {}: {}", description, ulid);
@@ -386,28 +376,31 @@ async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
         }
     }
 
-    // Run integrity checks to detect any issues
-    let integrity_tester = IntegrityTester::new(&ctx.pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 1,
-        include_deep_validation: false,
-        validate_checkpoints: false,
-        validate_ulid_ordering: true,
-        validate_schemas: false,
-    };
+    let skew_rows =
+        sqlx::query!(r#"SELECT id as "id!: Ulid" FROM core.events WHERE source = 'clock-skew'"#)
+            .fetch_all(&ctx.pool)
+            .await?;
 
-    let results = integrity_tester.run_integrity_tests(config).await?;
+    let mut violations = Vec::new();
+    for row in skew_rows {
+        if let Some(details) = detect_clock_skew(row.id) {
+            violations.push(details);
+        }
+    }
 
     println!("Clock skew integrity check results:");
-    println!(
-        "  ULID violations: {}",
-        results.check_report.ulid_ordering_violations.len()
-    );
-
-    for violation in &results.check_report.ulid_ordering_violations {
-        println!("  - {}: {}", violation.violation_type, violation.details);
+    for violation in &violations {
+        println!("  - {}", violation);
     }
+
+    assert!(
+        violations.iter().any(|v| v.contains("future")),
+        "Future timestamp violation should be detected"
+    );
+    assert!(
+        violations.iter().any(|v| v.contains("ancient")),
+        "Ancient timestamp violation should be detected"
+    );
 
     Ok(())
 }
@@ -417,7 +410,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()> {
+async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> EyreResult<()> {
     // Generate a large number of events to test ordering performance
     let num_events = 1000;
     let batch_size = 100;
@@ -463,14 +456,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
     // Test ordering query performance
     let query_start = Instant::now();
 
-    let ordered_ids: Vec<String> = sqlx::query_scalar!(
-        "SELECT event_id::text FROM core.events WHERE source = 'ulid-performance' ORDER BY event_id"
-    )
-    .fetch_all(&ctx.pool)
-    .await?
-    .into_iter()
-    .filter_map(|opt| opt)
-    .collect();
+    let ordered_ids = fetch_ordered_ulids(&ctx.pool, "ulid-performance", "id").await?;
 
     let query_time = query_start.elapsed();
     let query_rate = num_events as f64 / query_time.as_secs_f64();
@@ -483,7 +469,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
     );
 
     // Verify ordering correctness
-    let expected_order: Vec<String> = all_ulids.iter().map(|u| u.to_string()).collect();
+    let expected_order: Vec<Ulid> = all_ulids.iter().map(|u| *u.as_ulid()).collect();
     assert_eq!(
         ordered_ids.len(),
         expected_order.len(),
@@ -491,12 +477,11 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
     );
 
     // Check how many are in correct order
-    let mut correct_order_count = 0;
-    for i in 0..ordered_ids.len() {
-        if ordered_ids[i] == expected_order[i] {
-            correct_order_count += 1;
-        }
-    }
+    let correct_order_count = ordered_ids
+        .iter()
+        .zip(expected_order.iter())
+        .filter(|(actual, expected)| actual == expected)
+        .count();
 
     let order_accuracy = correct_order_count as f64 / ordered_ids.len() as f64;
     println!(
@@ -531,7 +516,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
+async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> EyreResult<()> {
     // Test ULID uniqueness under high concurrent load
     let num_tasks = 20;
     let events_per_task = 50;
@@ -621,4 +606,72 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
     );
 
     Ok(())
+}
+
+async fn fetch_ordered_ulids(pool: &DbPool, source: &str, order_by: &str) -> EyreResult<Vec<Ulid>> {
+    let query = format!(
+        "SELECT id FROM core.events WHERE source = $1 ORDER BY {}",
+        order_by
+    );
+    let rows = sqlx::query(&query).bind(source).fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let uuid: Uuid = row.get(0);
+            Ulid::from_uuid(uuid)
+        })
+        .collect())
+}
+
+fn verify_ulid_sequence_ordering(ulids: &[Ulid]) -> std::result::Result<(), String> {
+    for window in ulids.windows(2) {
+        if window[1] < window[0] {
+            return Err(format!("ULID {} appears before {}", window[1], window[0]));
+        }
+    }
+    Ok(())
+}
+
+fn verify_timestamp_progression(
+    ulids: &[Ulid],
+    tolerance_ms: i64,
+) -> std::result::Result<(), String> {
+    for window in ulids.windows(2) {
+        let prev = window[0].timestamp().timestamp_millis();
+        let next = window[1].timestamp().timestamp_millis();
+        if prev - next > tolerance_ms {
+            return Err(format!(
+                "Timestamp regression detected: {} -> {}",
+                prev, next
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn generate_ordering_violation_test_ulids() -> Vec<(Ulid, String)> {
+    let now = chrono::Utc::now();
+    vec![
+        (
+            Ulid::from_datetime(now + chrono::Duration::hours(1)),
+            "Future timestamp".to_string(),
+        ),
+        (
+            Ulid::from_datetime(now - chrono::Duration::hours(6)),
+            "Ancient timestamp".to_string(),
+        ),
+        (Ulid::new(), "Normal ULID".to_string()),
+    ]
+}
+
+fn detect_clock_skew(ulid: Ulid) -> Option<String> {
+    let now = chrono::Utc::now();
+    let ts = ulid.timestamp();
+    if ts > now + chrono::Duration::minutes(5) {
+        Some(format!("future timestamp {}", ts))
+    } else if ts < now - chrono::Duration::hours(2) {
+        Some(format!("ancient timestamp {}", ts))
+    } else {
+        None
+    }
 }

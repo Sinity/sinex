@@ -7,40 +7,42 @@
 //! - Cross-component type safety integration
 //! - Repository type safety guarantees
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
-use sinex_core::db::models::{Checkpoint, Event};
+use sinex_core::db::models::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
-use std::marker::PhantomData;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TestCheckpoint;
 
 // =============================================================================
 // GENERIC ID TYPE SAFETY TESTS
 // =============================================================================
 
 #[sinex_test]
-async fn test_generic_id_type_isolation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_generic_id_type_isolation(ctx: TestContext) -> EyreResult<()> {
     // Create IDs of different types
     let event_id = Id::<Event>::new();
-    let checkpoint_id = Id::<Checkpoint>::new();
+    let checkpoint_id = Id::<TestCheckpoint>::new();
 
     // Verify they have different types at compile time
     // (the following would fail to compile if uncommented)
     // let _type_error: Id<Event> = checkpoint_id; // Compilation error
-    // let _type_error: Id<Checkpoint> = event_id; // Compilation error
+    // let _type_error: Id<TestCheckpoint> = event_id; // Compilation error
 
     // But they should both be unique
     assert_ne!(event_id.to_string(), checkpoint_id.to_string());
 
     // Both should convert to/from ULID correctly
-    let event_ulid: Ulid = event_id.into();
-    let checkpoint_ulid: Ulid = checkpoint_id.into();
+    let event_ulid: Ulid = event_id.clone().into();
+    let checkpoint_ulid: Ulid = checkpoint_id.clone().into();
 
     let recovered_event_id = Id::<Event>::from(event_ulid);
-    let recovered_checkpoint_id = Id::<Checkpoint>::from(checkpoint_ulid);
+    let recovered_checkpoint_id = Id::<TestCheckpoint>::from(checkpoint_ulid);
 
     assert_eq!(event_id, recovered_event_id);
     assert_eq!(checkpoint_id, recovered_checkpoint_id);
@@ -49,9 +51,7 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_test]
-async fn test_id_database_integration_type_safety(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_id_database_integration_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Create an event and verify its ID type is preserved through database operations
     let event = ctx
         .create_test_event(
@@ -86,7 +86,7 @@ async fn test_id_database_integration_type_safety(
 }
 
 #[sinex_test]
-async fn test_id_collection_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_id_collection_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Create multiple events
     let mut event_ids = Vec::new();
 
@@ -103,7 +103,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> color_eyre::eyre::R
     }
 
     // Verify all IDs are unique
-    let id_set: HashSet<_> = event_ids.iter().cloned().collect();
+    let id_set: HashSet<String> = event_ids.iter().map(|id| id.to_string()).collect();
     assert_eq!(id_set.len(), 5, "All IDs should be unique");
 
     // Verify we can use the IDs to query events
@@ -129,7 +129,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> color_eyre::eyre::R
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_source_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_source_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
     let dynamic_source = EventSource::new("dynamic-test-source");
@@ -175,7 +175,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_event_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
     let dynamic_type = EventType::new("dynamic.test");
@@ -221,7 +221,7 @@ async fn test_event_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()
 }
 
 #[sinex_test]
-async fn test_domain_string_const_support(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_domain_string_const_support(ctx: TestContext) -> EyreResult<()> {
     // Test compile-time constants for domain strings
     const TEST_SOURCE: EventSource = EventSource::from_static("const-source");
     const TEST_TYPE: EventType = EventType::from_static("const.type");
@@ -247,7 +247,7 @@ async fn test_domain_string_const_support(ctx: TestContext) -> color_eyre::eyre:
 // =============================================================================
 
 #[sinex_test]
-async fn test_payload_validation_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_payload_validation_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Test that payload validation preserves type safety
     let valid_payload = json!({
         "required_field": "value",
@@ -278,7 +278,7 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn test_nested_payload_type_preservation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_nested_payload_type_preservation(ctx: TestContext) -> EyreResult<()> {
     // Test deeply nested payload structure preservation
     let complex_payload = json!({
         "metadata": {
@@ -340,7 +340,7 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> color_eyre::
 // =============================================================================
 
 #[sinex_test]
-async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_repository_query_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Create test data
     let _events = vec![
         ctx.create_test_event("repo-test", "query.safety", json!({"index": 1}))
@@ -392,7 +392,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn test_repository_id_query_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_repository_id_query_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Create an event
     let event = ctx
         .create_test_event(
@@ -429,9 +429,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> color_eyre::e
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_creation_pipeline_type_safety(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> EyreResult<()> {
     // Test that types are preserved through the entire event creation pipeline
 
     // 1. Domain type construction
@@ -482,7 +480,7 @@ async fn test_event_creation_pipeline_type_safety(
 }
 
 #[sinex_test]
-async fn test_concurrent_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_type_safety(ctx: TestContext) -> EyreResult<()> {
     use std::sync::Arc;
     use tokio::task::JoinSet;
 
@@ -546,7 +544,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_type_conversion_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_type_conversion_safety(ctx: TestContext) -> EyreResult<()> {
     // Test edge cases in ULID type conversions
 
     // Create ULID directly
@@ -554,7 +552,7 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> color_eyre::eyre:
 
     // Convert to different ID types
     let event_id = Id::<Event>::from(ulid);
-    let checkpoint_id = Id::<Checkpoint>::from(ulid);
+    let checkpoint_id = Id::<TestCheckpoint>::from(ulid);
 
     // Even though they came from the same ULID, they have different types
     assert_eq!(event_id.to_string(), checkpoint_id.to_string()); // Same string representation
@@ -572,7 +570,7 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> color_eyre::eyre:
 }
 
 #[sinex_test]
-async fn test_type_safety_boundary_conditions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_type_safety_boundary_conditions(ctx: TestContext) -> EyreResult<()> {
     // Test type safety at system boundaries
 
     // Empty but valid domain strings
