@@ -160,7 +160,11 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     let recent_events = ctx
         .pool
         .events()
-        .get_by_time_range(Utc::now() - Duration::minutes(5), Utc::now(), None, None)
+        .get_by_time_range(
+            Utc::now() - Duration::minutes(5),
+            Utc::now(),
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     let our_events_count = recent_events
@@ -752,8 +756,7 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
         .events()
         .get_by_source(
             &EventSource::from("load_test"),
-            Some(events_to_process as i64),
-            None,
+            sinex_core::types::Pagination::new(Some(events_to_process as i64), None),
         )
         .await?;
 

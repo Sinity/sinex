@@ -343,7 +343,10 @@ async fn test_automaton_event_filtering(ctx: TestContext) -> Result<()> {
     let filesystem_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("filesystem"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("filesystem"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     // Simulate processing only filesystem events (filtering)

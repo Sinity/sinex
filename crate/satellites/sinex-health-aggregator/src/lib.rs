@@ -352,7 +352,7 @@ impl HealthAggregator {
                     &event_type,
                     window_start,
                     chrono::Utc::now(),
-                    Some(100),
+                    sinex_core::types::Pagination::new(Some(100), None),
                 )
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("Failed to query health events: {}", e))?;

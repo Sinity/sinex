@@ -11,7 +11,7 @@ pub struct Pagination {
 
 impl Pagination {
     /// Default limit applied when callers omit or pass invalid input.
-    pub const DEFAULT_LIMIT: i64 = 50;
+    pub const DEFAULT_LIMIT: i64 = 100;
     /// Global maximum limit enforced across services unless overridden.
     pub const MAX_LIMIT: i64 = 1000;
 

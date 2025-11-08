@@ -416,7 +416,10 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     let recent_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("sequential-ingest"), Some(25), None)
+        .get_by_source(
+            &EventSource::from("sequential-ingest"),
+            sinex_core::types::Pagination::new(Some(25), None),
+        )
         .await?;
     assert!(
         recent_events.len() >= total_events,
@@ -721,7 +724,10 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     let status_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("health-monitor"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("health-monitor"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert!(
         status_events.len() >= 4,
@@ -795,7 +801,10 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
     let resource_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("resource-test"), Some(20), None)
+        .get_by_source(
+            &EventSource::from("resource-test"),
+            sinex_core::types::Pagination::new(Some(20), None),
+        )
         .await?;
     assert!(
         resource_events.len() >= 15,

@@ -76,8 +76,8 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     assert_eq!(terminal_event.event_type.as_str(), "command.executed");
 
     // Repository pattern would be:
-    // let fs_events = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), Some(10), None).await?;
-    // let command_events = ctx.pool.events().get_by_event_type(&EventType::from("command.executed"), Some(10), None).await?;
+    // let fs_events = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), sinex_core::types::Pagination::new(Some(10), None)).await?;
+    // let command_events = ctx.pool.events().get_by_event_type(&EventType::from("command.executed"), sinex_core::types::Pagination::new(Some(10), None)).await?;
 
     Ok(())
 }
@@ -188,8 +188,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
                 .events()
                 .get_by_source(
                     &EventSource::from(format!("task-{task_id}")),
-                    Some(100),
-                    None,
+                    sinex_core::types::Pagination::new(Some(100), None),
                 )
                 .await?;
             assert_eq!(events.len(), events_per_task);
@@ -265,7 +264,10 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
     let rollback_events = ctx
         .pool
         .events()
-        .get_by_event_type(&EventType::from("rollback"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from("rollback"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert_eq!(rollback_events.len(), 0);
 
@@ -353,7 +355,10 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
     let stored_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("performance-test"), Some(200), None)
+        .get_by_source(
+            &EventSource::from("performance-test"),
+            sinex_core::types::Pagination::new(Some(200), None),
+        )
         .await?;
     assert_eq!(stored_events.len(), batch_size);
 
@@ -402,7 +407,10 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
     let source_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("query-perf-0"), Some(200), None)
+        .get_by_source(
+            &EventSource::from("query-perf-0"),
+            sinex_core::types::Pagination::new(Some(200), None),
+        )
         .await?;
     assert!(!source_events.is_empty());
 
@@ -410,7 +418,10 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
     let type_events = ctx
         .pool
         .events()
-        .get_by_event_type(&EventType::from("query.test"), Some(200), None)
+        .get_by_event_type(
+            &EventType::from("query.test"),
+            sinex_core::types::Pagination::new(Some(200), None),
+        )
         .await?;
     assert!(!type_events.is_empty());
 

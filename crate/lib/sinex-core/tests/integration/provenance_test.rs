@@ -93,15 +93,24 @@ async fn test_multiple_event_sources(ctx: TestContext) -> Result<()> {
     // Query events by source
     let events_from_a = pool
         .events()
-        .get_by_source(&EventSource::from("source-a"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-a"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let events_from_b = pool
         .events()
-        .get_by_source(&EventSource::from("source-b"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-b"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let events_from_c = pool
         .events()
-        .get_by_source(&EventSource::from("source-c"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-c"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events_from_a.len(), 1, "Should have 1 event from source-a");
@@ -140,11 +149,17 @@ async fn test_event_querying_by_type(ctx: TestContext) -> Result<()> {
     // Query by event type
     let type_a_events = pool
         .events()
-        .get_by_event_type(&EventType::from("type.a"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from("type.a"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let type_b_events = pool
         .events()
-        .get_by_event_type(&EventType::from("type.b"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from("type.b"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(type_a_events.len(), 2, "Should have 2 events of type.a");
@@ -193,7 +208,10 @@ async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
     // Query events by source to verify batch
     let batch_events = pool
         .events()
-        .get_by_source(&EventSource::from("batch-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("batch-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(batch_events.len(), 5, "Should have 5 batch events");
@@ -256,7 +274,10 @@ async fn test_event_payload_preservation(ctx: TestContext) -> Result<()> {
     // Retrieve the event and verify payload integrity
     let retrieved_events = pool
         .events()
-        .get_by_source(&EventSource::from("payload-test"), Some(1), None)
+        .get_by_source(
+            &EventSource::from("payload-test"),
+            sinex_core::types::Pagination::new(Some(1), None),
+        )
         .await?;
 
     assert_eq!(

@@ -453,14 +453,15 @@ impl<'a> EventRepository<'a> {
         records_to_events(records)
     }
 
-    #[instrument(skip(self), fields(source = %source, limit = ?limit, offset = ?offset))]
+    #[instrument(
+        skip(self),
+        fields(source = %source, limit = pagination.limit(), offset = pagination.offset())
+    )]
     pub async fn get_by_source(
         &self,
         source: &EventSource,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let pagination = Pagination::with_default(limit, offset, 100);
         let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(concat!(
@@ -478,14 +479,15 @@ impl<'a> EventRepository<'a> {
         records_to_events(records)
     }
 
-    #[instrument(skip(self), fields(event_type = %event_type, limit = ?limit, offset = ?offset))]
+    #[instrument(
+        skip(self),
+        fields(event_type = %event_type, limit = pagination.limit(), offset = pagination.offset())
+    )]
     pub async fn get_by_event_type(
         &self,
         event_type: &EventType,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let pagination = Pagination::with_default(limit, offset, 100);
         let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(concat!(
@@ -529,15 +531,21 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
-    #[instrument(skip(self), fields(start = %start, end = %end, limit = ?limit, offset = ?offset))]
+    #[instrument(
+        skip(self),
+        fields(
+            start = %start,
+            end = %end,
+            limit = pagination.limit(),
+            offset = pagination.offset()
+        )
+    )]
     pub async fn get_by_time_range(
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let pagination = Pagination::with_default(limit, offset, 100);
         let (limit, offset) = pagination.as_tuple();
 
         // Use index hint for TimescaleDB optimization on time-range queries
@@ -585,19 +593,20 @@ impl<'a> EventRepository<'a> {
         event_type: &EventType,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        limit: Option<i64>,
+        pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let limit = limit.unwrap_or(100);
+        let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest DESC LIMIT $4"
+            " FROM core.events WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest DESC LIMIT $4 OFFSET $5"
         ))
         .bind(event_type.as_str())
         .bind(start)
         .bind(end)
         .bind(limit)
+        .bind(offset)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get events by type and time range"))?;
@@ -714,52 +723,18 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbResult<Vec<TimeBucketResult>> {
-        // Use SeaQuery for dynamic query building with proper escaping
-        use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT time_bucket("
+        );
+        builder.push_bind(interval);
+        builder.push("::interval, ts_ingest) AS bucket, COUNT(id) AS count FROM core.events WHERE ts_ingest >= ");
+        builder.push_bind(start);
+        builder.push(" AND ts_ingest <= ");
+        builder.push_bind(end);
+        builder.push(" GROUP BY bucket ORDER BY bucket ASC");
 
-        let query = Query::select()
-            .expr_as(
-                Func::cust(Alias::new("time_bucket"))
-                    .arg(Expr::val(interval))
-                    .arg(Expr::col((
-                        Alias::new("core"),
-                        Alias::new("events"),
-                        Alias::new("ts_ingest"),
-                    ))),
-                Alias::new("bucket"),
-            )
-            .expr_as(
-                Func::count(Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("id"),
-                ))),
-                Alias::new("count"),
-            )
-            .from((Alias::new("core"), Alias::new("events")))
-            .and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("ts_ingest"),
-                ))
-                .gte(start),
-            )
-            .and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("ts_ingest"),
-                ))
-                .lte(end),
-            )
-            .group_by_col(Alias::new("bucket"))
-            .order_by(Alias::new("bucket"), sea_query::Order::Asc)
-            .build(PostgresQueryBuilder);
-
-        let (sql, _values) = query;
-
-        sqlx::query_as(&sql)
+        builder
+            .build_query_as::<TimeBucketResult>()
             .fetch_all(self.pool)
             .await
             .map_err(|e| db_error(e, "time series aggregate"))

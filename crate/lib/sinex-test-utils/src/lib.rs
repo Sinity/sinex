@@ -329,7 +329,10 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
+            .get_by_source(
+                &EventSource::from_static("fs-watcher"),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         assert!(!events.is_empty());
 
@@ -379,12 +382,18 @@ mod tests {
         let source_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::new(source.to_string()), Some(10), None)
+            .get_by_source(
+                &EventSource::new(source.to_string()),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         let type_events = ctx
             .pool
             .events()
-            .get_by_event_type(&EventType::from(event_type), Some(10), None)
+            .get_by_event_type(
+                &EventType::from(event_type),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         // Should find the event in both queries
         assert!(!source_events.is_empty());
@@ -524,7 +533,7 @@ mod tests {
                         let events = ctx
                             .pool
                             .events()
-                            .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
+                            .get_by_source(&EventSource::from(format!("task_{i}")), sinex_core::types::Pagination::new(Some(100), None))
                             .await
                             .map_err(|e| eyre!("Failed to get events by source: {e}"))?;
                         observed = events.len();
@@ -545,11 +554,7 @@ mod tests {
                             let other_events = ctx
                                 .pool
                                 .events()
-                                .get_by_source(
-                                    &EventSource::from(format!("task_{k}")),
-                                    Some(100),
-                                    None,
-                                )
+                                .get_by_source(&EventSource::from(format!("task_{k}")), sinex_core::types::Pagination::new(Some(100), None))
                                 .await
                                 .map_err(|e| eyre!("Failed to get other events: {e}"))?;
                             assert_eq!(other_events.len(), 0);
@@ -858,7 +863,10 @@ mod tests {
             let events = temp_ctx
                 .pool
                 .events()
-                .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
+                .get_by_source(
+                    &EventSource::from("cleanup-test"),
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
                 .await?;
             assert_eq!(events.len(), 1);
 
@@ -870,7 +878,10 @@ mod tests {
         let leaked_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
+            .get_by_source(
+                &EventSource::from("cleanup-test"),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
 
         assert_eq!(
@@ -976,7 +987,10 @@ mod tests {
         let checkpoints = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("sinex"), Some(100), None)
+            .get_by_source(
+                &EventSource::from("sinex"),
+                sinex_core::types::Pagination::new(Some(100), None),
+            )
             .await?
             .into_iter()
             .filter(|e| e.event_type.as_str() == "checkpoint.saved")
@@ -991,7 +1005,10 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("automaton"), Some(100), None)
+            .get_by_source(
+                &EventSource::from("automaton"),
+                sinex_core::types::Pagination::new(Some(100), None),
+            )
             .await?;
 
         assert!(!events.is_empty(), "Should have automaton events");

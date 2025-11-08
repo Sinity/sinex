@@ -158,13 +158,19 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     let static_events = ctx
         .pool
         .events()
-        .get_by_source(&static_source, None, None)
+        .get_by_source(
+            &static_source,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .get_by_source(&dynamic_source, None, None)
+        .get_by_source(
+            &dynamic_source,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -204,13 +210,16 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     let static_events = ctx
         .pool
         .events()
-        .get_by_event_type(&static_type, None, None)
+        .get_by_event_type(&static_type, sinex_core::types::Pagination::new(None, None))
         .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .get_by_event_type(&dynamic_type, None, None)
+        .get_by_event_type(
+            &dynamic_type,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -355,7 +364,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let repo_events = ctx
         .pool
         .events()
-        .get_by_source(&repo_source, None, None)
+        .get_by_source(&repo_source, sinex_core::types::Pagination::new(None, None))
         .await?;
 
     assert_eq!(repo_events.len(), 2);
@@ -369,7 +378,10 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let safety_events = ctx
         .pool
         .events()
-        .get_by_event_type(&repo_event_type, None, None)
+        .get_by_event_type(
+            &repo_event_type,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(safety_events.len(), 3);

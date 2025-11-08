@@ -165,7 +165,10 @@ async fn test_all_features_combined(
     let events = ctx
         .pool
         .events()
-        .get_by_source(&source_ref, Some((count + 10) as i64), None)
+        .get_by_source(
+            &source_ref,
+            sinex_core::types::Pagination::new(Some((count + 10) as i64), None),
+        )
         .await?;
 
     assert_eq!(events.len(), count);
@@ -255,7 +258,10 @@ async fn test_with_fixtures(
     let events = ctx
         .pool
         .events()
-        .get_by_event_type(&type_ref, Some(1000), None)
+        .get_by_event_type(
+            &type_ref,
+            sinex_core::types::Pagination::new(Some(1000), None),
+        )
         .await?;
     let count = events.len() as i64;
 

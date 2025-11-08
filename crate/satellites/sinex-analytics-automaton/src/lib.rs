@@ -343,8 +343,7 @@ impl AnalyticsAutomaton {
                 .get_by_time_range(
                     start_time,
                     end_time,
-                    Some(MAX_ANALYTICS_EVENTS as i64),
-                    None,
+                    sinex_core::types::Pagination::new(Some(MAX_ANALYTICS_EVENTS as i64), None),
                 )
                 .await?;
             collected.append(&mut events);
@@ -357,7 +356,10 @@ impl AnalyticsAutomaton {
                         &event_type,
                         start_time,
                         end_time,
-                        Some((MAX_ANALYTICS_EVENTS / 2) as i64),
+                        sinex_core::types::Pagination::new(
+                            Some((MAX_ANALYTICS_EVENTS / 2) as i64),
+                            None,
+                        ),
                     )
                     .await?;
                 collected.append(&mut events);

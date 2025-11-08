@@ -424,7 +424,11 @@ impl SearchAutomaton {
         if self.config.searchable_event_types.is_empty() {
             let mut events = db_pool
                 .events()
-                .get_by_time_range(start_time, end_time, Some(MAX_SEARCH_EVENTS as i64), None)
+                .get_by_time_range(
+                    start_time,
+                    end_time,
+                    sinex_core::types::Pagination::new(Some(MAX_SEARCH_EVENTS as i64), None),
+                )
                 .await?;
             collected.append(&mut events);
         } else {
@@ -436,7 +440,10 @@ impl SearchAutomaton {
                         &event_type,
                         start_time,
                         end_time,
-                        Some((MAX_SEARCH_EVENTS / 2) as i64),
+                        sinex_core::types::Pagination::new(
+                            Some((MAX_SEARCH_EVENTS / 2) as i64),
+                            None,
+                        ),
                     )
                     .await?;
                 collected.append(&mut events);

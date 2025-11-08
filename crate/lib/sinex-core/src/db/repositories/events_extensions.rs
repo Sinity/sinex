@@ -17,10 +17,8 @@ impl<'a> EventRepository<'a> {
         source: &EventSource,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        limit: Option<i64>,
-        offset: Option<i64>,
+        pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let pagination = Pagination::with_default(limit, offset, 100);
         let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(
