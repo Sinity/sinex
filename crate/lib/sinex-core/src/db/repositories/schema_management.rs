@@ -6,6 +6,7 @@
 use crate::db::db_error;
 use crate::types::{Id, Ulid};
 use crate::{DbResult, Event, JsonValue};
+use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -64,6 +65,15 @@ pub struct ValidationError {
     pub error_type: String,
 }
 
+/// Result of synchronizing code-generated schemas with the database
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct SchemaSyncResult {
+    pub discovered: usize,
+    pub created: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+}
+
 /// Repository for event payload schema management
 pub struct SchemaManagementRepository<'a> {
     pool: &'a PgPool,
@@ -72,6 +82,54 @@ pub struct SchemaManagementRepository<'a> {
 impl<'a> SchemaManagementRepository<'a> {
     pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Synchronize the discovered schemas (from inventory) with the database
+    pub async fn sync_discovered_schemas<I>(
+        &self,
+        discovered: I,
+    ) -> DbResult<SchemaSyncResult>
+    where
+        I: IntoIterator<Item = ((String, String, String), JsonValue)>,
+    {
+        let mut candidates = Vec::new();
+        for ((source, event_type, version), schema_content) in discovered.into_iter() {
+            candidates.push(SchemaCandidate::new(source, event_type, version, schema_content));
+        }
+
+        let discovered_count = candidates.len();
+        let existing = self.load_active_schema_map().await?;
+
+        let mut created = 0;
+        let mut updated = 0;
+        let mut unchanged = 0;
+
+        for candidate in candidates {
+            let key = candidate.key();
+            if let Some(record) = existing.get(&key) {
+                if record
+                    .content_hash
+                    .as_ref()
+                    .map(|hash| hash == &candidate.content_hash)
+                    .unwrap_or(false)
+                {
+                    unchanged += 1;
+                } else {
+                    self.update_existing_schema(record.id, &candidate).await?;
+                    updated += 1;
+                }
+            } else {
+                self.insert_new_schema(&candidate).await?;
+                created += 1;
+            }
+        }
+
+        Ok(SchemaSyncResult {
+            discovered: discovered_count,
+            created,
+            updated,
+            unchanged,
+        })
     }
 
     /// Register a new event payload schema
@@ -492,6 +550,89 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(())
     }
+
+    async fn load_active_schema_map(
+        &self,
+    ) -> DbResult<HashMap<(String, String, String), SchemaRecord>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT 
+                id as "id: Ulid",
+                source,
+                event_type,
+                schema_version,
+                content_hash
+            FROM sinex_schemas.event_payload_schemas
+            WHERE is_active = true
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "load active schemas for sync"))?;
+
+        let mut map = HashMap::with_capacity(rows.len());
+        for row in rows {
+            map.insert(
+                (row.source, row.event_type, row.schema_version),
+                SchemaRecord {
+                    id: row.id,
+                    content_hash: row.content_hash.map(Into::into),
+                },
+            );
+        }
+
+        Ok(map)
+    }
+
+    async fn update_existing_schema(
+        &self,
+        schema_id: Ulid,
+        candidate: &SchemaCandidate,
+    ) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            UPDATE sinex_schemas.event_payload_schemas
+            SET schema_content = $1,
+                content_hash = $2,
+                updated_at = NOW()
+            WHERE id = $3::uuid::ulid
+            "#,
+            &candidate.schema.schema_content,
+            candidate.content_hash.as_str(),
+            schema_id.as_uuid()
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update schema content"))?;
+
+        Ok(())
+    }
+
+    async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Ulid> {
+        let id = Ulid::new();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO sinex_schemas.event_payload_schemas (
+                id, source, event_type, schema_version, schema_content,
+                content_hash, is_active, updated_at
+            ) VALUES (
+                $1::uuid::ulid, $2, $3, $4, $5, $6, true, NOW()
+            )
+            "#,
+            id.as_uuid(),
+            candidate.schema.source.as_str(),
+            candidate.schema.event_type.as_str(),
+            candidate.schema.schema_version.as_str(),
+            &candidate.schema.schema_content,
+            candidate.content_hash.as_str(),
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "insert new schema"))?;
+
+        Ok(id)
+    }
 }
 
 /// Schema statistics
@@ -501,4 +642,42 @@ pub struct SchemaStatistics {
     pub active_schemas: u64,
     pub unique_sources: u64,
     pub unique_event_types: u64,
+}
+
+#[derive(Debug, Clone)]
+struct SchemaCandidate {
+    schema: NewEventSchema,
+    content_hash: String,
+}
+
+impl SchemaCandidate {
+    fn new(
+        source: String,
+        event_type: String,
+        schema_version: String,
+        schema_content: JsonValue,
+    ) -> Self {
+        let schema = NewEventSchema {
+            source,
+            event_type,
+            schema_version,
+            schema_content,
+        };
+        let content_hash = schema.calculate_content_hash();
+        Self { schema, content_hash }
+    }
+
+    fn key(&self) -> (String, String, String) {
+        (
+            self.schema.source.clone(),
+            self.schema.event_type.clone(),
+            self.schema.schema_version.clone(),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SchemaRecord {
+    id: Ulid,
+    content_hash: Option<String>,
 }
