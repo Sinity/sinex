@@ -16,11 +16,10 @@ pub mod validator;
 pub use config::IngestdConfig;
 pub use jetstream_consumer::{JetStreamConsumer, JetStreamTopology};
 pub use material_assembler::MaterialAssembler;
-pub use schema_sync::SyncResult;
 pub use service::IngestService;
-pub use validator::{
-    EventValidator, SchemaCache, SchemaInfo, SchemaLookup, ValidationResult, ValidationStats,
-};
+pub use sinex_core::db::repositories::schema_management::SchemaSyncResult;
+pub use sinex_core::db::validation::SchemaInfo;
+pub use validator::{EventValidator, ValidationResult, ValidationStats};
 
 // Re-export SinexError for unified error handling
 pub use sinex_core::types::error::{Result, SinexError};

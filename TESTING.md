@@ -74,15 +74,13 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
   propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
 - **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
   rather than re-creating bespoke data builders. When you need a satellite
-  runtime for integration coverage, include the shared builder from
-  `sinex-satellite-sdk/tests/support/runtime.rs` instead of wiring pools and
-  emitters manually:
+  runtime for integration coverage, reach for the shared builder exported by
+  `sinex_test_utils::TestRuntimeBuilder`. It provisions telemetry emitters,
+  checkpoint managers, and NATS wiring automatically so tests exercise the
+  production pipeline end-to-end:
 
   ```rust
-  #[path = "support/runtime.rs"]
-  mod runtime;
-
-  use runtime::TestRuntimeBuilder;
+  use sinex_test_utils::TestRuntimeBuilder;
 
   let test_runtime = TestRuntimeBuilder::new(&ctx, "my-service")
       .with_dry_run(true)

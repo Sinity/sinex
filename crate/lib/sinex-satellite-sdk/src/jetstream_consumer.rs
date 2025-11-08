@@ -392,17 +392,6 @@ impl JetStreamEventConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confirmation_handler::ProvisionalEvent;
-    use async_trait::async_trait;
-
-    struct TestConfirmedHandler;
-
-    #[async_trait]
-    impl ConfirmedEventHandler for TestConfirmedHandler {
-        async fn handle_confirmed(&self, _event: &ProvisionalEvent) -> SatelliteResult<()> {
-            Ok(())
-        }
-    }
 
     #[tokio::test]
     async fn test_consumer_config_defaults() {

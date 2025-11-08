@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
+use sinex_core::types::ulid::Ulid;
 
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
@@ -17,6 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -31,6 +33,9 @@ static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(PoolMetrics::new);
 static OPTIONAL_EXTENSION_MISSING: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+static BOOTSTRAP_MATERIAL_ID: Lazy<Ulid> = Lazy::new(|| {
+    Ulid::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap material id")
+});
 
 /// Pool performance metrics for monitoring
 struct PoolMetrics {
@@ -563,7 +568,7 @@ impl DatabasePool {
                 .await
             {
                 if let Ok(rows) = sqlx::query!(
-                    r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+        r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
                 )
                 .fetch_all(&pool)
                 .await
@@ -616,7 +621,7 @@ impl DatabasePool {
                         .await
                     {
                         if let Ok(rows) = sqlx::query!(
-                            r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
+                    r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','pgx_ulid','pg_jsonschema','vector')"#
                         )
                         .fetch_all(&db_pool)
                         .await
@@ -1427,7 +1432,7 @@ async fn ensure_template_database(
                 timing_info_type,
                 metadata
             ) VALUES (
-                $1::text::ulid,
+                $1::uuid::ulid,
                 'annex',
                 'test-material-bootstrap',
                 'completed',
@@ -1437,7 +1442,7 @@ async fn ensure_template_database(
             ON CONFLICT (id) DO NOTHING
             "#,
         )
-        .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
         .execute(&template_pool)
         .await?;
 
@@ -1452,7 +1457,7 @@ async fn ensure_template_database(
                 timing_info_type,
                 metadata
             ) VALUES (
-                $1::text::ulid,
+                $1::uuid::ulid,
                 'annex',
                 'test-material-bootstrap',
                 'completed',
@@ -1466,7 +1471,7 @@ async fn ensure_template_database(
                 metadata = EXCLUDED.metadata
             "#,
         )
-        .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
         .execute(&template_pool)
         .await?;
 
@@ -1519,7 +1524,7 @@ async fn ensure_template_database(
 /// Check if required PostgreSQL extensions are available
 async fn check_required_extensions(pool: &DbPool) -> Result<()> {
     let required_extensions = [
-        ("ulid", "pgx_ulid for ULID primary keys"),
+        ("ulid", "ULID extension for primary keys"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
     ];
     let optional_extensions = [
@@ -1536,6 +1541,10 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
                 .await?;
 
         if available.is_none() {
+            if ext_name == "ulid" {
+                install_ulid_compat_layer(pool).await?;
+                continue;
+            }
             missing_required.push(format!("{ext_name} ({description})"));
             continue;
         }
@@ -1620,10 +1629,74 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()
         return Ok(());
     }
 
+    let available: Option<String> =
+        sqlx::query_scalar("SELECT name FROM pg_available_extensions WHERE name = $1")
+            .bind(extension)
+            .fetch_optional(pool)
+            .await?;
+
+    if available.is_none() && extension == "ulid" {
+        install_ulid_compat_layer(pool).await?;
+        return Ok(());
+    } else if available.is_none() {
+        return Err(SinexError::database(format!(
+            "Extension {extension} is not available in the current PostgreSQL installation"
+        )));
+    }
+
     let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
     sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
         SinexError::database(format!("Failed to create extension {extension}: {e}"))
     })?;
+
+    Ok(())
+}
+
+async fn install_ulid_compat_layer(pool: &DbPool) -> Result<()> {
+    warn!("ULID extension unavailable; installing compatibility shim for tests");
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        .execute(pool)
+        .await
+        .map_err(|e| SinexError::database(format!("Failed to enable pgcrypto: {e}")))?;
+
+    sqlx::query(
+        r#"
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ulid') THEN
+                EXECUTE 'CREATE DOMAIN ulid AS uuid';
+            END IF;
+        END
+        $$;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| SinexError::database(format!("Failed to create ULID domain shim: {e}")))?;
+
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION gen_ulid() RETURNS uuid
+        LANGUAGE SQL
+        STABLE
+        AS $$ SELECT gen_random_uuid() $$;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| SinexError::database(format!("Failed to create gen_ulid() shim: {e}")))?;
+
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION pgx_ulid_generate() RETURNS uuid
+        LANGUAGE SQL
+        STABLE
+        AS $$ SELECT gen_ulid() $$;
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| SinexError::database(format!("Failed to create pgx_ulid_generate() shim: {e}")))?;
 
     Ok(())
 }

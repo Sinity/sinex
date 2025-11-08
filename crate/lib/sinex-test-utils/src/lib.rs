@@ -30,13 +30,14 @@ mod database_pool;
 mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
-mod fixtures;
+pub mod fixtures;
 mod jetstream;
 mod nats;
 mod path_validation;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
+pub mod satellite_runtime;
 pub mod snapshot_helper;
 mod test_context;
 #[macro_use]
@@ -258,6 +259,7 @@ pub use nats::EphemeralNats;
 pub use satellite_management_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
+pub use satellite_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 

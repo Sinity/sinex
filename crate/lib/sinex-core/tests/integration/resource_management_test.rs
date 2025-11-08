@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::time::Duration;
 
 #[sinex_test]
-async fn test_database_connection_lifecycle(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_connection_lifecycle(ctx: TestContext) -> Result<()> {
     // Test that database connections are properly managed through ResourceGuard
     let connection_count = Arc::new(AtomicU32::new(0));
     let counter_clone = connection_count.clone();
@@ -43,7 +43,7 @@ async fn test_database_connection_lifecycle(ctx: TestContext) -> color_eyre::eyr
 }
 
 #[sinex_test]
-async fn test_advisory_lock_management(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_advisory_lock_management(ctx: TestContext) -> Result<()> {
     // Test advisory lock resource management pattern
     let lock_released = Arc::new(AtomicBool::new(false));
     let released_flag = lock_released.clone();
@@ -73,7 +73,7 @@ async fn test_advisory_lock_management(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_file_handle_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_file_handle_cleanup(ctx: TestContext) -> Result<()> {
     // Test file handle resource management with validated paths
 
     let cleanup_called = Arc::new(AtomicBool::new(false));
@@ -106,7 +106,7 @@ async fn test_file_handle_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<
 }
 
 #[sinex_test]
-async fn test_service_lifecycle_coordination(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_service_lifecycle_coordination(ctx: TestContext) -> Result<()> {
     // Test coordinated service startup/shutdown using ResourceGuard
     #[derive(Debug)]
     struct MockService {
@@ -171,7 +171,7 @@ async fn test_service_lifecycle_coordination(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn test_resource_pool_management(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_pool_management(ctx: TestContext) -> Result<()> {
     // Test managing a pool of resources
     struct ResourcePool {
         _resources: Vec<String>,
@@ -218,7 +218,7 @@ async fn test_resource_pool_management(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_nested_resource_dependencies(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_nested_resource_dependencies(ctx: TestContext) -> Result<()> {
     // Test nested resource dependencies with proper cleanup ordering
     let cleanup_order = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
@@ -273,7 +273,7 @@ async fn test_nested_resource_dependencies(ctx: TestContext) -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn test_concurrent_resource_access(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_resource_access(ctx: TestContext) -> Result<()> {
     // Test concurrent resource creation and cleanup
     let cleanup_count = Arc::new(AtomicU32::new(0));
     let mut handles = Vec::new();
@@ -314,7 +314,7 @@ async fn test_concurrent_resource_access(ctx: TestContext) -> color_eyre::eyre::
 }
 
 #[sinex_test]
-async fn test_resource_failure_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_failure_recovery(ctx: TestContext) -> Result<()> {
     // Test resource cleanup even when resource operations fail
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let error_occurred = Arc::new(AtomicBool::new(false));

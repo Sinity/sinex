@@ -9,6 +9,9 @@ license.workspace = true
 [dependencies]
 # Performance
 mimalloc = { workspace = true }
+async-nats = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
 
 sinex-core = { path = "../../lib/sinex-core", features = [] }
 sinex-services = { path = "../../lib/sinex-services" }
@@ -57,4 +60,3 @@ chrono = { workspace = true }
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 tempfile = "3.10"
-futures = "0.3"

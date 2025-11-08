@@ -12,7 +12,6 @@
 //! final processing, ensuring data integrity and correct processing semantics.
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result as EyreResult;
 use futures::future::join_all;
 use serde_json::json;
 use sinex_core::types::domain::EventSource;
@@ -28,7 +27,7 @@ use tokio::time::sleep;
 
 /// Test complete event ingestion pipeline from raw input to database storage
 #[sinex_test]
-async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<()> {
+async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing complete event ingestion pipeline");
 
     // Phase 1: Generate diverse test events representing different sources
@@ -85,10 +84,10 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<
         let event = ctx
             .create_test_event(source, event_type, payload.clone())
             .await?;
-        created_event_ids.push(event.id);
+        let event_id = event.id.clone();
+        created_event_ids.push(event_id.clone());
 
-        let event_id_display = event
-            .id
+        let event_id_display = event_id
             .as_ref()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "missing".to_string());
@@ -128,8 +127,8 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<
     for (i, (source, event_type, expected_payload)) in test_events.iter().enumerate() {
         let stored_event = &stored_events[i];
 
-        assert_eq!(stored_event.source, *source);
-        assert_eq!(stored_event.event_type, *event_type);
+        assert_eq!(stored_event.source.as_ref(), *source);
+        assert_eq!(stored_event.event_type.as_ref(), *event_type);
         assert_eq!(stored_event.payload, *expected_payload);
 
         // Verify pipeline processing metadata
@@ -145,9 +144,14 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<
             .as_ref()
             .map_or(false, |s| !s.is_empty()));
 
+        let event_id_display = stored_event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "missing".to_string());
         tracing::debug!(
-            event_id = %stored_event.id,
-            source = stored_event.source,
+            event_id = %event_id_display,
+            source = stored_event.source.as_ref(),
             "Event integrity verified"
         );
     }
@@ -176,7 +180,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> EyreResult<
 
 /// Test pipeline handling of concurrent event streams
 #[sinex_test]
-async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()> {
+async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing concurrent pipeline processing");
 
     let concurrent_streams = 4;
@@ -187,10 +191,12 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()>
     let mut stream_handles = Vec::new();
 
     for stream_id in 0..concurrent_streams {
-        let ctx_clone = ctx.clone();
         let results = processing_results.clone();
 
         let handle = tokio::spawn(async move {
+            let ctx = TestContext::new()
+                .await
+                .expect("Should create isolated stream context");
             let stream_name = format!("stream_{}", stream_id);
             let mut stream_events = Vec::new();
             let stream_start = Instant::now();
@@ -204,7 +210,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()>
                     "sequence": stream_id * events_per_stream + event_idx
                 });
 
-                match ctx_clone
+                match ctx
                     .create_test_event(&stream_name, "stream.data", event_payload)
                     .await
                 {
@@ -272,7 +278,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()>
 
     // Verify database state after concurrent processing
     let mut total_events_processed = 0;
-    let mut all_processed_ids = Vec::new();
+    let mut all_processed_ids: Vec<Option<Id<Event<JsonValue>>>> = Vec::new();
 
     for (stream_id, event_ids, duration) in results.iter() {
         total_events_processed += event_ids.len();
@@ -350,7 +356,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> EyreResult<()>
 
 /// Test pipeline data transformation and enrichment
 #[sinex_test]
-async fn test_pipeline_data_transformation(ctx: TestContext) -> EyreResult<()> {
+async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
 
     // Create raw events that should be processed and enriched
@@ -521,7 +527,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> EyreResult<()> {
 
 /// Test pipeline error handling and recovery mechanisms
 #[sinex_test]
-async fn test_pipeline_error_handling(ctx: TestContext) -> EyreResult<()> {
+async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline error handling and recovery");
 
     let pipeline_start = Instant::now();
@@ -679,7 +685,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> EyreResult<()> {
 
 /// Test pipeline performance under sustained load
 #[sinex_test]
-async fn test_pipeline_performance_under_load(ctx: TestContext) -> EyreResult<()> {
+async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline performance under sustained load");
 
     let events_to_process = 100;

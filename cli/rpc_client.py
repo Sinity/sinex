@@ -5,7 +5,7 @@ Sinex RPC Client - JSON-RPC 2.0 client for sinex-gateway service
 
 import json
 import time
-from typing import Optional, Dict, List, Any, Union
+from typing import Optional, Dict, List, Any, Union, Tuple
 from datetime import datetime, timedelta
 import urllib.request
 import urllib.parse
@@ -202,6 +202,101 @@ class SinexRPCClient:
             compatible_events.append(event)
         
         return compatible_events
+
+    # Replay Control Methods
+
+    def replay_create_operation(
+        self,
+        actor: str,
+        scope: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        result = self._call_rpc(
+            "replay.create_operation",
+            {"actor": actor, "scope": scope},
+        )
+        operation = result.get("operation")
+        if operation is None:
+            raise SinexRPCError(-32603, "RPC response missing operation payload")
+        return operation
+
+    def replay_preview_operation(
+        self,
+        operation_id: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        result = self._call_rpc(
+            "replay.preview_operation",
+            {"operation_id": operation_id},
+        )
+        operation = result.get("operation")
+        preview = result.get("preview")
+        if operation is None or preview is None:
+            raise SinexRPCError(-32603, "RPC response missing preview payload")
+        return operation, preview
+
+    def replay_approve_operation(
+        self,
+        operation_id: str,
+        approver: str,
+    ) -> Dict[str, Any]:
+        result = self._call_rpc(
+            "replay.approve_operation",
+            {"operation_id": operation_id, "approver": approver},
+        )
+        operation = result.get("operation")
+        if operation is None:
+            raise SinexRPCError(-32603, "RPC response missing operation payload")
+        return operation
+
+    def replay_execute_operation(
+        self,
+        operation_id: str,
+        executor: str,
+    ) -> Dict[str, Any]:
+        result = self._call_rpc(
+            "replay.execute_operation",
+            {"operation_id": operation_id, "executor": executor},
+        )
+        operation = result.get("operation")
+        if operation is None:
+            raise SinexRPCError(-32603, "RPC response missing operation payload")
+        return operation
+
+    def replay_cancel_operation(
+        self,
+        operation_id: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"operation_id": operation_id}
+        if reason:
+            payload["reason"] = reason
+        result = self._call_rpc("replay.cancel_operation", payload)
+        operation = result.get("operation")
+        if operation is None:
+            raise SinexRPCError(-32603, "RPC response missing operation payload")
+        return operation
+
+    def replay_operation_status(self, operation_id: str) -> Dict[str, Any]:
+        result = self._call_rpc(
+            "replay.operation_status",
+            {"operation_id": operation_id},
+        )
+        operation = result.get("operation")
+        if operation is None:
+            raise SinexRPCError(-32603, "RPC response missing operation payload")
+        return operation
+
+    def replay_list_operations(
+        self,
+        state: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        payload: Dict[str, Any] = {}
+        if state:
+            payload["state"] = state
+        result = self._call_rpc("replay.list_operations", payload)
+        operations = result.get("operations")
+        if operations is None:
+            raise SinexRPCError(-32603, "RPC response missing operations list")
+        return operations
     
     def get_sources_statistics(self) -> List[Dict[str, Any]]:
         """Get sources statistics compatible with CLI sources command."""

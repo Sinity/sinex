@@ -21,6 +21,9 @@ macro_rules! define_event_payload {
 
 pub(crate) use define_event_payload;
 
+#[macro_use]
+mod macros;
+
 pub mod blob;
 pub mod clipboard;
 pub mod desktop;

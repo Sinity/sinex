@@ -38,7 +38,7 @@ From codebase review:
 
 ## Remaining Work
 
-- Promote replay tooling onto `sinex.control.*` subjects (CLI + gateway integration).
+- Replay tooling now runs on `sinex.control.*` subjects (CLI + gateway integration completed), and telemetry sampling is live; only UX polish remains and is tracked in the public roadmap.
 - Complete JetStream migrations for analytics/search automata.
 - Harden annex integration for environments without local git-annex (better mocks for tests).
 
@@ -48,4 +48,4 @@ The codebase is in a **JetStream-first state**:
 - ingestd runs exclusively on JetStream streams with material assembler persistence and confirmation fan-out.
 - Satellite SDK exposes only NATS transports; gRPC client/helpers have been removed.
 - Stage-as-You-Go and AcquisitionManager ship with restart-safe annex integration and ledger writes.
-- Replay/control-plane work is staged but needs `sinex.control.*` subjects to replace the remaining TODOs.
+- Replay/control-plane work now uses `sinex.control.*` subjects; telemetry instrumentation is done, and only UX polish remains.

@@ -134,7 +134,7 @@ CREATE DATABASE test_db WITH TEMPLATE template_db
 - Automatic recreation on migration changes
 
 **Cache Invalidation**:
-- Stored in `target/sinex-test-utils/template_stamp.json`
+- Stored in `target/sinex-test-utils/template_stamp.json` (managed automatically; delete only when debugging a corrupted local template)
 - Detects extension version changes
 - Checks for required schema elements
 - Rebuilds if TimescaleDB version changes
@@ -1099,6 +1099,7 @@ WHERE datname LIKE 'sinex_test%';
 migrations or required extensions change. Manual deletion should only be
 necessary when debugging local Postgres issues:
 ```bash
+# Only needed if the cached template is corrupted locally
 rm target/sinex-test-utils/template_stamp.json
 cargo test
 ```

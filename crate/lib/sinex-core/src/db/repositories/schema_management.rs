@@ -6,10 +6,10 @@
 use crate::db::db_error;
 use crate::types::{Id, Ulid};
 use crate::{DbResult, Event, JsonValue};
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 /// Event payload schema record
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,16 +85,18 @@ impl<'a> SchemaManagementRepository<'a> {
     }
 
     /// Synchronize the discovered schemas (from inventory) with the database
-    pub async fn sync_discovered_schemas<I>(
-        &self,
-        discovered: I,
-    ) -> DbResult<SchemaSyncResult>
+    pub async fn sync_discovered_schemas<I>(&self, discovered: I) -> DbResult<SchemaSyncResult>
     where
         I: IntoIterator<Item = ((String, String, String), JsonValue)>,
     {
         let mut candidates = Vec::new();
         for ((source, event_type, version), schema_content) in discovered.into_iter() {
-            candidates.push(SchemaCandidate::new(source, event_type, version, schema_content));
+            candidates.push(SchemaCandidate::new(
+                source,
+                event_type,
+                version,
+                schema_content,
+            ));
         }
 
         let discovered_count = candidates.len();
@@ -576,7 +578,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 (row.source, row.event_type, row.schema_version),
                 SchemaRecord {
                     id: row.id,
-                    content_hash: row.content_hash.map(Into::into),
+                    content_hash: Some(row.content_hash),
                 },
             );
         }
@@ -664,7 +666,10 @@ impl SchemaCandidate {
             schema_content,
         };
         let content_hash = schema.calculate_content_hash();
-        Self { schema, content_hash }
+        Self {
+            schema,
+            content_hash,
+        }
     }
 
     fn key(&self) -> (String, String, String) {

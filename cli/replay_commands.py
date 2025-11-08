@@ -1,353 +1,311 @@
 #!/usr/bin/env python3
-"""
-Replay commands for Sinex CLI
-"""
+"""Replay commands for Sinex CLI (RPC-backed control plane)."""
 
-import click
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import click
+from rich import box
 from rich.console import Console
-from rich.prompt import Prompt, Confirm
+from rich.panel import Panel
+from rich.table import Table
 
 try:
-    from .replay_planner import (
-        ReplayPlanner, ReplayPlan, ReplayGate, GateType,
-        display_replay_plan, display_execution_results
-    )
-except ImportError:
-    from replay_planner import (
-        ReplayPlanner, ReplayPlan, ReplayGate, GateType,
-        display_replay_plan, display_execution_results
-    )
+    from .rpc_client import create_client, SinexRPCError
+except ImportError:  # pragma: no cover - direct execution fallback
+    from rpc_client import create_client, SinexRPCError  # type: ignore
+
 
 console = Console()
+STATE_CHOICES = [
+    "planning",
+    "previewed",
+    "approved",
+    "executing",
+    "committing",
+    "completed",
+    "failed",
+    "cancelled",
+]
 
 
-@click.group()
-def replay():
-    """Event replay planning and execution commands."""
-    pass
+def parse_time_option(label: str, value: Optional[str]) -> Optional[str]:
+    """Validate and normalise ISO 8601 timestamps."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:  # pragma: no cover - exercised via CLI
+        raise click.ClickException(
+            f"Invalid ISO 8601 timestamp for {label}: {value}"
+        ) from exc
+    return parsed.isoformat()
 
 
-@replay.command('plan')
-@click.option('--name', '-n', required=True, help='Name for the replay plan')
-@click.option('--description', '-d', help='Description of the replay')
-@click.option('--source', '-s', help='Filter by event source')
-@click.option('--event-type', '-t', help='Filter by event type')
-@click.option('--since', help='Replay events since datetime')
-@click.option('--until', help='Replay events until datetime')
-@click.option('--limit', type=int, default=1000, help='Maximum events to replay')
-@click.option('--target', type=click.Choice(['preview', 'nats', 'database']), 
-              default='preview', help='Target system for replay')
-@click.option('--dry-run/--live', default=True, help='Dry run mode (default: true)')
-@click.option('--interactive', '-i', is_flag=True, help='Interactive gate configuration')
-def create_plan(name: str, description: Optional[str], source: Optional[str],
-                event_type: Optional[str], since: Optional[str], until: Optional[str],
-                limit: int, target: str, dry_run: bool, interactive: bool):
-    """Create a new replay plan."""
-    
-    planner = ReplayPlanner()
-    
-    # Build source query
-    source_query = {}
-    if source:
-        source_query['source'] = source
-    if event_type:
-        source_query['event_type'] = event_type
-    if since:
-        source_query['since'] = since
-    if until:
-        source_query['until'] = until
-    source_query['limit'] = limit
-    
-    # Create plan
-    plan = planner.create_plan(
-        name=name,
-        description=description or f"Replay plan created at {datetime.utcnow()}",
-        source_query=source_query,
-        target_system=target,
-        dry_run=dry_run
+def build_scope(
+    processor_id: str,
+    since: Optional[str],
+    until: Optional[str],
+    material_ids: Tuple[str, ...],
+    event_types: Tuple[str, ...],
+) -> Dict[str, Any]:
+    scope: Dict[str, Any] = {
+        "processor_id": processor_id,
+        "time_window": None,
+        "material_filter": list(material_ids) or None,
+        "filters": {},
+    }
+
+    if since or until:
+        scope["time_window"] = [since, until]
+
+    if event_types:
+        scope["filters"]["event_types"] = list(event_types)
+
+    if not scope["filters"]:
+        scope["filters"] = {}
+
+    return scope
+
+
+def call_rpc(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except SinexRPCError as err:  # pragma: no cover - network/runtime failure
+        raise click.ClickException(str(err)) from err
+
+
+def render_operation(operation: Dict[str, Any]) -> None:
+    table = Table(title="Replay Operation", box=box.SIMPLE)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", overflow="fold")
+
+    table.add_row("Operation ID", str(operation.get("operation_id", "")))
+    table.add_row("State", str(operation.get("state", "")))
+    table.add_row("Actor", str(operation.get("actor", "")))
+    table.add_row("Processor", operation.get("scope", {}).get("processor_id", "-"))
+    table.add_row("Created", str(operation.get("created_at", "-")))
+    table.add_row("Approved By", str(operation.get("approved_by", "-")))
+    table.add_row("Executor", str(operation.get("executor_node", "-")))
+    table.add_row("Started", str(operation.get("started_at", "-")))
+    table.add_row("Finished", str(operation.get("finished_at", "-")))
+
+    checkpoint = operation.get("checkpoint", {})
+    checkpoint_text = (
+        f"{checkpoint.get('processed_events', 0)} / {checkpoint.get('total_events', 0)}"
     )
-    
-    # Interactive gate configuration
-    if interactive:
-        console.print("\n[cyan]Configure Control Gates[/cyan]")
-        console.print("Gates pause replay execution for inspection or control.\n")
-        
-        while Confirm.ask("Add a gate?", default=False):
-            gate_type = Prompt.ask(
-                "Gate type",
-                choices=["time", "count", "event", "manual", "condition"],
-                default="count"
-            )
-            
-            gate_name = Prompt.ask("Gate name")
-            gate_desc = Prompt.ask("Gate description")
-            
-            # Configure condition based on type
-            if gate_type == "count":
-                condition = int(Prompt.ask("Pause after how many events?", default="10"))
-            elif gate_type == "event":
-                condition = Prompt.ask("Event type to pause on")
-            elif gate_type == "time":
-                condition = Prompt.ask("Timestamp to pause at (ISO format)")
-            elif gate_type == "manual":
-                condition = None
-            else:  # condition
-                console.print("Enter JSON condition (e.g., {'key': 'value'})")
-                condition_str = Prompt.ask("Condition")
-                condition = json.loads(condition_str)
-            
-            action = Prompt.ask(
-                "Gate action",
-                choices=["pause", "skip", "transform"],
-                default="pause"
-            )
-            
-            gate = ReplayGate(
-                gate_type=GateType(gate_type),
-                name=gate_name,
-                description=gate_desc,
-                condition=condition,
-                action=action
-            )
-            
-            planner.add_gate(plan, gate)
-            console.print(f"[green]Added gate: {gate_name}[/green]")
-    
-    # Save plan
-    planner.save_plan(plan)
-    
-    console.print(f"\n[bold green]Replay plan created![/bold green]")
-    console.print(f"Operation ID: [yellow]{plan.operation_id}[/yellow]")
-    
-    # Display plan
-    display_replay_plan(plan)
-    
-    # Preview events
-    if Confirm.ask("\nPreview events that will be replayed?", default=True):
-        events = planner.preview_events(**source_query)
-        console.print(f"\nFound [cyan]{len(events)}[/cyan] events to replay")
-        
-        if events and Confirm.ask("Show first 5 events?", default=True):
-            for i, event in enumerate(events[:5]):
-                console.print(f"\n[yellow]Event {i+1}:[/yellow]")
-                console.print(f"  Type: {event['event_type']}")
-                console.print(f"  Source: {event['source']}")
-                console.print(f"  Time: {event.get('ts_orig', event['ts_ingest'])}")
-                if event.get('payload'):
-                    console.print(f"  Payload: {json.dumps(event['payload'], indent=2)[:200]}...")
+    table.add_row("Checkpoint", checkpoint_text)
+
+    console.print(table)
+
+    scope_json = json.dumps(operation.get("scope", {}), indent=2)
+    console.print(Panel(scope_json, title="Scope", border_style="cyan"))
+
+    preview = operation.get("preview_summary")
+    if preview:
+        render_preview(preview)
 
 
-@replay.command('list')
-@click.option('--status', type=click.Choice(['draft', 'executing', 'completed', 'failed']),
-              help='Filter by status')
-@click.option('--limit', type=int, default=20, help='Maximum plans to show')
-def list_plans(status: Optional[str], limit: int):
-    """List replay plans."""
-    
-    planner = ReplayPlanner()
-    
-    with planner.get_connection() as conn:
-        with conn.cursor() as cur:
-            query = """
-                SELECT operation_id, status, metadata, created_at, executed_at
-                FROM core.replay_operations
-                WHERE operation_type = 'replay'
-            """
-            params = []
-            
-            if status:
-                query += " AND status = %s"
-                params.append(status)
-            
-            query += " ORDER BY created_at DESC LIMIT %s"
-            params.append(limit)
-            
-            cur.execute(query, params)
-            plans = cur.fetchall()
-    
-    if not plans:
-        console.print("[yellow]No replay plans found[/yellow]")
-        return
-    
-    from rich.table import Table
-    table = Table(title="Replay Plans")
-    
-    table.add_column("Operation ID", style="cyan")
-    table.add_column("Name", style="white")
-    table.add_column("Status", style="yellow")
-    table.add_column("Target", style="green")
-    table.add_column("Created", style="blue")
-    table.add_column("Executed", style="magenta")
-    
-    for plan in plans:
-        metadata = plan['metadata']
-        table.add_row(
-            plan['operation_id'],
-            metadata.get('name', 'Unnamed'),
-            plan['status'],
-            metadata.get('target_system', 'unknown'),
-            plan['created_at'].strftime('%Y-%m-%d %H:%M'),
-            plan['executed_at'].strftime('%Y-%m-%d %H:%M') if plan['executed_at'] else 'Never'
+def render_preview(preview: Dict[str, Any]) -> None:
+    table = Table(title="Preview Summary", box=box.SIMPLE)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", overflow="fold")
+
+    table.add_row("Total Events", str(preview.get("total_events", "-")))
+
+    window = preview.get("time_window") or {}
+    table.add_row(
+        "Time Window",
+        f"{window.get('start', '-') } → {window.get('end', '-')}",
+    )
+
+    material = preview.get("material_filter")
+    if material:
+        table.add_row("Materials", json.dumps(material))
+
+    top_types = preview.get("top_event_types") or []
+    if top_types:
+        summary = ", ".join(
+            f"{entry.get('event_type')}: {entry.get('count')}" for entry in top_types
         )
-    
+        table.add_row("Top Event Types", summary)
+
     console.print(table)
 
 
-@replay.command('show')
-@click.argument('operation_id')
-def show_plan(operation_id: str):
-    """Show details of a replay plan."""
-    
-    planner = ReplayPlanner()
-    plan = planner.load_plan(operation_id)
-    
-    if not plan:
-        console.print(f"[red]Plan not found: {operation_id}[/red]")
-        return
-    
-    display_replay_plan(plan)
-    
-    # Show source query details
-    console.print("\n[cyan]Source Query:[/cyan]")
-    for key, value in plan.source_query.items():
-        console.print(f"  {key}: {value}")
-    
-    # Show transformation details if any
-    if plan.transformations:
-        console.print("\n[cyan]Transformations:[/cyan]")
-        for transform in plan.transformations:
-            console.print(f"  • {transform}")
-
-
-@replay.command('execute')
-@click.argument('operation_id')
-@click.option('--force', is_flag=True, help='Skip confirmation')
-@click.option('--no-interactive', is_flag=True, help='Disable interactive gates')
-def execute_plan(operation_id: str, force: bool, no_interactive: bool):
-    """Execute a replay plan."""
-    
-    planner = ReplayPlanner()
-    plan = planner.load_plan(operation_id)
-    
-    if not plan:
-        console.print(f"[red]Plan not found: {operation_id}[/red]")
-        return
-    
-    if plan.status == 'completed':
-        console.print("[yellow]Warning: This plan has already been executed[/yellow]")
-        if not Confirm.ask("Execute again?", default=False):
-            return
-    
-    # Display plan details
-    display_replay_plan(plan)
-    
-    # Confirmation
-    if not force:
-        mode = "DRY RUN" if plan.dry_run else "LIVE"
-        console.print(f"\n[yellow]Mode: {mode}[/yellow]")
-        
-        if not plan.dry_run:
-            console.print("[red]WARNING: This is a LIVE execution![/red]")
-        
-        if not Confirm.ask("\nProceed with execution?", default=True):
-            console.print("[yellow]Execution cancelled[/yellow]")
-            return
-    
-    # Execute plan
-    console.print("\n[cyan]Starting replay execution...[/cyan]\n")
-    
-    try:
-        results = planner.execute_plan(plan, interactive=not no_interactive)
-        display_execution_results(results)
-        
-    except Exception as e:
-        console.print(f"\n[red]Execution failed: {e}[/red]")
+def render_operation_list(operations: List[Dict[str, Any]]) -> None:
+    if not operations:
+        console.print("[yellow]No replay operations found[/yellow]")
         return
 
+    table = Table(title="Replay Operations", box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Operation ID", style="cyan")
+    table.add_column("State", style="magenta")
+    table.add_column("Processor", style="white")
+    table.add_column("Actor", style="green")
+    table.add_column("Created", style="yellow")
 
-@replay.command('delete')
-@click.argument('operation_id')
-@click.option('--force', is_flag=True, help='Skip confirmation')
-def delete_plan(operation_id: str, force: bool):
-    """Delete a replay plan."""
-    
-    planner = ReplayPlanner()
-    plan = planner.load_plan(operation_id)
-    
-    if not plan:
-        console.print(f"[red]Plan not found: {operation_id}[/red]")
-        return
-    
-    if not force:
-        console.print(f"Plan: [yellow]{plan.name}[/yellow]")
-        console.print(f"Status: {plan.status}")
-        
-        if not Confirm.ask("\nDelete this plan?", default=False):
-            console.print("[yellow]Deletion cancelled[/yellow]")
-            return
-    
-    with planner.get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM core.replay_operations
-                WHERE operation_id = %s AND operation_type = 'replay'
-            """, (operation_id,))
-            conn.commit()
-    
-    console.print(f"[green]Plan deleted: {operation_id}[/green]")
+    for op in operations:
+        scope = op.get("scope", {})
+        table.add_row(
+            str(op.get("operation_id", "")),
+            str(op.get("state", "")),
+            scope.get("processor_id", "-"),
+            str(op.get("actor", "")),
+            str(op.get("created_at", "")),
+        )
+
+    console.print(table)
 
 
-@replay.command('add-gate')
-@click.argument('operation_id')
-@click.option('--type', '-t', 'gate_type', 
-              type=click.Choice(['time', 'count', 'event', 'manual', 'condition']),
-              required=True, help='Gate type')
-@click.option('--name', '-n', required=True, help='Gate name')
-@click.option('--description', '-d', help='Gate description')
-@click.option('--condition', '-c', help='Gate condition (varies by type)')
-@click.option('--action', '-a', type=click.Choice(['pause', 'skip', 'transform']),
-              default='pause', help='Gate action')
-def add_gate_to_plan(operation_id: str, gate_type: str, name: str,
-                     description: Optional[str], condition: Optional[str],
-                     action: str):
-    """Add a gate to an existing replay plan."""
-    
-    planner = ReplayPlanner()
-    plan = planner.load_plan(operation_id)
-    
-    if not plan:
-        console.print(f"[red]Plan not found: {operation_id}[/red]")
-        return
-    
-    if plan.status != 'draft':
-        console.print(f"[red]Cannot modify plan with status: {plan.status}[/red]")
-        return
-    
-    # Parse condition based on type
-    parsed_condition = None
-    if gate_type == 'count':
-        parsed_condition = int(condition) if condition else 10
-    elif gate_type == 'event':
-        parsed_condition = condition
-    elif gate_type == 'time':
-        parsed_condition = condition
-    elif gate_type == 'condition':
-        parsed_condition = json.loads(condition) if condition else {}
-    
-    gate = ReplayGate(
-        gate_type=GateType(gate_type),
-        name=name,
-        description=description or f"{gate_type} gate",
-        condition=parsed_condition,
-        action=action
+@click.group()
+def replay() -> None:
+    """Event replay planning, approval, and execution commands."""
+
+
+@replay.command("plan")
+@click.option("--processor", "-p", "processor_id", help="Processor / event source ID")
+@click.option("--source", "-s", "source_id", help="Alias for --processor")
+@click.option(
+    "--event-type",
+    "-t",
+    "event_types",
+    multiple=True,
+    help="Event type filter (repeatable)",
+)
+@click.option(
+    "--material-id",
+    "-m",
+    "material_ids",
+    multiple=True,
+    help="Material ULID filter (repeatable)",
+)
+@click.option("--since", help="Earliest event timestamp (ISO 8601)")
+@click.option("--until", help="Latest event timestamp (ISO 8601)")
+@click.option(
+    "--actor",
+    default="sinex-cli",
+    show_default=True,
+    help="Actor recorded with the operation",
+)
+def plan_command(
+    processor_id: Optional[str],
+    source_id: Optional[str],
+    event_types: Tuple[str, ...],
+    material_ids: Tuple[str, ...],
+    since: Optional[str],
+    until: Optional[str],
+    actor: str,
+) -> None:
+    """Create a replay operation for a processor/source."""
+
+    target = processor_id or source_id
+    if not target:
+        raise click.UsageError("Please provide --processor (or --source).")
+
+    scope = build_scope(
+        target,
+        parse_time_option("since", since),
+        parse_time_option("until", until),
+        material_ids,
+        event_types,
     )
-    
-    planner.add_gate(plan, gate)
-    planner.save_plan(plan)
-    
-    console.print(f"[green]Gate added to plan: {name}[/green]")
-    display_replay_plan(plan)
+
+    client = create_client()
+    operation = call_rpc(client.replay_create_operation, actor, scope)
+
+    console.print(
+        f"[bold green]Replay operation planned[/bold green] (state: {operation.get('state')})"
+    )
+    render_operation(operation)
+    console.print("Next: run 'exo replay preview <operation_id>' to inspect the scope.")
+
+
+@replay.command("preview")
+@click.argument("operation_id")
+def preview_command(operation_id: str) -> None:
+    """Generate and display the preview summary for an operation."""
+
+    client = create_client()
+    operation, preview = call_rpc(client.replay_preview_operation, operation_id)
+
+    console.print("[bold cyan]Preview generated[/bold cyan]")
+    render_operation(operation)
+    render_preview(preview)
+
+
+@replay.command("approve")
+@click.argument("operation_id")
+@click.option(
+    "--approver",
+    default="sinex-cli",
+    show_default=True,
+    help="Identifier to record as the approver",
+)
+def approve_command(operation_id: str, approver: str) -> None:
+    """Approve a previewed replay operation."""
+
+    client = create_client()
+    operation = call_rpc(client.replay_approve_operation, operation_id, approver)
+    console.print("[bold green]Operation approved[/bold green]")
+    render_operation(operation)
+
+
+@replay.command("execute")
+@click.argument("operation_id")
+@click.option(
+    "--executor",
+    default="sinex-cli",
+    show_default=True,
+    help="Identifier of the executor",
+)
+def execute_command(operation_id: str, executor: str) -> None:
+    """Execute an approved replay operation."""
+
+    client = create_client()
+    operation = call_rpc(client.replay_execute_operation, operation_id, executor)
+    console.print("[bold green]Replay execution completed[/bold green]")
+    render_operation(operation)
+
+
+@replay.command("cancel")
+@click.argument("operation_id")
+@click.option("--reason", help="Cancellation reason")
+def cancel_command(operation_id: str, reason: Optional[str]) -> None:
+    """Cancel a pending or running replay operation."""
+
+    client = create_client()
+    operation = call_rpc(client.replay_cancel_operation, operation_id, reason)
+    console.print("[bold yellow]Operation cancelled[/bold yellow]")
+    render_operation(operation)
+
+
+@replay.command("status")
+@click.argument("operation_id")
+def status_command(operation_id: str) -> None:
+    """Show the current status of a replay operation."""
+
+    client = create_client()
+    operation = call_rpc(client.replay_operation_status, operation_id)
+    render_operation(operation)
+
+
+@replay.command("list")
+@click.option(
+    "--state",
+    type=click.Choice(STATE_CHOICES, case_sensitive=False),
+    help="Filter by replay state",
+)
+def list_command(state: Optional[str]) -> None:
+    """List replay operations, optionally filtering by state."""
+
+    client = create_client()
+    normalized = state.lower() if state else None
+    operations = call_rpc(client.replay_list_operations, normalized)
+    render_operation_list(operations)

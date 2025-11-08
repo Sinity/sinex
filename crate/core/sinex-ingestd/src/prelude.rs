@@ -8,19 +8,18 @@
 //!
 //! // Instead of:
 //! // use sinex_ingestd::{IngestService, IngestdConfig, EventValidator};
-//! // use sinex_ingestd::{ValidationResult, SchemaInfo, SyncResult};
+//! // use sinex_ingestd::{ValidationResult, SchemaInfo, SchemaSyncResult};
 //! ```
 
 // Core service
 pub use crate::{IngestService, IngestdConfig};
 
 // Validation
-pub use crate::{
-    EventValidator, SchemaCache, SchemaInfo, SchemaLookup, ValidationResult, ValidationStats,
-};
+pub use crate::{EventValidator, ValidationResult, ValidationStats};
+pub use sinex_core::db::validation::SchemaInfo;
 
 // Schema synchronization
-pub use crate::SyncResult;
+pub use crate::SchemaSyncResult;
 
 // Error handling
 pub use crate::{IngestdResult, SinexError};

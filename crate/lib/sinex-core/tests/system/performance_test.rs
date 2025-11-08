@@ -280,7 +280,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre:
                 // Try to claim an event for processing
                 let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                     r#"
-                    SELECT event_id::uuid
+                    SELECT id::uuid
                     FROM core.events
                     WHERE source = 'concurrent_test'
                       AND event_type = 'process_me'
@@ -288,7 +288,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre:
                         SELECT 1 FROM core.events processed
                         WHERE processed.source = 'concurrent_test'
                           AND processed.event_type = 'processed'
-                          AND processed.payload->>'original_id' = core.events.event_id::text
+                          AND processed.payload->>'original_id' = (core.events.id::uuid)::text
                       )
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
@@ -513,7 +513,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::R
                 loop {
                     let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                         r#"
-                        SELECT event_id::uuid
+                        SELECT id::uuid
                         FROM core.events
                         WHERE source = 'scaling_test'
                           AND event_type = 'worker_event'
@@ -521,7 +521,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::R
                             SELECT 1 FROM core.events processed
                             WHERE processed.source = 'scaling_test'
                               AND processed.event_type = 'processed'
-                              AND processed.payload->>'original_id' = core.events.event_id::text
+                              AND processed.payload->>'original_id' = (core.events.id::uuid)::text
                           )
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED

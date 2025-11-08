@@ -2,11 +2,13 @@
 //!
 //! This module contains all database-related functionality that was previously in sinex-db.
 
+pub mod integrity;
 pub mod models;
 pub mod pool;
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
+pub mod validation;
 
 // Core modules
 pub mod distributed_locking;

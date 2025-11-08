@@ -156,7 +156,6 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> color_eyre:
     let checkpoint1 = sqlx::query!(
         r#"
         SELECT 
-            id::text as "id!",
             processed_count as "processed_count!",
             checkpoint_version as "checkpoint_version!"
         FROM core.processor_checkpoints
@@ -185,7 +184,6 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> color_eyre:
             sqlx::query!(
                 r#"
                 SELECT 
-                    id::text as "id!",
                     processed_count as "processed_count!",
                     checkpoint_version as "checkpoint_version!"
                 FROM core.processor_checkpoints
@@ -666,11 +664,11 @@ async fn get_checkpoint(
     let row = sqlx::query!(
         r#"
         SELECT 
-            id::text as "id!",
+            id as "id!: Ulid",
             processor_name as "processor_name!",
             consumer_group as "consumer_group!",
             consumer_name as "consumer_name!",
-            last_processed_id,
+            last_processed_id as "last_processed_id?: Ulid",
             processed_count as "processed_count!",
             checkpoint_version as "checkpoint_version!"
         FROM core.processor_checkpoints
@@ -687,7 +685,7 @@ async fn get_checkpoint(
     .wrap_err("Failed to get checkpoint")?;
 
     Ok(TestCheckpoint {
-        id: Ulid::from_string(&row.id)?,
+        id: row.id,
         processor_name: row.processor_name,
         consumer_group: row.consumer_group,
         consumer_name: row.consumer_name,

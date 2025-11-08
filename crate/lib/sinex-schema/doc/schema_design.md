@@ -81,7 +81,7 @@ The schema consistently uses ULID (Universally Unique Lexicographically Sortable
 
 ```sql
 event_id ULID KEY DEFAULT gen_ulid(),
-ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (event_id::timestamp) STORED,
+ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (id::timestamp) STORED,
 ```
 
 **Benefits**:
@@ -220,7 +220,7 @@ The schema uses minimal triggers, preferring database-native features:
 #### Generated Columns Over Triggers
 ```sql
 -- Prefer generated columns for derived data
-ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (event_id::timestamp) STORED,
+ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (id::timestamp) STORED,
 operation_ts TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (operation_id::timestamp) STORED,
 ```
 
@@ -241,7 +241,7 @@ BEGIN
   ) RETURNING event_id INTO test_id;
   
   -- Clean up test record
-  DELETE FROM core.events WHERE event_id = test_id;
+  DELETE FROM core.events WHERE id = test_id;
   
   RAISE NOTICE 'Test insert successful, table is ready for use';
 EXCEPTION
@@ -564,7 +564,7 @@ WHERE is_active = true;
 #### Generated Column Strategy
 ```sql
 -- Optimize time queries without composite keys
-ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (event_id::timestamp) STORED,
+ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (id::timestamp) STORED,
 ```
 
 **Benefits**:
@@ -596,7 +596,7 @@ The schema is accessed through a sophisticated query builder system:
 // Query builder with automatic ULID/UUID conversion
 QueryBuilder::select(tables::EVENTS)
     .columns(&[
-        "event_id::uuid as \"id!\"",
+        "id::uuid as \"id!\"",
         "source_event_ids::ulid[] as \"source_event_ids\""
     ])
     .where_eq("event_id", QueryParam::Ulid(event_id))
@@ -662,7 +662,7 @@ pub async fn find_batch_violations(
 CREATE EXTENSION IF NOT EXISTS ulid;
 
 -- Seamless timestamp extraction
-event_id::timestamp -- Native conversion
+id::timestamp -- Native conversion
 gen_ulid() -- Generation function with proper entropy
 ```
 
@@ -790,7 +790,7 @@ DECLARE
 BEGIN
   -- Verify functionality works after schema changes
   INSERT INTO core.events (...) RETURNING event_id INTO test_id;
-  DELETE FROM core.events WHERE event_id = test_id;
+  DELETE FROM core.events WHERE id = test_id;
   RAISE NOTICE 'Migration verification successful';
 EXCEPTION
   WHEN OTHERS THEN

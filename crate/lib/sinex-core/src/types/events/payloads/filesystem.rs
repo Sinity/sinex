@@ -70,103 +70,111 @@ pub struct DirDiscoveredPayload {
 }
 
 impl FileCreatedPayload {
-    /// Builder-style method for size
-    pub fn with_size(mut self, size: u64) -> Self {
-        self.size = size;
-        self
-    }
-
-    /// Builder-style method for permissions  
-    pub fn with_permissions(mut self, perms: u32) -> Self {
-        self.permissions = Some(perms);
-        self
-    }
-
-    /// Builder-style method for created_at timestamp
-    pub fn with_created_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.created_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for size"]
+        with_size,
+        size,
+        u64
+    );
+    option_setter!(
+        #[doc = "Builder-style method for permissions"]
+        with_permissions,
+        permissions,
+        u32
+    );
+    assign_setter!(
+        #[doc = "Builder-style method for created_at timestamp"]
+        with_created_at,
+        created_at,
+        DateTime<Utc>
+    );
 }
 
 impl FileModifiedPayload {
-    /// Builder-style method for size
-    pub fn with_size(mut self, size: u64) -> Self {
-        self.size = size;
-        self
-    }
-
-    /// Builder-style method for modification type
-    pub fn with_modification_type(mut self, mod_type: impl Into<String>) -> Self {
-        self.modification_type = mod_type.into();
-        self
-    }
-
-    /// Builder-style method for modified_at timestamp
-    pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.modified_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for size"]
+        with_size,
+        size,
+        u64
+    );
+    assign_into_setter!(
+        #[doc = "Builder-style method for modification type"]
+        with_modification_type,
+        modification_type,
+        impl Into<String>
+    );
+    assign_setter!(
+        #[doc = "Builder-style method for modified_at timestamp"]
+        with_modified_at,
+        modified_at,
+        DateTime<Utc>
+    );
 }
 
 impl FileDeletedPayload {
-    /// Builder-style method for deleted_at timestamp
-    pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.deleted_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for deleted_at timestamp"]
+        with_deleted_at,
+        deleted_at,
+        DateTime<Utc>
+    );
 }
 
 impl FileMovedPayload {
-    /// Builder-style method for moved_at timestamp
-    pub fn with_moved_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.moved_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for moved_at timestamp"]
+        with_moved_at,
+        moved_at,
+        DateTime<Utc>
+    );
 }
 
 impl DirCreatedPayload {
-    /// Builder-style method for created_at timestamp
-    pub fn with_created_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.created_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for created_at timestamp"]
+        with_created_at,
+        created_at,
+        DateTime<Utc>
+    );
 }
 
 impl DirDeletedPayload {
-    /// Builder-style method for deleted_at timestamp
-    pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.deleted_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for deleted_at timestamp"]
+        with_deleted_at,
+        deleted_at,
+        DateTime<Utc>
+    );
 }
 
 impl FileDiscoveredPayload {
-    /// Builder-style method for size
-    pub fn with_size(mut self, size: u64) -> Self {
-        self.size = size;
-        self
-    }
-
-    /// Builder-style method for permissions
-    pub fn with_permissions(mut self, perms: u32) -> Self {
-        self.permissions = Some(perms);
-        self
-    }
-
-    /// Builder-style method for modified_at timestamp
-    pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.modified_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for size"]
+        with_size,
+        size,
+        u64
+    );
+    option_setter!(
+        #[doc = "Builder-style method for permissions"]
+        with_permissions,
+        permissions,
+        u32
+    );
+    assign_setter!(
+        #[doc = "Builder-style method for modified_at timestamp"]
+        with_modified_at,
+        modified_at,
+        DateTime<Utc>
+    );
 }
 
 impl DirDiscoveredPayload {
-    /// Builder-style method for modified_at timestamp
-    pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
-        self.modified_at = timestamp;
-        self
-    }
+    assign_setter!(
+        #[doc = "Builder-style method for modified_at timestamp"]
+        with_modified_at,
+        modified_at,
+        DateTime<Utc>
+    );
 }
 
 // Test helpers for external tests

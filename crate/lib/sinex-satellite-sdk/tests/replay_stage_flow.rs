@@ -3,9 +3,9 @@ mod support;
 
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_satellite_sdk::replay::{ReplayFilters, ReplayMode, ReplayService};
+use sinex_satellite_sdk::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayService};
 use sinex_test_utils::{prelude::*, sinex_test};
-use std::time::Duration as StdDuration;
+use std::{collections::HashMap, time::Duration as StdDuration};
 use support::runtime::TestRuntimeBuilder;
 use tokio::time::timeout;
 
@@ -30,10 +30,13 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     let support::runtime::TestRuntime {
         runtime,
         mut event_rx,
-        ..
+        nats,
     } = TestRuntimeBuilder::new(&ctx, "terminal-replay-test")
+        .with_dry_run(false)
+        .with_raw_config(HashMap::new())
         .build()
         .await?;
+    let _ = nats.client_url();
 
     let mut replay_service = ReplayService::from_runtime(
         &runtime,
@@ -45,7 +48,7 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     .with_batch_size(10);
 
     let replay_result = replay_service
-        .replay_into_emitter(runtime.event_emitter(), None)
+        .replay_into_emitter(runtime.event_emitter(), Option::<fn(&ReplayProgress)>::None)
         .await?;
 
     assert_eq!(replay_result.total_processed, 2);
@@ -85,10 +88,13 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
     let support::runtime::TestRuntime {
         runtime,
         mut event_rx,
-        ..
+        nats,
     } = TestRuntimeBuilder::new(&ctx, "terminal-replay-custom")
+        .with_dry_run(false)
+        .with_raw_config(HashMap::new())
         .build()
         .await?;
+    let _ = nats.client_url();
 
     let filters = ReplayFilters {
         sources: Some(vec!["terminal-history".to_string()]),
@@ -104,7 +110,7 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
         ReplayService::from_runtime(&runtime, ReplayMode::Custom { filters }).with_batch_size(5);
 
     let replay_result = replay_service
-        .replay_into_emitter(runtime.event_emitter(), None)
+        .replay_into_emitter(runtime.event_emitter(), Option::<fn(&ReplayProgress)>::None)
         .await?;
 
     assert_eq!(replay_result.total_processed, 1);

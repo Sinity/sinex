@@ -1,21 +1,26 @@
 use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
-use sinex_core::{types::ulid::Ulid, JsonValue};
-use sinex_satellite_sdk::{checkpoint::CheckpointManager, nats_publisher::NatsPublisher};
+use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
 use sinex_satellite_sdk::{
+    checkpoint::CheckpointManager,
     event_processor::EventTransport,
+    heartbeat::HeartbeatEmitter,
+    nats_publisher::NatsPublisher,
     stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState, ServiceInfo},
 };
-use sinex_test_utils::{prelude::*, EphemeralNats};
 use tokio::sync::mpsc;
 
+use crate::{EphemeralNats, TestContext};
+
+/// Fully wired runtime scaffold for satellite integration tests.
 pub struct TestRuntime {
     pub runtime: ProcessorRuntimeState,
-    pub event_rx: mpsc::UnboundedReceiver<sinex_core::db::models::Event<JsonValue>>,
+    pub event_rx: mpsc::UnboundedReceiver<Event<JsonValue>>,
     pub nats: EphemeralNats,
 }
 
+/// Builder for [`TestRuntime`].
 pub struct TestRuntimeBuilder<'ctx> {
     ctx: &'ctx TestContext,
     service_name: String,
@@ -102,7 +107,7 @@ impl TestRuntime {
         TestRuntimeBuilder::new(ctx, service_name).build().await
     }
 
-    pub fn heartbeat(&self, interval: u64) -> sinex_satellite_sdk::heartbeat::HeartbeatEmitter {
+    pub fn heartbeat(&self, interval: u64) -> HeartbeatEmitter {
         self.runtime.heartbeat_emitter(interval)
     }
 

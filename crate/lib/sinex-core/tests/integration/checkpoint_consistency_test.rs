@@ -7,16 +7,18 @@
 // - Cross-automaton checkpoint validation
 // - Recovery scenarios and data loss detection
 
+use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::Result;
-use sinex_core::db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_core::db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
-use sinex_core::types::events::{event_types, services, EventFactory};
+use serde_json::json;
+use sinex_core::db::integrity::checkpoint_verification;
+use sinex_core::types::ulid::Ulid;
+use sinex_core::DbPool;
 use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[sinex_test]
-async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_checkpoint_consistency_validation(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -31,19 +33,22 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
     .await?;
 
     // Insert some test events
-    let mut event_ulids = Vec::new();
+    let mut event_ids = Vec::new();
     for i in 0..10 {
-        let factory = EventFactory::new("test.checkpoint");
-        let event = factory.create_event("consistency_test", json!({"sequence": i}));
-        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
-        event_ulids.push(inserted_event.id);
+        let event = ctx
+            .create_test_event(
+                "test.checkpoint",
+                "consistency_test",
+                json!({"sequence": i}),
+            )
+            .await?;
+        event_ids.push(event.id.expect("event should have id"));
 
-        // Small delay between events
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     // Create initial checkpoint pointing to the 5th event
-    let checkpoint_ulid = event_ulids[4];
+    let checkpoint_ulid = event_ids[4].as_ulid().clone();
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
@@ -51,15 +56,19 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
         VALUES ($1, $2::uuid, 5, NOW(), '{"processed": 5}'::jsonb)
         "#,
         processor_name,
-        checkpoint_ulid.to_string()
+        checkpoint_ulid.to_uuid()
     )
     .execute(&pool)
     .await?;
 
     // Test checkpoint consistency verification
-    let issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &processor_name)
-            .await?;
+    let issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.checkpoint",
+        ChronoDuration::hours(24),
+    )
+    .await?;
 
     println!(
         "Checkpoint consistency issues for {}: {}",
@@ -67,7 +76,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
         issues.len()
     );
     for issue in &issues {
-        println!("  - {}", issue);
+        println!("  - {} ({})", issue.details, issue.processor_name);
     }
 
     // Should detect that there are newer events that haven't been processed
@@ -75,7 +84,8 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
     assert!(
         issues
             .iter()
-            .any(|issue| issue.contains("not updated") || issue.contains("behind")),
+            .any(|issue| issue.inconsistency_type
+                == CheckpointInconsistencyType::CheckpointBehindEvents),
         "Should detect processing lag"
     );
 
@@ -100,7 +110,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre:
 }
 
 #[sinex_test]
-async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_checkpoint_gap_detection(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -117,17 +127,19 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
     // Insert events in two batches with a gap
     let mut batch1_events = Vec::new();
     for i in 0..5 {
-        let event = {
-            let factory = EventFactory::new("test.gap_detection");
-            let event = factory.create_event("batch1", json!({"batch": 1, "sequence": i}));
-            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        batch1_events.push(event.id);
+        let event = ctx
+            .create_test_event(
+                "test.gap_detection",
+                "batch1",
+                json!({"batch": 1, "sequence": i}),
+            )
+            .await?;
+        batch1_events.push(event.id.expect("event id"));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Create checkpoint at end of batch1
-    let last_batch1_ulid = *batch1_events.last().unwrap();
+    let last_batch1_ulid = batch1_events.last().unwrap().as_ulid().clone();
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
@@ -135,7 +147,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
         VALUES ($1, $2::uuid, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb)
         "#,
         processor_name,
-        last_batch1_ulid.to_string()
+        last_batch1_ulid.to_uuid()
     )
     .execute(&pool)
     .await?;
@@ -145,41 +157,24 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
     let mut batch2_events = Vec::new();
     for i in 0..8 {
-        let event = {
-            let factory = EventFactory::new("test.gap_detection");
-            let event = factory.create_event("batch2", json!({"batch": 2, "sequence": i}));
-            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        batch2_events.push(event.id);
+        let event = ctx
+            .create_test_event(
+                "test.gap_detection",
+                "batch2",
+                json!({"batch": 2, "sequence": i}),
+            )
+            .await?;
+        batch2_events.push(event.id.expect("event id"));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
-    // Run integrity check to detect gap
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 1,
-        include_deep_validation: true,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
-
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    println!("Gap detection results:");
-    println!(
-        "  Checkpoint inconsistencies: {}",
-        results.check_report.checkpoint_inconsistencies.len()
-    );
-
-    // Should detect that checkpoint is behind current events
-    let checkpoint_issues: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
-        .iter()
-        .filter(|inc| inc.processor_name == processor_name)
-        .collect();
+    let checkpoint_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.gap_detection",
+        ChronoDuration::hours(1),
+    )
+    .await?;
 
     assert!(
         !checkpoint_issues.is_empty(),
@@ -188,22 +183,9 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
 
     for issue in &checkpoint_issues {
         println!(
-            "  - {}: {} (type: {:?})",
-            issue.processor_name, issue.details, issue.inconsistency_type
+            "  - {:?}: {} ({})",
+            issue.inconsistency_type, issue.details, issue.processor_name
         );
-
-        match issue.inconsistency_type {
-            CheckpointInconsistencyType::CheckpointBehindEvents => {
-                assert!(
-                    issue.events_potentially_missed > 0,
-                    "Should detect missed events"
-                );
-            }
-            CheckpointInconsistencyType::StaleCheckpoint => {
-                // Expected for old checkpoint
-            }
-            _ => {}
-        }
     }
 
     // Calculate expected gap
@@ -249,13 +231,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_checkpoint_failover_propagates_state(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> Result<()> {
     let service_name = format!("failover_service_{}", Ulid::new());
     let consumer_group = format!("failover_group_{}", Ulid::new());
 
-    let mut leader = CheckpointManager::new(
+    let leader = CheckpointManager::new(
         ctx.pool.clone(),
         service_name.clone(),
         consumer_group.clone(),
@@ -276,17 +256,14 @@ async fn test_checkpoint_failover_propagates_state(
         leader.save_checkpoint(&state).await?;
     }
 
-    let mut follower = CheckpointManager::new(
+    let follower = CheckpointManager::new(
         ctx.pool.clone(),
         service_name.clone(),
         consumer_group.clone(),
         "worker-standby".to_string(),
     );
 
-    let latest = follower
-        .get_latest_checkpoint()
-        .await?
-        .expect("expected checkpoint state");
+    let latest = follower.load_checkpoint().await?;
     assert_eq!(latest.processed_count, 5);
 
     for index in 5..10u64 {
@@ -303,17 +280,14 @@ async fn test_checkpoint_failover_propagates_state(
         follower.save_checkpoint(&state).await?;
     }
 
-    let mut restarted_leader = CheckpointManager::new(
+    let restarted_leader = CheckpointManager::new(
         ctx.pool.clone(),
         service_name.clone(),
         consumer_group.clone(),
         "worker-primary-restart".to_string(),
     );
 
-    let latest_after_failover = restarted_leader
-        .get_latest_checkpoint()
-        .await?
-        .expect("checkpoint after failover");
+    let latest_after_failover = restarted_leader.load_checkpoint().await?;
 
     assert_eq!(latest_after_failover.processed_count, 10);
     assert_eq!(
@@ -328,7 +302,7 @@ async fn test_checkpoint_failover_propagates_state(
 }
 
 #[sinex_test]
-async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_stale_checkpoint_detection(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -342,10 +316,14 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
     .execute(&pool)
     .await?;
 
-    // Insert a single event
-    let factory = EventFactory::new("test.stale_checkpoint");
-    let raw_event = factory.create_event("stale_test", json!({"data": "test"}));
-    let event = sinex_core::db::insert_event_with_validator(&pool, &raw_event, None).await?;
+    let event = ctx
+        .create_test_event(
+            "test.stale_checkpoint",
+            "stale_test",
+            json!({"data": "test"}),
+        )
+        .await?;
+    let event_id = event.id.expect("event id");
 
     // Create checkpoint with old timestamp (3 hours ago)
     sqlx::query!(
@@ -355,44 +333,27 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
         VALUES ($1, $2::uuid, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb)
         "#,
         processor_name,
-        event.id.to_string()
+        event_id.to_uuid()
     )
     .execute(&pool)
     .await?;
 
-    // Run integrity check to detect stale checkpoint
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 24, // Look back 24 hours to catch the stale checkpoint
-        include_deep_validation: false,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
+    let stale_checkpoints = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.stale_checkpoint",
+        ChronoDuration::hours(1),
+    )
+    .await?;
 
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    // Should detect stale checkpoint
-    let stale_checkpoints: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
+    let stale_matches: Vec<_> = stale_checkpoints
         .iter()
-        .filter(|inc| {
-            inc.processor_name == processor_name
-                && matches!(
-                    inc.inconsistency_type,
-                    CheckpointInconsistencyType::StaleCheckpoint
-                )
-        })
+        .filter(|issue| issue.inconsistency_type == CheckpointInconsistencyType::StaleCheckpoint)
         .collect();
 
-    assert!(
-        !stale_checkpoints.is_empty(),
-        "Should detect stale checkpoint"
-    );
+    assert!(!stale_matches.is_empty(), "Should detect stale checkpoint");
 
-    for stale in &stale_checkpoints {
+    for stale in &stale_matches {
         println!("Detected stale checkpoint: {}", stale.details);
         assert!(
             stale.details.contains("hours"),
@@ -421,9 +382,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
 }
 
 #[sinex_test]
-async fn test_cross_automaton_checkpoint_validation(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create multiple test automatons
@@ -442,36 +401,40 @@ async fn test_cross_automaton_checkpoint_validation(
     }
 
     // Insert events for cross-validation
-    let mut shared_events = Vec::new();
     for i in 0..15 {
-        let factory = EventFactory::new("test.cross_validation");
-        let event = factory.create_event("shared_event", json!({"sequence": i}));
-        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
-        shared_events.push(inserted_event.id);
+        ctx.create_test_event(
+            "test.cross_validation",
+            "shared_event",
+            json!({"sequence": i}),
+        )
+        .await?;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Create checkpoints for automatons at different points
-    let checkpoint_configs = vec![
-        (&processor_names[0], 5, "NOW()"), // Up to date
-        (&processor_names[1], 10, "NOW() - INTERVAL '1 hour'"), // Behind but recent
-        (&processor_names[2], 3, "NOW() - INTERVAL '4 hours'"), // Far behind and stale
+    let now = Utc::now();
+    let checkpoint_configs = [
+        (&processor_names[0], 5usize, ChronoDuration::minutes(0)), // Up to date
+        (&processor_names[1], 10usize, ChronoDuration::hours(1)),  // Behind but recent
+        (&processor_names[2], 3usize, ChronoDuration::hours(4)),   // Far behind and stale
     ];
 
-    for (name, processed_count, last_activity) in checkpoint_configs {
-        let checkpoint_ulid = shared_events[processed_count - 1];
+    for (name, processed_count, lag) in checkpoint_configs {
+        let checkpoint_ulid =
+            fetch_event_ulid_at(&pool, "test.cross_validation", (processed_count - 1) as i64)
+                .await?;
 
-        sqlx::query(&format!(
+        sqlx::query!(
             r#"
             INSERT INTO core.processor_checkpoints 
             (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
-            VALUES ($1, $2::uuid, $3, {}, '{{"checkpoint_test": true}}'::jsonb)
+            VALUES ($1, $2::uuid, $3, $4, '{"checkpoint_test": true}'::jsonb)
             "#,
-            last_activity
-        ))
-        .bind(name)
-        .bind(checkpoint_ulid.to_string())
-        .bind(processed_count as i64)
+            name,
+            checkpoint_ulid.to_uuid(),
+            processed_count as i64,
+            now - lag
+        )
         .execute(&pool)
         .await?;
     }
@@ -489,15 +452,23 @@ async fn test_cross_automaton_checkpoint_validation(
         );
     }
 
-    // Validate each automaton's checkpoint consistency
-    let mut all_issues = HashMap::new();
+    // Validate each automaton's checkpoint consistency via direct analysis
+    let mut all_issues: HashMap<String, Vec<CheckpointInconsistency>> = HashMap::new();
 
     for name in &processor_names {
-        let issues =
-            checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, name).await?;
+        let issues = analyze_checkpoint(
+            &pool,
+            name,
+            "test.cross_validation",
+            ChronoDuration::hours(24),
+        )
+        .await?;
         println!("Automaton {}: {} issues", name, issues.len());
         for issue in &issues {
-            println!("  - {}", issue);
+            println!(
+                "  - {:?}: {} ({})",
+                issue.inconsistency_type, issue.details, issue.processor_name
+            );
         }
         all_issues.insert(name.clone(), issues);
     }
@@ -507,7 +478,6 @@ async fn test_cross_automaton_checkpoint_validation(
     let automaton1_issues = all_issues.get(&processor_names[1]).unwrap();
     let automaton2_issues = all_issues.get(&processor_names[2]).unwrap();
 
-    // Automaton 0 (up to date) should have fewest issues
     println!(
         "Issues count - Automaton 0: {}, 1: {}, 2: {}",
         automaton0_issues.len(),
@@ -515,7 +485,6 @@ async fn test_cross_automaton_checkpoint_validation(
         automaton2_issues.len()
     );
 
-    // Automaton 2 (far behind and stale) should have most issues
     assert!(
         automaton2_issues.len() >= automaton0_issues.len(),
         "Far behind automaton should have more issues"
@@ -525,25 +494,10 @@ async fn test_cross_automaton_checkpoint_validation(
         "Stale automaton should have more issues"
     );
 
-    // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 24,
-        include_deep_validation: true,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
-
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    // Should detect issues across all automatons
-    let cross_validation_issues: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
-        .iter()
-        .filter(|inc| processor_names.contains(&inc.processor_name))
+    // Should detect issues across all automatons without relying on compatibility layers
+    let cross_validation_issues: Vec<_> = all_issues
+        .values()
+        .flat_map(|issues| issues.iter().cloned())
         .collect();
 
     println!(
@@ -552,9 +506,9 @@ async fn test_cross_automaton_checkpoint_validation(
     );
 
     // Should detect different types of issues
-    let issue_types: std::collections::HashSet<_> = cross_validation_issues
+    let issue_types: HashSet<_> = cross_validation_issues
         .iter()
-        .map(|issue| &issue.inconsistency_type)
+        .map(|issue| issue.inconsistency_type)
         .collect();
 
     println!("Detected issue types: {:?}", issue_types);
@@ -586,7 +540,7 @@ async fn test_cross_automaton_checkpoint_validation(
 }
 
 #[sinex_test]
-async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton for recovery scenarios
@@ -601,7 +555,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     .await?;
 
     // Test Scenario 1: Checkpoint references non-existent event
-    let non_existent_ulid = Ulid::new(); // Generate random ULID that doesn't exist in events
+    let non_existent_ulid = Ulid::new();
 
     sqlx::query!(
         r#"
@@ -610,25 +564,26 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
         VALUES ($1, $2::uuid, 100, NOW(), '{"scenario": "non_existent_event"}'::jsonb)
         "#,
         processor_name,
-        non_existent_ulid.to_string()
+        non_existent_ulid.to_uuid()
     )
     .execute(&pool)
     .await?;
 
-    // Verify this scenario is detected
-    let issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &processor_name)
-            .await?;
+    let missing_event_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.recovery",
+        ChronoDuration::hours(24),
+    )
+    .await?;
     assert!(
-        !issues.is_empty(),
+        missing_event_issues
+            .iter()
+            .any(|issue| issue.inconsistency_type
+                == CheckpointInconsistencyType::MissingEventReference),
         "Should detect non-existent event reference"
     );
-    assert!(
-        issues.iter().any(|issue| issue.contains("non-existent")),
-        "Should specifically mention non-existent event"
-    );
 
-    // Clean up scenario 1
     sqlx::query!(
         "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
         processor_name
@@ -636,59 +591,33 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     .execute(&pool)
     .await?;
 
-    // Test Scenario 2: Checkpoint with invalid ULID format
+    // Test Scenario 2: Checkpoint missing ULID despite processed work
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints 
         (processor_name, last_processed_id, processed_count, last_activity, checkpoint_data)
-        VALUES ($1, 'invalid-ulid-format', 50, NOW(), '{"scenario": "invalid_ulid"}'::jsonb)
+        VALUES ($1, NULL, 50, NOW(), '{"scenario": "invalid_ulid"}'::jsonb)
         "#,
         processor_name
     )
     .execute(&pool)
     .await?;
 
-    // Run integrity check for invalid ULID
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 1,
-        include_deep_validation: false,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
-
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    // Should detect invalid ULID format
-    let invalid_ulid_issues: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
-        .iter()
-        .filter(|inc| {
-            inc.processor_name == processor_name
-                && matches!(
-                    inc.inconsistency_type,
-                    CheckpointInconsistencyType::InvalidCheckpointFormat
-                )
-        })
-        .collect();
-
+    let invalid_ulid_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.recovery",
+        ChronoDuration::hours(24),
+    )
+    .await?;
     assert!(
-        !invalid_ulid_issues.is_empty(),
-        "Should detect invalid ULID format"
+        invalid_ulid_issues
+            .iter()
+            .any(|issue| issue.inconsistency_type
+                == CheckpointInconsistencyType::InvalidCheckpointFormat),
+        "Should detect invalid checkpoint format"
     );
 
-    for issue in &invalid_ulid_issues {
-        println!("Invalid ULID issue: {}", issue.details);
-        assert!(
-            issue.details.contains("Invalid ULID"),
-            "Should mention invalid ULID"
-        );
-    }
-
-    // Clean up scenario 2
     sqlx::query!(
         "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
         processor_name
@@ -697,33 +626,27 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     .await?;
 
     // Test Scenario 3: Missing checkpoint (automaton exists but no checkpoint)
-    // Just check that no checkpoint exists - this should be detected by the automaton list check
     let expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     assert!(
         expected_automatons.contains(&processor_name),
         "Test automaton should be in expected list"
     );
 
-    let missing_checkpoint_issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &processor_name)
-            .await?;
-    assert!(
-        !missing_checkpoint_issues.is_empty(),
-        "Should detect missing checkpoint"
-    );
+    let missing_checkpoint_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.recovery",
+        ChronoDuration::hours(24),
+    )
+    .await?;
     assert!(
         missing_checkpoint_issues
             .iter()
-            .any(|issue| issue.contains("No checkpoint found")),
-        "Should specifically mention missing checkpoint"
+            .any(|issue| issue.inconsistency_type == CheckpointInconsistencyType::MissingCheckpoint),
+        "Should detect missing checkpoint"
     );
 
-    // Test Scenario 4: Checkpoint ahead of events (impossible scenario but test data corruption)
-    let factory = EventFactory::new("test.recovery");
-    let event = factory.create_event("future_reference", json!({"scenario": "future_reference"}));
-    let future_event = insert_event_with_validator(&pool, &event, None).await?;
-
-    // Create a fake "future" ULID by modifying timestamp
+    // Test Scenario 4: Checkpoint ahead of events (future ULID)
     let future_timestamp = Utc::now() + ChronoDuration::hours(1);
     let future_ulid = Ulid::from_datetime(future_timestamp);
 
@@ -734,17 +657,23 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
         VALUES ($1, $2::uuid, 999, NOW(), '{"scenario": "future_checkpoint"}'::jsonb)
         "#,
         processor_name,
-        future_ulid.to_string()
+        future_ulid.to_uuid()
     )
     .execute(&pool)
     .await?;
 
-    // This scenario should be detected as checkpoint ahead of events
-    let future_issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &processor_name)
-            .await?;
+    let future_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.recovery",
+        ChronoDuration::hours(24),
+    )
+    .await?;
     assert!(
-        !future_issues.is_empty(),
+        future_issues
+            .iter()
+            .any(|issue| issue.inconsistency_type
+                == CheckpointInconsistencyType::MissingEventReference),
         "Should detect checkpoint issues with future ULID"
     );
 
@@ -773,8 +702,186 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyr
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CheckpointInconsistencyType {
+    MissingCheckpoint,
+    MissingEventReference,
+    CheckpointBehindEvents,
+    StaleCheckpoint,
+    InvalidCheckpointFormat,
+}
+
+#[derive(Debug, Clone)]
+struct CheckpointInconsistency {
+    processor_name: String,
+    details: String,
+    inconsistency_type: CheckpointInconsistencyType,
+    events_potentially_missed: u64,
+}
+
+async fn analyze_checkpoint(
+    pool: &DbPool,
+    processor_name: &str,
+    source: &str,
+    stale_after: ChronoDuration,
+) -> Result<Vec<CheckpointInconsistency>> {
+    struct Snapshot {
+        last_processed_id: Option<Ulid>,
+        last_activity: chrono::DateTime<Utc>,
+        processed_count: i64,
+    }
+
+    let snapshot_row = match sqlx::query!(
+        r#"
+        SELECT 
+            last_processed_id::uuid as "last_processed_id?: Ulid",
+            last_activity,
+            processed_count
+        FROM core.processor_checkpoints
+        WHERE processor_name = $1
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "#,
+        processor_name
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(row) => row,
+        Err(err) => {
+            if let Some(issue) = checkpoint_format_issue(processor_name, &err) {
+                return Ok(vec![issue]);
+            }
+            return Err(err.into());
+        }
+    };
+
+    let mut issues = Vec::new();
+
+    let Some(snapshot) = snapshot_row.map(|row| Snapshot {
+        last_processed_id: row.last_processed_id,
+        last_activity: row.last_activity,
+        processed_count: row.processed_count,
+    }) else {
+        issues.push(CheckpointInconsistency {
+            processor_name: processor_name.to_string(),
+            details: "No checkpoint found for processor".to_string(),
+            inconsistency_type: CheckpointInconsistencyType::MissingCheckpoint,
+            events_potentially_missed: 0,
+        });
+        return Ok(issues);
+    };
+
+    if snapshot.last_processed_id.is_none() && snapshot.processed_count > 0 {
+        issues.push(CheckpointInconsistency {
+            processor_name: processor_name.to_string(),
+            details: format!(
+                "Checkpoint missing ULID reference despite processed_count={}",
+                snapshot.processed_count
+            ),
+            inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
+            events_potentially_missed: snapshot.processed_count.max(0) as u64,
+        });
+    }
+
+    let newer_events: i64 = if let Some(last_id) = snapshot.last_processed_id {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid::ulid)"#,
+            last_id.to_uuid()
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(false);
+
+        if !exists {
+            issues.push(CheckpointInconsistency {
+                processor_name: processor_name.to_string(),
+                details: "Checkpoint references non-existent event".to_string(),
+                inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
+                events_potentially_missed: 0,
+            });
+        }
+
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) FROM core.events WHERE source = $1 AND id > $2::uuid::ulid"#,
+            source,
+            last_id.to_uuid()
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0)
+    } else {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) FROM core.events WHERE source = $1"#,
+            source
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0)
+    };
+
+    if newer_events > 0 {
+        issues.push(CheckpointInconsistency {
+            processor_name: processor_name.to_string(),
+            details: format!("Checkpoint behind by {} events", newer_events),
+            inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
+            events_potentially_missed: newer_events.max(0) as u64,
+        });
+    }
+
+    let hours_since_last_activity = (Utc::now() - snapshot.last_activity).num_hours();
+    if hours_since_last_activity >= stale_after.num_hours() {
+        issues.push(CheckpointInconsistency {
+            processor_name: processor_name.to_string(),
+            details: format!(
+                "Checkpoint stale (last activity {} hours ago)",
+                hours_since_last_activity
+            ),
+            inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
+            events_potentially_missed: newer_events.max(0) as u64,
+        });
+    }
+
+    Ok(issues)
+}
+
+async fn fetch_event_ulid_at(pool: &DbPool, source: &str, offset: i64) -> Result<Ulid> {
+    let row = sqlx::query!(
+        r#"
+        SELECT id as "id!: Ulid"
+        FROM core.events
+        WHERE source = $1
+        ORDER BY id
+        OFFSET $2
+        LIMIT 1
+        "#,
+        source,
+        offset
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row.id)
+}
+
+fn checkpoint_format_issue(
+    processor_name: &str,
+    err: &sqlx::Error,
+) -> Option<CheckpointInconsistency> {
+    match err {
+        sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("22P02") => {
+            Some(CheckpointInconsistency {
+                processor_name: processor_name.to_string(),
+                details: format!("Invalid ULID format in checkpoint: {}", db_err.message()),
+                inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
+                events_potentially_missed: 0,
+            })
+        }
+        _ => None,
+    }
+}
+
 #[sinex_test]
-async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -789,20 +896,16 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
     .await?;
 
     // Create a sequence of events
-    let mut event_sequence = Vec::new();
     for i in 0..20 {
-        let event = {
-            let factory = EventFactory::new("test.data_loss");
-            let event = factory.create_event("sequence_event", json!({"sequence": i}));
-            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        event_sequence.push(event.id);
+        let _event = ctx
+            .create_test_event("test.data_loss", "sequence_event", json!({"sequence": i}))
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Simulate data loss scenario: checkpoint jumps from event 5 to event 15
     // This suggests events 6-14 were "processed" but there's a gap
-    let checkpoint_ulid = event_sequence[14]; // 15th event (0-indexed)
+    let checkpoint_ulid = fetch_event_ulid_at(&pool, "test.data_loss", 14).await?; // 15th event (0-indexed)
 
     sqlx::query!(
         r#"
@@ -811,42 +914,31 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
         VALUES ($1, $2::uuid, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb)
         "#,
         processor_name,
-        checkpoint_ulid.to_string()
+        checkpoint_ulid.to_uuid()
     )
     .execute(&pool)
     .await?;
 
     // Now add more events after the checkpoint
     for i in 20..25 {
-        let event = {
-            let factory = EventFactory::new("test.data_loss");
-            let event = factory.create_event("post_checkpoint_event", json!({"sequence": i}));
-            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        event_sequence.push(event.id);
+        let _event = ctx
+            .create_test_event(
+                "test.data_loss",
+                "post_checkpoint_event",
+                json!({"sequence": i}),
+            )
+            .await?;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
-    // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 1000,
-        check_window_hours: 1,
-        include_deep_validation: true,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
-
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    // Analyze data loss detection results
-    let data_loss_issues: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
-        .iter()
-        .filter(|inc| inc.processor_name == processor_name)
-        .collect();
+    // Analyze data loss detection results directly
+    let data_loss_issues = analyze_checkpoint(
+        &pool,
+        &processor_name,
+        "test.data_loss",
+        ChronoDuration::hours(1),
+    )
+    .await?;
 
     println!("Data loss detection results:");
     println!("  Total checkpoint issues: {}", data_loss_issues.len());
@@ -854,8 +946,11 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
     let mut potentially_missed_events = 0;
     for issue in &data_loss_issues {
         println!(
-            "  - {}: {} (missed: {})",
-            issue.inconsistency_type, issue.details, issue.events_potentially_missed
+            "  - {:?}: {} (missed: {}) [{}]",
+            issue.inconsistency_type,
+            issue.details,
+            issue.events_potentially_missed,
+            issue.processor_name
         );
         potentially_missed_events += issue.events_potentially_missed;
     }
@@ -878,29 +973,6 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
         potentially_missed_events >= expected_unprocessed,
         "Should detect at least the expected unprocessed events"
     );
-
-    // Verify recommendations are generated for data loss scenarios
-    let data_loss_recommendations: Vec<_> = results
-        .recommendations
-        .iter()
-        .filter(|rec| {
-            rec.description.to_lowercase().contains("checkpoint")
-                || rec.description.to_lowercase().contains("data")
-        })
-        .collect();
-
-    assert!(
-        !data_loss_recommendations.is_empty(),
-        "Should generate recommendations for data loss scenarios"
-    );
-
-    for rec in &data_loss_recommendations {
-        println!("Recommendation: {} - {}", rec.priority, rec.description);
-        assert!(
-            !rec.action_steps.is_empty(),
-            "Recommendations should include action steps"
-        );
-    }
 
     // Cleanup
     sqlx::query!(

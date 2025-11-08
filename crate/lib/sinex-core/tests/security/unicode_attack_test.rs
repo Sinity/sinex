@@ -76,7 +76,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> color_eyre::eyre::R
             SELECT payload,
                    payload->>'username' as username
             FROM core.events
-            WHERE event_id::uuid = $1::uuid
+            WHERE id::uuid = $1::uuid
             "#,
             event.id.to_uuid()
         )
@@ -549,8 +549,8 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
 async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), color_eyre::eyre::Error> {
     sqlx::query!(
         r#"
-        INSERT INTO core.events (event_id, source, event_type, payload, ts_orig, ts_ingest)
-        VALUES ($1::uuid, $2, $3, $4, $5, $6)
+        INSERT INTO core.events (id, source, event_type, payload, ts_orig, ts_ingest)
+        VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)
         "#,
         event.id.to_uuid(),
         event.source,

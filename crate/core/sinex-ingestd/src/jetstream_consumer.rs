@@ -404,12 +404,8 @@ impl JetStreamConsumer {
         }
 
         let guard = self.validator.read().await;
-        let validation = guard
-            .validate_payload_for(&event.source, &event.event_type, &event.payload)
-            .map_err(|err| {
-                SinexError::validation(format!("Schema validation error: {}", err))
-                    .with_operation("jetstream_consumer.validate_event")
-            })?;
+        let validation =
+            guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
 
         match validation {
             ValidationResult::Valid | ValidationResult::Skipped | ValidationResult::NoSchema => {

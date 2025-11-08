@@ -20,7 +20,14 @@ impl MigrationTrait for Migration {
         // Core extensions and schemas (install server-available version of TimescaleDB)
         manager.get_connection().execute_unprepared(
             r#"
-            CREATE EXTENSION IF NOT EXISTS "ulid";
+            DO $$
+            BEGIN
+              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'ulid') THEN
+                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "ulid"';
+              ELSIF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ulid') THEN
+                RAISE EXCEPTION 'ULID extension not available on server';
+              END IF;
+            END$$;
 
             DO $$
             BEGIN
@@ -55,6 +62,24 @@ impl MigrationTrait for Migration {
             CREATE SCHEMA IF NOT EXISTS audit;
             CREATE SCHEMA IF NOT EXISTS sinex_schemas;
             CREATE SCHEMA IF NOT EXISTS metrics;
+
+            -- Ensure ulid type exposes binary send/receive functions for SQL clients
+            CREATE OR REPLACE FUNCTION public.ulid_send(ulid)
+            RETURNS bytea
+            AS 'uuid_send'
+            LANGUAGE internal
+            IMMUTABLE STRICT PARALLEL SAFE;
+
+            CREATE OR REPLACE FUNCTION public.ulid_recv(internal)
+            RETURNS ulid
+            AS 'uuid_recv'
+            LANGUAGE internal
+            IMMUTABLE STRICT PARALLEL SAFE;
+
+            ALTER TYPE ulid SET (
+                SEND = ulid_send,
+                RECEIVE = ulid_recv
+            );
 
             CREATE OR REPLACE FUNCTION public.ulid_to_timestamptz(id_val ULID) RETURNS TIMESTAMPTZ AS 'SELECT id_val::timestamp' LANGUAGE sql IMMUTABLE;
             CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at() RETURNS TRIGGER AS 'BEGIN NEW.updated_at = NOW(); RETURN NEW; END;' LANGUAGE plpgsql;
@@ -146,6 +171,56 @@ impl MigrationTrait for Migration {
                         duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
                         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
                     WHERE id = p_operation_id;
+                END;
+                $$ LANGUAGE plpgsql;
+                "#,
+            )
+            .await?;
+
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                CREATE OR REPLACE FUNCTION core.expand_cascade(temp_table TEXT, max_depth INTEGER)
+                RETURNS INTEGER AS $$
+                DECLARE
+                    current_depth INTEGER := 0;
+                    rows_inserted INTEGER;
+                BEGIN
+                    LOOP
+                        IF current_depth >= max_depth THEN
+                            EXIT;
+                        END IF;
+
+                        EXECUTE format(
+                            'WITH current_level AS (
+                                SELECT id
+                                FROM %I
+                                WHERE depth = $1 AND processed = FALSE
+                            ),
+                            children AS (
+                                SELECT DISTINCT e.id, COALESCE(e.source_event_ids, ''{}''::ulid[]) AS parent_ids
+                                FROM core.events e
+                                JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
+                                WHERE NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)
+                            )
+                            INSERT INTO %I (id, depth, parent_ids, processed)
+                            SELECT c.id, $1 + 1, c.parent_ids, FALSE
+                            FROM children c',
+                            temp_table, temp_table, temp_table
+                        )
+                        USING current_depth;
+
+                        GET DIAGNOSTICS rows_inserted = ROW_COUNT;
+
+                        EXECUTE format('UPDATE %I SET processed = TRUE WHERE depth = $1', temp_table)
+                            USING current_depth;
+
+                        EXIT WHEN rows_inserted = 0;
+                        current_depth := current_depth + 1;
+                    END LOOP;
+
+                    RETURN current_depth;
                 END;
                 $$ LANGUAGE plpgsql;
                 "#,

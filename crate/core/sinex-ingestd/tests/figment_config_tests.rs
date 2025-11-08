@@ -52,11 +52,15 @@ fn constructs_from_args() -> color_eyre::eyre::Result<()> {
 fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
     use std::fs;
 
+    let original_db = std::env::var("DATABASE_URL").ok();
+    std::env::remove_var("DATABASE_URL");
+
     let temp_dir = tempfile::tempdir()?;
     let file_path = temp_dir.path().join("custom.toml");
     fs::write(
         &file_path,
         r#"
+            [ingestd]
             database_url = "postgresql://example/config"
             nats_url = "nats://example:4222"
             database_pool_size = 25
@@ -73,5 +77,10 @@ fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
     assert_eq!(config.batch_size, 128);
     assert_eq!(config.batch_timeout_secs, 9);
     assert!(config.dry_run);
+
+    if let Some(url) = original_db {
+        std::env::set_var("DATABASE_URL", url);
+    }
+
     Ok(())
 }

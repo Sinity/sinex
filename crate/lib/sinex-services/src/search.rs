@@ -33,7 +33,7 @@ pub struct SearchResult {
 /// Database row for search query results
 #[derive(Debug, sqlx::FromRow)]
 struct SearchResultRow {
-    event_id: Option<String>,
+    event_id: Ulid,
     source: String,
     event_type: String,
     host: String,
@@ -59,7 +59,7 @@ impl SearchService {
 
         // Base select. Score is a placeholder (1.0) to keep response shape stable.
         let mut sql = String::from(
-            "SELECT id::text AS event_id, source, event_type, host, ts_ingest, payload, 1.0::float8 AS score \
+            "SELECT id AS event_id, source, event_type, host, ts_ingest, payload, 1.0::float8 AS score \
              FROM core.events",
         );
 
@@ -155,18 +155,14 @@ impl SearchService {
 
         let results = rows
             .into_iter()
-            .filter_map(|row| {
-                row.event_id
-                    .and_then(|id| id.parse::<Ulid>().ok())
-                    .map(|ulid| SearchResult {
-                        event_id: ulid,
-                        source: row.source,
-                        event_type: row.event_type,
-                        host: row.host,
-                        timestamp: row.ts_ingest,
-                        snippet: Self::extract_snippet(&row.payload, query.text.as_deref()),
-                        score: row.score,
-                    })
+            .map(|row| SearchResult {
+                event_id: row.event_id,
+                source: row.source,
+                event_type: row.event_type,
+                host: row.host,
+                timestamp: row.ts_ingest,
+                snippet: Self::extract_snippet(&row.payload, query.text.as_deref()),
+                score: row.score,
             })
             .collect();
 

@@ -2,12 +2,11 @@
 //!
 //! Tests for agent subscription patterns and event routing functionality
 
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn test_agent_event_subscription_queries(ctx: TestContext) -> EyreResult<()> {
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
     // Create multiple agents with different subscriptions
     let agents = vec![
         (
@@ -80,7 +79,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> EyreResult<(
 }
 
 #[sinex_test]
-async fn test_subscription_pattern_matching(ctx: TestContext) -> EyreResult<()> {
+async fn test_subscription_pattern_matching(ctx: TestContext) -> Result<()> {
     // Create an agent with complex subscription patterns
     let complex_subscriptions = json!({
         "core.events_feed_all": [
@@ -122,7 +121,7 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> EyreResult<()> 
 }
 
 #[sinex_test]
-async fn test_subscription_routing_priorities(ctx: TestContext) -> EyreResult<()> {
+async fn test_subscription_routing_priorities(ctx: TestContext) -> Result<()> {
     // Create agents with overlapping subscriptions to test routing priorities
     let priority_agents = vec![
         (
@@ -184,7 +183,7 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> EyreResult<()
 }
 
 #[sinex_test]
-async fn test_subscription_filter_validation(ctx: TestContext) -> EyreResult<()> {
+async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
     // Test various filter patterns for validation
     let test_filters = vec![
         (
@@ -235,7 +234,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> EyreResult<()>
 }
 
 #[sinex_test]
-async fn test_subscription_schema_references(ctx: TestContext) -> EyreResult<()> {
+async fn test_subscription_schema_references(ctx: TestContext) -> Result<()> {
     // Test subscriptions with schema references
     let schema_subscription = json!({
         "sinex.pkm.note_updated": [
@@ -285,7 +284,7 @@ async fn test_subscription_schema_references(ctx: TestContext) -> EyreResult<()>
 }
 
 #[sinex_test]
-async fn test_subscription_updates_and_changes(ctx: TestContext) -> EyreResult<()> {
+async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
     // Create an agent with initial subscriptions
     let initial_subscriptions = json!({
         "core.events_feed_all": [

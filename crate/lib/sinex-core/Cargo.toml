@@ -37,6 +37,7 @@ bon = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
 num-traits = "0.2"
+ahash = { workspace = true }
 
 # Query building
 sea-query = { workspace = true }
@@ -78,6 +79,8 @@ arbitrary = ["dep:proptest"]
 schema-manager = ["dep:clap", "dep:tracing-subscriber", "dep:sha2"]
 json-schema = []
 testing = []  # Enable test-only methods
+state-tests = []
+slow-tests = []
 
 [[bin]]
 name = "sinex-schema"
@@ -92,3 +95,5 @@ sinex-test-utils = { path = "../sinex-test-utils" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 proptest = { workspace = true }
 async-nats = { workspace = true }
+async-std = { version = "1.12", features = ["attributes"] }
+pretty_assertions = "1.4"

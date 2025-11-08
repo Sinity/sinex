@@ -7,7 +7,6 @@
 //! - Cross-timezone compatibility
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
