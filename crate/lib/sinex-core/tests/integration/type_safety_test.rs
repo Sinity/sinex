@@ -379,13 +379,16 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test combined queries
     let filters = EventSearchFilters {
-        source: Some(EventSource::from_static("repo-test")),
-        event_type: Some(EventType::from_static("query.safety")),
+        sources: vec![EventSource::from_static("repo-test")],
+        event_types: vec![EventType::from_static("query.safety")],
         ..Default::default()
     };
     let specific_events = ctx.pool.events().search(filters).await?;
 
     assert_eq!(specific_events.len(), 2);
+    assert!(specific_events
+        .iter()
+        .all(|row| row.source.as_str() == "repo-test"));
 
     Ok(())
 }

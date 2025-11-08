@@ -4,6 +4,7 @@ use crate::db::models::{Event, JsonValue};
 use crate::db::repositories::common::{db_error, DbResult, Repository};
 use crate::db::repositories::events::{EventRecordExt, EventRepository};
 use crate::types::domain::EventSource;
+use crate::types::Pagination;
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use tracing::instrument;
@@ -19,8 +20,8 @@ impl<'a> EventRepository<'a> {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let pagination = Pagination::with_default(limit, offset, 100);
+        let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(
             r#"

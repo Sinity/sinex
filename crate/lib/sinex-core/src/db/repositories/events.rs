@@ -4,10 +4,10 @@ use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
-use crate::types::domain::{EventSource, EventType, SchemaVersion};
+use crate::types::domain::{EventSource, EventType, HostName, SchemaVersion};
 use crate::types::error::SinexError;
 use crate::types::non_empty::NonEmptyVec;
-use crate::types::Id;
+use crate::types::{Id, Pagination};
 use crate::EventRecord;
 use sinex_schema::ulid::Ulid;
 
@@ -32,7 +32,7 @@ macro_rules! event_select_columns {
     };
 }
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::instrument;
 
 /// Event repository for database operations
@@ -59,6 +59,17 @@ fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>
         .into_iter()
         .map(|record| record.try_to_event())
         .collect()
+}
+
+/// Minimal row returned by repository-backed search.
+#[derive(Debug, sqlx::FromRow)]
+pub struct EventSearchRow {
+    pub id: Ulid,
+    pub source: EventSource,
+    pub event_type: EventType,
+    pub host: HostName,
+    pub ts_ingest: DateTime<Utc>,
+    pub payload: JsonValue,
 }
 
 // Extension methods for EventRecord from sinex-migrations
@@ -449,8 +460,8 @@ impl<'a> EventRepository<'a> {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let pagination = Pagination::with_default(limit, offset, 100);
+        let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
@@ -474,8 +485,8 @@ impl<'a> EventRepository<'a> {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let pagination = Pagination::with_default(limit, offset, 100);
+        let (limit, offset) = pagination.as_tuple();
 
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
@@ -526,8 +537,8 @@ impl<'a> EventRepository<'a> {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
-        let limit = limit.unwrap_or(100);
-        let offset = offset.unwrap_or(0);
+        let pagination = Pagination::with_default(limit, offset, 100);
+        let (limit, offset) = pagination.as_tuple();
 
         // Use index hint for TimescaleDB optimization on time-range queries
         let records = sqlx::query_as::<_, EventRecord>(concat!(
@@ -615,173 +626,85 @@ impl<'a> EventRepository<'a> {
         records_to_events(records)
     }
 
-    #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
-    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event<JsonValue>>> {
-        use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    #[instrument(
+        skip(self, filters),
+        fields(
+            limit = filters.pagination.limit(),
+            offset = filters.pagination.offset(),
+            sources = filters.sources.len(),
+            event_types = filters.event_types.len(),
+            has_text = filters.text_query.is_some()
+        )
+    )]
+    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<EventSearchRow>> {
+        let EventSearchFilters {
+            sources,
+            event_types,
+            host,
+            payload_contains,
+            text_query,
+            time_range,
+            pagination,
+        } = filters;
 
-        let limit = filters.limit.unwrap_or(100);
-        let offset = filters.offset.unwrap_or(0);
+        let mut query = QueryBuilder::<Postgres>::new(
+            "SELECT id::uuid AS id, source, event_type, host, ts_ingest, payload \
+             FROM core.events",
+        );
 
-        // Build dynamic query with SeaQuery
-        let mut query = Query::select()
-            .column((Alias::new("core"), Alias::new("events"), Alias::new("id")))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("source"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("event_type"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("ts_ingest"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("ts_orig"),
-            ))
-            .column((Alias::new("core"), Alias::new("events"), Alias::new("host")))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("ingestor_version"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("payload_schema_id"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("payload"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("source_event_ids"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("source_material_id"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("offset_start"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("offset_end"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("anchor_byte"),
-            ))
-            .column((
-                Alias::new("core"),
-                Alias::new("events"),
-                Alias::new("associated_blob_ids"),
-            ))
-            .from((Alias::new("core"), Alias::new("events")))
-            .order_by(
-                (
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("ts_ingest"),
-                ),
-                sea_query::Order::Desc,
-            )
-            .limit(limit)
-            .offset(offset)
-            .to_owned();
+        query.push(" WHERE TRUE");
 
-        // Add dynamic filters
-        if let Some(source) = &filters.source {
-            query.and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("source"),
-                ))
-                .eq(source.as_str()),
-            );
+        if !sources.is_empty() {
+            let values: Vec<String> = sources.iter().map(|s| s.as_str().to_string()).collect();
+            query.push(" AND source = ANY(");
+            query.push_bind(values);
+            query.push(")");
         }
 
-        if let Some(event_type) = &filters.event_type {
-            query.and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("event_type"),
-                ))
-                .eq(event_type.as_str()),
-            );
+        if !event_types.is_empty() {
+            let values: Vec<String> = event_types.iter().map(|t| t.as_str().to_string()).collect();
+            query.push(" AND event_type = ANY(");
+            query.push_bind(values);
+            query.push(")");
         }
 
-        if let Some(host) = &filters.host {
-            query.and_where(
-                Expr::col((Alias::new("core"), Alias::new("events"), Alias::new("host")))
-                    .eq(host.as_str()),
-            );
+        if let Some(host) = host {
+            query.push(" AND host = ");
+            query.push_bind(host.into_string());
         }
 
-        if let Some(after) = &filters.after {
-            query.and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("ts_ingest"),
-                ))
-                .gte(*after),
-            );
+        if let Some(range) = time_range {
+            if let Some(start) = range.start() {
+                query.push(" AND ts_ingest >= ");
+                query.push_bind(start);
+            }
+            if let Some(end) = range.end() {
+                query.push(" AND ts_ingest <= ");
+                query.push_bind(end);
+            }
         }
 
-        if let Some(before) = &filters.before {
-            query.and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("ts_ingest"),
-                ))
-                .lte(*before),
-            );
+        if let Some(payload_filter) = payload_contains {
+            query.push(" AND payload @> ");
+            query.push_bind(payload_filter);
         }
 
-        // Add payload_contains filter using JSONB containment operator (@>)
-        if let Some(payload_filter) = &filters.payload_contains {
-            query.and_where(
-                Expr::col((
-                    Alias::new("core"),
-                    Alias::new("events"),
-                    Alias::new("payload"),
-                ))
-                // Use PostgreSQL JSONB containment operator @>
-                // This leverages GIN indexes for fast JSONB queries
-                .binary(
-                    sea_query::BinOper::Custom("@>"),
-                    Expr::value(payload_filter.clone()),
-                ),
-            );
+        if let Some(text) = text_query {
+            query.push(" AND payload::text ILIKE ");
+            query.push_bind(format!("%{}%", text));
         }
 
-        let (sql, _values) = query.build(PostgresQueryBuilder);
+        query.push(" ORDER BY ts_ingest DESC");
+        query.push(" LIMIT ");
+        query.push_bind(pagination.limit());
+        query.push(" OFFSET ");
+        query.push_bind(pagination.offset());
 
-        // Use the dynamic query string with renamed columns
-        let records = sqlx::query_as::<_, EventRecord>(&sql)
+        query
+            .build_query_as::<EventSearchRow>()
             .fetch_all(self.pool)
             .await
-            .map_err(|e| db_error(e, "search events"))?;
-
-        records_to_events(records)
+            .map_err(|e| db_error(e, "search events"))
     }
 
     #[instrument(skip(self), fields(interval = interval, start = %start, end = %end))]

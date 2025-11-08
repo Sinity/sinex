@@ -18,8 +18,8 @@ pub use common::{
     TransactionSupport, TransactionalRepository,
 };
 pub use events::{
-    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventTypeCount, NewSchema,
-    SourceActivity,
+    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventSearchRow,
+    EventTypeCount, NewSchema, SourceActivity,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
