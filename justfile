@@ -51,14 +51,14 @@ pre-commit: fmt lint check test
 
 # Run fast tests (unit + property) with nextest
 test:
-    SINEX_ALLOW_NATIVE_TESTS=1 cargo nextest run --workspace --lib --profile reliable
-    SINEX_ALLOW_NATIVE_TESTS=1 PROPTEST_CASES=${PROPTEST_CASES:-64} cargo nextest run --workspace --test property_tests --profile reliable
+    cargo nextest run --workspace --lib --profile reliable
+    PROPTEST_CASES=${PROPTEST_CASES:-64} cargo nextest run --workspace --test property_tests --profile reliable
 
 # Run all tests with nextest
 test-all:
     just db-setup
     LD_LIBRARY_PATH="$(pkg-config --variable=libdir dbus-1)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-    RUST_LOG=${RUST_LOG:-} SINEX_ALLOW_NATIVE_TESTS=1 cargo nextest run --workspace --profile reliable
+    RUST_LOG=${RUST_LOG:-} cargo nextest run --workspace --profile reliable
 
 # (integration target removed to keep surface minimal; use `just test-all` with filters if needed)
 
