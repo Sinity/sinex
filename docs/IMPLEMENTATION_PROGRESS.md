@@ -39,7 +39,7 @@ From codebase review:
 ## Remaining Work
 
 - Replay tooling now runs on `sinex.control.*` subjects (CLI + gateway integration completed), and telemetry sampling is live; only UX polish remains and is tracked in the public roadmap.
-- Complete JetStream migrations for analytics/search automata.
+- JetStream migrations for analytics/search automata are complete—no further action required here.
 - Harden annex integration for environments without local git-annex (better mocks for tests).
 
 ## Architecture Status

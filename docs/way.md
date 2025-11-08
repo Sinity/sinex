@@ -26,11 +26,10 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 - **Phase 5 - Cleanup**: gRPC surface removed, sensd code paths deleted, transactional outbox retired, docs updated
 - ✅ Replay control surface: gateway RPC + CLI `exo replay` now issue plan/preview/approve/execute via `sinex.control.replay`.
 
-**Satellites**: 6/8 modern and buildable (75% complete)
+**Satellites**: 8/8 modern and buildable (100% complete)
 - ✅ All using `processor_main!` and NATS JetStream
 - ✅ Zero legacy gRPC patterns
-- ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
-- 🔄 Blocked: analytics-automaton, search-automaton (deeper refactoring)
+- ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer, analytics-automaton, search-automaton
 
 **Testing**
 - `just test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
@@ -165,11 +164,10 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 - [x] Remove sensd client + sensor guards once all satellites migrate.
 
 ### Satellites
-- [x] **All buildable satellites modernized (6/8 - 75% complete)** ✅ 2025-01
+- [x] **All buildable satellites modernized (8/8 - 100% complete)** ✅ 2025-01
   - All using `processor_main!` macro and NATS JetStream
   - Zero legacy gRPC patterns remain
-  - Completed: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
-  - Blocked: analytics-automaton, search-automaton (deeper refactoring needed)
+  - Completed: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer, analytics-automaton, search-automaton
 - Migratory template for each satellite:
   1. Integrate `AcquisitionManager` + Stage-as-You-Go to capture materials.
   2. [x] Publish slices/events to JetStream; confirm ingestion locally. ✅ NatsPublisher integrated
