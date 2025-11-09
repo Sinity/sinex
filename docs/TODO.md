@@ -185,12 +185,10 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Status:** `seaquery_helpers.rs` modules/tests were removed and `repositories_common` now builds SQL via `format!`; only schema/migration crates retain SeaQuery.  
     - **Regression Test:** `cargo check` / `just check` ensures no `sea_query` references remain under `sinex-core` outside migrations; add `rg "sea_query" crate/lib/sinex-core` CI guard if desired.
 
-34. **Sweep for aliased IDs (`SELECT id AS foo_id`) and align with schema names**  
-    - **Files:** workspace-wide search across `*.rs`, `*.sql`, and `.sqlx` definitions.  
-    - **Steps:** replace ad-hoc aliases with direct column names (relying on struct field renames or `FromRow` annotations); regenerate `.sqlx` cache.  
-    - **Tests:** `cargo check`/`just check` should fail before the sweep wherever structs expect aliased names.
+34. **Sweep for aliased IDs (`SELECT id AS foo_id`) and align with schema names** — ✅ *Verified*  
+    - **Status:** Workspace `rg " AS [A-Za-z0-9_]+_id"` (excluding sqlx macro aliases like `"id!: ..."`) returns no business logic hits; search previously-flagged services (search, analytics) now bind `id` directly.  
+    - **Ongoing guard:** keep the search command in CI lint docs to ensure future aliases don’t regress.
 
-35. **Adopt shared fixture constants across remaining test suites**  
-    - **Files:** `crate/lib/sinex-test-utils/src/constants.rs`, all tests still hard-coding sources/types (search for `"repo-test"`, `"query.safety"`, etc.).  
-    - **Steps:** expand the constants module as needed and update downstream tests to import via the prelude; consider a lint/CI check that flags the old literals.  
-    - **Tests:** grep/CI step proving the old strings no longer appear; as interim guard, add a test that fails if the constants aren’t used in representative suites.
+35. **Adopt shared fixture constants across remaining test suites** — ✅ *Done*  
+    - **Status:** `rg "repo-test"` / `rg "query.safety"` only match `sinex-test-utils/src/constants.rs`; `integration_tests`, `type_safety_test`, and other suites import the constants via the prelude.  
+    - **Guard:** keep the `rg` check noted here so future literals get caught early.

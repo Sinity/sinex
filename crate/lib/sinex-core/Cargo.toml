@@ -39,9 +39,6 @@ futures = "0.3"
 num-traits = "0.2"
 ahash = { workspace = true }
 
-# Query building
-sea-query = { workspace = true }
-
 # Migration system  
 sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
 
