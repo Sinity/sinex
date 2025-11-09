@@ -238,7 +238,11 @@ impl ReplayStateMachine {
         let now = Utc::now();
         let state_repo = self.pool.state();
         let op_id = state_repo
-            .start_replay_operation(&actor, serde_json::to_value(&scope)?)
+            .start_replay_operation(
+                &actor,
+                serde_json::to_value(&scope)?,
+                scope.time_window.clone(),
+            )
             .await
             .map_err(|e| eyre!("start_replay_operation failed: {}", e))?;
         let operation_id = *op_id.as_ulid();

@@ -138,14 +138,14 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r#"
                 -- Operations API helpers
-                CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB)
+                CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB, p_scope_window tstzrange DEFAULT NULL)
                 RETURNS ULID AS $$
                 DECLARE
                     v_operation_id ULID;
                 BEGIN
                     v_operation_id := gen_ulid();
-                    INSERT INTO core.operations_log (id, operation_type, operator, scope, result_status)
-                    VALUES (v_operation_id, p_operation_type, p_operator, p_scope, 'running');
+                    INSERT INTO core.operations_log (id, operation_type, operator, scope, scope_window, result_status)
+                    VALUES (v_operation_id, p_operation_type, p_operator, p_scope, p_scope_window, 'running');
                     RETURN v_operation_id;
                 END;
                 $$ LANGUAGE plpgsql;
@@ -171,6 +171,163 @@ impl MigrationTrait for Migration {
                         duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer,
                         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
                     WHERE id = p_operation_id;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.prepare_cascade_session(p_session_id TEXT, p_drop_on_commit BOOLEAN DEFAULT FALSE)
+                RETURNS TEXT AS $$
+                DECLARE
+                    v_table TEXT := format('cascade_analysis_%s', p_session_id);
+                    v_clause TEXT := CASE WHEN p_drop_on_commit THEN ' ON COMMIT DROP' ELSE '' END;
+                    v_create TEXT;
+                BEGIN
+                    IF p_session_id !~ '^[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid session identifier: %', p_session_id;
+                    END IF;
+
+                    IF p_drop_on_commit THEN
+                        v_create := format(
+                            'CREATE TEMP TABLE %I (
+                                id ULID PRIMARY KEY,
+                                depth INT NOT NULL DEFAULT 0,
+                                parent_ids ULID[] DEFAULT ''{}''::ULID[],
+                                child_ids ULID[],
+                                is_archived BOOLEAN DEFAULT FALSE,
+                                is_live BOOLEAN DEFAULT TRUE,
+                                processed BOOLEAN DEFAULT FALSE
+                            )%s',
+                            v_table,
+                            v_clause
+                        );
+                        EXECUTE v_create;
+                    ELSE
+                        v_create := format(
+                            'CREATE TEMP TABLE IF NOT EXISTS %I (
+                                id ULID PRIMARY KEY,
+                                depth INT NOT NULL DEFAULT 0,
+                                parent_ids ULID[] DEFAULT ''{}''::ULID[],
+                                child_ids ULID[],
+                                is_archived BOOLEAN DEFAULT FALSE,
+                                is_live BOOLEAN DEFAULT TRUE,
+                                processed BOOLEAN DEFAULT FALSE
+                            )',
+                            v_table
+                        );
+                        EXECUTE v_create;
+                        EXECUTE format(
+                            'CREATE INDEX IF NOT EXISTS %I ON %I (depth)',
+                            'idx_' || v_table || '_depth',
+                            v_table
+                        );
+                        EXECUTE format(
+                            'CREATE INDEX IF NOT EXISTS %I ON %I (processed)',
+                            'idx_' || v_table || '_processed',
+                            v_table
+                        );
+                    END IF;
+
+                    RETURN v_table;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.cascade_populate_roots(p_table TEXT, p_event_ids ULID[])
+                RETURNS BIGINT AS $$
+                DECLARE
+                    v_sql TEXT;
+                    v_rows BIGINT;
+                BEGIN
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+
+                    v_sql := format(
+                        'INSERT INTO %I (id, depth, parent_ids, processed)
+                         SELECT e.id, 0, COALESCE(e.source_event_ids, ''{}''::ULID[]), FALSE
+                         FROM core.events e
+                         WHERE e.id = ANY($1::ulid[])
+                         ON CONFLICT DO NOTHING',
+                        p_table
+                    );
+                    EXECUTE v_sql USING p_event_ids;
+                    GET DIAGNOSTICS v_rows = ROW_COUNT;
+                    RETURN COALESCE(v_rows, 0);
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.cascade_count_nodes(p_table TEXT)
+                RETURNS BIGINT AS $$
+                DECLARE
+                    v_sql TEXT;
+                    v_count BIGINT;
+                BEGIN
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+
+                    v_sql := format('SELECT COUNT(*) FROM %I', p_table);
+                    EXECUTE v_sql INTO v_count;
+                    RETURN COALESCE(v_count, 0);
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.cascade_depth_histogram(p_table TEXT)
+                RETURNS TABLE(depth INT, node_count BIGINT) AS $$
+                DECLARE
+                    v_sql TEXT;
+                BEGIN
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+
+                    v_sql := format(
+                        'SELECT depth, COUNT(*) AS node_count FROM %I GROUP BY depth ORDER BY depth',
+                        p_table
+                    );
+                    RETURN QUERY EXECUTE v_sql;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.cascade_find_integrity_violations(p_table TEXT, p_limit INTEGER DEFAULT 100)
+                RETURNS TABLE(live_event_id ULID, archived_event_id ULID) AS $$
+                DECLARE
+                    v_sql TEXT;
+                BEGIN
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+
+                    v_sql := format(
+                        'WITH archived_set AS (
+                            SELECT id FROM %I WHERE depth = 0
+                        ),
+                        violations AS (
+                            SELECT 
+                                e.id as live_event_id,
+                                unnest(e.source_event_ids) as archived_event_id
+                            FROM core.events e
+                            WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
+                            AND e.id NOT IN (SELECT id FROM %I)
+                        )
+                        SELECT DISTINCT live_event_id, archived_event_id
+                        FROM violations
+                        LIMIT $1',
+                        p_table,
+                        p_table
+                    );
+                    RETURN QUERY EXECUTE v_sql USING p_limit;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE OR REPLACE FUNCTION core.cleanup_cascade_session(p_table TEXT)
+                RETURNS VOID AS $$
+                BEGIN
+                    IF p_table IS NULL OR p_table = '' THEN
+                        RETURN;
+                    END IF;
+                    IF p_table !~ '^cascade_analysis_[A-Za-z0-9_]+$' THEN
+                        RAISE EXCEPTION 'Invalid cascade table name: %', p_table;
+                    END IF;
+                    EXECUTE format('DROP TABLE IF EXISTS %I', p_table);
                 END;
                 $$ LANGUAGE plpgsql;
                 "#,

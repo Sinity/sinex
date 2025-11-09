@@ -14,8 +14,10 @@ use crate::{Event, Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use std::ops::Bound;
 
 /// Database record for operations_log table
 /// NOTE: The actual table only has: id, operation_type, operator, scope,
@@ -79,12 +81,17 @@ impl<'a> StateRepository<'a> {
         &self,
         operator: &str,
         scope: JsonValue,
+        scope_window: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> DbResult<Id<Operation>> {
+        let scope_window_range = scope_window
+            .map(|(start, end)| PgRange::from((Bound::Included(start), Bound::Included(end))));
+
         let op_uuid: Uuid = sqlx::query_scalar!(
-            r#"SELECT core.start_operation($1, $2, $3::jsonb)::uuid as "id!: Uuid""#,
+            r#"SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as "id!: Uuid""#,
             "replay",
             operator,
-            scope
+            scope,
+            scope_window_range
         )
         .fetch_one(self.pool)
         .await
