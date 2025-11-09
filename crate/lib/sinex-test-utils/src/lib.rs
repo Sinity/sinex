@@ -26,6 +26,7 @@ mod builders;
 mod channel_behavior_utils;
 mod channel_enhancements;
 mod channel_helpers;
+pub mod constants;
 mod database_pool;
 mod deployment_scenario_utils;
 mod error_testing;
@@ -80,9 +81,14 @@ pub mod prelude {
 
     // Common test fixtures
     pub use crate::{
-        acquire_admin_connection, optional_extension_missing, pool_slot_count,
-        test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
-        with_pool_size,
+        acquire_admin_connection,
+        constants::{
+            EVENT_SOURCE_REPO_PRIMARY, EVENT_SOURCE_REPO_SECONDARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY, SOURCE_FIXTURE_REPO_PRIMARY,
+            SOURCE_FIXTURE_REPO_SECONDARY,
+        },
+        optional_extension_missing, pool_slot_count, test_context_fixture, test_event_sources,
+        test_event_types, test_paths, test_sources, with_pool_size,
     };
 
     // Core sinex imports - now using flattened namespace

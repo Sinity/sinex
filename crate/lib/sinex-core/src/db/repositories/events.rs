@@ -723,9 +723,7 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbResult<Vec<TimeBucketResult>> {
-        let mut builder = QueryBuilder::<Postgres>::new(
-            "SELECT time_bucket("
-        );
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT time_bucket(");
         builder.push_bind(interval);
         builder.push("::interval, ts_ingest) AS bucket, COUNT(id) AS count FROM core.events WHERE ts_ingest >= ");
         builder.push_bind(start);

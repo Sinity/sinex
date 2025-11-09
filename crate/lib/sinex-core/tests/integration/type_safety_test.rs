@@ -12,6 +12,10 @@ use sinex_core::db::models::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
+use sinex_test_utils::constants::{
+    EVENT_SOURCE_REPO_PRIMARY, EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY,
+    SOURCE_FIXTURE_REPO_PRIMARY, SOURCE_FIXTURE_REPO_SECONDARY,
+};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
@@ -351,16 +355,28 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
 async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     // Create test data
     let _events = vec![
-        ctx.create_test_event("repo-test", "query.safety", json!({"index": 1}))
-            .await?,
-        ctx.create_test_event("repo-test", "query.safety", json!({"index": 2}))
-            .await?,
-        ctx.create_test_event("other-source", "query.safety", json!({"index": 3}))
-            .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_PRIMARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 1}),
+        )
+        .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_PRIMARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 2}),
+        )
+        .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_SECONDARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 3}),
+        )
+        .await?,
     ];
 
     // Test source-based queries return correct types
-    let repo_source = EventSource::from_static("repo-test");
+    let repo_source = EVENT_SOURCE_REPO_PRIMARY;
     let repo_events = ctx
         .pool
         .events()
@@ -374,7 +390,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     }
 
     // Test type-based queries
-    let repo_event_type = EventType::from_static("query.safety");
+    let repo_event_type = EVENT_TYPE_QUERY_SAFETY;
     let safety_events = ctx
         .pool
         .events()

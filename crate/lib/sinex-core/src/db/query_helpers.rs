@@ -3,8 +3,7 @@
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{retry, timeouts};
 use crate::{DbPool, DbPoolRef};
-use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
-use sqlx::{Error as SqlxError, Postgres, Transaction};
+use sqlx::{Error as SqlxError, Postgres, QueryBuilder, Transaction};
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -133,23 +132,21 @@ pub async fn exists(
     where_clause: &str,
     context: &str,
 ) -> SinexResult<bool> {
-    let subquery = Query::select()
-        .expr(Expr::val(1))
-        .from(Alias::new(table))
-        .cond_where(Expr::cust(where_clause))
-        .to_owned();
+    let mut builder = QueryBuilder::<Postgres>::new("SELECT EXISTS(SELECT 1 FROM ");
+    push_identifier(&mut builder, table);
+    if !where_clause.trim().is_empty() {
+        builder.push(" WHERE ");
+        builder.push(where_clause);
+    }
+    builder.push(")");
 
-    let query = Query::select().expr(Expr::exists(subquery)).to_owned();
-
-    let (sql, _values) = query.build(PostgresQueryBuilder);
-
-    // Since we're using Expr::cust() for where_clause, no additional parameters to bind
-    let result: (bool,) = sqlx::query_as(&sql)
+    let exists = builder
+        .build_query_scalar::<bool>()
         .fetch_one(pool)
         .await
         .map_err(|e| db_error(e, context))?;
 
-    Ok(result.0)
+    Ok(exists)
 }
 
 /// Count records matching a condition
@@ -159,23 +156,28 @@ pub async fn count(
     where_clause: Option<&str>,
     context: &str,
 ) -> SinexResult<i64> {
-    let mut query = Query::select()
-        .expr(Func::count(Expr::cust("*")))
-        .from(Alias::new(table))
-        .to_owned();
+    let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ");
+    push_identifier(&mut builder, table);
 
     if let Some(clause) = where_clause {
-        query = query.cond_where(Expr::cust(clause)).to_owned();
+        if !clause.trim().is_empty() {
+            builder.push(" WHERE ");
+            builder.push(clause);
+        }
     }
-    let (sql, _values) = query.build(PostgresQueryBuilder);
 
-    // Since we're using Expr::cust() for dynamic parts, no additional parameters to bind
-    let result: (i64,) = sqlx::query_as(&sql)
+    let count = builder
+        .build_query_scalar::<i64>()
         .fetch_one(pool)
         .await
         .map_err(|e| db_error(e, context))?;
 
-    Ok(result.0)
+    Ok(count)
+}
+
+fn push_identifier(builder: &mut QueryBuilder<Postgres>, ident: &str) {
+    let escaped = ident.replace('"', "\"\"");
+    builder.push(format_args!("\"{}\"", escaped));
 }
 
 // ULID/UUID conversion utilities are now provided by sinex-schema::ulid_conversions
