@@ -99,14 +99,13 @@ pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialR
 
 // Re-export all repository traits and types at crate root for short imports
 pub use db::repositories::{
-    BatchRepository, BlobRepository, CascadeRepository, CascadeRepositoryTx, Checkpoint,
-    CheckpointExt, CheckpointRecord, CheckpointRepository, CommandCount, CreateEntity,
-    CreateEntityRelation, DbPoolExt, DbResult, EnhancedRepository, EntityRecord,
-    EntityRelationRecord, EntityType, EventAnnotation, EventPayloadSchema, EventRepository,
-    EventSearchFilters, EventTypeCount, KnowledgeGraphRepository, NewSchema, Operation,
-    OperationRecord, OperationStatistics, Repository, SourceActivity, SourceMaterialExt,
-    SourceMaterialRepository, StateRepository, StorageStats, SystemHealthReport, TableDef,
-    TransactionSupport, TransactionalRepository,
+    BatchRepository, BlobRepository, Checkpoint, CheckpointExt, CheckpointRecord,
+    CheckpointRepository, CommandCount, CreateEntity, CreateEntityRelation, DbPoolExt, DbResult,
+    EnhancedRepository, EntityRecord, EntityRelationRecord, EntityType, EventAnnotation,
+    EventPayloadSchema, EventRepository, EventRepositoryTx, EventSearchFilters, EventTypeCount,
+    KnowledgeGraphRepository, NewSchema, Operation, OperationRecord, OperationStatistics,
+    Repository, SourceActivity, SourceMaterialExt, SourceMaterialRepository, StateRepository,
+    StorageStats, SystemHealthReport, TableDef, TransactionSupport, TransactionalRepository,
 };
 
 // Re-export all domain types at crate root for short imports

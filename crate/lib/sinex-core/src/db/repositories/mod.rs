@@ -1,7 +1,6 @@
 #![doc = include_str!("../../../doc/db_repositories.md")]
 //! See `doc/db_repositories.md` for the repository architecture overview.
 pub mod blobs;
-pub mod cascade;
 pub mod checkpoints;
 pub mod common;
 pub mod events;
@@ -13,15 +12,14 @@ pub mod state;
 
 // Re-export main types
 pub use blobs::{BlobRepository, StorageStats};
-pub use cascade::{CascadeRepository, CascadeRepositoryTx};
 pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository};
 pub use common::{
     BatchRepository, DbResult, EnhancedRepository, EventSearchFilters, Repository, TableDef,
     TransactionSupport, TransactionalRepository,
 };
 pub use events::{
-    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventSearchRow,
-    EventTypeCount, NewSchema, SourceActivity,
+    CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
+    EventSearchRow, EventTypeCount, NewSchema, SourceActivity,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
@@ -57,7 +55,6 @@ pub trait DbPoolExt {
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
-    fn cascade(&self) -> cascade::CascadeRepository<'_>;
 }
 
 impl DbPoolExt for PgPool {
@@ -87,9 +84,5 @@ impl DbPoolExt for PgPool {
 
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_> {
         schema_management::SchemaManagementRepository::new(self)
-    }
-
-    fn cascade(&self) -> cascade::CascadeRepository<'_> {
-        cascade::CascadeRepository::new(self)
     }
 }

@@ -3,7 +3,7 @@
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
-use sinex_core::db::repositories::{CascadeRepositoryTx, DbPoolExt};
+use sinex_core::db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -240,9 +240,9 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<String> {
         // Validate session_id to prevent SQL injection
         Self::validate_session_id(session_id)?;
-        let mut repo = CascadeRepositoryTx::new(tx);
+        let mut repo = EventRepositoryTx::new(tx);
         let table_name = repo
-            .prepare_session(session_id, true)
+            .prepare_cascade_session(session_id, true)
             .await
             .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
         debug!("Created temp table: {}", table_name);
@@ -256,8 +256,8 @@ impl StreamingCascadeAnalyzer {
 
         let table_name = self
             .pool
-            .cascade()
-            .prepare_session(session_id, false)
+            .events()
+            .prepare_cascade_session(session_id, false)
             .await
             .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
         debug!("Created temporary table {}", table_name);
@@ -275,8 +275,8 @@ impl StreamingCascadeAnalyzer {
             return Ok(());
         }
 
-        let mut repo = CascadeRepositoryTx::new(tx);
-        repo.populate_roots(table_name, event_ids)
+        let mut repo = EventRepositoryTx::new(tx);
+        repo.populate_cascade_roots(table_name, event_ids)
             .await
             .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
         debug!("Populated {} initial events", event_ids.len());
@@ -286,8 +286,8 @@ impl StreamingCascadeAnalyzer {
     /// Populate initial events to analyze
     async fn populate_initial_events(&self, table_name: &str, event_ids: &[Ulid]) -> Result<()> {
         self.pool
-            .cascade()
-            .populate_roots(table_name, event_ids)
+            .events()
+            .populate_cascade_roots(table_name, event_ids)
             .await
             .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
         debug!("Populated {} initial events", event_ids.len());
@@ -300,9 +300,9 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        let mut repo = CascadeRepositoryTx::new(tx);
+        let mut repo = EventRepositoryTx::new(tx);
         let depth = repo
-            .expand(table_name, self.config.max_depth as i32)
+            .expand_cascade(table_name, self.config.max_depth as i32)
             .await
             .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
 
@@ -315,9 +315,9 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<HashMap<usize, usize>> {
-        let mut repo = CascadeRepositoryTx::new(tx);
+        let mut repo = EventRepositoryTx::new(tx);
         let rows = repo
-            .depth_histogram(table_name)
+            .cascade_depth_histogram(table_name)
             .await
             .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
 
@@ -335,9 +335,9 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        let mut repo = CascadeRepositoryTx::new(tx);
+        let mut repo = EventRepositoryTx::new(tx);
         let count = repo
-            .count_nodes(table_name)
+            .cascade_node_count(table_name)
             .await
             .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
         Ok(count as usize)
@@ -349,9 +349,9 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<IntegrityViolation>> {
-        let mut repo = CascadeRepositoryTx::new(tx);
+        let mut repo = EventRepositoryTx::new(tx);
         let rows = repo
-            .find_integrity_violations(table_name, 100)
+            .cascade_integrity_violations(table_name, 100)
             .await
             .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
 
@@ -440,8 +440,8 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<()> {
-        let mut repo = CascadeRepositoryTx::new(tx);
-        repo.cleanup_session(table_name)
+        let mut repo = EventRepositoryTx::new(tx);
+        repo.cleanup_cascade_session(table_name)
             .await
             .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
         Ok(())
@@ -451,8 +451,8 @@ impl StreamingCascadeAnalyzer {
     async fn build_dependency_graph(&self, table_name: &str) -> Result<usize> {
         let depth = self
             .pool
-            .cascade()
-            .expand(table_name, self.config.max_depth as i32)
+            .events()
+            .expand_cascade(table_name, self.config.max_depth as i32)
             .await
             .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
 
@@ -464,8 +464,8 @@ impl StreamingCascadeAnalyzer {
     async fn calculate_depth_histogram(&self, table_name: &str) -> Result<HashMap<usize, usize>> {
         let rows = self
             .pool
-            .cascade()
-            .depth_histogram(table_name)
+            .events()
+            .cascade_depth_histogram(table_name)
             .await
             .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
 
@@ -481,8 +481,8 @@ impl StreamingCascadeAnalyzer {
     async fn count_affected_events(&self, table_name: &str) -> Result<usize> {
         let count = self
             .pool
-            .cascade()
-            .count_nodes(table_name)
+            .events()
+            .cascade_node_count(table_name)
             .await
             .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
         Ok(count as usize)
@@ -492,8 +492,8 @@ impl StreamingCascadeAnalyzer {
     async fn find_integrity_violations(&self, table_name: &str) -> Result<Vec<IntegrityViolation>> {
         let rows = self
             .pool
-            .cascade()
-            .find_integrity_violations(table_name, 100)
+            .events()
+            .cascade_integrity_violations(table_name, 100)
             .await
             .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
 
@@ -578,8 +578,8 @@ impl StreamingCascadeAnalyzer {
     /// Clean up temporary tables
     async fn cleanup_temp_tables(&self, table_name: &str) -> Result<()> {
         self.pool
-            .cascade()
-            .cleanup_session(table_name)
+            .events()
+            .cleanup_cascade_session(table_name)
             .await
             .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
         debug!("Cleaned up temporary table {}", table_name);

@@ -31,7 +31,12 @@ let rows = sqlx::query(
 The consumer re-implements batching, conversion to UUID/JSON, and conflict handling even though the
 rest of the codebase goes through `EventRepository`.
 
-### Proposed change
+### Status / changes
+- Added `scope_window tstzrange` column to `core.operations_log` plus optional parameter on `core.start_operation`.
+- `StateRepository::start_replay_operation` now converts `ReplayScope::time_window` into a `tstzrange`, so every replay operation records its window with native Postgres range semantics.
+- Existing readers continue to work (column is nullable) while we plumb richer accessors later.
+
+### Proposed change (remaining)
 
 * Add `EventRepository::insert_stream_batch(batch: &[PreparedEventRow]) -> DbResult<Vec<Ulid>>`.
   - The repository will own the UNNEST SQL (or switch to `INSERT ... SELECT FROM UNNEST`) and be the
@@ -105,7 +110,12 @@ sqlx::query!(
 * The module repeats `quote_ident` gymnastics everywhere and re-runs the same SQL across both the
   transactional and non-transactional paths.
 
-### Proposed change
+### Status / changes
+- Introduced PL/pgSQL helpers: `core.prepare_cascade_session`, `core.cascade_populate_roots`, `core.cascade_depth_histogram`, `core.cascade_count_nodes`, `core.cascade_find_integrity_violations`, and `core.cleanup_cascade_session`.
+- Added `CascadeRepository` (+ tx variant) in `sinex-core`, and rewired `StreamingCascadeAnalyzer` to call those functions instead of emitting raw SQL / temp-table DDL.
+- Temp-table creation, population, histogram/count queries, integrity checks, and cleanup now live fully inside Postgres.
+
+### Remaining follow-up
 
 * Move the session management + graph walk entirely into PL/pgSQL living in `core` schema. The
   working theory is one or two cohesive functions rather than four micro helpers:
@@ -137,7 +147,11 @@ let exists = sqlx::query_scalar!(
 .await?;
 ```
 
-### Proposed change
+### Status / changes
+- `StateRepository` now stores replay windows via `scope_window`, so downstream consumers can query range coverage.
+- Cascade helper functions expose integrity/census queries via repositories; alias-heavy ad-hoc SQL was replaced with stored procedures and strongly-typed repository methods.
+
+### Proposed change (next)
 
 * Extend `StateRepository` with `operation_exists(id: Ulid) -> DbResult<bool>` and optionally
   `load_operation(id: Ulid) -> DbResult<Option<OperationRecord>>`.
@@ -163,3 +177,8 @@ let exists = sqlx::query_scalar!(
 
 Please treat this document as the authoritative checklist until each item lands; update it (or link a
 tracking issue) as we knock down the remaining ad-hoc SQL call sites.
+
+## Replay overlap policy
+
+- Recording `scope_window` in `core.operations_log` adds observability but does **not** block users from launching overlapping replays.
+- Any enforcement (exclusion constraints, conflict detection) must be explicitly requested by product/ops. Until then, the repository simply persists the range for analytics/debugging.
