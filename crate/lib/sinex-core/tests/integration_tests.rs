@@ -17,6 +17,7 @@ use serde_json::json;
 use std::sync::Arc;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue};
+use sinex_test_utils::constants::{EVENT_SOURCE_REPO_PRIMARY, SOURCE_FIXTURE_REPO_PRIMARY};
 use sinex_test_utils::prelude::*;
 
 // =============================================================================
@@ -235,19 +236,31 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::
     // Test the repository pattern with various query operations
 
     // Insert test data
-    ctx.create_test_event("repo-test", "type.a", json!({"category": "alpha"}))
-        .await?;
-    ctx.create_test_event("repo-test", "type.b", json!({"category": "beta"}))
-        .await?;
-    ctx.create_test_event("repo-test", "type.a", json!({"category": "gamma"}))
-        .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.a",
+        json!({"category": "alpha"}),
+    )
+    .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.b",
+        json!({"category": "beta"}),
+    )
+    .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.a",
+        json!({"category": "gamma"}),
+    )
+    .await?;
 
     let repo = ctx.pool.events();
 
     // Test querying by source
     let by_source = repo
         .get_by_source(
-            &EventSource::from_static("repo-test"),
+            &EVENT_SOURCE_REPO_PRIMARY,
             sinex_core::types::Pagination::new(Some(10), None),
         )
         .await?;
@@ -263,9 +276,7 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::
     assert_eq!(by_type.len(), 2);
 
     // Test counting
-    let count = repo
-        .count_by_source(&EventSource::from_static("repo-test"))
-        .await?;
+    let count = repo.count_by_source(&EVENT_SOURCE_REPO_PRIMARY).await?;
     assert_eq!(count, 3);
 
     Ok(())

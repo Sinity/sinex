@@ -385,7 +385,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
 
     assert_eq!(repo_events.len(), 2);
     for event in &repo_events {
-        assert_eq!(event.source.as_str(), "repo-test");
+        assert_eq!(event.source.as_str(), SOURCE_FIXTURE_REPO_PRIMARY);
         assert!(event.id.is_some()); // All events should have IDs
     }
 
@@ -402,13 +402,13 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
 
     assert_eq!(safety_events.len(), 3);
     for event in &safety_events {
-        assert_eq!(event.event_type.as_str(), "query.safety");
+        assert_eq!(event.event_type.as_str(), EVENT_TYPE_FIXTURE_QUERY_SAFETY);
     }
 
     // Test combined queries
     let filters = EventSearchFilters {
-        sources: vec![EventSource::from_static("repo-test")],
-        event_types: vec![EventType::from_static("query.safety")],
+        sources: vec![EVENT_SOURCE_REPO_PRIMARY],
+        event_types: vec![EVENT_TYPE_QUERY_SAFETY],
         ..Default::default()
     };
     let specific_events = ctx.pool.events().search(filters).await?;
@@ -416,7 +416,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     assert_eq!(specific_events.len(), 2);
     assert!(specific_events
         .iter()
-        .all(|row| row.source.as_str() == "repo-test"));
+        .all(|row| row.source.as_str() == SOURCE_FIXTURE_REPO_PRIMARY));
 
     Ok(())
 }
