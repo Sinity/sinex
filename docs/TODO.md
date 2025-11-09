@@ -101,3 +101,96 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Steps:** extend the `#[sinex_test]` macro (or move to sync contexts) so proptest + async works, then restore the commented suites.  
     - **Tests:** ensure the resurrected tests fail with the current harness limitations and pass after the macro support lands.
 
+
+## Additional Priorities
+
+18. **Deprecate `raw.sensor_jobs` / sensd schema**  
+    - **Files:** `crate/lib/sinex-schema/src/schema/sensd.rs`, residual `.sqlx` caches, docs referencing sensd.  
+    - **Steps:** drop the tables in the squashed migration (or gate them behind a feature), scrub `.sqlx` artifacts, and rewrite any docs/tools still referencing sensd workflows.  
+    - **Tests:** migration test that fails now because tables still exist; schema diff ensures removal is deliberate.
+
+19. **Document ingestor job metadata**  
+    - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`.  
+    - **Steps:** when submitting jobs (or emitting events), include the actual material ULID and path metadata so downstream components do not rely on parsing `target_uri`.  
+    - **Tests:** unit test verifying metadata is populated; currently impossible because we only store `file://path`.
+
+20. **Replay control bus resilience**  
+    - **Files:** `crate/core/sinex-gateway/src/service_container.rs`, `crate/core/sinex-gateway/src/replay_control`.  
+    - **Steps:** implement exponential backoff + monitoring when `spawn_replay_control` fails instead of silent warn-and-disable; expose health info to the gateway CLI.  
+    - **Tests:** integration test that currently shows the replay client missing when NATS is down; expect failure until retries/metrics exist.
+
+21. **Structured DLQ metrics and tooling**  
+    - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs` (DLQ publish), `docs/architecture/Core_Architecture.md`.  
+    - **Steps:** emit metrics/logs for DLQ insert/delete, provide a CLI command to inspect DLQ contents, and wire alerts for sustained backlog.  
+    - **Tests:** fail-first CLI test demonstrating no DLQ inspection command exists.
+
+22. **Gateway performance isolation**  
+    - **Files:** `crate/core/sinex-gateway/src/service_container.rs`, `sinex-services`.  
+    - **Steps:** refactor long-running queries (analytics/search) to async tasks or chunked pagination so one RPC cannot hog the shared DB pool.  
+    - **Tests:** stress test that fires multiple queries; currently they run sequentially and block.
+
+23. **Heartbeat-driven alerting for satellites**  
+    - **Files:** `sinex-satellite-sdk/src/heartbeat.rs`, `docs/architecture/SystemOperations_And_Integrity_Architecture.md`.  
+    - **Steps:** define thresholds and log/emit `process.degraded` or `process.failed` events when heartbeat error counts exceed tolerances; integrate with NixOS monitoring rules.  
+    - **Tests:** new heartbeat unit test injecting synthetic error counts; fails now because status stays "healthy" regardless.
+
+24. **Gateway CLI teardown awareness**  
+    - **Files:** `cli/exo.py`, `crate/core/sinex-gateway/src/rpc_server.rs`.  
+    - **Steps:** ensure the CLI handles 401/429 gracefully (prompting for `--use-db` or auth), and add integration tests verifying error messages (currently CLI suggests `--use-db` even when rate limited).  
+    - **Tests:** CLI tests that expect specific guidance; fail today because generic errors bubble up.
+
+25. **Watcher teardown and restart handling**  
+    - **Files:** `dbus_watcher.rs`, `journal_watcher.rs`, `systemd_watcher.rs`, `udev_watcher.rs`.  
+    - **Steps:** add explicit shutdown signals to stop spawned tasks, and ensure the unified processor can restart watchers on reconfiguration.  
+    - **Tests:** harness that cancels the processor and asserts watchers exit; fails now because tasks run forever/
+
+26. **Gateway structured logging + tracing context**  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`.  
+    - **Steps:** introduce request IDs, user/session tags, and propagate them into service-layer logs for auditability.  
+    - **Tests:** tracing subscriber test verifying logs contain IDs; fails currently because logs lack correlation IDs.
+
+27. **DLQ / confirmation CLI commands**  
+    - **Files:** `cli/exo.py` (new subcommands).  
+    - **Steps:** add `exo dlq list/purge` and `exo confirmations tail` commands to inspect health from the CLI, backed by DB queries or JetStream.  
+    - **Tests:** CLI integration tests; currently no commands exist, so tests will fail.
+
+28. **Remove dead sensd stubs from satellites**  
+    - **Files:** `crate/satellites/*` modules still containing `MaterialSlice` stubs, commented sensd references.  
+    - **Steps:** delete the stubs after AcquisitionManager is adopted (task 5) and update documentation to state JetStream-only operation.  
+    - **Tests:** `cargo check` should fail if stubs remain referenced, ensuring we actually remove them.
+
+29. **Replay automation coverage**  
+    - **Files:** `crate/lib/sinex-processor-runtime/src/lib.rs` (replay module), `crate/lib/sinex-services/src/analytics.rs`.  
+    - **Steps:** add integration tests for the replay control lifecycle (create → preview → approve → execute) using the gateway RPC dispatch; verify error paths and cancellation.  
+    - **Tests:** currently absent; new tests should fail because the RPC handler’s error messages are not validated.
+
+30. **Gateway secret management via agenix**  
+    - **Files:** `nixos/modules/secrets-management.md`, `nixos/modules/default.nix`.  
+    - **Steps:** ensure gateway-related secrets (tokens, TLS certs) are provisioned through agenix instead of raw env vars; document rotation.  
+    - **Tests:** NixOS VM test verifying services refuse to start when secrets missing; fails now because they happily read env defaults.
+
+31. **Better documentation surfacing for watchers**  
+    - **Files:** `crate/satellites/sinex-system-satellite/doc/README.md`, workspace docs.  
+    - **Steps:** explain how each watcher works, configuration knobs, and failure behavior; currently the README doesn’t mention the real implementations, leading to confusion.  
+    - **Tests:** documentation lint or manual review (no automated failure today), but include this task so we update the docs alongside code.
+
+32. **Upgrade plan for gateway/test infra**  
+    - **Files:** `docs/testing-priorities-and-roadmap.md`.  
+    - **Steps:** fold the new gateway/system tasks into that roadmap so engineers know the order of operations; ensures the plan stays in sync with this TODO file.  
+    - **Tests:** manual verification.
+
+## SQL Ergonomics Sweep
+
+33. **Remove remaining SeaQuery call sites (outside schema/migration code)** — ✅ *Completed in `Range-aware replays and cascade repository refactor` follow-up*  
+    - **Status:** `seaquery_helpers.rs` modules/tests were removed and `repositories_common` now builds SQL via `format!`; only schema/migration crates retain SeaQuery.  
+    - **Regression Test:** `cargo check` / `just check` ensures no `sea_query` references remain under `sinex-core` outside migrations; add `rg "sea_query" crate/lib/sinex-core` CI guard if desired.
+
+34. **Sweep for aliased IDs (`SELECT id AS foo_id`) and align with schema names**  
+    - **Files:** workspace-wide search across `*.rs`, `*.sql`, and `.sqlx` definitions.  
+    - **Steps:** replace ad-hoc aliases with direct column names (relying on struct field renames or `FromRow` annotations); regenerate `.sqlx` cache.  
+    - **Tests:** `cargo check`/`just check` should fail before the sweep wherever structs expect aliased names.
+
+35. **Adopt shared fixture constants across remaining test suites**  
+    - **Files:** `crate/lib/sinex-test-utils/src/constants.rs`, all tests still hard-coding sources/types (search for `"repo-test"`, `"query.safety"`, etc.).  
+    - **Steps:** expand the constants module as needed and update downstream tests to import via the prelude; consider a lint/CI check that flags the old literals.  
+    - **Tests:** grep/CI step proving the old strings no longer appear; as interim guard, add a test that fails if the constants aren’t used in representative suites.
