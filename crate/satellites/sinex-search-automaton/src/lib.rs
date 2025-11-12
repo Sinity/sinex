@@ -42,7 +42,7 @@ mod common {
 
 use crate::common::*;
 use serde_json::json;
-use sinex_core::{environment, Ulid};
+use sinex_core::{environment, types::Result as CoreResult, Ulid};
 use sinex_satellite_sdk::{
     confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
     event_processor::EventTransport,
@@ -416,7 +416,7 @@ impl SearchAutomaton {
         &self,
         db_pool: &PgPool,
         end_time: DateTime<Utc>,
-    ) -> Result<Vec<Event<JsonValue>>, sinex_core::SinexError> {
+    ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time =
             end_time - ChronoDuration::seconds(self.config.indexing_window_seconds.max(60) as i64);
 
@@ -999,6 +999,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_core::types::Id;
+    use sinex_test_utils::sinex_test;
     use tokio::runtime::Runtime;
 
     fn make_event(event_type: &str, minutes_ago: i64, content: &str) -> Event<JsonValue> {
@@ -1013,8 +1014,8 @@ mod tests {
         event
     }
 
-    #[test]
-    fn capture_events_prunes_deduplicates() {
+    #[sinex_test]
+    fn capture_events_prunes_deduplicates() -> color_eyre::Result<()> {
         let mut automaton = SearchAutomaton::new();
         let first = make_event("document.created", 10, "hello world");
         let mut duplicate = first.clone();
@@ -1023,19 +1024,21 @@ mod tests {
         automaton.capture_events(vec![first.clone(), duplicate]);
         assert_eq!(automaton.recent_events.len(), 1);
         assert_eq!(automaton.search_index.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn search_index_event_contains_summary() {
+    #[sinex_test]
+    fn search_index_event_contains_summary() -> color_eyre::Result<()> {
         let mut automaton = SearchAutomaton::new();
         let event = make_event("document.created", 5, "contents for indexing");
         automaton.capture_events(vec![event]);
         let index_event = automaton.generate_search_index_event().unwrap();
         assert_eq!(index_event.event_type.to_string(), "search.index_built");
+        Ok(())
     }
 
-    #[test]
-    fn search_analytics_event_emitted() {
+    #[sinex_test]
+    fn search_analytics_event_emitted() -> color_eyre::Result<()> {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let mut automaton = SearchAutomaton::new();
@@ -1056,10 +1059,11 @@ mod tests {
                 "expected analytics event"
             );
         });
+        Ok(())
     }
 
-    #[test]
-    fn sparse_content_types_trigger_discoverability_event() {
+    #[sinex_test]
+    fn sparse_content_types_trigger_discoverability_event() -> color_eyre::Result<()> {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let mut automaton = SearchAutomaton::new();
@@ -1085,5 +1089,6 @@ mod tests {
                 "search.discoverability"
             );
         });
+        Ok(())
     }
 }
