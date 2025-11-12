@@ -25,7 +25,6 @@ pub mod examples;
 pub mod heartbeat;
 pub mod ingestion_helpers;
 pub mod jetstream_consumer;
-pub mod job_manager;
 pub mod lease_manager;
 pub mod lifecycle;
 pub mod nats_publisher;
@@ -34,7 +33,6 @@ pub mod preflight;
 pub mod prelude;
 pub mod replay;
 pub mod runtime;
-pub mod sensors;
 pub mod stage_as_you_go;
 pub mod stream_processor {
     pub use crate::runtime::stream::*;
@@ -53,19 +51,14 @@ pub use confirmation_handler::{
 };
 pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};
-pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
+pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
-pub use job_manager::{JobManager, JobManagerConfig, SensorExecutor, SensorJob, SensorType};
 pub use lease_manager::{LeaseManager, LeaseManagerConfig, LeaseStatus};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use nats_publisher::NatsPublisher;
 pub use replay::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
-};
-pub use sensors::{
-    AppendStreamConfig, AppendStreamSensor, BatchedPullSensor, MultiFileSensor,
-    ReplaceSnapshotSensor, TreeWatchConfig, TreeWatchSensor,
 };
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
