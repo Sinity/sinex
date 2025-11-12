@@ -61,6 +61,7 @@ Satellites publish events directly to NATS JetStream (`events.raw.*` subjects); 
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers
 - **NATS JetStream Ingestion**: Satellites publish directly to JetStream; ingestd acts as consumer/archiver
 - **Idempotency & Confirmation**: Message deduplication via NATS-Msg-Id headers; confirmation delivery for provisionals
+- **Confirmation + DLQ Subjects**: Ingestd publishes canonical confirmations on `events.confirmations.*` and dead-letter entries on `events.dlq.*`, so automata can wait for durable IDs and handle failures deterministically
 - **Schema Validation**: JSON Schema validation for event payloads
 - **Git-Annex Integration**: Large file storage for blobs (source material slices)
 - **NixOS Module**: First-class NixOS deployment support
@@ -261,6 +262,7 @@ devenv tasks run test:vm        # VM smoke tests
 ### Key Components
 - **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
 - **Schema & Taxonomy**: [`crate/lib/sinex-schema/doc/overview.md`](crate/lib/sinex-schema/doc/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+  - When any `EventPayload` changes, run `./scripts/schema-dev.sh generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
 - **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](crate/lib/sinex-satellite-sdk/doc/overview.md)
 
 ### For Contributors
@@ -272,21 +274,31 @@ devenv tasks run test:vm        # VM smoke tests
 ```
 sinex/
 ├── crate/                         # Rust workspace crates
-│   ├── sinex-core/               # Core traits and types
-│   ├── sinex-db/                 # Database layer
-│   ├── sinex-satellite-sdk/      # SDK for building satellites
-│   ├── sinex-ingestd/            # Central ingestion daemon
-│   ├── sinex-gateway/            # API gateway service
-│   ├── sinex-fs-watcher/         # Filesystem event satellite
-│   ├── sinex-terminal-satellite/ # Terminal event satellite
-│   ├── sinex-desktop-satellite/  # Desktop event satellite
-│   ├── sinex-system-satellite/   # System event satellite
-│   └── sinex-terminal-command-canonicalizer/  # Automaton example
-├── crate/lib/sinex-schema/       # Database schema + migrations (sea-orm-migration)
-├── nixos/                        # NixOS module and deployment
-├── tests/                        # Comprehensive test suites
-├── cli/                          # Python query interface (exo.py)
-└── docs/                         # Documentation (architecture, roadmap, guides)
+│   ├── core/                      # Runtime binaries
+│   │   ├── sinex-ingestd/         # Central ingestion daemon
+│   │   ├── sinex-gateway/         # API gateway service
+│   │   └── sinex-rpc-dispatcher/  # RPC scan/explore worker
+│   ├── lib/                       # Shared libraries
+│   │   ├── sinex-core/            # Core types + database repositories
+│   │   ├── sinex-schema/          # Database schema + migrations (SeaORM)
+│   │   ├── sinex-processor-runtime/
+│   │   ├── sinex-satellite-sdk/
+│   │   ├── sinex-macros/
+│   │   ├── sinex-services/
+│   │   └── sinex-test-utils/
+│   └── satellites/                # Event satellites & automata
+│       ├── sinex-terminal-satellite/
+│       ├── sinex-desktop-satellite/
+│       ├── sinex-system-satellite/
+│       ├── sinex-fs-watcher/
+│       ├── sinex-terminal-command-canonicalizer/
+│       ├── sinex-health-aggregator/
+│       └── sinex-document-ingestor/
+├── schemas/                       # Generated JSON schemas for GitOps
+├── tests/e2e/                     # Workspace-level integration suites
+├── cli/                           # Python query interface (exo.py)
+├── docs/                          # Architecture, roadmap, and guide material
+└── nixos/                         # NixOS module and deployment files
 ```
 
 ## 🤝 Contributing
