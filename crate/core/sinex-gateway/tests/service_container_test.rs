@@ -3,9 +3,10 @@
 //! Tests the initialization and dependency management of all services
 //! including AnalyticsService, ContentService, PkmService, and SearchService.
 
-use color_eyre::eyre::Result;
+use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -23,7 +24,7 @@ fn should_run_gateway_integration() -> bool {
 /// Test successful initialization with valid database URL
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_initialization_success() -> Result<()> {
+async fn test_service_container_initialization_success() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }
@@ -62,7 +63,7 @@ async fn test_service_container_initialization_success() -> Result<()> {
 /// Test initialization with DATABASE_URL from environment
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_env_database_url() -> Result<()> {
+async fn test_service_container_env_database_url() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }
@@ -178,7 +179,7 @@ async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()
 /// Test service container cloning
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_clone() -> Result<()> {
+async fn test_service_container_clone() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }
@@ -219,7 +220,7 @@ async fn test_service_container_clone() -> Result<()> {
 /// Test annex path configuration
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_annex_path_config() -> Result<()> {
+async fn test_service_container_annex_path_config() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }
@@ -256,7 +257,7 @@ async fn test_service_container_annex_path_config() -> Result<()> {
 /// Test concurrent service container initialization
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_concurrent_initialization() -> Result<()> {
+async fn test_service_container_concurrent_initialization() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }
@@ -273,7 +274,7 @@ async fn test_service_container_concurrent_initialization() -> Result<()> {
         async move { ServiceContainer::new(Some(url)).await }
     });
 
-    let results: Vec<Result<ServiceContainer>> = futures::future::join_all(futures).await;
+    let results: Vec<EyreResult<ServiceContainer>> = futures::future::join_all(futures).await;
 
     // All should succeed
     for (i, result) in results.iter().enumerate() {
@@ -290,7 +291,7 @@ async fn test_service_container_concurrent_initialization() -> Result<()> {
 /// Test service Arc reference counting
 #[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
-async fn test_service_container_arc_references() -> Result<()> {
+async fn test_service_container_arc_references() -> TestResult<()> {
     if !should_run_gateway_integration() {
         return Ok(());
     }

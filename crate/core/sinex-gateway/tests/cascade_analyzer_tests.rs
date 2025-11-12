@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{CascadeAnalysis, IntegrityViolation, Severity, ViolationType};
+use sinex_test_utils::{sinex_test, TestContext};
 
-#[tokio::test]
-async fn cascade_analysis_structure_holds_basic_invariants() {
+#[sinex_test]
+async fn cascade_analysis_structure_holds_basic_invariants() -> color_eyre::Result<()> {
     let analysis = CascadeAnalysis {
         max_depth: 5,
         depth_histogram: HashMap::from([(0, 10), (1, 20), (2, 15)]),
@@ -17,10 +18,12 @@ async fn cascade_analysis_structure_holds_basic_invariants() {
     assert_eq!(analysis.max_depth, 5);
     assert_eq!(analysis.total_affected, 45);
     assert_eq!(analysis.depth_histogram.get(&1), Some(&20));
+
+    Ok(())
 }
 
-#[test]
-fn violation_type_and_severity_round_trip() {
+#[sinex_test]
+async fn violation_type_and_severity_round_trip() -> color_eyre::Result<()> {
     let violation = IntegrityViolation {
         archived_event_id: Ulid::new(),
         live_event_id: Ulid::new(),
@@ -33,4 +36,6 @@ fn violation_type_and_severity_round_trip() {
         ViolationType::LiveToArchived
     ));
     assert!(matches!(violation.severity, Severity::Critical));
+
+    Ok(())
 }

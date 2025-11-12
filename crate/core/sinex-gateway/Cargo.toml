@@ -18,6 +18,7 @@ sinex-services = { path = "../../lib/sinex-services" }
 # sinex-annex folded into sinex-satellite-sdk
 # sinex-telemetry folded into sinex-core
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+async-trait = { workspace = true }
 
 # Database
 sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
@@ -27,9 +28,9 @@ tokio = { workspace = true, features = ["full"] }
 
 # Web framework for RPC server
 axum = { workspace = true }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors"] }
-hyper = { version = "1.0", features = ["server"] }
+tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }
+tower-http = { version = "0.6", features = ["cors", "limit"] }
+hyper = { version = "1.0", features = ["server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server", "service"] }
 tokio-stream = { workspace = true, features = ["net"] }
 
@@ -60,3 +61,5 @@ chrono = { workspace = true }
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 tempfile = "3.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls"] }
+which = "6"

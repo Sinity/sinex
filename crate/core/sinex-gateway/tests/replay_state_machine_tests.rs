@@ -1,9 +1,11 @@
 use chrono::{TimeZone, Utc};
+use color_eyre::Result;
 use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_test_utils::{sinex_test, TestContext};
 
-#[test]
-fn state_transitions_follow_rules() {
+#[sinex_test]
+async fn state_transitions_follow_rules() -> Result<()> {
     assert!(ReplayState::Planning.can_transition_to(ReplayState::Previewed));
     assert!(ReplayState::Previewed.can_transition_to(ReplayState::Approved));
     assert!(ReplayState::Approved.can_transition_to(ReplayState::Executing));
@@ -18,10 +20,12 @@ fn state_transitions_follow_rules() {
     assert!(ReplayState::Failed.is_terminal());
     assert!(ReplayState::Cancelled.is_terminal());
     assert!(!ReplayState::Executing.is_terminal());
+
+    Ok(())
 }
 
-#[test]
-fn checkpoint_serialization_round_trips() {
+#[sinex_test]
+async fn checkpoint_serialization_round_trips() -> Result<()> {
     let checkpoint = ReplayCheckpoint {
         processed_events: 12_345,
         total_events: 50_000,
@@ -31,18 +35,20 @@ fn checkpoint_serialization_round_trips() {
         updated_at: Utc::now(),
     };
 
-    let json = serde_json::to_string(&checkpoint).unwrap();
-    let deserialized: ReplayCheckpoint = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&checkpoint)?;
+    let deserialized: ReplayCheckpoint = serde_json::from_str(&json)?;
 
     assert_eq!(checkpoint.processed_events, deserialized.processed_events);
     assert_eq!(checkpoint.total_events, deserialized.total_events);
     assert_eq!(checkpoint.last_event_id, deserialized.last_event_id);
     assert_eq!(checkpoint.batch_number, deserialized.batch_number);
     assert_eq!(checkpoint.savepoint_id, deserialized.savepoint_id);
+
+    Ok(())
 }
 
-#[test]
-fn checkpoint_serialization_handles_none() {
+#[sinex_test]
+async fn checkpoint_serialization_handles_none() -> Result<()> {
     let checkpoint = ReplayCheckpoint {
         processed_events: 100,
         total_events: 1_000,
@@ -52,16 +58,18 @@ fn checkpoint_serialization_handles_none() {
         updated_at: Utc::now(),
     };
 
-    let json = serde_json::to_string(&checkpoint).unwrap();
-    let deserialized: ReplayCheckpoint = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&checkpoint)?;
+    let deserialized: ReplayCheckpoint = serde_json::from_str(&json)?;
 
     assert!(deserialized.last_event_id.is_none());
     assert!(deserialized.savepoint_id.is_none());
     assert_eq!(checkpoint.processed_events, deserialized.processed_events);
+
+    Ok(())
 }
 
-#[test]
-fn scope_serialization_round_trips() {
+#[sinex_test]
+async fn scope_serialization_round_trips() -> Result<()> {
     use std::collections::HashMap;
 
     let mut filters = HashMap::new();
@@ -78,20 +86,22 @@ fn scope_serialization_round_trips() {
         filters,
     };
 
-    let json = serde_json::to_string(&scope).unwrap();
-    let deserialized: ReplayScope = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&scope)?;
+    let deserialized: ReplayScope = serde_json::from_str(&json)?;
 
     assert_eq!(scope.processor_id, deserialized.processor_id);
     assert_eq!(scope.time_window, deserialized.time_window);
     assert_eq!(
         scope.material_filter.as_ref().map(|v| v.len()),
-        deserialized.material_filter.as_ref().map(|v| v.len())
+        deserialized.material_filter.as_ref().map(|v| v.len()),
     );
     assert_eq!(scope.filters.len(), deserialized.filters.len());
+
+    Ok(())
 }
 
-#[test]
-fn operations_default_to_planning() {
+#[sinex_test]
+async fn operations_default_to_planning() -> Result<()> {
     use std::collections::HashMap;
 
     let scope = ReplayScope {
@@ -122,10 +132,12 @@ fn operations_default_to_planning() {
     assert_eq!(operation.scope.processor_id, scope.processor_id);
     assert!(operation.approved_by.is_none());
     assert!(operation.finished_at.is_none());
+
+    Ok(())
 }
 
-#[test]
-fn states_serialize_to_expected_strings() {
+#[sinex_test]
+async fn states_serialize_to_expected_strings() -> Result<()> {
     let states = vec![
         ReplayState::Planning,
         ReplayState::Previewed,
@@ -138,8 +150,8 @@ fn states_serialize_to_expected_strings() {
     ];
 
     for state in states {
-        let json = serde_json::to_string(&state).unwrap();
-        let deserialized: ReplayState = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&state)?;
+        let deserialized: ReplayState = serde_json::from_str(&json)?;
 
         match state {
             ReplayState::Planning => assert_eq!(json, "\"Planning\""),
@@ -154,4 +166,6 @@ fn states_serialize_to_expected_strings() {
 
         assert_eq!(format!("{:?}", state), format!("{:?}", deserialized));
     }
+
+    Ok(())
 }
