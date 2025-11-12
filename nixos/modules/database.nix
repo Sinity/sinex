@@ -5,6 +5,7 @@ with lib;
 let
   cfg = config.services.sinex;
   db = cfg.database;
+  allDatabases = unique ([ db.name ] ++ db.extraDatabases);
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && cfg.core.enable;
@@ -44,12 +45,12 @@ let
   computedMaxConnections = max (perServiceConnections + 10) baselineConnections;
 
   postgresqlPkg = db.package;
-  postgresqlPackages =
-    if postgresqlPkg ? pkgs then postgresqlPkg.pkgs else pkgs.postgresql16Packages;
+  postgresqlPackages = pkgs.postgresql16Packages;
 
   extensionPackages = unique (
     optionals (postgresqlPackages ? timescaledb) [ postgresqlPackages.timescaledb ]
     ++ optionals (postgresqlPackages ? pgvector) [ postgresqlPackages.pgvector ]
+    ++ optionals (postgresqlPackages ? pg_jsonschema) [ postgresqlPackages.pg_jsonschema ]
     ++ optionals (postgresqlPackages ? pgx_ulid) [ postgresqlPackages.pgx_ulid ]
   );
 
@@ -113,12 +114,30 @@ in
       services.postgresql = {
         enable = true;
         package = mkForce postgresqlPkg;
-        ensureDatabases = mkDefault [ db.name ];
+        ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
         extensions = extensionPackages;
         settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
       };
+    })
+
+    (mkIf (db.enable && db.autoSetup) {
+      systemd.services.postgresql-setup.script = lib.mkAfter ''
+        ensure_extension() {
+          local dbName="$1"
+          local extName="$2"
+          echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
+          psql -v ON_ERROR_STOP=1 -d "$dbName" -c "CREATE EXTENSION IF NOT EXISTS \"$extName\"" >/dev/null
+        }
+
+        for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
+          ensure_extension "$dbName" "timescaledb"
+          ensure_extension "$dbName" "pg_jsonschema"
+          ensure_extension "$dbName" "vector"
+          ensure_extension "$dbName" "ulid"
+        done
+      '';
     })
 
     (mkIf (cfg.enable && db.migration.enable) {
