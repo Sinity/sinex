@@ -105,7 +105,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_events_provenance_xor_constraint() -> Result<()> {
+    async fn test_events_provenance_xor_constraint() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -183,7 +183,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_events_string_length_constraints() -> Result<()> {
+    async fn test_events_string_length_constraints() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -265,7 +265,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_offset_kind_constraint() -> Result<()> {
+    async fn test_offset_kind_constraint() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -324,7 +324,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_foreign_key_constraints() -> Result<()> {
+    async fn test_foreign_key_constraints() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -380,7 +380,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_unique_constraints() -> Result<()> {
+    async fn test_unique_constraints() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -448,7 +448,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_not_null_constraints() -> Result<()> {
+    async fn test_not_null_constraints() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -500,7 +500,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_json_payload_validation() -> Result<()> {
+    async fn test_json_payload_validation() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -541,7 +541,7 @@ mod constraint_validation_tests {
     }
 
     #[sinex_test]
-    async fn test_array_constraints() -> Result<()> {
+    async fn test_array_constraints() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
@@ -624,7 +624,7 @@ mod performance_constraint_tests {
     use super::*;
 
     #[sinex_test]
-    async fn test_constraint_check_performance() -> Result<()> {
+    async fn test_constraint_check_performance() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
 
@@ -672,7 +672,7 @@ mod performance_constraint_tests {
     }
 
     #[sinex_test]
-    async fn test_index_constraint_interaction() -> Result<()> {
+    async fn test_index_constraint_interaction() -> TestResult<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
 
