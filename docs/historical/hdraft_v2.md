@@ -1,5 +1,6 @@
+----
 
----
+> **Historical note:** Legacy vision document predating the JetStream-only rollout. Concepts like sensd/gRPC/outbox remain here for reference; see `docs/way.md` for current architecture.
 
 **Sinnix Exocortex: The Sentient Archive (Definitive Document v2.1)**
 =====================================================================

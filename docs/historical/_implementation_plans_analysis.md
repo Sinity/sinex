@@ -1,5 +1,7 @@
 # Sinex Implementation Plans and Roadmap Analysis
 
+> **Historical note:** Reflects planning prior to the JetStream-only transition. Treat sensd/gRPC references as archival; current roadmap is in `docs/way.md` and `docs/roadmap/`.
+
 **Analysis Date**: 2025-07-23
 **Focus**: Implementation plans, development roadmaps, priorities, and technical strategies
 **Status**: Comprehensive analysis of project planning documents
