@@ -3,9 +3,9 @@ name: Schema Compatibility Check
 on:
   pull_request:
     paths:
-      - 'crate/sinex-events/src/payloads/**'
-      - 'crate/sinex-events/src/event.rs'
-      - 'crate/sinex-macros/src/event_payload.rs'
+      - 'schemas/**'
+      - 'crate/lib/sinex-core/src/types/events/**'
+      - 'scripts/check-schema-compatibility.sh'
 
 jobs:
   check-schemas:
@@ -29,15 +29,6 @@ jobs:
           chmod +x scripts/check-schema-compatibility.sh
           CI_BASE_BRANCH=${{ github.base_ref }} ./scripts/check-schema-compatibility.sh
 
-      - name: Generate schema report
-        if: always()
-        run: |
-          echo "## Schema Compatibility Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f schema-report.md ]; then
-            cat schema-report.md >> $GITHUB_STEP_SUMMARY
-          fi
-
       - name: Comment on PR
         if: failure()
         uses: actions/github-script@v7
@@ -47,9 +38,8 @@ jobs:
             ❌ **Schema Compatibility Check Failed**
             
             Please ensure:
-            - Version numbers are incremented for breaking changes
-            - \`evolves_from\` is specified for major version changes
-            - Breaking changes are documented with \`breaking_change\` attribute
+            - Any breaking changes get a schema version bump
+            - Optional additions remain backward compatible
             
             Run \`./scripts/check-schema-compatibility.sh\` locally for details.
             `;

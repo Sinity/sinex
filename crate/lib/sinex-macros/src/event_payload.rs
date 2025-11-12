@@ -1,8 +1,8 @@
 //! EventPayload derive macro implementation
 
 use proc_macro2::TokenStream;
-use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Error};
+use quote::{format_ident, quote};
+use syn::{parse_macro_input, Data, DeriveInput, Error, Fields, Ident, Type};
 
 pub fn derive_event_payload_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -34,6 +34,17 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
     let event_type = attrs.event_type;
     let version = attrs.version;
 
+    let builder_methods = generate_builder_methods(&input);
+    let builder_impl = if builder_methods.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            impl #name {
+                #(#builder_methods)*
+            }
+        }
+    };
+
     // Generate the implementation
     // We use crate:: to work within sinex_types itself
     let expanded = quote! {
@@ -62,9 +73,79 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
         };
+
+        #builder_impl
     };
 
     Ok(expanded)
+}
+
+fn generate_builder_methods(input: &DeriveInput) -> Vec<TokenStream> {
+    let mut methods = Vec::new();
+
+    let Data::Struct(data_struct) = &input.data else {
+        return methods;
+    };
+
+    let Fields::Named(fields_named) = &data_struct.fields else {
+        return methods;
+    };
+
+    for field in &fields_named.named {
+        let Some(field_ident) = &field.ident else {
+            continue;
+        };
+        let method_ident = format_ident!("with_{}", field_ident);
+        let doc = format!("Builder-style method for `{}'", field_ident);
+        let setter = build_setter(&method_ident, field_ident, &field.ty, &doc);
+        methods.push(setter);
+    }
+
+    methods
+}
+
+fn build_setter(method_ident: &Ident, field_ident: &Ident, ty: &Type, doc: &str) -> TokenStream {
+    if let Some(inner) = option_inner_type(ty) {
+        quote! {
+            #[doc = #doc]
+            pub fn #method_ident(mut self, value: impl Into<#inner>) -> Self {
+                self.#field_ident = Some(value.into());
+                self
+            }
+        }
+    } else {
+        quote! {
+            #[doc = #doc]
+            pub fn #method_ident(mut self, value: impl Into<#ty>) -> Self {
+                self.#field_ident = value.into();
+                self
+            }
+        }
+    }
+}
+
+fn option_inner_type(ty: &Type) -> Option<&Type> {
+    if let Type::Path(type_path) = ty {
+        type_path.path.segments.last().and_then(|segment| {
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    args.args.first().and_then(|arg| {
+                        if let syn::GenericArgument::Type(inner_ty) = arg {
+                            Some(inner_ty)
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    } else {
+        None
+    }
 }
 
 struct EventPayloadAttrs {

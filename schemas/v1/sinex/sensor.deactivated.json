@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "events_generated": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "satellite": {
+      "type": "string"
+    },
+    "sensor": {
+      "type": "string"
+    },
+    "uptime_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "events_generated",
+    "reason",
+    "satellite",
+    "sensor",
+    "uptime_seconds"
+  ],
+  "title": "SensorDeactivatedPayload",
+  "type": "object"
+}

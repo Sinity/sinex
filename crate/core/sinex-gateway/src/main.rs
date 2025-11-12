@@ -19,6 +19,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 mod handlers;
 mod native_messaging;
+mod replay_control;
+mod replay_state_machine;
 mod rpc_server;
 mod service_container;
 

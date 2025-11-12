@@ -108,6 +108,11 @@ pub struct TestContext {
 }
 
 impl TestContext {
+    /// Backwards-compatible accessor for the shared database pool.
+    pub fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+
     pub(crate) fn sanitize_payload(value: &mut JsonValue) {
         match value {
             JsonValue::String(s) => {

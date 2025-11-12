@@ -8,24 +8,25 @@ suites are organised, and captures the conventions that the CI gate enforces.
 
 ```bash
 # Fast feedback (unit + library integration)
-just test
+devenv tasks run dev:test
 
 # Full workspace matrix (all crates, Nextest)
-just test-all
+cargo nextest run --workspace --profile reliable
 
 # Targeted runs
 cargo nextest run --workspace --test <binary>
 cargo nextest run --workspace --profile <profile-name>
 
 # Before opening a PR
-just pre-commit
+devenv tasks run dev:test
 ```
 
 **Prerequisites:** run `nix develop` (or source your local toolchain) so that
 TimescaleDB/PostgreSQL, the `nats-server` binary, and the Cargo toolchain are
 available. `TestContext` connects to the local Postgres socket at
 `/run/postgresql` and spins up an ephemeral JetStream instance by shelling out
-to `nats-server`, so both services must be reachable before running `just test`.
+to `nats-server`, so both services must be reachable before running the Nextest
+suite.
 
 If you are inside the Nix dev shell (`nix develop`), `nats-server` is already
 on `PATH` (see `flake.nix` exporting `NATS_SERVER_BIN`). For other toolchains,
@@ -74,15 +75,13 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
   propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
 - **Fixtures:** prefer the fixture namespaces under `sinex_test_utils::fixtures`
   rather than re-creating bespoke data builders. When you need a satellite
-  runtime for integration coverage, include the shared builder from
-  `sinex-satellite-sdk/tests/support/runtime.rs` instead of wiring pools and
-  emitters manually:
+  runtime for integration coverage, reach for the shared builder exported by
+  `sinex_test_utils::TestRuntimeBuilder`. It provisions telemetry emitters,
+  checkpoint managers, and NATS wiring automatically so tests exercise the
+  production pipeline end-to-end:
 
   ```rust
-  #[path = "support/runtime.rs"]
-  mod runtime;
-
-  use runtime::TestRuntimeBuilder;
+  use sinex_test_utils::TestRuntimeBuilder;
 
   let test_runtime = TestRuntimeBuilder::new(&ctx, "my-service")
       .with_dry_run(true)
@@ -90,8 +89,10 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
       .await?;
   ```
 - **Property tests:** place proptest suites alongside the crate they fuzz (see
-  below). Capture any new failing seeds in that crate’s
-  `tests/property/*.proptest-regressions` files.
+  below). Use `#[sinex_test(proptest)]` so the harness provides tracing,
+  timeouts, and `TestContext`; add `cases = 256` (or any other number) to fix
+  the `PROPTEST_CASES` used by `TestRunner`. Capture any new failing seeds in
+  that crate’s `tests/property/*.proptest-regressions` files.
 
 ## Property Testing Guidelines
 
@@ -126,11 +127,11 @@ Nextest profiles are defined in `.config/nextest.toml`:
 | `debug` | Single-threaded with full stdout/stderr |
 | `ci-parallel` | High-parallel CI runners |
 
-Invoke with `cargo nextest run --profile <name>` or use the matching `just`
-alias (`just test-fast`, `just test-reliable`, …).
+Invoke with `cargo nextest run --profile <name>` (for example,
+`cargo nextest run --profile fast`).
 
 Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
-`cargo bench --features bench` or `just bench-*` helpers for comparisons.
+`cargo bench --features bench` for comparisons.
 
 ## Authoritative References
 
@@ -140,14 +141,15 @@ Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
   Nextest configuration, and CI expectations.
 - `tests/e2e/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
   commands.
-- `docs/documentation-guidelines.md` – documentation checklist (ensure `just
-  check` and `just test` pass after moving or adding tests).
+- `docs/documentation-guidelines.md` – documentation checklist (ensure
+  `devenv tasks run dev:check` and `cargo nextest run --workspace` pass after
+  moving or adding tests).
 
 ## If You Only Read One Section
 
 1. Put new tests in the crate that owns the behaviour.
 2. Reach for `TestContext` utilities before writing bespoke scaffolding.
-3. Keep the quick-start commands in muscle memory (`just test`, `just test-all`,
-   `just pre-commit`).
+3. Keep the quick-start commands in muscle memory (`devenv tasks run dev:test`
+   and `cargo nextest run --workspace`).
 4. Link back to this handbook (or the crate-level docs above) when opening PRs
    so reviewers know which conventions you followed.

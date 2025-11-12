@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "dbus_enabled": {
+      "type": "boolean"
+    },
+    "journal_enabled": {
+      "type": "boolean"
+    },
+    "start_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "systemd_enabled": {
+      "type": "boolean"
+    },
+    "udev_enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "dbus_enabled",
+    "journal_enabled",
+    "start_time",
+    "systemd_enabled",
+    "udev_enabled"
+  ],
+  "title": "SystemMonitoringStartedPayload",
+  "type": "object"
+}

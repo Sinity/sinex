@@ -1,0 +1,793 @@
+use crate::db::repositories::DbPoolExt;
+use crate::types::ulid::Ulid;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use color_eyre::eyre::{eyre, Result};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
+use std::collections::HashMap;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
+
+/// Helper function to extract lock ID from ULID for advisory locks
+#[allow(dead_code)]
+fn ulid_to_lock_id(ulid: Ulid) -> i64 {
+    let bytes = ulid.to_bytes();
+    i64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
+}
+
+/// Replay operation states with well-defined transitions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text")]
+pub enum ReplayState {
+    /// Initial state, gathering scope and planning
+    #[sqlx(rename = "planning")]
+    Planning,
+    /// Preview computed, awaiting approval
+    #[sqlx(rename = "previewed")]
+    Previewed,
+    /// Approved for execution
+    #[sqlx(rename = "approved")]
+    Approved,
+    /// Active replay in progress
+    #[sqlx(rename = "executing")]
+    Executing,
+    /// Finalizing changes
+    #[sqlx(rename = "committing")]
+    Committing,
+    /// Successfully finished
+    #[sqlx(rename = "completed")]
+    Completed,
+    /// Error occurred
+    #[sqlx(rename = "failed")]
+    Failed,
+    /// User cancelled
+    #[sqlx(rename = "cancelled")]
+    Cancelled,
+}
+
+impl ReplayState {
+    /// Check if transition to target state is valid
+    pub fn can_transition_to(&self, target: ReplayState) -> bool {
+        match (self, target) {
+            // From Planning
+            (ReplayState::Planning, ReplayState::Previewed) => true,
+            (ReplayState::Planning, ReplayState::Cancelled) => true,
+
+            // From Previewed
+            (ReplayState::Previewed, ReplayState::Approved) => true,
+            (ReplayState::Previewed, ReplayState::Cancelled) => true,
+            (ReplayState::Previewed, ReplayState::Planning) => true, // Re-plan
+
+            // From Approved
+            (ReplayState::Approved, ReplayState::Executing) => true,
+            (ReplayState::Approved, ReplayState::Cancelled) => true,
+
+            // From Executing
+            (ReplayState::Executing, ReplayState::Committing) => true,
+            (ReplayState::Executing, ReplayState::Failed) => true,
+            (ReplayState::Executing, ReplayState::Cancelled) => true,
+            (ReplayState::Executing, ReplayState::Executing) => true, // Pause/resume
+
+            // From Committing
+            (ReplayState::Committing, ReplayState::Completed) => true,
+            (ReplayState::Committing, ReplayState::Failed) => true,
+
+            // Terminal states can't transition
+            (ReplayState::Completed, _) => false,
+            (ReplayState::Failed, ReplayState::Planning) => true, // Retry
+            (ReplayState::Cancelled, ReplayState::Planning) => true, // Restart
+
+            _ => false,
+        }
+    }
+
+    /// Check if state is terminal
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled
+        )
+    }
+}
+
+/// Scope defining what to replay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayScope {
+    /// Processor ID to replay
+    pub processor_id: String,
+    /// Optional time window
+    pub time_window: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    /// Optional material filter
+    pub material_filter: Option<Vec<Ulid>>,
+    /// Additional filters as JSON
+    pub filters: HashMap<String, serde_json::Value>,
+}
+
+/// Checkpoint for resumable execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayCheckpoint {
+    /// Number of events processed
+    pub processed_events: u64,
+    /// Total events to process
+    pub total_events: u64,
+    /// Last processed event ID
+    pub last_event_id: Option<Ulid>,
+    /// Current batch number
+    pub batch_number: u32,
+    /// PostgreSQL savepoint ID if in transaction
+    pub savepoint_id: Option<String>,
+    /// Timestamp of last update
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Default for ReplayCheckpoint {
+    fn default() -> Self {
+        Self {
+            processed_events: 0,
+            total_events: 0,
+            last_event_id: None,
+            batch_number: 0,
+            savepoint_id: None,
+            updated_at: Utc::now(),
+        }
+    }
+}
+
+/// Complete replay operation record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayOperation {
+    /// Unique operation ID
+    pub operation_id: Ulid,
+    /// Current state
+    pub state: ReplayState,
+    /// Replay scope
+    pub scope: ReplayScope,
+    /// Preview results (if computed)
+    pub preview_summary: Option<serde_json::Value>,
+    /// Execution checkpoint
+    pub checkpoint: ReplayCheckpoint,
+    /// Who created this operation
+    pub actor: String,
+    /// When operation was created
+    pub created_at: DateTime<Utc>,
+    /// Who approved (if approved)
+    pub approved_by: Option<String>,
+    /// When approved
+    pub approved_at: Option<DateTime<Utc>>,
+    /// Which node is executing
+    pub executor_node: Option<String>,
+    /// When execution started
+    pub started_at: Option<DateTime<Utc>>,
+    /// When execution finished
+    pub finished_at: Option<DateTime<Utc>>,
+    /// Outcome (success, error, cancelled)
+    pub outcome: Option<String>,
+    /// Error details if failed
+    pub error_details: Option<String>,
+}
+
+/// State machine for managing replay operations
+pub struct ReplayStateMachine {
+    pool: PgPool,
+}
+
+impl ReplayStateMachine {
+    fn resolve_time_window(scope: &ReplayScope) -> (DateTime<Utc>, DateTime<Utc>) {
+        if let Some(window) = scope.time_window {
+            window
+        } else {
+            let end = Utc::now();
+            let start = end - ChronoDuration::hours(24);
+            (start, end)
+        }
+    }
+
+    fn build_filter_query<'a>(
+        scope: &'a ReplayScope,
+        window: (DateTime<Utc>, DateTime<Utc>),
+        base: &'static str,
+    ) -> QueryBuilder<'a, Postgres> {
+        let mut builder = QueryBuilder::<Postgres>::new(base);
+        builder.push(" WHERE source = ");
+        builder.push_bind(scope.processor_id.as_str());
+        builder.push(" AND ts_orig >= ");
+        builder.push_bind(window.0);
+        builder.push(" AND ts_orig <= ");
+        builder.push_bind(window.1);
+
+        if let Some(materials) = scope.material_filter.as_ref() {
+            let ids: Vec<Uuid> = materials
+                .iter()
+                .map(|id| Uuid::from_bytes(id.to_bytes()))
+                .collect();
+            if !ids.is_empty() {
+                builder.push(" AND source_material_id = ANY(");
+                builder.push_bind(ids);
+                builder.push(")");
+            }
+        }
+
+        if let Some(event_types) = scope.filters.get("event_types").and_then(|v| v.as_array()) {
+            let names: Vec<String> = event_types
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            if !names.is_empty() {
+                builder.push(" AND event_type = ANY(");
+                builder.push_bind(names);
+                builder.push(")");
+            }
+        }
+
+        builder
+    }
+
+    /// Create new state machine
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new replay operation
+    pub async fn create_operation(
+        &self,
+        scope: ReplayScope,
+        actor: String,
+    ) -> Result<ReplayOperation> {
+        let now = Utc::now();
+        let state_repo = self.pool.state();
+        let op_id = state_repo
+            .start_replay_operation(
+                &actor,
+                serde_json::to_value(&scope)?,
+                scope.time_window.clone(),
+            )
+            .await
+            .map_err(|e| eyre!("start_replay_operation failed: {}", e))?;
+        let operation_id = *op_id.as_ulid();
+
+        let mut operation = ReplayOperation {
+            operation_id,
+            state: ReplayState::Planning,
+            scope: scope.clone(),
+            preview_summary: None,
+            checkpoint: ReplayCheckpoint::default(),
+            actor: actor.clone(),
+            created_at: now,
+            approved_by: None,
+            approved_at: None,
+            executor_node: None,
+            started_at: None,
+            finished_at: None,
+            outcome: None,
+            error_details: None,
+        };
+        // Encode initial meta JSON into preview_summary column
+        let meta = MetaJson {
+            state: operation.state,
+            checkpoint: operation.checkpoint.clone(),
+            actor: operation.actor.clone(),
+            created_at: operation.created_at,
+            approved_by: operation.approved_by.clone(),
+            approved_at: operation.approved_at,
+            executor_node: operation.executor_node.clone(),
+            started_at: operation.started_at,
+            finished_at: operation.finished_at,
+            outcome: operation.outcome.clone(),
+            error_details: operation.error_details.clone(),
+            preview: None,
+        };
+        let meta_json = serde_json::to_value(&meta)?;
+        operation.preview_summary = Some(meta_json.clone());
+
+        state_repo
+            .update_operation_meta(&op_id, "running", Some("planning"), meta_json)
+            .await
+            .map_err(|e| eyre!("update_operation_meta failed: {}", e))?;
+
+        info!(
+            "Created replay operation {} in Planning state",
+            operation.operation_id
+        );
+
+        Ok(operation)
+    }
+
+    /// Load existing operation
+    pub async fn load_operation(&self, operation_id: Ulid) -> Result<ReplayOperation> {
+        let row = sqlx::query(
+            "SELECT operator, scope, preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+
+        let operator: String = row.try_get("operator")?;
+        let scope_val: serde_json::Value = row.try_get("scope")?;
+        let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+        let meta_val = preview.unwrap_or(serde_json::json!({"state": "planning"}));
+
+        let op = Self::decode_meta_to_operation(operation_id, operator, scope_val, meta_val)?;
+        Ok(op)
+    }
+
+    /// Transition to new state
+    pub async fn transition(&self, operation_id: Ulid, new_state: ReplayState) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.transition_with_tx(&mut tx, operation_id, new_state)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Transition with existing transaction
+    pub async fn transition_with_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        operation_id: Ulid,
+        new_state: ReplayState,
+    ) -> Result<()> {
+        // Load current meta JSON
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid FOR UPDATE",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&mut **tx)
+        .await?;
+        let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+        let mut meta = Self::decode_meta_json(preview)?;
+
+        if !meta.state.can_transition_to(new_state) {
+            return Err(eyre!(
+                "Invalid state transition: {:?} -> {:?}",
+                meta.state,
+                new_state
+            ));
+        }
+
+        let now = Utc::now();
+        meta.state = new_state;
+        if meta.started_at.is_none() && matches!(new_state, ReplayState::Executing) {
+            meta.started_at = Some(now);
+        }
+        if matches!(
+            new_state,
+            ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled
+        ) {
+            meta.finished_at = Some(now);
+        }
+
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query(
+            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(status)
+        .bind(msg)
+        .bind(meta_json)
+        .execute(&mut **tx)
+        .await?;
+
+        info!("Transitioned operation {} to {:?}", operation_id, new_state);
+
+        Ok(())
+    }
+
+    /// Update preview summary
+    pub async fn update_preview(
+        &self,
+        operation_id: Ulid,
+        preview: serde_json::Value,
+    ) -> Result<()> {
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        if meta.state == ReplayState::Planning {
+            meta.state = ReplayState::Previewed;
+        }
+        meta.preview = Some(preview);
+        let meta_json = serde_json::to_value(&meta)?;
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        sqlx::query(
+            "UPDATE core.operations_log SET preview_summary = $2, result_status = $3, result_message = $4 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(meta_json)
+        .bind(status)
+        .bind(msg)
+        .execute(&self.pool)
+        .await?;
+
+        info!("Updated preview for operation {}", operation_id);
+        Ok(())
+    }
+
+    /// Generate a preview summary for a given scope
+    pub async fn generate_preview_summary(&self, scope: &ReplayScope) -> Result<serde_json::Value> {
+        let window = Self::resolve_time_window(scope);
+
+        let mut count_query = Self::build_filter_query(
+            scope,
+            window,
+            "SELECT COUNT(*)::bigint as total FROM core.events",
+        );
+        let total: i64 = count_query
+            .build_query_scalar::<Option<i64>>()
+            .fetch_one(&self.pool)
+            .await?
+            .unwrap_or(0);
+
+        let mut event_type_query = Self::build_filter_query(
+            scope,
+            window,
+            "SELECT event_type, COUNT(*)::bigint as count FROM core.events",
+        );
+        event_type_query.push(" GROUP BY event_type ORDER BY count DESC LIMIT 5");
+        let top_types: Vec<EventTypeCountRow> = event_type_query
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut material_summary = serde_json::Value::Null;
+        if let Some(materials) = scope.material_filter.as_ref() {
+            if !materials.is_empty() {
+                let mut material_query = Self::build_filter_query(
+                    scope,
+                    window,
+                    "SELECT COUNT(DISTINCT source_material_id)::bigint as count FROM core.events",
+                );
+                let distinct: i64 = material_query
+                    .build_query_scalar::<Option<i64>>()
+                    .fetch_one(&self.pool)
+                    .await?
+                    .unwrap_or(0);
+
+                material_summary = serde_json::json!({
+                    "requested": materials.len(),
+                    "observed": distinct,
+                });
+            }
+        }
+
+        let preview = serde_json::json!({
+            "processor_id": scope.processor_id,
+            "time_window": {
+                "start": window.0,
+                "end": window.1,
+            },
+            "total_events": total,
+            "top_event_types": top_types
+                .into_iter()
+                .map(|row| serde_json::json!({
+                    "event_type": row.event_type,
+                    "count": row.count,
+                }))
+                .collect::<Vec<_>>(),
+            "material_filter": material_summary,
+        });
+
+        Ok(preview)
+    }
+
+    /// Approve operation for execution
+    pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<()> {
+        let now = Utc::now();
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        if meta.state != ReplayState::Previewed {
+            return Err(eyre!("Operation must be in Previewed state to approve"));
+        }
+        meta.state = ReplayState::Approved;
+        meta.approved_by = Some(approver.clone());
+        meta.approved_at = Some(now);
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query(
+            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(status)
+        .bind(msg)
+        .bind(meta_json)
+        .execute(&self.pool)
+        .await?;
+
+        info!("Operation {} approved by {}", operation_id, approver);
+        Ok(())
+    }
+
+    /// Update checkpoint
+    pub async fn update_checkpoint(
+        &self,
+        operation_id: Ulid,
+        checkpoint: &ReplayCheckpoint,
+    ) -> Result<()> {
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        meta.checkpoint = checkpoint.clone();
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query(
+            "UPDATE core.operations_log SET preview_summary = $2 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(meta_json)
+        .execute(&self.pool)
+        .await?;
+
+        debug!(
+            "Updated checkpoint for operation {}: {}/{}",
+            operation_id, checkpoint.processed_events, checkpoint.total_events
+        );
+        Ok(())
+    }
+
+    /// Mark operation as failed
+    pub async fn mark_failed(&self, operation_id: Ulid, error: String) -> Result<()> {
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        meta.state = ReplayState::Failed;
+        meta.finished_at = Some(Utc::now());
+        meta.error_details = Some(error.clone());
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query(
+            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(status)
+        .bind(msg)
+        .bind(meta_json)
+        .execute(&self.pool)
+        .await?;
+
+        warn!("Operation {} failed: {}", operation_id, error);
+        Ok(())
+    }
+
+    /// Mark operation as cancelled
+    pub async fn cancel(&self, operation_id: Ulid, reason: String) -> Result<()> {
+        let row = sqlx::query(
+            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .fetch_one(&self.pool)
+        .await?;
+        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        if meta.state.is_terminal() {
+            return Ok(());
+        }
+        meta.state = ReplayState::Cancelled;
+        meta.finished_at = Some(Utc::now());
+        meta.outcome = Some("cancelled".into());
+        meta.error_details = Some(reason.clone());
+        let (status, msg) = Self::map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta)?;
+        sqlx::query(
+            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        )
+        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(status)
+        .bind(msg)
+        .bind(meta_json)
+        .execute(&self.pool)
+        .await?;
+
+        info!("Operation {} cancelled: {}", operation_id, reason);
+        Ok(())
+    }
+
+    /// Acquire distributed lock for operation
+    pub async fn acquire_execution_lock(
+        &self,
+        operation_id: Ulid,
+        executor_node: String,
+    ) -> Result<bool> {
+        // Use PostgreSQL advisory lock based on operation_id hash
+        // Convert first 8 bytes of ULID to i64 for lock ID
+        let bytes = operation_id.to_bytes();
+        let lock_id = i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
+
+        let acquired = sqlx::query!(
+            r#"
+            SELECT pg_try_advisory_lock($1) as acquired
+            "#,
+            lock_id,
+        )
+        .fetch_one(&self.pool)
+        .await?
+        .acquired
+        .unwrap_or(false);
+
+        if acquired {
+            // Update executor_node in meta JSON
+            let row = sqlx::query(
+                "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+            )
+            .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+            .fetch_one(&self.pool)
+            .await?;
+            let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+            meta.executor_node = Some(executor_node.clone());
+            let meta_json = serde_json::to_value(&meta)?;
+            sqlx::query(
+                "UPDATE core.operations_log SET preview_summary = $2 WHERE id::uuid = $1::uuid",
+            )
+            .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+            .bind(meta_json)
+            .execute(&self.pool)
+            .await?;
+
+            info!(
+                "Node {} acquired lock for operation {}",
+                executor_node, operation_id
+            );
+        }
+
+        Ok(acquired)
+    }
+
+    /// Release execution lock
+    pub async fn release_execution_lock(&self, operation_id: Ulid) -> Result<()> {
+        // Convert first 8 bytes of ULID to i64 for lock ID
+        let bytes = operation_id.to_bytes();
+        let lock_id = i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
+
+        sqlx::query!(
+            r#"
+            SELECT pg_advisory_unlock($1) as released
+            "#,
+            lock_id,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        debug!("Released lock for operation {}", operation_id);
+        Ok(())
+    }
+
+    /// List operations optionally filtered by state
+    pub async fn list_operations(
+        &self,
+        filter_state: Option<ReplayState>,
+    ) -> Result<Vec<ReplayOperation>> {
+        let rows = sqlx::query(
+            "SELECT id::uuid as id, operator, scope, preview_summary FROM core.operations_log WHERE operation_type = 'replay' ORDER BY id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut operations = Vec::new();
+        for row in rows {
+            let uuid: sqlx::types::Uuid = row.try_get("id")?;
+            let id_ulid = Ulid::from_bytes(*uuid.as_bytes())?;
+            let operator: String = row.try_get("operator")?;
+            let scope_val: serde_json::Value = row.try_get("scope")?;
+            let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+            let meta = Self::decode_meta_json(preview)?;
+
+            if let Some(target) = filter_state {
+                if meta.state != target {
+                    continue;
+                }
+            }
+
+            let op = Self::decode_meta_to_operation(
+                id_ulid,
+                operator,
+                scope_val,
+                serde_json::to_value(meta)?,
+            )?;
+            operations.push(op);
+        }
+
+        Ok(operations)
+    }
+}
+
+impl ReplayStateMachine {
+    fn map_state_to_status(state: &ReplayState) -> (&'static str, &'static str) {
+        match state {
+            ReplayState::Completed => ("success", "completed"),
+            ReplayState::Failed => ("failure", "failed"),
+            ReplayState::Cancelled => ("partial", "cancelled"),
+            ReplayState::Planning => ("running", "planning"),
+            ReplayState::Previewed => ("running", "previewed"),
+            ReplayState::Approved => ("running", "approved"),
+            ReplayState::Executing => ("running", "executing"),
+            ReplayState::Committing => ("running", "committing"),
+        }
+    }
+
+    fn decode_meta_json(v: Option<serde_json::Value>) -> Result<MetaJson> {
+        if let Some(val) = v {
+            Ok(serde_json::from_value(val)?)
+        } else {
+            Ok(MetaJson {
+                state: ReplayState::Planning,
+                checkpoint: ReplayCheckpoint::default(),
+                actor: "unknown".into(),
+                created_at: Utc::now(),
+                approved_by: None,
+                approved_at: None,
+                executor_node: None,
+                started_at: None,
+                finished_at: None,
+                outcome: None,
+                error_details: None,
+                preview: None,
+            })
+        }
+    }
+
+    fn decode_meta_to_operation(
+        operation_id: Ulid,
+        operator: String,
+        scope_val: serde_json::Value,
+        meta_val: serde_json::Value,
+    ) -> Result<ReplayOperation> {
+        let meta: MetaJson = serde_json::from_value(meta_val)?;
+        Ok(ReplayOperation {
+            operation_id,
+            state: meta.state,
+            scope: serde_json::from_value(scope_val)?,
+            preview_summary: meta.preview.clone(),
+            checkpoint: meta.checkpoint,
+            actor: operator,
+            created_at: meta.created_at,
+            approved_by: meta.approved_by,
+            approved_at: meta.approved_at,
+            executor_node: meta.executor_node,
+            started_at: meta.started_at,
+            finished_at: meta.finished_at,
+            outcome: meta.outcome,
+            error_details: meta.error_details,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct EventTypeCountRow {
+    event_type: String,
+    count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MetaJson {
+    state: ReplayState,
+    checkpoint: ReplayCheckpoint,
+    actor: String,
+    created_at: DateTime<Utc>,
+    approved_by: Option<String>,
+    approved_at: Option<DateTime<Utc>>,
+    executor_node: Option<String>,
+    started_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+    outcome: Option<String>,
+    error_details: Option<String>,
+    preview: Option<serde_json::Value>,
+}

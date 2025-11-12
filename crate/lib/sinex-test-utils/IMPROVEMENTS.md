@@ -3,7 +3,7 @@
 ## Completed Tasks
 
 ### 1. Fixed EventQueries SQL Error ✅
-- **Problem**: EventQueries was using incorrect SQL type annotations (`event_id::uuid as "id!"`) 
+- **Problem**: EventQueries was using incorrect SQL type annotations (` id::uuid as "id!"`) 
 - **Solution**: Removed type casting annotations to let the database return native types, which are then converted via the `From<EventRecord>` implementation
 - **Files Changed**: 
   - `/realm/project/sinex/crate/sinex-db/src/queries/events.rs`

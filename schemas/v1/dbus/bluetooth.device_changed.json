@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "connected": {
+      "type": "boolean"
+    },
+    "device_address": {
+      "type": "string"
+    },
+    "device_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "device_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "paired": {
+      "type": "boolean"
+    },
+    "rssi": {
+      "format": "int16",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "trusted": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "connected",
+    "device_address",
+    "event_type",
+    "paired",
+    "timestamp",
+    "trusted"
+  ],
+  "title": "DbusBluetoothDeviceChangedPayload",
+  "type": "object"
+}

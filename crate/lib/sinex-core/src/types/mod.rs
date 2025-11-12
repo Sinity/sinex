@@ -5,6 +5,7 @@ pub mod error;
 pub mod events;
 pub mod ids;
 pub mod non_empty;
+pub mod query;
 pub mod utils;
 pub mod validation;
 
@@ -14,6 +15,7 @@ pub use sinex_schema::ulid::Ulid;
 
 use chrono::{DateTime, Utc};
 pub use error::{Result as SinexResult, SinexError};
+pub use query::{Pagination, TimeRange};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;

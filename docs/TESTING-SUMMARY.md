@@ -221,6 +221,13 @@
 - [ ] Zero data loss on cutover
 - [ ] Safe rollback procedure
 
+### Newly Landed Suites (2025-02-23)
+- `jetstream_consumer_test::duplicate_events_are_idempotent` (ingestd) – covers idempotency replay guarantees.
+- `jetstream_consumer_test::dlq_captures_multiple_validation_failures` – validates DLQ fan-out under burst rejection.
+- `pipeline_resilience_test::{ingestion_handles_burst_under_latency_budget,replaying_events_after_restart_does_not_duplicate}` – throughput + restart-no-duplicate assertions.
+- `material_acquisition::material_acquisition_concurrent_sessions_isolated` – concurrent material pipeline safeguards.
+- `replay_control::tests::telemetry_reports_state_counts` and `replay_control::tests::replay_client_errors_when_broker_disappears` – replay telemetry + control-plane HA coverage.
+
 ---
 
 ## Key Testing Infrastructure Needed
@@ -404,4 +411,3 @@ For implementation details:
 For full details, see:
 - `docs/testing-gap-analysis.md` - Complete gap analysis (1,219 lines)
 - `docs/testing-priorities-and-roadmap.md` - Implementation roadmap (517 lines)
-

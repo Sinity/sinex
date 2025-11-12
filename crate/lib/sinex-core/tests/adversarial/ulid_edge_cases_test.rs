@@ -68,11 +68,11 @@ async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> color_eyre:
     // Verify retrieval
     let retrieved = sqlx::query!(
         r#"
-        SELECT event_id::text as "ulid!",
+        SELECT id as "ulid!: Ulid",
                ts_orig,
                payload
         FROM core.events
-        WHERE event_id::uuid = $1::uuid
+        WHERE id = $1::uuid::ulid
         "#,
         max_ulid.to_uuid()
     )
@@ -83,8 +83,7 @@ async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> color_eyre:
     println!("Retrieved timestamp: {:?}", retrieved.ts_orig);
 
     // Verify ULID components are preserved
-    let retrieved_ulid = Ulid::from_string(&retrieved.ulid)?;
-    assert_eq!(retrieved_ulid.timestamp_ms(), max_timestamp_ms);
+    assert_eq!(retrieved.ulid.timestamp_ms(), max_timestamp_ms);
 
     Ok(())
 }

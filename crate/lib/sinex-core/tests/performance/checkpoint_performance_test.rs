@@ -134,10 +134,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         stats.max_processed
     );
 
-    let latest = manager
-        .get_latest_checkpoint()
-        .await?
-        .ok_or_else(|| eyre!("expected a persisted checkpoint"))?;
+    let latest = manager.load_checkpoint().await?;
 
     if let Some(expected) = last_checkpoint {
         color_eyre::eyre::ensure!(

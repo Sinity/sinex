@@ -1,8 +1,10 @@
 //! Shared RPC method handlers
 
+use crate::replay_control::ReplayControlClient;
+use crate::replay_state_machine::{ReplayScope, ReplayState};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use color_eyre::eyre::{Context, ContextCompat, Result};
+use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
     db::models::{Entity, Event},
@@ -203,6 +205,122 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
     Ok(json!({ "annex_key": annex_key }))
 }
 
+// Replay handlers
+
+pub async fn handle_replay_create_operation(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let actor = params
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sinex-cli")
+        .to_string();
+
+    let scope_val = params
+        .get("scope")
+        .cloned()
+        .ok_or_else(|| eyre!("Missing scope definition for replay"))?;
+    let scope: ReplayScope =
+        serde_json::from_value(scope_val).wrap_err("Invalid replay scope payload")?;
+
+    let operation = client.plan(actor, scope).await?;
+    Ok(json!({ "operation": operation }))
+}
+
+pub async fn handle_replay_preview_operation(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let operation_id = parse_ulid_param(&params, "operation_id")?;
+    let (operation, preview) = client.preview(operation_id).await?;
+    Ok(json!({ "operation": operation, "preview": preview }))
+}
+
+pub async fn handle_replay_approve_operation(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let operation_id = parse_ulid_param(&params, "operation_id")?;
+    let approver = params
+        .get("approver")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sinex-cli")
+        .to_string();
+    let operation = client.approve(operation_id, approver).await?;
+    Ok(json!({ "operation": operation }))
+}
+
+pub async fn handle_replay_execute_operation(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let operation_id = parse_ulid_param(&params, "operation_id")?;
+    let executor = params
+        .get("executor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sinex-cli")
+        .to_string();
+    let operation = client.execute(operation_id, executor).await?;
+    Ok(json!({ "operation": operation }))
+}
+
+pub async fn handle_replay_cancel_operation(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let operation_id = parse_ulid_param(&params, "operation_id")?;
+    let reason = params
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let operation = client.cancel(operation_id, reason).await?;
+    Ok(json!({ "cancelled": true, "operation": operation }))
+}
+
+pub async fn handle_replay_operation_status(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let operation_id = parse_ulid_param(&params, "operation_id")?;
+    let operation = client.status(operation_id).await?;
+    Ok(json!({ "operation": operation }))
+}
+
+pub async fn handle_replay_list_operations(
+    client: &ReplayControlClient,
+    params: Value,
+) -> Result<Value> {
+    let state = params
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(parse_replay_state)
+        .transpose()?;
+    let operations = client.list(state).await?;
+    Ok(json!({ "operations": operations }))
+}
+
+fn parse_replay_state(value: &str) -> Result<ReplayState> {
+    match value.to_lowercase().as_str() {
+        "planning" => Ok(ReplayState::Planning),
+        "previewed" => Ok(ReplayState::Previewed),
+        "approved" => Ok(ReplayState::Approved),
+        "executing" => Ok(ReplayState::Executing),
+        "committing" => Ok(ReplayState::Committing),
+        "completed" => Ok(ReplayState::Completed),
+        "failed" => Ok(ReplayState::Failed),
+        "cancelled" => Ok(ReplayState::Cancelled),
+        other => Err(eyre!("Unknown replay state '{other}'")),
+    }
+}
+
+fn parse_ulid_param(params: &Value, field: &str) -> Result<Ulid> {
+    params
+        .get(field)
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<Ulid>().ok())
+        .ok_or_else(|| eyre!("Missing or invalid {field} parameter"))
+}
 pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Result<Value> {
     let annex_key = params
         .get("annex_key")
@@ -245,5 +363,28 @@ mod tests {
         assert_eq!(json["content_base64"], "aGk=");
         assert_eq!(json["mime_type"], "application/octet-stream");
         assert_eq!(json["size_bytes"], 2);
+    }
+
+    #[test]
+    fn parse_replay_state_accepts_known_variants() {
+        let states = [
+            ("planning", ReplayState::Planning),
+            ("PREVIEWED", ReplayState::Previewed),
+            ("Approved", ReplayState::Approved),
+        ];
+        for (input, expected) in states {
+            assert_eq!(parse_replay_state(input).unwrap(), expected);
+        }
+        assert!(parse_replay_state("unknown").is_err());
+    }
+
+    #[test]
+    fn parse_ulid_param_validates_input() {
+        let id = Ulid::new();
+        let params = json!({"operation_id": id.to_string()});
+        assert_eq!(parse_ulid_param(&params, "operation_id").unwrap(), id);
+
+        let invalid = json!({"operation_id": "not-ulid"});
+        assert!(parse_ulid_param(&invalid, "operation_id").is_err());
     }
 }

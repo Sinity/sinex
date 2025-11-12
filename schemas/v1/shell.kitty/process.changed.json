@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "change_timestamp": {
+      "type": "string"
+    },
+    "current_process": true,
+    "kitty_tab_id": {
+      "type": "string"
+    },
+    "kitty_window_id": {
+      "type": "string"
+    },
+    "previous_process": true,
+    "working_directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "change_timestamp",
+    "current_process",
+    "kitty_tab_id",
+    "kitty_window_id"
+  ],
+  "title": "KittyProcessChangedPayload",
+  "type": "object"
+}

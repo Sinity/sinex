@@ -26,17 +26,19 @@ mod builders;
 mod channel_behavior_utils;
 mod channel_enhancements;
 mod channel_helpers;
+pub mod constants;
 mod database_pool;
 mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
-mod fixtures;
+pub mod fixtures;
 mod jetstream;
 mod nats;
 mod path_validation;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
+pub mod satellite_runtime;
 pub mod snapshot_helper;
 mod test_context;
 #[macro_use]
@@ -79,9 +81,14 @@ pub mod prelude {
 
     // Common test fixtures
     pub use crate::{
-        acquire_admin_connection, optional_extension_missing, pool_slot_count,
-        test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
-        with_pool_size,
+        acquire_admin_connection,
+        constants::{
+            EVENT_SOURCE_REPO_PRIMARY, EVENT_SOURCE_REPO_SECONDARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY, SOURCE_FIXTURE_REPO_PRIMARY,
+            SOURCE_FIXTURE_REPO_SECONDARY,
+        },
+        optional_extension_missing, pool_slot_count, test_context_fixture, test_event_sources,
+        test_event_types, test_paths, test_sources, with_pool_size,
     };
 
     // Core sinex imports - now using flattened namespace
@@ -258,6 +265,7 @@ pub use nats::EphemeralNats;
 pub use satellite_management_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
+pub use satellite_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 
@@ -327,7 +335,10 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
+            .get_by_source(
+                &EventSource::from_static("fs-watcher"),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         assert!(!events.is_empty());
 
@@ -377,12 +388,18 @@ mod tests {
         let source_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::new(source.to_string()), Some(10), None)
+            .get_by_source(
+                &EventSource::new(source.to_string()),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         let type_events = ctx
             .pool
             .events()
-            .get_by_event_type(&EventType::from(event_type), Some(10), None)
+            .get_by_event_type(
+                &EventType::from(event_type),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
         // Should find the event in both queries
         assert!(!source_events.is_empty());
@@ -522,7 +539,7 @@ mod tests {
                         let events = ctx
                             .pool
                             .events()
-                            .get_by_source(&EventSource::from(format!("task_{i}")), Some(100), None)
+                            .get_by_source(&EventSource::from(format!("task_{i}")), sinex_core::types::Pagination::new(Some(100), None))
                             .await
                             .map_err(|e| eyre!("Failed to get events by source: {e}"))?;
                         observed = events.len();
@@ -543,11 +560,7 @@ mod tests {
                             let other_events = ctx
                                 .pool
                                 .events()
-                                .get_by_source(
-                                    &EventSource::from(format!("task_{k}")),
-                                    Some(100),
-                                    None,
-                                )
+                                .get_by_source(&EventSource::from(format!("task_{k}")), sinex_core::types::Pagination::new(Some(100), None))
                                 .await
                                 .map_err(|e| eyre!("Failed to get other events: {e}"))?;
                             assert_eq!(other_events.len(), 0);
@@ -856,7 +869,10 @@ mod tests {
             let events = temp_ctx
                 .pool
                 .events()
-                .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
+                .get_by_source(
+                    &EventSource::from("cleanup-test"),
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
                 .await?;
             assert_eq!(events.len(), 1);
 
@@ -868,7 +884,10 @@ mod tests {
         let leaked_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
+            .get_by_source(
+                &EventSource::from("cleanup-test"),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
 
         assert_eq!(
@@ -974,7 +993,10 @@ mod tests {
         let checkpoints = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("sinex"), Some(100), None)
+            .get_by_source(
+                &EventSource::from("sinex"),
+                sinex_core::types::Pagination::new(Some(100), None),
+            )
             .await?
             .into_iter()
             .filter(|e| e.event_type.as_str() == "checkpoint.saved")
@@ -989,7 +1011,10 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("automaton"), Some(100), None)
+            .get_by_source(
+                &EventSource::from("automaton"),
+                sinex_core::types::Pagination::new(Some(100), None),
+            )
             .await?;
 
         assert!(!events.is_empty(), "Should have automaton events");

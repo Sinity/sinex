@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "exit_code": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "pid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "process_name": {
+      "type": "string"
+    },
+    "process_type": {
+      "type": "string"
+    },
+    "shutdown_reason": {
+      "type": "string"
+    },
+    "uptime_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "exit_code",
+    "pid",
+    "process_name",
+    "process_type",
+    "shutdown_reason",
+    "uptime_seconds"
+  ],
+  "title": "ProcessShutdownPayload",
+  "type": "object"
+}

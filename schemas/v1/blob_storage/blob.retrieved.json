@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "blob_id": {
+      "type": "string"
+    },
+    "cache_hit": {
+      "type": "boolean"
+    },
+    "retrieval_time_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blob_id",
+    "cache_hit",
+    "retrieval_time_ms"
+  ],
+  "title": "BlobRetrievedPayload",
+  "type": "object"
+}

@@ -86,7 +86,10 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> Result<()> {
     let events_by_source = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("fs-watcher"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("fs-watcher"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert_eq!(events_by_source.len(), 1, "Should find fs-watcher event");
 
@@ -221,7 +224,10 @@ async fn test_service_performance_integration(ctx: TestContext) -> Result<()> {
     let by_source_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("perf-source-1"), Some(20), None)
+        .get_by_source(
+            &EventSource::from("perf-source-1"),
+            sinex_core::types::Pagination::new(Some(20), None),
+        )
         .await?;
 
     let query_duration = query_start.elapsed();
@@ -393,7 +399,10 @@ async fn test_service_configuration(ctx: TestContext) -> Result<()> {
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("config-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("config-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert_eq!(events.len(), 1);
 

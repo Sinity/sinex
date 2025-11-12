@@ -9,12 +9,15 @@ use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
 use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use crate::types::error::SinexError;
+use crate::types::Ulid;
 use crate::{Event, Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_schema::ulid_conversions::uuid_to_ulid;
+use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use std::ops::Bound;
 
 /// Database record for operations_log table
 /// NOTE: The actual table only has: id, operation_type, operator, scope,
@@ -78,12 +81,17 @@ impl<'a> StateRepository<'a> {
         &self,
         operator: &str,
         scope: JsonValue,
+        scope_window: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> DbResult<Id<Operation>> {
+        let scope_window_range = scope_window
+            .map(|(start, end)| PgRange::from((Bound::Included(start), Bound::Included(end))));
+
         let op_uuid: Uuid = sqlx::query_scalar!(
-            r#"SELECT core.start_operation($1, $2, $3::jsonb) as "id!: Uuid""#,
+            r#"SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as "id!: Uuid""#,
             "replay",
             operator,
-            scope
+            scope,
+            scope_window_range
         )
         .fetch_one(self.pool)
         .await
@@ -869,14 +877,13 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Test ULID generation functionality
-    pub async fn test_ulid_generation(&self) -> DbResult<String> {
-        let row = sqlx::query!("SELECT gen_ulid()::text as test_ulid")
+    pub async fn test_ulid_generation(&self) -> DbResult<crate::types::Ulid> {
+        let row = sqlx::query!("SELECT gen_ulid() as \"test_ulid!: Ulid\"")
             .fetch_one(self.pool)
             .await
             .map_err(|e| db_error(e, "test ULID generation"))?;
 
-        row.test_ulid
-            .ok_or_else(|| db_error(sqlx::Error::RowNotFound, "ULID generation returned NULL"))
+        Ok(row.test_ulid)
     }
 
     /// Check TimescaleDB extension version

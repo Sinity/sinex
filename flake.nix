@@ -12,15 +12,20 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
+    devenv = {
+      url = "github:cachix/devenv";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    {
+    inputs@{
       self,
       nixpkgs,
       fenix,
       agenix,
       flake-utils,
+      devenv,
     }:
     let
       # System-specific outputs
@@ -318,136 +323,9 @@ PY
             pkgs.lib.nameValuePair "sinex-vm-${name}" value
           ) (pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests);
 
-          devShells.default = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              # Rust toolchain with cranelift backend
-              rustToolchain
-              fenixPkgs.rust-analyzer
-              fenixPkgs.clippy
-              fenixPkgs.rustfmt
-              fenixPkgs.llvm-tools
-              fenixPkgs.rust-src
-              fenixPkgs.rustc-codegen-cranelift
-              cargo-watch
-              cargo-nextest
-              cargo-llvm-cov
-
-              # Development tools
-              just
-              sqlx-cli
-              mold # Fast linker for compilation speed
-              cargo-modules # Module structure visualization
-
-              # Python and testing
-              python3
-              python3Packages.click
-              python3Packages.psycopg2
-              python3Packages.rich
-              python3Packages.pyyaml
-              nats-server
-              postgresql_16
-              
-              # Token counting for LLM context
-              (pkgs.python3Packages.buildPythonPackage rec {
-                pname = "ttok";
-                version = "0.3";
-                src = pkgs.python3Packages.fetchPypi {
-                  inherit pname version;
-                  sha256 = "sha256-BHSgCldHYNsiTSSur6UOG56t9qV056bBMkZYvZuCSbg=";
-                };
-                propagatedBuildInputs = with pkgs.python3Packages; [
-                  tiktoken
-                ];
-              })
-
-              # Process management and monitoring
-              mprocs
-              btop
-              jq
-
-              # VM testing tools (Agent Alpha)
-              qemu
-              qemu_kvm
-
-              # Build dependencies
-              openssl
-              pkg-config
-              dbus
-              dbus.dev
-              protobuf
-            ];
-
-            shellHook = ''
-              # Database configuration
-              export DATABASE_NAME="sinex_dev"
-              export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
-              export PGHOST="/run/postgresql"
-              export PGUSER="$USER"
-              export PGDATABASE="$DATABASE_NAME"
-              export SINEX_TEST_OPTIMIZATIONS="true"
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              export NATS_SERVER_BIN="${pkgs.nats-server}/bin/nats-server"
-              export PATH="$PWD/target/debug:$PATH"
-
-              alias sinex-cli="python3 cli/exo.py"
-              alias e2e-test="cargo test -p sinex-e2e-tests"
-              alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
-
-              # Clear screen for clean start
-              clear
-
-              # Database setup
-              if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
-                DB_STATUS="🟢"
-                if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw "$DATABASE_NAME"; then
-                  createdb -h /run/postgresql "$DATABASE_NAME" 2>/dev/null || DB_STATUS="🟡"
-                fi
-                
-                # Run migrations using sea-orm system
-                if [ "$DB_STATUS" = "🟢" ] && command -v cargo >/dev/null 2>&1; then
-                  if cd crate/lib/sinex-schema && cargo run -- status >/dev/null 2>&1; then
-                    MIGRATION_INFO="migrations ready"
-                  else
-                    DB_STATUS="🟡"
-                    MIGRATION_INFO="run 'just migrate'"
-                  fi
-                  cd - >/dev/null
-                fi
-              else
-                DB_STATUS="🔴"
-                MIGRATION_INFO="PostgreSQL not running"
-              fi
-
-              # Display MOTD
-              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-              echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
-              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-              echo
-
-              # Database status
-              if [ "$DB_STATUS" = "🟢" ]; then
-                echo -e "Database:    \033[32m✓\033[0m $DATABASE_NAME"
-              elif [ "$DB_STATUS" = "🟡" ]; then
-                echo -e "Database:    \033[33m⚠\033[0m $DATABASE_NAME ($MIGRATION_INFO)"
-              else
-                echo -e "Database:    \033[31m✗\033[0m $MIGRATION_INFO"
-              fi
-
-              # Build system status
-              echo -e "Build:       \033[32m✓\033[0m Incremental compilation enabled"
-              echo -e "Cores:       \033[32m✓\033[0m 24 parallel jobs"
-
-              echo -e "\033[90m────────────────────────────────────────\033[0m"
-              echo -e "\033[90mQuick commands:\033[0m"
-              echo -e "  \033[1mjust\033[0m         → Show all commands"
-              echo -e "  \033[1mjust qc\033[0m      → Check workspace (2-3s)"
-              echo -e "  \033[1mjust qcs\033[0m     → Smart check changes only (0.2-0.7s)"
-              echo -e "  \033[1mjust dev\033[0m     → Format, check & test"
-              echo -e "  \033[1me2e-test\033[0m    → Run Rust end-to-end suite"
-              echo -e "  \033[1mvm-smoke\033[0m    → Run NixOS VM smoke profile"
-              echo -e "  \033[1msinex-cli\033[0m   → Invoke the CLI without installation"
-              echo ""
-            '';
+          devShells.default = devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [ ./devenv.nix ];
           };
 
         }
@@ -456,21 +334,10 @@ PY
     systemOutputs
     // {
       # NixOS module
-      nixosModules =
-        let
-          baseModule = import ./nixos;
-        in
-        {
-          default = args:
-            let
-              base = baseModule args;
-              existingImports = base.imports or [ ];
-            in
-            base // {
-              imports = [ agenix.nixosModules.default ] ++ existingImports;
-            };
-          sinex = args: (self.nixosModules.default args);
-        };
+      nixosModules = {
+        default = import ./nixos;
+        sinex = args: (self.nixosModules.default args);
+      };
 
       nixosConfigurations = {
         example = nixpkgs.lib.nixosSystem {

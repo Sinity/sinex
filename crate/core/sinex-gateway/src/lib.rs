@@ -9,6 +9,7 @@
 pub mod cascade_analyzer;
 pub mod handlers;
 pub mod prelude;
+pub mod replay_control;
 pub mod replay_state_machine;
 pub mod rpc_server;
 pub mod service_container;

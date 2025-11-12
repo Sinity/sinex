@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "encoding": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "file_path": {
+      "type": "string"
+    },
+    "mime_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "size_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "source_material_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "file_path",
+    "size_bytes",
+    "source_material_id"
+  ],
+  "title": "DocumentIngestedPayload",
+  "type": "object"
+}

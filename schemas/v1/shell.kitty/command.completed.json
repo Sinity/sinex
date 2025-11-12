@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Kitty command completion event.",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "error_output": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "exit_status": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "kitty_tab_id": {
+      "type": "string"
+    },
+    "kitty_window_id": {
+      "type": "string"
+    },
+    "output_lines": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "shell_pid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "working_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "command",
+    "duration_ms",
+    "exit_status",
+    "kitty_tab_id",
+    "kitty_window_id",
+    "shell_pid",
+    "working_directory"
+  ],
+  "title": "KittyCommandCompletedPayload",
+  "type": "object"
+}

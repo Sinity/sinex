@@ -4,14 +4,16 @@ on:
   push:
     branches: [ master, 'claude/**' ]
     paths:
-      - 'crate/sinex-events/src/**/*.rs'
+      - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
+      - 'scripts/schema-dev.sh'
       - '.github/workflows/schema-management.yml'
   pull_request:
     branches: [ master ]
     paths:
-      - 'crate/sinex-events/src/**/*.rs'
+      - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
+      - 'scripts/schema-dev.sh'
       - '.github/workflows/schema-management.yml'
 
 jobs:
@@ -59,9 +61,9 @@ jobs:
           name: sinex
           skipPush: true
           
-      - name: Generate schemas
+      - name: Generate schemas via CLI
         run: |
-          nix develop --command cargo run --package sinex-events --bin generate-schemas
+          nix develop --command ./scripts/schema-dev.sh generate
           
       - name: Check for schema changes
         id: check-changes
@@ -84,53 +86,11 @@ jobs:
           git commit -m "chore: update generated schemas [skip ci]"
           git push
 
-  check-compatibility:
-    name: Check Schema Compatibility
-    runs-on: ubuntu-latest
-    needs: generate-schemas
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          
-      - name: Install json-schema-diff
-        run: npm install -g json-schema-diff
-        
-      - name: Check backward compatibility
-        run: |
-          echo "Checking schema backward compatibility..."
-          BASE_BRANCH="${{ github.base_ref }}"
-          
-          # Get list of schema files that exist in both branches
-          git ls-tree -r origin/$BASE_BRANCH --name-only | grep "^schemas/.*\.json$" | while read schema_path; do
-            if [ -f "$schema_path" ]; then
-              echo "Checking compatibility for: $schema_path"
-              
-              # Get schema from base branch
-              git show origin/$BASE_BRANCH:$schema_path > /tmp/base_schema.json
-              
-              # Compare schemas
-              if ! json-schema-diff /tmp/base_schema.json $schema_path; then
-                echo "⚠️  Breaking change detected in $schema_path"
-                echo "Consider incrementing the schema version if this is intentional"
-                exit 1
-              fi
-            fi
-          done
-          
-          echo "✅ All schema changes are backward compatible"
-
   deploy-schemas:
     name: Deploy Schemas to Database
     runs-on: ubuntu-latest
     needs: [validate-schemas, generate-schemas]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.SINEX_PROD_DATABASE_URL != ''
     steps:
       - uses: actions/checkout@v4
       
@@ -142,7 +102,7 @@ jobs:
             experimental-features = nix-command flakes
             
       - name: Deploy schemas
+        env:
+          DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
         run: |
-          echo "🚀 Deploying schemas to production database..."
-          echo "Note: This step requires the deployment script to be implemented"
-          # nix develop --command ./scripts/deploy-schemas.sh
+          nix develop --command ./scripts/deploy-schemas.sh

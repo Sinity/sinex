@@ -17,6 +17,7 @@ use serde_json::json;
 use std::sync::Arc;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue};
+use sinex_test_utils::constants::{EVENT_SOURCE_REPO_PRIMARY, SOURCE_FIXTURE_REPO_PRIMARY};
 use sinex_test_utils::prelude::*;
 
 // =============================================================================
@@ -51,8 +52,7 @@ async fn test_basic_event_insertion_and_retrieval(
         .events()
         .get_by_source(
             &EventSource::from_static("integration-test"),
-            Some(10),
-            None,
+            sinex_core::types::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -84,7 +84,10 @@ async fn test_batch_event_insertion(ctx: TestContext) -> Result<()> {
     let retrieved = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("batch-test"), Some(20), None)
+        .get_by_source(
+            &EventSource::from_static("batch-test"),
+            sinex_core::types::Pagination::new(Some(20), None),
+        )
         .await?;
 
     assert_eq!(retrieved.len(), 10);
@@ -132,7 +135,10 @@ async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Res
         let source_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::new(source), Some(10), None)
+            .get_by_source(
+                &EventSource::new(source),
+                sinex_core::types::Pagination::new(Some(10), None),
+            )
             .await?;
 
         assert!(!source_events.is_empty());
@@ -205,7 +211,10 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
     let retrieved_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("id-test"), Some(1), None)
+        .get_by_source(
+            &EventSource::from_static("id-test"),
+            sinex_core::types::Pagination::new(Some(1), None),
+        )
         .await?;
 
     let retrieved = retrieved_events
@@ -227,31 +236,47 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::
     // Test the repository pattern with various query operations
 
     // Insert test data
-    ctx.create_test_event("repo-test", "type.a", json!({"category": "alpha"}))
-        .await?;
-    ctx.create_test_event("repo-test", "type.b", json!({"category": "beta"}))
-        .await?;
-    ctx.create_test_event("repo-test", "type.a", json!({"category": "gamma"}))
-        .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.a",
+        json!({"category": "alpha"}),
+    )
+    .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.b",
+        json!({"category": "beta"}),
+    )
+    .await?;
+    ctx.create_test_event(
+        SOURCE_FIXTURE_REPO_PRIMARY,
+        "type.a",
+        json!({"category": "gamma"}),
+    )
+    .await?;
 
     let repo = ctx.pool.events();
 
     // Test querying by source
     let by_source = repo
-        .get_by_source(&EventSource::from_static("repo-test"), Some(10), None)
+        .get_by_source(
+            &EVENT_SOURCE_REPO_PRIMARY,
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert_eq!(by_source.len(), 3);
 
     // Test querying by type
     let by_type = repo
-        .get_by_event_type(&EventType::from_static("type.a"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from_static("type.a"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert_eq!(by_type.len(), 2);
 
     // Test counting
-    let count = repo
-        .count_by_source(&EventSource::from_static("repo-test"))
-        .await?;
+    let count = repo.count_by_source(&EVENT_SOURCE_REPO_PRIMARY).await?;
     assert_eq!(count, 3);
 
     Ok(())
@@ -271,7 +296,10 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
 
     // Test limit
     let limited = repo
-        .get_by_source(&EventSource::from_static("pagination-test"), Some(5), None)
+        .get_by_source(
+            &EventSource::from_static("pagination-test"),
+            sinex_core::types::Pagination::new(Some(5), None),
+        )
         .await?;
     assert_eq!(limited.len(), 5);
 
@@ -279,8 +307,7 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
     let all_events = repo
         .get_by_source(
             &EventSource::from_static("pagination-test"),
-            Some(100),
-            None,
+            sinex_core::types::Pagination::new(Some(100), None),
         )
         .await?;
     assert_eq!(all_events.len(), 20);
@@ -338,7 +365,10 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
     let db_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("concurrent-test"), Some(20), None)
+        .get_by_source(
+            &EventSource::from_static("concurrent-test"),
+            sinex_core::types::Pagination::new(Some(20), None),
+        )
         .await?;
     assert_eq!(db_events.len(), 10);
 
@@ -365,7 +395,10 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
     let other_events = other_ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("isolation-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("isolation-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(other_events.len(), 0, "Test contexts should be isolated");
@@ -374,7 +407,10 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
     let our_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("isolation-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("isolation-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(our_events.len(), 1, "Should see our own events");
@@ -744,7 +780,10 @@ async fn test_insta_snapshots(ctx: TestContext) -> color_eyre::eyre::Result<()> 
     let retrieved = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("snapshot-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("snapshot-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     // Create snapshot of the results
@@ -847,7 +886,10 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
     let workflow_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("workflow-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("workflow-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(workflow_events.len(), 4);

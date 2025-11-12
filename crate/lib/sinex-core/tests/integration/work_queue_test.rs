@@ -15,8 +15,9 @@
 use async_nats::jetstream::{
     consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
     stream::{Config as StreamConfig, RetentionPolicy},
+    AckKind,
 };
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
@@ -131,10 +132,13 @@ async fn simulate_work_processor(
             Ok(messages) => {
                 let mut messages = messages;
                 if let Some(message) = messages.next().await {
-                    let message = message?;
+                    let message = message
+                        .map_err(|err| eyre!("failed to receive JetStream message: {err}"))?;
 
                     // Extract work item metadata
-                    let message_info = message.info()?;
+                    let message_info = message
+                        .info()
+                        .map_err(|err| eyre!("failed to read JetStream metadata: {err}"))?;
                     let work_item_id = format!(
                         "work_{}_{}",
                         message_info.stream_sequence, message_info.consumer_sequence
@@ -145,7 +149,7 @@ async fn simulate_work_processor(
                         debug!("Worker {} claimed work item {}", worker_id, work_item_id);
 
                         // Parse work item payload
-                        let payload: serde_json::Value = serde_json::from_slice(&message.payload)?;
+                        let _payload: serde_json::Value = serde_json::from_slice(&message.payload)?;
 
                         // Simulate processing work
                         tokio::time::sleep(processing_delay).await;
@@ -157,10 +161,14 @@ async fn simulate_work_processor(
                         }
 
                         // Acknowledge the message
-                        message.ack().await?;
+                        message.ack().await.map_err(|err| {
+                            eyre!("failed to ack work item {work_item_id}: {err}")
+                        })?;
                     } else {
                         // Work item already claimed by another worker, nack it
-                        message.nak(None).await?;
+                        message.ack_with(AckKind::Nak(None)).await.map_err(|err| {
+                            eyre!("failed to nack work item {work_item_id}: {err}")
+                        })?;
                     }
                 }
             }
@@ -267,10 +275,8 @@ async fn test_work_queue_event_processing_pipeline(
     }
 
     // Wait for all workers to complete
-    let mut total_processed = 0;
     while let Some(result) = join_set.join_next().await {
         let worker_processed = result??;
-        total_processed += worker_processed;
         debug!("Worker completed, processed {} items", worker_processed);
     }
 
@@ -727,7 +733,7 @@ mod unit_tests {
     use super::*;
 
     #[sinex_test]
-    fn test_work_tracker_basic_operations() -> color_eyre::eyre::Result<()> {
+    fn test_work_tracker_basic_operations() -> Result<()> {
         let tracker = WorkTracker::new();
 
         // Test work item claiming
@@ -758,7 +764,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_work_tracker_concurrent_claiming() -> color_eyre::eyre::Result<()> {
+    fn test_work_tracker_concurrent_claiming() -> Result<()> {
         let tracker = WorkTracker::new();
         let tracker_clone = tracker.clone();
 
@@ -773,7 +779,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_work_tracker_multiple_workers() -> color_eyre::eyre::Result<()> {
+    fn test_work_tracker_multiple_workers() -> Result<()> {
         let tracker = WorkTracker::new();
 
         let work_items = vec!["work1", "work2", "work3", "work4", "work5"];

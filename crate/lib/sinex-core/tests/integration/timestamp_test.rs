@@ -7,7 +7,6 @@
 //! - Cross-timezone compatibility
 
 use chrono::{DateTime, TimeZone, Timelike, Utc};
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
@@ -45,7 +44,10 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("timestamp_test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("timestamp_test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(
@@ -174,7 +176,10 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("precision_test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("precision_test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events.len(), precision_cases.len());
@@ -233,7 +238,10 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("timezone_test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("timezone_test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events.len(), timezone_cases.len());
@@ -314,7 +322,10 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("ordering_test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("ordering_test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events.len(), 5);
@@ -380,7 +391,10 @@ async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::
     let events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("payload_test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("payload_test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events.len(), 3);

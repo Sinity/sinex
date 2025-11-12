@@ -1,12 +1,14 @@
 #![doc = include_str!("../doc/rpc_server.md")]
 
 // Local crate imports
-use crate::{handlers::*, service_container::ServiceContainer};
+use crate::{
+    handlers::*, replay_control::ReplayControlClient, service_container::ServiceContainer,
+};
 
 // External crates
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{eyre, Result, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
@@ -118,10 +120,49 @@ pub async fn dispatch_rpc_method(
 
         "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params).await,
 
+        // Replay control surface
+        "replay.create_operation" => {
+            let control = replay_control_client(services)?;
+            handle_replay_create_operation(control, params).await
+        }
+        "replay.preview_operation" => {
+            let control = replay_control_client(services)?;
+            handle_replay_preview_operation(control, params).await
+        }
+        "replay.approve_operation" => {
+            let control = replay_control_client(services)?;
+            handle_replay_approve_operation(control, params).await
+        }
+        "replay.execute_operation" => {
+            let control = replay_control_client(services)?;
+            handle_replay_execute_operation(control, params).await
+        }
+        "replay.cancel_operation" => {
+            let control = replay_control_client(services)?;
+            handle_replay_cancel_operation(control, params).await
+        }
+        "replay.operation_status" => {
+            let control = replay_control_client(services)?;
+            handle_replay_operation_status(control, params).await
+        }
+        "replay.list_operations" => {
+            let control = replay_control_client(services)?;
+            handle_replay_list_operations(control, params).await
+        }
+
         _ => Err(color_eyre::Report::new(UnknownMethodError {
             method: method.to_string(),
         })),
     }
+}
+
+fn replay_control_client<'a>(
+    services: &'a ServiceContainer,
+) -> color_eyre::eyre::Result<&'a ReplayControlClient> {
+    services
+        .replay_control
+        .as_ref()
+        .ok_or_else(|| eyre!("Replay control bus is not initialised"))
 }
 
 /// Main RPC handler using dispatch table

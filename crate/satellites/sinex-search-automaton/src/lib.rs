@@ -6,43 +6,56 @@
 //!
 //! Content Events → Indexing → Synthesized Search Events.
 
-// Local facade module to reduce import verbosity
 mod common {
-    // Core types facade
+    // Core facades
     pub use sinex_core::{
-        db::models::Event,
-        types::{events::payloads::*, Id},
+        db::models::{Event, EventId, Provenance},
+        db::repositories::DbPoolExt,
+        types::{domain::EventType, Id},
+        JsonValue,
     };
 
-    // SDK facade for common processor types
+    // Runtime/SDK facades
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    };
     pub use sinex_satellite_sdk::{
         stream_processor::{
             Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            TimeHorizon,
+            ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
         SatelliteError, SatelliteResult,
-    };
-    pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
     };
 
     // External dependencies
     pub use {
         async_trait::async_trait,
-        chrono::{DateTime, Utc},
+        chrono::{DateTime, Duration as ChronoDuration, Utc},
         serde::{Deserialize, Serialize},
         serde_json,
         sqlx::PgPool,
-        std::{collections::HashMap, time::Duration},
+        std::time::Duration,
         tokio::sync::mpsc,
-        tracing::{debug, error, info, instrument, warn},
+        tracing::{error, info, warn},
     };
 }
 
-// Use local facade for common types
 use crate::common::*;
+use serde_json::json;
+use sinex_core::{environment, Ulid};
+use sinex_satellite_sdk::{
+    confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+    event_processor::EventTransport,
+    jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
+    ProcessingModel,
+};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+
+const MAX_SEARCH_EVENTS: usize = 1024;
+const MAX_PROVENANCE_IDS: usize = 8;
+const DEFAULT_BATCH_SIZE: usize = 128;
 
 /// Configuration for Search Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -77,11 +90,11 @@ impl Default for SearchAutomatonConfig {
                 "terminal.output.captured".to_string(),
             ],
             enable_fulltext_indexing: true,
-            enable_semantic_search: false, // Disabled by default due to complexity
+            enable_semantic_search: false,
             enable_search_analytics: true,
-            indexing_window_seconds: 3600, // 1 hour
+            indexing_window_seconds: 3600,
             min_content_length: 10,
-            max_index_size: 10000,
+            max_index_size: 10_000,
         }
     }
 }
@@ -110,18 +123,18 @@ pub struct SearchQueryPattern {
 }
 
 /// Search Automaton using unified StatefulStreamProcessor architecture
-///
-/// Consumes events containing searchable content and produces search insights:
-/// - Full-text search index building from event content
-/// - Search query pattern analysis
-/// - Content discoverability insights
-/// - Search optimization recommendations
 pub struct SearchAutomaton {
     runtime: Option<ProcessorRuntimeState>,
     config: SearchAutomatonConfig,
     event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     search_index: Vec<SearchIndexEntry>,
+    recent_events: VecDeque<Event<JsonValue>>,
+    recent_event_ids: HashSet<Ulid>,
+    incoming_tx: Option<mpsc::UnboundedSender<ProvisionalEvent>>,
+    incoming_rx: Option<mpsc::UnboundedReceiver<ProvisionalEvent>>,
+    consumer: Option<Arc<JetStreamEventConsumer>>,
+    consumer_handle: Option<JoinHandle<()>>,
 }
 
 impl SearchAutomaton {
@@ -132,14 +145,18 @@ impl SearchAutomaton {
             event_sender: None,
             db_pool: None,
             search_index: Vec::new(),
+            recent_events: VecDeque::new(),
+            recent_event_ids: HashSet::new(),
+            incoming_tx: None,
+            incoming_rx: None,
+            consumer: None,
+            consumer_handle: None,
         }
     }
 
     fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
-            SatelliteError::General(color_eyre::eyre::eyre!(
-                "Search automaton runtime not initialised"
-            ))
+            SatelliteError::Lifecycle("Search automaton runtime not initialised".into())
         })
     }
 
@@ -149,9 +166,9 @@ impl SearchAutomaton {
         } else if let Some(pool) = self.db_pool.as_ref() {
             Ok(pool)
         } else {
-            Err(SatelliteError::General(color_eyre::eyre::eyre!(
-                "Database pool not initialized"
-            )))
+            Err(SatelliteError::Processing(
+                "Database pool not initialized".into(),
+            ))
         }
     }
 
@@ -161,158 +178,332 @@ impl SearchAutomaton {
         } else if let Some(sender) = self.event_sender.as_ref() {
             Ok(sender.clone())
         } else {
-            Err(SatelliteError::General(color_eyre::eyre::eyre!(
-                "Event sender not initialized"
-            )))
+            Err(SatelliteError::Processing(
+                "Event sender not initialized".into(),
+            ))
         }
     }
 
-    /// Process searchable events and generate search insights
-    async fn process_search_events(&mut self, from: &Checkpoint) -> SatelliteResult<u64> {
-        let db_pool = self.db_pool()?;
-        let event_sender = self.event_sender()?;
+    fn ensure_event_channel(&mut self) {
+        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
+            let (tx, rx) = mpsc::unbounded_channel();
+            self.incoming_tx = Some(tx);
+            self.incoming_rx = Some(rx);
+        }
+    }
 
-        // Query recent searchable events
-        let events = self.query_searchable_events(db_pool, from).await?;
-        info!("Processing {} events for search indexing", events.len());
-
-        // Build or update search index from events
-        self.build_search_index(&events).await;
-
-        let mut events_processed = 0u64;
-
-        // Generate full-text search index if enabled
-        if self.config.enable_fulltext_indexing && !self.search_index.is_empty() {
-            if let Ok(index_event) = self.generate_search_index_event().await {
-                if let Err(e) = event_sender.send(index_event) {
-                    warn!("Failed to send search index event: {}", e);
-                } else {
-                    events_processed += 1;
-                }
+    async fn ensure_consumer(&mut self) -> SatelliteResult<()> {
+        if let Some(handle) = self.consumer_handle.as_ref() {
+            if !handle.is_finished() {
+                return Ok(());
             }
         }
 
-        // Generate search analytics if enabled
+        self.consumer_handle = None;
+        self.consumer = None;
+
+        let runtime = self.runtime()?;
+        let transport = runtime.transport().clone();
+        let service_name = runtime.service_info().service_name().to_string();
+
+        let nats_publisher = match transport {
+            EventTransport::Nats(publisher) => publisher,
+        };
+
+        self.ensure_event_channel();
+        let sender = self.incoming_tx.clone().ok_or_else(|| {
+            SatelliteError::Processing("Confirmed event channel unavailable".into())
+        })?;
+
+        let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
+        let env = environment().clone();
+        let config = JetStreamEventConsumerConfig {
+            processing_model: ProcessingModel::LeaderStandby,
+            batch_size: DEFAULT_BATCH_SIZE,
+            confirmation_timeout: Duration::from_secs(60),
+            consumer_name: format!("{}-search-automaton", service_name.replace('.', "_")),
+            enable_provisional_processing: false,
+        };
+
+        let consumer = Arc::new(JetStreamEventConsumer::new(
+            nats_publisher.nats_client().clone(),
+            env,
+            config,
+            handler,
+            None,
+        ));
+
+        let consumer_run = consumer.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(err) = consumer_run.run().await {
+                error!("Search automaton JetStream consumer exited: {err}");
+            }
+        });
+
+        self.consumer = Some(consumer);
+        self.consumer_handle = Some(handle);
+
+        Ok(())
+    }
+
+    async fn process_snapshot(&mut self, end_time: DateTime<Utc>) -> SatelliteResult<u64> {
+        let db_pool = self.db_pool()?;
+        let events = self
+            .query_searchable_events(db_pool, end_time)
+            .await
+            .map_err(|err| {
+                SatelliteError::Processing(format!("Failed to query search events: {err}"))
+            })?;
+
+        if events.is_empty() {
+            return Ok(0);
+        }
+
+        self.capture_events(events);
+        self.emit_search_outputs().await
+    }
+
+    async fn run_continuous(&mut self, from: Checkpoint) -> SatelliteResult<u64> {
+        let mut processed = self.process_snapshot(Utc::now()).await.unwrap_or(0);
+        self.ensure_consumer().await?;
+
+        let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+            SatelliteError::Processing("Confirmed events channel not initialized".into())
+        })?;
+
+        while let Some(provisional) = receiver.recv().await {
+            processed += self.process_confirmed_event(provisional).await?;
+        }
+
+        info!("Confirmed event channel closed; exiting search continuous loop");
+        self.incoming_tx = None;
+        self.consumer_handle = None;
+        self.consumer = None;
+        drop(from);
+
+        Ok(processed)
+    }
+
+    async fn process_confirmed_event(
+        &mut self,
+        provisional: ProvisionalEvent,
+    ) -> SatelliteResult<u64> {
+        let db_pool = self.db_pool()?;
+        let event_id = EventId::from_ulid(provisional.event_id);
+
+        let persisted = match db_pool.events().get_by_id(event_id).await {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                warn!("Confirmed search event missing from database");
+                return Ok(0);
+            }
+            Err(err) => {
+                return Err(SatelliteError::Processing(format!(
+                    "Failed to load confirmed search event: {err}"
+                )))
+            }
+        };
+
+        self.capture_events(vec![persisted]);
+        self.emit_search_outputs().await
+    }
+
+    async fn emit_search_outputs(&mut self) -> SatelliteResult<u64> {
+        let mut processed = 0u64;
+        let sender = self.event_sender()?;
+
+        if self.config.enable_fulltext_indexing && !self.search_index.is_empty() {
+            match self.generate_search_index_event() {
+                Ok(event) => {
+                    if sender.send(event).is_ok() {
+                        processed += 1;
+                    }
+                }
+                Err(err) => warn!("Failed to build search index event: {err}"),
+            }
+        }
+
         if self.config.enable_search_analytics {
-            if let Ok(analytics_events) = self.generate_search_analytics(&events).await {
-                for analytics_event in analytics_events {
-                    if let Err(e) = event_sender.send(analytics_event) {
-                        warn!("Failed to send search analytics event: {}", e);
-                    } else {
-                        events_processed += 1;
+            let snapshot = self.recent_snapshot();
+            match self.generate_search_analytics(&snapshot).await {
+                Ok(events) => {
+                    for event in events {
+                        if sender.send(event).is_ok() {
+                            processed += 1;
+                        }
+                    }
+                }
+                Err(err) => warn!("Failed to build search analytics: {err}"),
+            }
+        }
+
+        match self.analyze_content_discoverability().await {
+            Ok(events) => {
+                for event in events {
+                    if sender.send(event).is_ok() {
+                        processed += 1;
                     }
                 }
             }
+            Err(err) => warn!("Failed to analyze discoverability: {err}"),
         }
 
-        // Generate content discoverability insights
-        if let Ok(discoverability_events) = self.analyze_content_discoverability().await {
-            for discoverability_event in discoverability_events {
-                if let Err(e) = event_sender.send(discoverability_event) {
-                    warn!("Failed to send content discoverability event: {}", e);
-                } else {
-                    events_processed += 1;
+        Ok(processed)
+    }
+
+    fn capture_events(&mut self, mut events: Vec<Event<JsonValue>>) {
+        events.sort_by_key(|event| event_timestamp(event));
+        for event in events {
+            if let Some(key) = event.id.as_ref().map(|id| *id.as_ulid()) {
+                if self.recent_event_ids.insert(key) {
+                    self.recent_events.push_back(event);
                 }
             }
         }
-
-        Ok(events_processed)
+        self.prune_recent_events();
+        self.rebuild_search_index();
     }
 
-    /// Query searchable events from the database
+    fn prune_recent_events(&mut self) {
+        let cutoff = Utc::now()
+            - ChronoDuration::seconds(self.config.indexing_window_seconds.max(60) as i64);
+        while let Some(front) = self.recent_events.front() {
+            let outdated = event_timestamp(front) < cutoff;
+            if outdated || self.recent_events.len() > MAX_SEARCH_EVENTS {
+                if let Some(evicted) = self.recent_events.pop_front() {
+                    if let Some(id) = evicted.id.as_ref() {
+                        self.recent_event_ids.remove(id.as_ulid());
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        while self.recent_events.len() > MAX_SEARCH_EVENTS {
+            if let Some(evicted) = self.recent_events.pop_front() {
+                if let Some(id) = evicted.id.as_ref() {
+                    self.recent_event_ids.remove(id.as_ulid());
+                }
+            }
+        }
+    }
+
+    fn rebuild_search_index(&mut self) {
+        self.search_index.clear();
+        let mut entries: Vec<SearchIndexEntry> = self
+            .recent_events
+            .iter()
+            .rev()
+            .filter_map(|event| self.create_search_index_entry(event))
+            .collect();
+
+        entries.sort_by(|a, b| {
+            b.search_score
+                .partial_cmp(&a.search_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        entries.truncate(self.config.max_index_size);
+        self.search_index = entries;
+    }
+
+    fn recent_snapshot(&self) -> Vec<Event<JsonValue>> {
+        let mut snapshot: Vec<_> = self.recent_events.iter().cloned().collect();
+        snapshot.sort_by_key(|event| event_timestamp(event));
+        snapshot
+    }
+
     async fn query_searchable_events(
         &self,
         db_pool: &PgPool,
-        _from: &Checkpoint,
-    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
-        let window_start =
-            Utc::now() - chrono::Duration::seconds(self.config.indexing_window_seconds as i64);
+        end_time: DateTime<Utc>,
+    ) -> Result<Vec<Event<JsonValue>>, sinex_core::SinexError> {
+        let start_time =
+            end_time - ChronoDuration::seconds(self.config.indexing_window_seconds.max(60) as i64);
 
-        let events = db_pool
-            .events()
-            .get_recent(
-                1000,
-                Some(window_start),
-                Some(&self.config.searchable_event_types),
-            )
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
-
-        Ok(events)
-    }
-
-    /// Build or update search index from events
-    async fn build_search_index(&mut self, events: &[Event<JsonValue>]) {
-        self.search_index.clear();
-
-        for event in events {
-            if let Some(index_entry) = self.create_search_index_entry(event) {
-                if index_entry.content.len() >= self.config.min_content_length {
-                    self.search_index.push(index_entry);
-                }
+        let mut collected = Vec::new();
+        if self.config.searchable_event_types.is_empty() {
+            let mut events = db_pool
+                .events()
+                .get_by_time_range(
+                    start_time,
+                    end_time,
+                    sinex_core::types::Pagination::new(Some(MAX_SEARCH_EVENTS as i64), None),
+                )
+                .await?;
+            collected.append(&mut events);
+        } else {
+            for event_type_str in &self.config.searchable_event_types {
+                let event_type = EventType::from(event_type_str.as_str());
+                let mut events = db_pool
+                    .events()
+                    .get_events_by_type_and_time_range(
+                        &event_type,
+                        start_time,
+                        end_time,
+                        sinex_core::types::Pagination::new(
+                            Some((MAX_SEARCH_EVENTS / 2) as i64),
+                            None,
+                        ),
+                    )
+                    .await?;
+                collected.append(&mut events);
             }
         }
 
-        // Limit index size
-        if self.search_index.len() > self.config.max_index_size {
-            // Sort by search score and keep the best entries
-            self.search_index.sort_by(|a, b| {
-                b.search_score
-                    .partial_cmp(&a.search_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            self.search_index.truncate(self.config.max_index_size);
+        collected.sort_by_key(|event| event_timestamp(event));
+        dedup_events(&mut collected);
+        if collected.len() > MAX_SEARCH_EVENTS {
+            collected.drain(..collected.len() - MAX_SEARCH_EVENTS);
         }
 
-        info!(
-            "Built search index with {} entries",
-            self.search_index.len()
-        );
+        Ok(collected)
     }
 
     /// Create a search index entry from an event
     fn create_search_index_entry(&self, event: &Event<JsonValue>) -> Option<SearchIndexEntry> {
-        if let Ok(payload) = serde_json::from_value::<serde_json::Value>(event.payload.clone()) {
-            let title = self.extract_title(&payload, event);
-            let content = self.extract_searchable_content(&payload)?;
-            let keywords = self.extract_search_keywords(&payload, &content);
-            let search_score = self.calculate_search_score(&content, &keywords, event);
-
-            Some(SearchIndexEntry {
-                entry_id: format!("{}_{}", event.id.as_ulid(), event.ts_orig.timestamp()),
-                title,
-                content,
-                keywords,
-                source_event_id: event.id,
-                event_type: event.event_type.to_string(),
-                timestamp: event.ts_orig,
-                search_score,
-            })
-        } else {
-            None
+        if !self.config.searchable_event_types.is_empty()
+            && !self
+                .config
+                .searchable_event_types
+                .iter()
+                .any(|ty| ty == event.event_type.as_ref())
+        {
+            return None;
         }
+
+        let payload = serde_json::from_value::<serde_json::Value>(event.payload.clone()).ok()?;
+        let id = event.id.as_ref()?.clone();
+        let title = self.extract_title(&payload, event);
+        let content = self.extract_searchable_content(&payload)?;
+        if content.len() < self.config.min_content_length {
+            return None;
+        }
+        let keywords = self.extract_search_keywords(&payload, &content);
+        let search_score = self.calculate_search_score(&content, &keywords, event);
+        let entry_id = format!("{}_{}", id.as_ulid(), event_timestamp(event).timestamp());
+
+        Some(SearchIndexEntry {
+            entry_id,
+            title,
+            content,
+            keywords,
+            source_event_id: id,
+            event_type: event.event_type.to_string(),
+            timestamp: event_timestamp(event),
+            search_score,
+        })
     }
 
-    /// Extract title for search indexing
     fn extract_title(&self, payload: &serde_json::Value, event: &Event<JsonValue>) -> String {
-        // Try explicit title field
         if let Some(title) = payload.get("title").and_then(|v| v.as_str()) {
             return title.to_string();
         }
-
-        // Try path-based title
         if let Some(path) = payload.get("path").and_then(|v| v.as_str()) {
             if let Some(filename) = path.split('/').last() {
                 return filename.to_string();
             }
         }
-
-        // Try command-based title
-        if let Some(command) = payload
-            .get("command")
-            .or_else(|| payload.get("command_string"))
-            .and_then(|v| v.as_str())
-        {
+        if let Some(command) = payload.get("command").and_then(|v| v.as_str()) {
             return format!(
                 "Command: {}",
                 command
@@ -322,98 +513,63 @@ impl SearchAutomaton {
                     .join(" ")
             );
         }
-
-        // Try URL-based title
         if let Some(url) = payload.get("url").and_then(|v| v.as_str()) {
-            return format!("Web: {}", url);
+            return format!("Web: {url}");
         }
-
-        // Default title
         format!(
             "{} - {}",
             event.event_type,
-            event.ts_orig.format("%Y-%m-%d %H:%M")
+            event_timestamp(event).format("%Y-%m-%d %H:%M")
         )
     }
 
-    /// Extract searchable content from payload
     fn extract_searchable_content(&self, payload: &serde_json::Value) -> Option<String> {
-        // Try various content fields
-        if let Some(content) = payload.get("content").and_then(|v| v.as_str()) {
-            return Some(content.to_string());
+        for key in [
+            "content",
+            "text",
+            "data",
+            "output",
+            "command",
+            "command_string",
+        ] {
+            if let Some(value) = payload.get(key).and_then(|v| v.as_str()) {
+                return Some(value.to_string());
+            }
         }
-
-        if let Some(text) = payload.get("text").and_then(|v| v.as_str()) {
-            return Some(text.to_string());
-        }
-
-        if let Some(data) = payload.get("data").and_then(|v| v.as_str()) {
-            return Some(data.to_string());
-        }
-
-        if let Some(output) = payload.get("output").and_then(|v| v.as_str()) {
-            return Some(output.to_string());
-        }
-
-        // For command events, include the command itself as searchable
-        if let Some(command) = payload
-            .get("command")
-            .or_else(|| payload.get("command_string"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(command.to_string());
-        }
-
         None
     }
 
-    /// Extract keywords for search indexing
     fn extract_search_keywords(&self, payload: &serde_json::Value, content: &str) -> Vec<String> {
         let mut keywords = Vec::new();
-
-        // Extract explicit keywords
-        if let Some(kw_array) = payload.get("keywords").and_then(|v| v.as_array()) {
-            for kw in kw_array {
-                if let Some(keyword) = kw.as_str() {
-                    keywords.push(keyword.to_string());
-                }
+        if let Some(explicit) = payload.get("keywords").and_then(|v| v.as_array()) {
+            for kw in explicit.iter().filter_map(|value| value.as_str()) {
+                keywords.push(kw.to_string());
             }
         }
-
-        // Extract from tags
-        if let Some(tags_array) = payload.get("tags").and_then(|v| v.as_array()) {
-            for tag in tags_array {
-                if let Some(tag_str) = tag.as_str() {
-                    keywords.push(tag_str.to_string());
-                }
+        if let Some(tags) = payload.get("tags").and_then(|v| v.as_array()) {
+            for tag in tags.iter().filter_map(|value| value.as_str()) {
+                keywords.push(tag.to_string());
             }
         }
-
-        // Simple keyword extraction from content
-        // Extract words longer than 3 characters that appear frequently
         let mut word_counts = HashMap::new();
         for word in content.split_whitespace() {
-            let clean_word = word
+            let cleaned = word
                 .to_lowercase()
                 .chars()
-                .filter(|c| c.is_alphabetic())
+                .filter(|c| c.is_alphanumeric())
                 .collect::<String>();
-            if clean_word.len() > 3 {
-                *word_counts.entry(clean_word).or_insert(0) += 1;
+            if cleaned.len() > 3 {
+                *word_counts.entry(cleaned).or_insert(0) += 1;
             }
         }
-
-        // Add frequent words as keywords
         for (word, count) in word_counts {
             if count >= 2 || keywords.len() < 10 {
                 keywords.push(word);
             }
         }
-
         keywords
     }
 
-    /// Calculate search relevance score for content
     fn calculate_search_score(
         &self,
         content: &str,
@@ -421,14 +577,8 @@ impl SearchAutomaton {
         event: &Event<JsonValue>,
     ) -> f64 {
         let mut score = 0.0;
-
-        // Content length factor (longer content might be more valuable)
         score += (content.len() as f64 / 1000.0).min(2.0);
-
-        // Keyword density factor
         score += (keywords.len() as f64 / 10.0).min(1.0);
-
-        // Event type factor
         match event.event_type.to_string().as_str() {
             s if s.contains("document") => score += 2.0,
             s if s.contains("file") => score += 1.5,
@@ -436,43 +586,131 @@ impl SearchAutomaton {
             s if s.contains("web") => score += 1.2,
             _ => score += 0.5,
         }
-
-        // Recency factor (newer content gets higher score)
-        let hours_old = (Utc::now() - event.ts_orig).num_hours() as f64;
-        let recency_factor = (1.0 / (1.0 + hours_old / 24.0)).max(0.1);
-        score *= recency_factor;
-
-        score
+        let hours_old = (Utc::now() - event_timestamp(event)).num_hours() as f64;
+        let recency = (1.0 / (1.0 + hours_old / 24.0)).max(0.2);
+        score * recency
     }
 
-    /// Generate search index event
-    async fn generate_search_index_event(&self) -> SatelliteResult<Event<JsonValue>> {
-        let total_entries = self.search_index.len();
+    fn provenance_from_index(&self) -> Provenance {
+        let ids: Vec<EventId> = self
+            .search_index
+            .iter()
+            .take(MAX_PROVENANCE_IDS)
+            .map(|entry| entry.source_event_id.clone())
+            .collect();
+        provenance_from_ids(&ids)
+    }
 
-        // Create index summary
+    async fn generate_search_analytics(
+        &self,
+        events: &[Event<JsonValue>],
+    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut content_types = HashMap::new();
+        for event in events {
+            *content_types
+                .entry(event.event_type.to_string())
+                .or_insert(0usize) += 1;
+        }
+
+        let top_types: Vec<_> = content_types
+            .iter()
+            .map(|(typ, count)| json!({ "event_type": typ, "count": count }))
+            .collect();
+
+        let payload = json!({
+            "analysis_type": "search.analytics",
+            "top_content_types": top_types,
+            "index_size": self.search_index.len(),
+            "semantic_enabled": self.config.enable_semantic_search,
+        });
+
+        let provenance = self.provenance_from_index();
+        let analytics_event =
+            Event::create("search-automaton", "search.analytics", payload, provenance)
+                .at_time(Utc::now());
+
+        Ok(vec![analytics_event])
+    }
+
+    async fn analyze_content_discoverability(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
+        if self.search_index.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut event_types = HashMap::new();
+        for entry in &self.search_index {
+            *event_types
+                .entry(entry.event_type.clone())
+                .or_insert(0usize) += 1;
+        }
+
+        let mut issues = Vec::new();
+        for (event_type, count) in event_types {
+            if count < 3 {
+                issues.push(json!({
+                    "event_type": event_type,
+                    "message": "Sparse coverage",
+                }));
+            }
+        }
+
+        if issues.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let payload = json!({
+            "analysis_type": "search.discoverability",
+            "issues": issues,
+            "recommendations": [
+                "Capture richer metadata for underrepresented types",
+                "Enable semantic_search for better clustering",
+            ],
+        });
+
+        let event = Event::create(
+            "search-automaton",
+            "search.discoverability",
+            payload,
+            self.provenance_from_index(),
+        )
+        .at_time(Utc::now());
+
+        Ok(vec![event])
+    }
+
+    fn generate_search_index_event(&self) -> SatelliteResult<Event<JsonValue>> {
+        if self.search_index.is_empty() {
+            return Err(SatelliteError::Processing(
+                "Search index empty; nothing to emit".into(),
+            ));
+        }
+
+        let total_entries = self.search_index.len();
         let mut content_type_distribution = HashMap::new();
-        let mut avg_score_by_type = HashMap::new();
-        let mut type_counts = HashMap::new();
         let mut type_scores = HashMap::new();
 
         for entry in &self.search_index {
             *content_type_distribution
                 .entry(entry.event_type.clone())
-                .or_insert(0) += 1;
-            *type_scores
+                .or_insert(0usize) += 1;
+            type_scores
                 .entry(entry.event_type.clone())
                 .or_insert(Vec::new())
                 .push(entry.search_score);
-            *type_counts.entry(entry.event_type.clone()).or_insert(0) += 1;
         }
 
-        // Calculate average scores by type
-        for (event_type, scores) in type_scores {
-            let avg_score = scores.iter().sum::<f64>() / scores.len() as f64;
-            avg_score_by_type.insert(event_type, avg_score);
-        }
+        let avg_score_by_type: HashMap<_, _> = type_scores
+            .into_iter()
+            .map(|(event_type, scores)| {
+                let avg = scores.iter().sum::<f64>() / scores.len() as f64;
+                (event_type, avg)
+            })
+            .collect();
 
-        // Get top entries
         let mut top_entries = self.search_index.clone();
         top_entries.sort_by(|a, b| {
             b.search_score
@@ -481,10 +719,10 @@ impl SearchAutomaton {
         });
         top_entries.truncate(10);
 
-        let top_entries_summary: Vec<_> = top_entries
+        let top_summary: Vec<_> = top_entries
             .iter()
             .map(|entry| {
-                serde_json::json!({
+                json!({
                     "title": entry.title,
                     "event_type": entry.event_type,
                     "search_score": entry.search_score,
@@ -494,201 +732,24 @@ impl SearchAutomaton {
             })
             .collect();
 
-        let source_event_ids: Vec<Id<Event<JsonValue>>> = self
-            .search_index
-            .iter()
-            .map(|entry| entry.source_event_id)
-            .collect();
-
-        let index_payload = serde_json::json!({
-            "analysis_type": "search_index",
+        let payload = json!({
+            "analysis_type": "search.index",
             "total_entries": total_entries,
             "content_type_distribution": content_type_distribution,
             "avg_score_by_type": avg_score_by_type,
-            "top_entries": top_entries_summary,
+            "top_entries": top_summary,
             "index_size_limit": self.config.max_index_size,
             "indexing_window_hours": self.config.indexing_window_seconds / 3600,
             "generated_at": Utc::now(),
         });
 
-        let event = Event::new(
+        Ok(Event::create(
             "search-automaton",
             "search.index_built",
-            index_payload,
-            source_event_ids,
+            payload,
+            self.provenance_from_index(),
         )
-        .with_timestamp(Utc::now());
-
-        Ok(event.into())
-    }
-
-    /// Generate search analytics
-    async fn generate_search_analytics(
-        &self,
-        events: &[Event<JsonValue>],
-    ) -> SatelliteResult<Vec<Event<JsonValue>>> {
-        let mut analytics_events = Vec::new();
-
-        // Analyze search patterns in the content
-        let search_patterns = self.analyze_search_patterns();
-
-        if !search_patterns.is_empty() {
-            let all_event_ids: Vec<Id<Event<JsonValue>>> = events.iter().map(|e| e.id).collect();
-
-            let analytics_payload = serde_json::json!({
-                "analysis_type": "search_analytics",
-                "search_patterns": search_patterns,
-                "total_patterns": search_patterns.len(),
-                "analysis_period_hours": self.config.indexing_window_seconds / 3600,
-                "generated_at": Utc::now(),
-            });
-
-            let analytics_event = Event::new(
-                "search-automaton",
-                "search.analytics",
-                analytics_payload,
-                all_event_ids,
-            )
-            .with_timestamp(Utc::now());
-
-            analytics_events.push(analytics_event.into());
-        }
-
-        Ok(analytics_events)
-    }
-
-    /// Analyze search patterns in content
-    fn analyze_search_patterns(&self) -> Vec<SearchQueryPattern> {
-        let mut patterns = Vec::new();
-
-        // Group entries by similar keywords
-        let mut keyword_groups: HashMap<String, Vec<&SearchIndexEntry>> = HashMap::new();
-
-        for entry in &self.search_index {
-            for keyword in &entry.keywords {
-                keyword_groups
-                    .entry(keyword.clone())
-                    .or_default()
-                    .push(entry);
-            }
-        }
-
-        // Generate patterns for keywords that appear frequently
-        for (keyword, entries) in keyword_groups {
-            if entries.len() >= 3 {
-                // Pattern needs at least 3 occurrences
-                let related_content_types: Vec<String> = entries
-                    .iter()
-                    .map(|e| e.event_type.clone())
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
-                    .collect();
-
-                let avg_relevance_score =
-                    entries.iter().map(|e| e.search_score).sum::<f64>() / entries.len() as f64;
-
-                patterns.push(SearchQueryPattern {
-                    pattern_type: "keyword_cluster".to_string(),
-                    query_terms: vec![keyword],
-                    frequency: entries.len(),
-                    related_content_types,
-                    avg_relevance_score,
-                });
-            }
-        }
-
-        // Sort by frequency and keep top patterns
-        patterns.sort_by(|a, b| b.frequency.cmp(&a.frequency));
-        patterns.truncate(20);
-
-        patterns
-    }
-
-    /// Analyze content discoverability
-    async fn analyze_content_discoverability(&self) -> SatelliteResult<Vec<Event<JsonValue>>> {
-        let mut discoverability_events = Vec::new();
-
-        // Analyze how easily content can be discovered
-        let mut low_discoverability_entries = Vec::new();
-        let mut high_discoverability_entries = Vec::new();
-
-        for entry in &self.search_index {
-            if entry.keywords.len() < 2 && entry.search_score < 1.0 {
-                low_discoverability_entries.push(entry);
-            } else if entry.keywords.len() >= 5 && entry.search_score > 2.0 {
-                high_discoverability_entries.push(entry);
-            }
-        }
-
-        if !low_discoverability_entries.is_empty() || !high_discoverability_entries.is_empty() {
-            let all_entry_ids: Vec<Id<Event<JsonValue>>> = self
-                .search_index
-                .iter()
-                .map(|entry| entry.source_event_id)
-                .collect();
-
-            let discoverability_payload = serde_json::json!({
-                "analysis_type": "content_discoverability",
-                "total_indexed_items": self.search_index.len(),
-                "low_discoverability_count": low_discoverability_entries.len(),
-                "high_discoverability_count": high_discoverability_entries.len(),
-                "low_discoverability_percentage": (low_discoverability_entries.len() as f64 / self.search_index.len() as f64) * 100.0,
-                "recommendations": self.generate_discoverability_recommendations(&low_discoverability_entries),
-                "generated_at": Utc::now(),
-            });
-
-            let discoverability_event = Event::new(
-                "search-automaton",
-                "search.content_discoverability",
-                discoverability_payload,
-                all_entry_ids,
-            )
-            .with_timestamp(Utc::now());
-
-            discoverability_events.push(discoverability_event.into());
-        }
-
-        Ok(discoverability_events)
-    }
-
-    /// Generate recommendations for improving content discoverability
-    fn generate_discoverability_recommendations(
-        &self,
-        low_discoverability_entries: &[&SearchIndexEntry],
-    ) -> Vec<String> {
-        let mut recommendations = Vec::new();
-
-        if !low_discoverability_entries.is_empty() {
-            recommendations.push(format!(
-                "{} items have low discoverability due to insufficient keywords",
-                low_discoverability_entries.len()
-            ));
-
-            // Analyze common characteristics of low-discoverability content
-            let mut event_types = HashMap::new();
-            for entry in low_discoverability_entries {
-                *event_types.entry(&entry.event_type).or_insert(0) += 1;
-            }
-
-            if let Some((most_common_type, count)) =
-                event_types.iter().max_by_key(|(_, &count)| count)
-            {
-                recommendations.push(format!(
-                    "Most affected content type: {} ({} items)",
-                    most_common_type, count
-                ));
-                recommendations.push(format!(
-                    "Consider adding more descriptive metadata to {} events",
-                    most_common_type
-                ));
-            }
-        }
-
-        recommendations.push("Enable semantic search for better content understanding".to_string());
-        recommendations
-            .push("Consider increasing min_content_length for better quality indexing".to_string());
-
-        recommendations
+        .at_time(Utc::now()))
     }
 }
 
@@ -700,20 +761,11 @@ impl StatefulStreamProcessor for SearchAutomaton {
         &mut self,
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
-        info!("Initializing search automaton");
-
         let (config, runtime) = init.into_runtime();
         self.db_pool = Some(runtime.db_pool().clone());
         self.event_sender = Some(runtime.event_sender());
         self.runtime = Some(runtime);
         self.config = config;
-
-        info!(
-            "Search automaton configured - indexing {} event types, max index size: {}",
-            self.config.searchable_event_types.len(),
-            self.config.max_index_size
-        );
-
         Ok(())
     }
 
@@ -724,45 +776,33 @@ impl StatefulStreamProcessor for SearchAutomaton {
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = Utc::now();
-
         let events_processed = match until {
-            TimeHorizon::Snapshot => {
-                // Perform one-time search indexing
-                self.process_search_events(&from).await.unwrap_or(0)
+            TimeHorizon::Snapshot => self.process_snapshot(Utc::now()).await.unwrap_or(0),
+            TimeHorizon::Historical { end_time } => {
+                self.process_snapshot(end_time).await.unwrap_or(0)
             }
-            TimeHorizon::Historical { .. } => {
-                // Index historical searchable events
-                self.process_search_events(&from).await.unwrap_or(0)
-            }
-            TimeHorizon::Continuous => {
-                // Continuous search processing
-                self.process_search_events(&from).await.unwrap_or(0)
-            }
+            TimeHorizon::Continuous => self.run_continuous(from).await.unwrap_or(0),
         };
 
         let duration = Utc::now().signed_duration_since(start_time);
 
         Ok(ScanReport {
             events_processed,
-            duration: Duration::from_millis(duration.num_milliseconds() as u64),
+            duration: Duration::from_millis(duration.num_milliseconds().max(0) as u64),
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
                 (
                     "search_index_entries".to_string(),
-                    serde_json::Value::Number(self.search_index.len().into()),
-                ),
-                (
-                    "max_index_size".to_string(),
-                    serde_json::Value::Number(self.config.max_index_size.into()),
+                    self.search_index.len() as u64,
                 ),
                 (
                     "fulltext_indexing_enabled".to_string(),
-                    serde_json::Value::Bool(self.config.enable_fulltext_indexing),
+                    self.config.enable_fulltext_indexing as u64,
                 ),
                 (
                     "search_analytics_enabled".to_string(),
-                    serde_json::Value::Bool(self.config.enable_search_analytics),
+                    self.config.enable_search_analytics as u64,
                 ),
             ]),
             successful_targets: vec!["search".to_string()],
@@ -779,9 +819,32 @@ impl StatefulStreamProcessor for SearchAutomaton {
         ProcessorType::Automaton
     }
 
+    fn capabilities(&self) -> ProcessorCapabilities {
+        ProcessorCapabilities {
+            supports_continuous: true,
+            supports_snapshot: true,
+            supports_historical: true,
+            manages_own_continuous_loop: true,
+            ..ProcessorCapabilities::default()
+        }
+    }
+
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
-        // Search indexing operates on recent data, no persistent checkpoint needed
         Ok(Checkpoint::None)
+    }
+
+    async fn shutdown(&mut self) -> SatelliteResult<()> {
+        if let Some(consumer) = self.consumer.take() {
+            consumer.stop().await;
+        }
+        if let Some(handle) = self.consumer_handle.take() {
+            if let Err(err) = handle.await {
+                warn!("Failed to join search consumer task: {err}");
+            }
+        }
+        self.incoming_tx = None;
+        self.incoming_rx = None;
+        Ok(())
     }
 }
 
@@ -810,27 +873,24 @@ impl ExplorationProvider for SearchAutomaton {
             metadata: HashMap::from([
                 (
                     "search_index_entries".to_string(),
-                    self.search_index.len().to_string(),
+                    json!(self.search_index.len()),
                 ),
                 (
                     "max_index_size".to_string(),
-                    self.config.max_index_size.to_string(),
+                    json!(self.config.max_index_size),
                 ),
-                (
-                    "avg_search_score".to_string(),
-                    format!("{:.2}", avg_search_score),
-                ),
+                ("avg_search_score".to_string(), json!(avg_search_score)),
                 (
                     "fulltext_indexing".to_string(),
-                    self.config.enable_fulltext_indexing.to_string(),
+                    json!(self.config.enable_fulltext_indexing),
                 ),
                 (
                     "semantic_search".to_string(),
-                    self.config.enable_semantic_search.to_string(),
+                    json!(self.config.enable_semantic_search),
                 ),
                 (
                     "search_analytics".to_string(),
-                    self.config.enable_search_analytics.to_string(),
+                    json!(self.config.enable_search_analytics),
                 ),
             ]),
             healthy: true,
@@ -851,18 +911,16 @@ impl ExplorationProvider for SearchAutomaton {
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = Utc::now();
         Ok(CoverageAnalysis {
-            time_range: (now - chrono::Duration::hours(1), now),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 100.0, // Search processes available searchable events
+            time_range: (now - ChronoDuration::hours(1), now),
+            source_total: self.search_index.len() as u64,
+            sinex_total: self.search_index.len() as u64,
+            coverage_percentage: 100.0,
             missing_count: 0,
             missing_samples: Vec::new(),
             duplicate_count: 0,
             recommendations: vec![
-                "Search automaton builds full-text search indices from event content".to_string(),
-                "Adjust searchable_event_types to focus on specific content sources".to_string(),
+                "Adjust searchable_event_types to focus on specific sources".to_string(),
                 "Enable semantic_search for more sophisticated content understanding".to_string(),
-                "Increase max_index_size to retain more searchable content".to_string(),
             ],
         })
     }
@@ -876,5 +934,156 @@ impl ExplorationProvider for SearchAutomaton {
     }
 }
 
+fn event_timestamp(event: &Event<JsonValue>) -> DateTime<Utc> {
+    event.ts_orig.unwrap_or_else(|| {
+        event
+            .id
+            .as_ref()
+            .map(|id| id.timestamp())
+            .unwrap_or_else(Utc::now)
+    })
+}
+
+fn dedup_events(events: &mut Vec<Event<JsonValue>>) {
+    let mut seen: HashSet<Ulid> = HashSet::new();
+    events.retain(|event| match event.id.as_ref() {
+        Some(id) => seen.insert(*id.as_ulid()),
+        None => false,
+    });
+}
+
+fn provenance_from_ids(ids: &[EventId]) -> Provenance {
+    if let Some(first) = ids.first().cloned() {
+        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
+    } else {
+        default_provenance()
+    }
+}
+
+fn default_provenance() -> Provenance {
+    let bootstrap = EventId::from_ulid(
+        Ulid::from_bytes([
+            0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ])
+        .expect("valid ULID bytes"),
+    );
+    Provenance::from_synthesis_safe(bootstrap, vec![])
+}
+
+#[derive(Clone)]
+struct ChannelConfirmedEventHandler {
+    sender: mpsc::UnboundedSender<ProvisionalEvent>,
+}
+
+impl ChannelConfirmedEventHandler {
+    fn new(sender: mpsc::UnboundedSender<ProvisionalEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+#[async_trait]
+impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
+    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> SatelliteResult<()> {
+        self.sender.send(event.clone()).map_err(|err| {
+            SatelliteError::Processing(format!("Failed to forward confirmed search event: {err}"))
+        })
+    }
+}
+
 /// Type alias for compatibility with processor_main! macro
 pub type SearchProcessor = SearchAutomaton;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_core::types::Id;
+    use tokio::runtime::Runtime;
+
+    fn make_event(event_type: &str, minutes_ago: i64, content: &str) -> Event<JsonValue> {
+        let mut event = Event::create(
+            "test",
+            event_type,
+            json!({ "content": content, "title": "Test" }),
+            default_provenance(),
+        )
+        .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago));
+        event.id = Some(Id::new());
+        event
+    }
+
+    #[test]
+    fn capture_events_prunes_deduplicates() {
+        let mut automaton = SearchAutomaton::new();
+        let first = make_event("document.created", 10, "hello world");
+        let mut duplicate = first.clone();
+        duplicate.ts_orig = Some(Utc::now());
+
+        automaton.capture_events(vec![first.clone(), duplicate]);
+        assert_eq!(automaton.recent_events.len(), 1);
+        assert_eq!(automaton.search_index.len(), 1);
+    }
+
+    #[test]
+    fn search_index_event_contains_summary() {
+        let mut automaton = SearchAutomaton::new();
+        let event = make_event("document.created", 5, "contents for indexing");
+        automaton.capture_events(vec![event]);
+        let index_event = automaton.generate_search_index_event().unwrap();
+        assert_eq!(index_event.event_type.to_string(), "search.index_built");
+    }
+
+    #[test]
+    fn search_analytics_event_emitted() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut automaton = SearchAutomaton::new();
+            automaton.capture_events(vec![make_event(
+                "document.created",
+                1,
+                "rich searchable content with repeated words content content",
+            )]);
+            let snapshot = automaton.recent_snapshot();
+            let analytics = automaton
+                .generate_search_analytics(&snapshot)
+                .await
+                .expect("analytics generation should succeed");
+            assert_eq!(analytics.len(), 1);
+            assert_eq!(
+                analytics[0].event_type.to_string(),
+                "search.analytics",
+                "expected analytics event"
+            );
+        });
+    }
+
+    #[test]
+    fn sparse_content_types_trigger_discoverability_event() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut automaton = SearchAutomaton::new();
+            automaton.capture_events(vec![
+                make_event("document.created", 1, "alpha beta gamma delta epsilon"),
+                make_event(
+                    "web.page_visited",
+                    1,
+                    "http request response content sample",
+                ),
+            ]);
+
+            let discoverability = automaton
+                .analyze_content_discoverability()
+                .await
+                .expect("analysis should succeed");
+            assert!(
+                !discoverability.is_empty(),
+                "sparse types should emit discoverability issues"
+            );
+            assert_eq!(
+                discoverability[0].event_type.to_string(),
+                "search.discoverability"
+            );
+        });
+    }
+}

@@ -866,3 +866,41 @@ impl ExplorationProvider for DesktopProcessor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_satellite_sdk::stream_processor::{
+        Checkpoint, ProcessorInitContext, ScanArgs, TimeHorizon,
+    };
+    use sinex_test_utils::{satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext};
+
+    #[sinex_test]
+    async fn desktop_processor_emits_clipboard_events(ctx: TestContext) -> color_eyre::Result<()> {
+        let runtime = TestRuntimeBuilder::new(&ctx, "desktop-processor")
+            .build()
+            .await?;
+        let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
+        let init_ctx = ProcessorInitContext::new(
+            DesktopConfig::default(),
+            raw_config,
+            service_info,
+            handles,
+            work_dir,
+        );
+
+        let mut processor = DesktopProcessor::new();
+        processor.initialize(init_ctx).await?;
+
+        let report = processor
+            .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
+            .await?;
+
+        assert!(
+            report.events_processed > 0,
+            "Desktop snapshot scans should emit clipboard/window events"
+        );
+
+        Ok(())
+    }
+}

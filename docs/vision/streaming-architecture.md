@@ -4,7 +4,7 @@
 > JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
 
 
-This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream and the transactional outbox pattern.
+This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired in Phase 5 of `docs/way.md`; see the historical note below.)
 
 > **Accuracy Notice (2025-07-24)**  
 > References to `docs/TARGET_final.md` and other legacy plans point to files that were removed during documentation consolidation. Treat those links as historical context only. The authoritative ingestion/JetStream plan now lives in `docs/way.md`. Update any downstream documents or tooling that still expect the old path.
@@ -12,19 +12,19 @@ This document consolidates our streaming/backpressure guidance and replaces ad�
 ## Goals
 - Natural backpressure without arbitrary channel sizes.
 - Preserve Postgres as the single source of truth for events.
-- Keep publish semantics reliable via a transactional outbox.
+- Keep publish semantics reliable via JetStream confirmations and durable consumers.
 - Maintain event ordering and durability (ULIDs + persisted streams).
 
 ## Data Flow (Current)
 ```
-Satellites → NATS (staging) → sinex-ingestd → Postgres → Outbox → NATS (events) → Consumers
-                     ↓                         ↓                        ↓
-                Buffer/transport         Source of truth           Notifications
+Satellites → NATS (staging) → sinex-ingestd → Postgres (core.events)
+                                         ↓
+                               JetStream confirmations/DLQ → Automata & Replay
 ```
 
 Notes:
 - The staging stream is optional but recommended for bursty producers.
-- Postgres (core.events) remains authoritative; NATS is for transport/notifications.
+- Postgres (core.events) remains authoritative; JetStream transports provisional events, confirmations, and DLQ messages.
 
 ## Key Components
 
@@ -47,21 +47,10 @@ Purpose:
 - Absorb bursts while preserving order.
 - Let consumer pace apply backpressure naturally.
 
-### Transactional Outbox (Postgres)
-Persist events and enqueue an outbox record in the same transaction; a background publisher drains the outbox to the “events” stream.
+### JetStream Confirmation Flow
+In the JetStream‑first architecture, ingestd persists events inside a single database transaction and, once committed, publishes confirmations back to JetStream (e.g., `events.confirmations.<event_id>`) plus any DLQ entries. Automata and replay tooling consume those confirmation streams via durable consumers, which gives the same ordering and reliability guarantees the old transactional outbox provided—without a second delivery mechanism. See `docs/way.md` for the authoritative subject list.
 
-Pseudo‑flow:
-```
-BEGIN;
-  INSERT INTO core.events (...);
-  INSERT INTO core.outbox (...);
-COMMIT;
-# Publisher processes outbox → NATS events
-```
-
-Benefits:
-- Atomic DB write + publish.
-- Crash‑resilient delivery (replay outbox on restart).
+**Historical note:** older revisions described a Postgres transactional outbox that relayed events to NATS. That component was removed when Phase 5 of the JetStream refactor completed; the section above captures the current behaviour.
 
 ### NATS JetStream (Events)
 Authoritative notifications for persisted events (consumers replay as needed).

@@ -147,7 +147,7 @@ Disaster Recovery (summary)
 Daily Ops
 - Health check: verify services; recent event counts; error scans; DB disk usage.
 - Queue/lag: check JetStream consumer lag; DLQs; retry transient failures.
-- Migrations: apply via `sinex-schema` (sea-orm-migration); refresh SQLx offline cache (`just sqlx-prepare`).
+- Migrations: apply via `sinex-schema` (sea-orm-migration); refresh SQLx offline cache (`devenv tasks run sqlx:prepare`).
 
 Troubleshooting
 - Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.

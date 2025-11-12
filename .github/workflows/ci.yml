@@ -38,7 +38,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb-ha:pg16-latest
+        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -53,6 +53,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Enforce forbidden pattern guards
+      run: bash scripts/check_forbidden_patterns.sh
+
+    - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        ./scripts/schema-dev.sh generate
+        if ! git diff --quiet -- schemas; then
+          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
+          git status schemas
+          exit 1
+        fi
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -90,13 +105,14 @@ jobs:
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |
-        cd crate/sinex-db/migration && cargo run -- up
+        cd crate/lib/sinex-schema
+        cargo run -- up
         
     - name: Run tests
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
         RUST_LOG: debug
-      run: cargo test --all-features
+      run: cargo nextest run --all-features --workspace
 
   coverage:
     name: Code Coverage
@@ -104,7 +120,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb-ha:pg16-latest
+        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -119,6 +135,21 @@ jobs:
           
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Enforce forbidden pattern guards
+      run: bash scripts/check_forbidden_patterns.sh
+
+    - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        ./scripts/schema-dev.sh generate
+        if ! git diff --quiet -- schemas; then
+          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
+          git status schemas
+          exit 1
+        fi
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -149,7 +180,8 @@ jobs:
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |
-        cd crate/sinex-db/migration && cargo run -- up
+        cd crate/lib/sinex-schema
+        cargo run -- up
         
     - name: Generate code coverage
       env:

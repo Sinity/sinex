@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "status_detail": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "status_detail",
+    "timestamp"
+  ],
+  "title": "SystemdUnitStateChangedPayload",
+  "type": "object"
+}

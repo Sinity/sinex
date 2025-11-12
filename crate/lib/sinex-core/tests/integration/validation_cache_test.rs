@@ -1,11 +1,9 @@
-use sinex_core::db::pool::DbPool;
-use sinex_test_utils::{sinex_test, test_context::TestContext};
+use sinex_test_utils::{sinex_test, TestContext};
 use sqlx::Row;
 
 #[sinex_test]
-async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    let pool = &ctx.pool;
+async fn test_validation_cache_uses_payload_hash(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let pool = ctx.pool.clone();
 
     // Create a test schema
     let schema_row = sqlx::query(
@@ -16,7 +14,7 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
         RETURNING id::uuid as id
         "#
     )
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
     let schema_id: sqlx::types::Uuid = schema_row.get("id");
 
@@ -35,7 +33,7 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
     )
     .bind(serde_json::from_str::<serde_json::Value>(test_payload)?)
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
     let event_id: sqlx::types::Uuid = event_row.get("id");
 
@@ -43,7 +41,7 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
     let validation_result =
         sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
             .bind(event_id)
-            .fetch_one(pool.inner())
+            .fetch_one(&pool)
             .await?;
     let is_valid: Option<bool> = validation_result.get("is_valid");
     assert!(is_valid.unwrap_or(false), "Event should be valid");
@@ -53,7 +51,7 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
         "SELECT payload_hash, schema_id::uuid as schema_id, is_valid FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
     )
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
 
     // Verify payload hash is correct length (SHA256 = 64 hex characters)
@@ -67,7 +65,7 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
     // Verify the hash matches what we expect
     let expected_hash: String = sqlx::query("SELECT encode(digest($1, 'sha256'), 'hex') as hex")
         .bind(test_payload)
-        .fetch_one(pool.inner())
+        .fetch_one(&pool)
         .await?
         .get("hex");
 
@@ -88,19 +86,19 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
         "SELECT COUNT(*) FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
     )
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
 
     let _ = sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
         .bind(event_id)
-        .fetch_one(pool.inner())
+        .fetch_one(&pool)
         .await?;
 
     let cache_count_after: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
     )
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
 
     assert_eq!(
@@ -112,9 +110,10 @@ async fn test_validation_cache_uses_payload_hash() -> color_eyre::eyre::Result<(
 }
 
 #[sinex_test]
-async fn test_validation_cache_with_invalid_payload() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    let pool = &ctx.pool;
+async fn test_validation_cache_with_invalid_payload(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let pool = ctx.pool.clone();
 
     // Create a test schema
     let schema_row = sqlx::query(
@@ -125,7 +124,7 @@ async fn test_validation_cache_with_invalid_payload() -> color_eyre::eyre::Resul
         RETURNING id::uuid as id
         "#
     )
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
     let schema_id: sqlx::types::Uuid = schema_row.get("id");
 
@@ -144,7 +143,7 @@ async fn test_validation_cache_with_invalid_payload() -> color_eyre::eyre::Resul
     )
     .bind(serde_json::from_str::<serde_json::Value>(test_payload)?)
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
     let event_id: sqlx::types::Uuid = event_row.get("id");
 
@@ -152,7 +151,7 @@ async fn test_validation_cache_with_invalid_payload() -> color_eyre::eyre::Resul
     let validation_result =
         sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
             .bind(event_id)
-            .fetch_one(pool.inner())
+            .fetch_one(&pool)
             .await?;
     let is_valid: Option<bool> = validation_result.get("is_valid");
     assert!(!is_valid.unwrap_or(true), "Event should be invalid");
@@ -162,7 +161,7 @@ async fn test_validation_cache_with_invalid_payload() -> color_eyre::eyre::Resul
         "SELECT is_valid, validation_errors FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
     )
     .bind(schema_id)
-    .fetch_one(pool.inner())
+    .fetch_one(&pool)
     .await?;
 
     let cached_valid: Option<bool> = cache_entry.get("is_valid");

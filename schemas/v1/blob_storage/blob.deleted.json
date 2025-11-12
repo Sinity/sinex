@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "blob_id": {
+      "type": "string"
+    },
+    "deletion_reason": {
+      "type": "string"
+    },
+    "freed_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blob_id",
+    "deletion_reason",
+    "freed_bytes"
+  ],
+  "title": "BlobDeletedPayload",
+  "type": "object"
+}

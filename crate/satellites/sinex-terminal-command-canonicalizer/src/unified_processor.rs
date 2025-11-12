@@ -127,7 +127,12 @@ impl TerminalCommandCanonicalizer {
         let event_type = EventType::from_static("command.canonical");
         let events = pool
             .events()
-            .get_events_by_type_and_time_range(&event_type, start_time, end_time, Some(1000))
+            .get_events_by_type_and_time_range(
+                &event_type,
+                start_time,
+                end_time,
+                sinex_core::types::Pagination::new(Some(1000), None),
+            )
             .await?;
 
         // Find matching command text
@@ -284,7 +289,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                         &event_type,
                         start_time,
                         end_time,
-                        Some(10_000),
+                        sinex_core::types::Pagination::new(Some(10_000), None),
                     )
                     .await?;
 

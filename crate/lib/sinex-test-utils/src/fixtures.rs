@@ -1669,7 +1669,10 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&source_ref, Some(1000), None)
+            .get_by_source(
+                &source_ref,
+                sinex_core::types::Pagination::new(Some(1000), None),
+            )
             .await?;
         assert_eq!(events.len(), 7);
 

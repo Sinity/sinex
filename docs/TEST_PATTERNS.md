@@ -134,7 +134,7 @@ CREATE DATABASE test_db WITH TEMPLATE template_db
 - Automatic recreation on migration changes
 
 **Cache Invalidation**:
-- Stored in `target/sinex-test-utils/template_stamp.json`
+- Stored in `target/sinex-test-utils/template_stamp.json` (managed automatically; delete only when debugging a corrupted local template)
 - Detects extension version changes
 - Checks for required schema elements
 - Rebuilds if TimescaleDB version changes
@@ -775,7 +775,7 @@ async fn test_custom_snapshot(ctx: TestContext) -> Result<()> {
 
 **Features**:
 - Auto-generated baseline snapshots
-- Update mode: `INSTA_UPDATE=always cargo test`
+- Update mode: `INSTA_UPDATE=always cargo nextest run -p sinex-test-utils`
 - YAML, JSON, debug, and inline formats
 - Git-friendly diffs for review
 
@@ -1099,8 +1099,9 @@ WHERE datname LIKE 'sinex_test%';
 migrations or required extensions change. Manual deletion should only be
 necessary when debugging local Postgres issues:
 ```bash
+# Only needed if the cached template is corrupted locally
 rm target/sinex-test-utils/template_stamp.json
-cargo test
+cargo nextest run -p sinex-test-utils
 ```
 
 ### Issue: "Tests hang on cleanup"

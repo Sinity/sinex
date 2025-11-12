@@ -6,6 +6,7 @@ incremental = true
 pipelining = true
 # Use all available CPU cores for compilation
 jobs = 24
+rustc-workspace-wrapper = "scripts/rustc_wrapper.sh"
 
 # Shared build cache across the workspace (experimental)
 [unstable]
@@ -53,8 +54,8 @@ cf = [
   "--features",
 ] # Check with features
 
-[env]
 # Environment variables for coverage and testing
+[env]
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
 
 # Speed optimizations via environment variables

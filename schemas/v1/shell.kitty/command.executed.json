@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Kitty command executed event emitted by shell integration.",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "execution_time_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "exit_status": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "kitty_tab_id": {
+      "type": "string"
+    },
+    "kitty_window_id": {
+      "type": "string"
+    },
+    "shell_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "command",
+    "kitty_tab_id",
+    "kitty_window_id"
+  ],
+  "title": "KittyCommandExecutedPayload",
+  "type": "object"
+}

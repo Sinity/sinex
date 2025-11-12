@@ -120,7 +120,7 @@ exo replay --cascade          # Historical reprocessing
 ```sql
 CREATE TABLE core.events (
     event_id ULID PRIMARY KEY,
-    ts_ingest TIMESTAMPTZ GENERATED ALWAYS AS (event_id::timestamp) STORED,
+    ts_ingest TIMESTAMPTZ GENERATED ALWAYS AS (id::timestamp) STORED,
     source TEXT NOT NULL,
     event_type TEXT NOT NULL,
     payload JSONB NOT NULL,

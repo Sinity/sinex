@@ -4,8 +4,15 @@
 
 use crate::error::ServiceResult;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::DbPool;
-use sinex_core::types::ulid::Ulid;
+use sinex_core::db::{
+    repositories::{DbPoolExt, EventSearchFilters},
+    DbPool,
+};
+use sinex_core::types::{
+    domain::{EventSource, EventType},
+    ulid::Ulid,
+    Pagination, TimeRange,
+};
 use sqlx::types::chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,23 +37,9 @@ pub struct SearchResult {
     pub score: f64,
 }
 
-/// Database row for search query results
-#[derive(Debug, sqlx::FromRow)]
-struct SearchResultRow {
-    event_id: Option<String>,
-    source: String,
-    event_type: String,
-    host: String,
-    ts_ingest: DateTime<Utc>,
-    payload: serde_json::Value,
-    score: f64,
-}
-
 pub struct SearchService {
     pool: DbPool,
 }
-
-const MAX_LIMIT: i32 = 1000;
 
 impl SearchService {
     pub fn new(pool: DbPool) -> Self {
@@ -55,118 +48,21 @@ impl SearchService {
 
     /// Search events based on criteria using parameterized SQLx query building
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
-        let query = normalize_query(query);
+        let prepared = PreparedSearch::new(query)?;
+        let snippet_text = prepared.search_text.as_deref();
 
-        // Base select. Score is a placeholder (1.0) to keep response shape stable.
-        let mut sql = String::from(
-            "SELECT id::text AS event_id, source, event_type, host, ts_ingest, payload, 1.0::float8 AS score \
-             FROM core.events",
-        );
-
-        // Dynamic parameters (we'll append WHERE clauses and numbered placeholders below)
-
-        // We’ll switch to a simpler approach: assemble dynamic SQL and keep an ordered list of bind values in an enum.
-
-        #[derive(Debug)]
-        enum Param {
-            Text(String),
-            Time(DateTime<Utc>),
-            ILike(String),
-            Limit(i64),
-            Offset(i64),
-        }
-
-        let mut params: Vec<Param> = Vec::new();
-
-        // Append filters
-        let mut first_clause = true;
-        let mut push_clause = |clause: &str| {
-            if first_clause {
-                sql.push_str(" WHERE ");
-                first_clause = false;
-            } else {
-                sql.push_str(" AND ");
-            }
-            sql.push_str(clause);
-        };
-
-        if !query.sources.is_empty() {
-            // e.g., source IN ($1,$2,...)
-            let start = params.len();
-            for s in &query.sources {
-                params.push(Param::Text(s.clone()));
-            }
-            let count = params.len() - start;
-            let placeholders: Vec<String> =
-                (0..count).map(|i| format!("${}", start + i + 1)).collect();
-            push_clause(&format!("source IN ({})", placeholders.join(",")));
-        }
-
-        if !query.event_types.is_empty() {
-            let start = params.len();
-            for t in &query.event_types {
-                params.push(Param::Text(t.clone()));
-            }
-            let count = params.len() - start;
-            let placeholders: Vec<String> =
-                (0..count).map(|i| format!("${}", start + i + 1)).collect();
-            push_clause(&format!("event_type IN ({})", placeholders.join(",")));
-        }
-
-        if let Some(start) = query.start_time {
-            let idx = params.len() + 1;
-            push_clause(&format!("ts_ingest >= ${}", idx));
-            params.push(Param::Time(start));
-        }
-        if let Some(end) = query.end_time {
-            let idx = params.len() + 1;
-            push_clause(&format!("ts_ingest <= ${}", idx));
-            params.push(Param::Time(end));
-        }
-
-        if let Some(text) = &query.text {
-            let idx = params.len() + 1;
-            push_clause(&format!("payload::text ILIKE ${}", idx));
-            params.push(Param::ILike(format!("%{}%", text)));
-        }
-
-        // Order, limit, offset
-        sql.push_str(" ORDER BY ts_ingest DESC");
-        let limit_idx = params.len() + 1;
-        sql.push_str(&format!(" LIMIT ${}", limit_idx));
-        params.push(Param::Limit(query.limit as i64));
-        let offset_idx = params.len() + 1;
-        sql.push_str(&format!(" OFFSET ${}", offset_idx));
-        params.push(Param::Offset(query.offset as i64));
-
-        // Prepare query and bind in order
-        let mut q = sqlx::query_as::<_, SearchResultRow>(&sql);
-        for p in params {
-            q = match p {
-                Param::Text(s) => q.bind(s),
-                Param::Time(ts) => q.bind(ts),
-                Param::ILike(s) => q.bind(s),
-                Param::Limit(v) => q.bind(v),
-                Param::Offset(v) => q.bind(v),
-            };
-        }
-
-        let rows = q.fetch_all(&self.pool).await?;
+        let rows = self.pool.events().search(prepared.filters).await?;
 
         let results = rows
             .into_iter()
-            .filter_map(|row| {
-                row.event_id
-                    .and_then(|id| id.parse::<Ulid>().ok())
-                    .map(|ulid| SearchResult {
-                        event_id: ulid,
-                        source: row.source,
-                        event_type: row.event_type,
-                        host: row.host,
-                        timestamp: row.ts_ingest,
-                        snippet: Self::extract_snippet(&row.payload, query.text.as_deref()),
-                        score: row.score,
-                    })
+            .map(|row| SearchResult {
+                event_id: row.id,
+                source: row.source.into_string(),
+                event_type: row.event_type.into_string(),
+                host: row.host.into_string(),
+                timestamp: row.ts_ingest,
+                snippet: Self::extract_snippet(&row.payload, snippet_text),
+                score: 1.0,
             })
             .collect();
 
@@ -222,15 +118,62 @@ impl SearchService {
     }
 }
 
-fn normalize_query(mut query: SearchQuery) -> SearchQuery {
-    if query.limit <= 0 {
-        query.limit = 50;
+#[derive(Debug)]
+struct PreparedSearch {
+    filters: EventSearchFilters,
+    search_text: Option<String>,
+}
+
+impl PreparedSearch {
+    fn new(query: SearchQuery) -> ServiceResult<Self> {
+        let SearchQuery {
+            text,
+            sources,
+            event_types,
+            start_time,
+            end_time,
+            limit,
+            offset,
+        } = query;
+
+        let pagination = Pagination::with_bounds(
+            Some(limit as i64),
+            Some(offset as i64),
+            Pagination::DEFAULT_LIMIT,
+            Pagination::MAX_LIMIT,
+        );
+
+        let time_range = match (start_time, end_time) {
+            (None, None) => None,
+            (start, end) => Some(TimeRange::new(start, end)?),
+        };
+
+        let search_text = text.and_then(|t| {
+            let trimmed = t.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        let sources = sources.into_iter().map(EventSource::from).collect();
+        let event_types = event_types.into_iter().map(EventType::from).collect();
+
+        let filters = EventSearchFilters {
+            sources,
+            event_types,
+            text_query: search_text.clone(),
+            time_range,
+            pagination,
+            ..Default::default()
+        };
+
+        Ok(Self {
+            filters,
+            search_text,
+        })
     }
-    query.limit = query.limit.min(MAX_LIMIT);
-    if query.offset < 0 {
-        query.offset = 0;
-    }
-    query
 }
 
 #[cfg(test)]
@@ -238,7 +181,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_query_enforces_bounds() {
+    fn prepared_search_clamps_pagination() {
         let query = SearchQuery {
             text: None,
             sources: vec![],
@@ -249,9 +192,9 @@ mod tests {
             offset: -5,
         };
 
-        let normalized = normalize_query(query);
-        assert_eq!(normalized.limit, MAX_LIMIT);
-        assert_eq!(normalized.offset, 0);
+        let prepared = PreparedSearch::new(query).expect("preparation succeeds");
+        assert_eq!(prepared.filters.pagination.limit(), Pagination::MAX_LIMIT);
+        assert_eq!(prepared.filters.pagination.offset(), 0);
 
         let query = SearchQuery {
             text: None,
@@ -262,7 +205,29 @@ mod tests {
             limit: 0,
             offset: 0,
         };
-        let normalized = normalize_query(query);
-        assert_eq!(normalized.limit, 50);
+        let prepared = PreparedSearch::new(query).expect("preparation succeeds");
+        assert_eq!(
+            prepared.filters.pagination.limit(),
+            Pagination::DEFAULT_LIMIT
+        );
+        assert_eq!(prepared.filters.pagination.offset(), 0);
+    }
+
+    #[test]
+    fn prepared_search_validates_time_range() {
+        let start = Utc::now();
+        let end = start - chrono::Duration::hours(1);
+
+        let query = SearchQuery {
+            text: None,
+            sources: vec![],
+            event_types: vec![],
+            start_time: Some(start),
+            end_time: Some(end),
+            limit: 10,
+            offset: 0,
+        };
+
+        assert!(PreparedSearch::new(query).is_err());
     }
 }

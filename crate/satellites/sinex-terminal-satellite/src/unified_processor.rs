@@ -638,20 +638,12 @@ impl ExplorationProvider for TerminalProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    mod runtime_support {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../..",
-            "/lib/sinex-satellite-sdk/tests/support/runtime.rs"
-        ));
-    }
-    use runtime_support::TestRuntimeBuilder;
     use sinex_core::db::models::Provenance;
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_satellite_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
-    use sinex_test_utils::prelude::*;
     use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{prelude::*, TestRuntime, TestRuntimeBuilder};
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
 
@@ -682,13 +674,15 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
-        let runtime_support::TestRuntime {
+        let TestRuntime {
             runtime,
             mut event_rx,
-            ..
+            nats,
         } = TestRuntimeBuilder::new(&ctx, "terminal-satellite-test")
+            .with_dry_run(false)
             .build()
             .await?;
+        let _ = nats.client_url();
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {

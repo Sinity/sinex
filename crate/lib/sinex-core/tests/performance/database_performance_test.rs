@@ -180,7 +180,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> color_eyre::eyre::
 
     // Define comprehensive query test suite
     let query_tests = vec![
-        ("Primary Key Lookup", "SELECT * FROM core.events WHERE event_id = $1::uuid"),
+        ("Primary Key Lookup", "SELECT * FROM core.events WHERE id = $1::uuid::ulid"),
         ("Source Index Scan", "SELECT * FROM core.events WHERE source = $1 LIMIT 100"),
         ("Event Type Filter", "SELECT * FROM core.events WHERE event_type = $1 LIMIT 100"),
         ("Time Range Query", "SELECT * FROM core.events WHERE ts_orig >= $1 AND ts_orig <= $2"),

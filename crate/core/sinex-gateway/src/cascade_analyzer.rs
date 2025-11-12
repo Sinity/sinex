@@ -1,13 +1,14 @@
 #![doc = include_str!("../doc/cascade_analyzer.md")]
 
-use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
+use sinex_core::db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 /// Analysis of cascade effects for a replay operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +100,19 @@ pub struct StreamingCascadeAnalyzer {
 
 #[allow(dead_code)]
 impl StreamingCascadeAnalyzer {
+    fn quote_identifier(name: &str) -> String {
+        let mut quoted = String::with_capacity(name.len() + 2);
+        quoted.push('"');
+        for ch in name.chars() {
+            if ch == '"' {
+                quoted.push('"');
+            }
+            quoted.push(ch);
+        }
+        quoted.push('"');
+        quoted
+    }
+
     /// Create new analyzer with default configuration
     pub fn new(pool: PgPool) -> Self {
         Self::with_config(pool, CascadeAnalyzerConfig::default())
@@ -226,33 +240,11 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<String> {
         // Validate session_id to prevent SQL injection
         Self::validate_session_id(session_id)?;
-
-        let table_name = format!("cascade_analysis_{}", session_id);
-
-        // Use PostgreSQL's quote_ident() to safely handle the table name
-        let create_table_sql = r#"
-            SELECT 'CREATE TEMP TABLE ' || quote_ident($1) || ' (
-                id ULID PRIMARY KEY,
-                depth INTEGER NOT NULL DEFAULT 0,
-                parent_ids ULID[] DEFAULT ''{}''::ULID[],
-                processed BOOLEAN DEFAULT FALSE
-            ) ON COMMIT DROP' AS sql
-        "#;
-
-        let sql_result = sqlx::query_scalar::<_, String>(create_table_sql)
-            .bind(&table_name)
-            .fetch_one(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        let table_name = repo
+            .prepare_cascade_session(session_id, true)
             .await
-            .map_err(|e| db_error(e, "build safe table creation SQL"))?;
-
-        sqlx::query(&sql_result)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create temp table {}: {}", table_name, e);
-                db_error(e, "create temp cascade tables")
-            })?;
-
+            .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
         debug!("Created temp table: {}", table_name);
         Ok(table_name)
     }
@@ -262,59 +254,12 @@ impl StreamingCascadeAnalyzer {
         // Validate session_id to prevent SQL injection
         Self::validate_session_id(session_id)?;
 
-        // Generate unique table name for this session
-        let table_name = format!("cascade_analysis_{}", session_id);
-
-        // Use PostgreSQL's quote_ident() to safely handle table and index names
-        let create_table_sql = r#"
-            SELECT 'CREATE TEMPORARY TABLE IF NOT EXISTS ' || quote_ident($1) || ' (
-                id ULID PRIMARY KEY,
-                depth INT NOT NULL DEFAULT 0,
-                parent_ids ULID[],
-                child_ids ULID[],
-                is_archived BOOLEAN DEFAULT FALSE,
-                is_live BOOLEAN DEFAULT TRUE,
-                processed BOOLEAN DEFAULT FALSE
-            )' AS sql
-        "#;
-
-        let table_sql = sqlx::query_scalar::<_, String>(create_table_sql)
-            .bind(&table_name)
-            .fetch_one(&self.pool)
+        let table_name = self
+            .pool
+            .events()
+            .prepare_cascade_session(session_id, false)
             .await
-            .map_err(|e| db_error(e, "build safe table creation SQL"))?;
-
-        let create_indexes_sql = r#"
-            SELECT 'CREATE INDEX IF NOT EXISTS ' || quote_ident('idx_' || $1 || '_depth') || 
-                   ' ON ' || quote_ident($1) || ' (depth); ' ||
-                   'CREATE INDEX IF NOT EXISTS ' || quote_ident('idx_' || $1 || '_processed') || 
-                   ' ON ' || quote_ident($1) || ' (processed)' AS sql
-        "#;
-
-        let indexes_sql = sqlx::query_scalar::<_, String>(create_indexes_sql)
-            .bind(&table_name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| db_error(e, "build safe index creation SQL"))?;
-
-        // Execute table creation
-        sqlx::query(&table_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create temp table {}: {}", table_name, e);
-                db_error(e, "create temp cascade table")
-            })?;
-
-        // Execute index creation
-        sqlx::query(&indexes_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create indexes for table {}: {}", table_name, e);
-                db_error(e, "create temp cascade indexes")
-            })?;
-
+            .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
         debug!("Created temporary table {}", table_name);
         Ok(table_name)
     }
@@ -330,48 +275,21 @@ impl StreamingCascadeAnalyzer {
             return Ok(());
         }
 
-        let values: Vec<String> = event_ids
-            .iter()
-            .map(|id| format!("('{}'::ulid, 0)", id))
-            .collect();
-
-        let insert_sql = format!(
-            "INSERT INTO {} (id, depth) VALUES {} ON CONFLICT DO NOTHING",
-            table_name,
-            values.join(",")
-        );
-
-        sqlx::query(&insert_sql)
-            .execute(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        repo.populate_cascade_roots(table_name, event_ids)
             .await
-            .map_err(|e| db_error(e, "populate initial events"))?;
-
+            .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
         debug!("Populated {} initial events", event_ids.len());
         Ok(())
     }
 
     /// Populate initial events to analyze
     async fn populate_initial_events(&self, table_name: &str, event_ids: &[Ulid]) -> Result<()> {
-        let query = format!(
-            r#"
-            INSERT INTO {} (id, depth, parent_ids, is_archived)
-            SELECT 
-                e.event_id,
-                0,
-                e.source_event_ids,
-                FALSE
-            FROM core.events e
-            WHERE e.event_id = ANY($1::ulid[])
-            "#,
-            table_name
-        );
-
-        sqlx::query(&query)
-            .bind(event_ids.to_uuid_vec())
-            .execute(&self.pool)
+        self.pool
+            .events()
+            .populate_cascade_roots(table_name, event_ids)
             .await
-            .map_err(|e| db_error(e, "populate initial events"))?;
-
+            .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
         debug!("Populated {} initial events", event_ids.len());
         Ok(())
     }
@@ -382,102 +300,13 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        let mut current_depth = 0;
-        let max_depth = self.config.max_depth;
-        let batch_size = self.config.batch_size;
+        let mut repo = EventRepositoryTx::new(tx);
+        let depth = repo
+            .expand_cascade(table_name, self.config.max_depth as i32)
+            .await
+            .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
 
-        loop {
-            // Process events in batches to avoid memory issues
-            let mut total_inserted = 0;
-            let mut batch_offset = 0;
-
-            loop {
-                // Find children of current depth events in batches
-                let query = format!(
-                    r#"
-                    WITH current_level AS (
-                        SELECT id, parent_ids
-                        FROM {}
-                        WHERE depth = $1 AND NOT processed
-                        LIMIT $2 OFFSET $3
-                    ),
-                    children AS (
-                        SELECT DISTINCT e.event_id, e.source_event_ids as parent_ids
-                        FROM core.events e
-                        JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM {} t WHERE t.id = e.event_id
-                        )
-                        LIMIT $2
-                    )
-                    INSERT INTO {} (id, depth, parent_ids)
-                    SELECT event_id, $4, parent_ids
-                    FROM children
-                    ON CONFLICT (id) DO NOTHING
-                    RETURNING id
-                    "#,
-                    table_name, table_name, table_name
-                );
-
-                let inserted = sqlx::query(&query)
-                    .bind(current_depth as i32)
-                    .bind(batch_size as i32)
-                    .bind(batch_offset as i32)
-                    .bind((current_depth + 1) as i32)
-                    .fetch_all(&mut **tx)
-                    .await
-                    .map_err(|e| db_error(e, "build dependency graph - insert children"))?;
-
-                let batch_count = inserted.len();
-                total_inserted += batch_count;
-
-                if batch_count < batch_size {
-                    // No more events at this offset
-                    break;
-                }
-
-                batch_offset += batch_size;
-
-                // Check memory limit if configured
-                if let Some(memory_limit) = self.config.memory_limit_bytes {
-                    // Estimate memory usage (rough calculation)
-                    let estimated_rows = self.count_affected_events_tx(tx, table_name).await?;
-                    let estimated_memory = estimated_rows * 64; // ~64 bytes per row estimate
-
-                    if estimated_memory > memory_limit {
-                        warn!(
-                            "Memory limit reached: {} bytes (limit: {} bytes)",
-                            estimated_memory, memory_limit
-                        );
-                        return Err(eyre!("Memory limit exceeded during graph building"));
-                    }
-                }
-            }
-
-            // Mark current depth as processed
-            let update_query = format!(
-                "UPDATE {} SET processed = true WHERE depth = $1",
-                table_name
-            );
-            sqlx::query(&update_query)
-                .bind(current_depth as i32)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| db_error(e, "build dependency graph - mark processed"))?;
-
-            if total_inserted == 0 || current_depth >= max_depth {
-                break;
-            }
-
-            current_depth += 1;
-            debug!(
-                "Processed depth {}, inserted {} new events",
-                current_depth - 1,
-                total_inserted
-            );
-        }
-
-        Ok(current_depth)
+        Ok(depth)
     }
 
     /// Calculate depth histogram (transaction version)
@@ -486,20 +315,11 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<HashMap<usize, usize>> {
-        let query = format!(
-            r#"
-            SELECT depth, COUNT(*) as count
-            FROM {}
-            GROUP BY depth
-            ORDER BY depth
-            "#,
-            table_name
-        );
-
-        let rows = sqlx::query_as::<_, (i32, i64)>(&query)
-            .fetch_all(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        let rows = repo
+            .cascade_depth_histogram(table_name)
             .await
-            .map_err(|e| db_error(e, "calculate depth histogram"))?;
+            .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
 
         let mut histogram = HashMap::new();
         for (depth, count) in rows {
@@ -515,23 +335,12 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<usize> {
-        // Use safe identifier quoting for table name
-        let query_sql = r#"
-            SELECT 'SELECT COUNT(*) FROM ' || quote_ident($1) AS sql
-        "#;
-
-        let safe_query = sqlx::query_scalar::<_, String>(query_sql)
-            .bind(table_name)
-            .fetch_one(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        let count = repo
+            .cascade_node_count(table_name)
             .await
-            .map_err(|e| db_error(e, "build safe count query"))?;
-
-        let row = sqlx::query_scalar::<_, i64>(&safe_query)
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| db_error(e, "count affected events"))?;
-
-        Ok(row as usize)
+            .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
+        Ok(count as usize)
     }
 
     /// Find integrity violations (transaction version)
@@ -540,31 +349,11 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<IntegrityViolation>> {
-        // Find live events that would reference archived events
-        let query = format!(
-            r#"
-            WITH archived_set AS (
-                SELECT id FROM {}
-            ),
-            violations AS (
-                SELECT 
-                    e.event_id as live_event_id,
-                    unnest(e.source_event_ids) as archived_event_id
-                FROM core.events e
-                WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
-                AND e.event_id NOT IN (SELECT id FROM {})
-            )
-            SELECT DISTINCT live_event_id, archived_event_id
-            FROM violations
-            LIMIT 100
-            "#,
-            table_name, table_name
-        );
-
-        let rows = sqlx::query_as::<_, (Ulid, Ulid)>(&query)
-            .fetch_all(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        let rows = repo
+            .cascade_integrity_violations(table_name, 100)
             .await
-            .map_err(|e| db_error(e, "find integrity violations"))?;
+            .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
 
         let mut violations = Vec::new();
         for (live_id, archived_id) in rows {
@@ -589,6 +378,7 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<Vec<CircularDependency>> {
+        let quoted_table = Self::quote_identifier(table_name);
         // For now, use a simple SQL approach to find potential cycles
         // In production, would implement proper Tarjan's algorithm
         let max_cycle_depth = self.config.max_depth.max(1);
@@ -615,23 +405,24 @@ impl StreamingCascadeAnalyzer {
                 WHERE NOT cc.has_cycle
                 AND array_length(cc.path, 1) < {1}
             )
-            SELECT path
+            SELECT (path)::uuid[] AS path
             FROM cycle_check
             WHERE has_cycle
             LIMIT 10
             "#,
-            table_name, max_cycle_depth
+            quoted_table, max_cycle_depth
         );
 
-        let rows = sqlx::query_as::<_, (Vec<Ulid>,)>(&query)
+        let rows = sqlx::query_as::<_, (Vec<Uuid>,)>(&query)
             .fetch_all(&mut **tx)
             .await
             .map_err(|e| db_error(e, "detect circular dependencies"))?;
 
         let mut cycles = Vec::new();
         for (path,) in rows {
+            let converted: Vec<Ulid> = path.into_iter().map(Ulid::from_uuid).collect();
             cycles.push(CircularDependency {
-                cycle: path,
+                cycle: converted,
                 is_strong: true, // Conservative assumption
             });
         }
@@ -649,162 +440,34 @@ impl StreamingCascadeAnalyzer {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         table_name: &str,
     ) -> Result<()> {
-        // Temp tables created with ON COMMIT DROP will auto-cleanup
-        // But we can explicitly drop if needed
-        let drop_sql_query = r#"
-            SELECT 'DROP TABLE IF EXISTS ' || quote_ident($1) AS sql
-        "#;
-
-        let safe_drop_sql = sqlx::query_scalar::<_, String>(drop_sql_query)
-            .bind(table_name)
-            .fetch_one(&mut **tx)
+        let mut repo = EventRepositoryTx::new(tx);
+        repo.cleanup_cascade_session(table_name)
             .await
-            .map_err(|e| db_error(e, "build safe drop table SQL"))?;
-
-        sqlx::query(&safe_drop_sql)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| db_error(e, "cleanup temp tables"))?;
+            .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
         Ok(())
     }
 
     /// Build dependency graph using iterative deepening
     async fn build_dependency_graph(&self, table_name: &str) -> Result<usize> {
-        let mut current_depth = 0;
-        let max_depth = self.config.max_depth;
-        let batch_size = self.config.batch_size;
-
-        loop {
-            // Process events in batches to avoid memory issues
-            let mut total_inserted = 0;
-            let mut batch_offset = 0;
-
-            loop {
-                // Find children of current depth events in batches
-                let query = format!(
-                    r#"
-                    WITH current_level AS (
-                        SELECT id, parent_ids
-                        FROM {}
-                        WHERE depth = $1 AND NOT processed
-                        LIMIT $2 OFFSET $3
-                    ),
-                    children AS (
-                        SELECT DISTINCT e.event_id, e.source_event_ids as parent_ids
-                        FROM core.events e
-                        JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM {} t WHERE t.id = e.event_id
-                        )
-                        LIMIT $2
-                    )
-                    INSERT INTO {} (id, depth, parent_ids)
-                    SELECT event_id, $4, parent_ids
-                    FROM children
-                    ON CONFLICT (id) DO NOTHING
-                    RETURNING id
-                    "#,
-                    table_name, table_name, table_name
-                );
-
-                let inserted = sqlx::query(&query)
-                    .bind(current_depth as i32)
-                    .bind(batch_size as i32)
-                    .bind(batch_offset as i32)
-                    .bind((current_depth + 1) as i32)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| db_error(e, "build dependency graph - insert children"))?;
-
-                let batch_count = inserted.len();
-                total_inserted += batch_count;
-
-                if batch_count < batch_size {
-                    // No more events at this offset
-                    break;
-                }
-
-                batch_offset += batch_size;
-
-                // Check memory limit if configured
-                if let Some(memory_limit) = self.config.memory_limit_bytes {
-                    let estimated_memory = self.estimate_memory_usage(table_name).await?;
-                    if estimated_memory > memory_limit {
-                        warn!(
-                            "Memory limit exceeded: {} > {}",
-                            estimated_memory, memory_limit
-                        );
-                        return Err(eyre!("Analysis would exceed memory limit"));
-                    }
-                }
-            }
-
-            // Mark current depth as processed
-            let update_query = format!(
-                "UPDATE {} SET processed = TRUE WHERE depth = $1",
-                table_name
-            );
-            sqlx::query(&update_query)
-                .bind(current_depth as i32)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| db_error(e, "build dependency graph - mark processed"))?;
-
-            if total_inserted == 0 || current_depth >= max_depth {
-                break;
-            }
-
-            current_depth += 1;
-            debug!(
-                "Processed depth {} with batch size {}, found {} children",
-                current_depth, batch_size, total_inserted
-            );
-        }
-
-        info!("Built dependency graph with max depth {}", current_depth);
-        Ok(current_depth)
-    }
-
-    /// Estimate memory usage of the temp table
-    async fn estimate_memory_usage(&self, table_name: &str) -> Result<usize> {
-        let query = format!(
-            r#"
-            SELECT COUNT(*) as count,
-                   AVG(octet_length(ulid_to_bytea(id)) + 
-                       COALESCE(array_length(parent_ids, 1) * 16, 0) + 
-                       8) as avg_row_size
-            FROM {}
-            "#,
-            table_name
-        );
-
-        let result = sqlx::query_as::<_, (i64, Option<f64>)>(&query)
-            .fetch_one(&self.pool)
+        let depth = self
+            .pool
+            .events()
+            .expand_cascade(table_name, self.config.max_depth as i32)
             .await
-            .map_err(|e| db_error(e, "estimate memory usage"))?;
+            .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
 
-        let (count, avg_size) = result;
-        let estimated_bytes = (count as f64 * avg_size.unwrap_or(100.0)) as usize;
-
-        Ok(estimated_bytes)
+        info!("Built dependency graph with max depth {}", depth);
+        Ok(depth)
     }
 
     /// Calculate histogram of cascade depths
     async fn calculate_depth_histogram(&self, table_name: &str) -> Result<HashMap<usize, usize>> {
-        let query = format!(
-            r#"
-            SELECT depth, COUNT(*) as count
-            FROM {}
-            GROUP BY depth
-            ORDER BY depth
-            "#,
-            table_name
-        );
-
-        let rows = sqlx::query_as::<_, (i32, i64)>(&query)
-            .fetch_all(&self.pool)
+        let rows = self
+            .pool
+            .events()
+            .cascade_depth_histogram(table_name)
             .await
-            .map_err(|e| db_error(e, "calculate depth histogram"))?;
+            .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
 
         let mut histogram = HashMap::new();
         for (depth, count) in rows {
@@ -816,52 +479,23 @@ impl StreamingCascadeAnalyzer {
 
     /// Count total affected events
     async fn count_affected_events(&self, table_name: &str) -> Result<usize> {
-        // Use safe identifier quoting for table name
-        let query_sql = r#"
-            SELECT 'SELECT COUNT(*) FROM ' || quote_ident($1) AS sql
-        "#;
-
-        let safe_query = sqlx::query_scalar::<_, String>(query_sql)
-            .bind(table_name)
-            .fetch_one(&self.pool)
+        let count = self
+            .pool
+            .events()
+            .cascade_node_count(table_name)
             .await
-            .map_err(|e| db_error(e, "build safe count query"))?;
-
-        let row = sqlx::query_scalar::<_, i64>(&safe_query)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| db_error(e, "count affected events"))?;
-
-        Ok(row as usize)
+            .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
+        Ok(count as usize)
     }
 
     /// Find integrity violations
     async fn find_integrity_violations(&self, table_name: &str) -> Result<Vec<IntegrityViolation>> {
-        // Find live events that would reference archived events
-        let query = format!(
-            r#"
-            WITH archived_set AS (
-                SELECT id FROM {} WHERE depth = 0
-            ),
-            violations AS (
-                SELECT 
-                    e.event_id as live_event_id,
-                    unnest(e.source_event_ids) as archived_event_id
-                FROM core.events e
-                WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
-                AND e.event_id NOT IN (SELECT id FROM {})
-            )
-            SELECT DISTINCT live_event_id, archived_event_id
-            FROM violations
-            LIMIT 100
-            "#,
-            table_name, table_name
-        );
-
-        let rows = sqlx::query_as::<_, (Ulid, Ulid)>(&query)
-            .fetch_all(&self.pool)
+        let rows = self
+            .pool
+            .events()
+            .cascade_integrity_violations(table_name, 100)
             .await
-            .map_err(|e| db_error(e, "find integrity violations"))?;
+            .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
 
         let mut violations = Vec::new();
         for (live_id, archived_id) in rows {
@@ -885,8 +519,10 @@ impl StreamingCascadeAnalyzer {
         &self,
         table_name: &str,
     ) -> Result<Vec<CircularDependency>> {
+        let quoted_table = Self::quote_identifier(table_name);
         // For now, use a simple SQL approach to find potential cycles
         // In production, would implement proper Tarjan's algorithm
+        let max_cycle_depth = self.config.max_depth.max(1);
         let query = format!(
             r#"
             WITH RECURSIVE cycle_check AS (
@@ -908,25 +544,26 @@ impl StreamingCascadeAnalyzer {
                 FROM {} t
                 JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
                 WHERE NOT cc.has_cycle
-                AND array_length(cc.path, 1) < 10
+                AND array_length(cc.path, 1) < {1}
             )
-            SELECT path
+            SELECT (path)::uuid[] AS path
             FROM cycle_check
             WHERE has_cycle
             LIMIT 10
             "#,
-            table_name, table_name
+            quoted_table, max_cycle_depth
         );
 
-        let rows = sqlx::query_as::<_, (Vec<Ulid>,)>(&query)
+        let rows = sqlx::query_as::<_, (Vec<Uuid>,)>(&query)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| db_error(e, "detect circular dependencies"))?;
 
         let mut cycles = Vec::new();
         for (path,) in rows {
+            let converted: Vec<Ulid> = path.into_iter().map(Ulid::from_uuid).collect();
             cycles.push(CircularDependency {
-                cycle: path,
+                cycle: converted,
                 is_strong: true, // Conservative assumption
             });
         }
@@ -940,22 +577,11 @@ impl StreamingCascadeAnalyzer {
 
     /// Clean up temporary tables
     async fn cleanup_temp_tables(&self, table_name: &str) -> Result<()> {
-        // Use safe identifier quoting for table name
-        let drop_sql_query = r#"
-            SELECT 'DROP TABLE IF EXISTS ' || quote_ident($1) AS sql
-        "#;
-
-        let safe_drop_sql = sqlx::query_scalar::<_, String>(drop_sql_query)
-            .bind(table_name)
-            .fetch_one(&self.pool)
+        self.pool
+            .events()
+            .cleanup_cascade_session(table_name)
             .await
-            .map_err(|e| db_error(e, "build safe drop table SQL"))?;
-
-        sqlx::query(&safe_drop_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| db_error(e, "cleanup temp tables"))?;
-
+            .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
         debug!("Cleaned up temporary table {}", table_name);
         Ok(())
     }
@@ -981,10 +607,10 @@ impl StreamingCascadeAnalyzer {
         let rows = sqlx::query(
             r#"
             SELECT 
-                event_id,
+                id as event_id,
                 source_event_ids
             FROM core.events
-            WHERE event_id = ANY($1::ulid[])
+            WHERE id = ANY($1::ulid[])
             "#,
         )
         .bind(event_ids.to_uuid_vec())
@@ -1048,5 +674,22 @@ impl StreamingCascadeAnalyzer {
 
         info!("Planned cascade order for {} events", result.len());
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_id_validation_enforces_length() {
+        assert!(StreamingCascadeAnalyzer::validate_session_id(&"a".repeat(64)).is_ok());
+        assert!(StreamingCascadeAnalyzer::validate_session_id(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn session_id_validation_rejects_invalid_chars() {
+        assert!(StreamingCascadeAnalyzer::validate_session_id("valid_session_1").is_ok());
+        assert!(StreamingCascadeAnalyzer::validate_session_id("invalid-session").is_err());
     }
 }

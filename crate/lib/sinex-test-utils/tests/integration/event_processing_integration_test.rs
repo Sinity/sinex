@@ -40,7 +40,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(
 
     // Verify heartbeat event was created using repository pattern
     let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), Some(10), None)
+        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
         .await?;
 
     let heartbeat_events: Vec<_> = events
@@ -138,7 +138,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
 
     // Verify all events were created in correct order using repository pattern
     let all_events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), Some(10), None)
+        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
         .await?;
 
     // Filter to only our process
@@ -217,7 +217,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_e
 
     // Verify custom metrics are included using repository pattern
     let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), Some(10), None)
+        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
         .await?;
 
     // Filter to only our process heartbeats
@@ -454,7 +454,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
 
     // Verify the failure progression is recorded using repository pattern
     let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), Some(10), None)
+        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
         .await?;
 
     // Filter to only our process
@@ -542,7 +542,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> color_eyre::eyre::R
 
     // Verify all heartbeats were recorded using repository pattern
     let all_events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), Some(30), None)
+        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(30), None))
         .await?;
 
     // Count heartbeat events for our process

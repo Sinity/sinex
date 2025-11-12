@@ -95,11 +95,11 @@ def get_event_ids() -> List[str]:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT event_id::text FROM core.events 
+                    SELECT id::text AS id FROM core.events 
                     ORDER BY ts_ingest DESC 
                     LIMIT 50
                 """)
-                return [row['event_id'] for row in cur.fetchall()]
+                return [row['id'] for row in cur.fetchall()]
     except Exception:
         return []
 

@@ -160,31 +160,64 @@ git clone https://github.com/yourusername/sinex.git
 cd sinex
 
 # Enter development shell (sets up PostgreSQL, migrations, etc.)
-nix develop
+nix develop                # or: direnv allow && direnv reload
 
-# View available commands
-just
+# Inspect available helper tasks (devenv CLI requires an explicit subcommand)
+devenv tasks help                  # Shows the run/export subcommands
+devenv tasks run --help            # Lists all task labels defined in devenv.nix
 ```
+
+Direnv users will see a status banner (MOTD) sourced from `scripts/dev-env-banner.sh` whenever the
+environment loads, matching the `nix develop` experience.
+
+### Database defaults
+The dev shell and Cargo configuration export the Postgres settings automatically:
+
+- `PGHOST=/run/postgresql`
+- `PGUSER=sinity`
+- `PGDATABASE=sinex_dev`
+- `DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql`
+
+As long as you are inside `nix develop`/`direnv`, commands such as `cargo check`, `cargo expand`,
+and `sqlx` no longer require per-command overrides. If you need to point at another database, copy
+`.env.example` to `.env` (kept out of version control) and set those variables before launching the shell.
+
+> **SQLx offline mode:** Only the Nix flake build exports `SQLX_OFFLINE=true` (so the sandbox can
+> compile without a database). Leave it unset during normal development; that way every
+> `sqlx::query!` is validated against the live schema. Regenerate the cache with
+> `devenv tasks run sqlx:prepare` whenever SQL changes so the flake build stays in sync.
+
+> **PostgreSQL extensions:** Migrations assume the database already has `timescaledb`,
+> `ulid`, `pg_jsonschema`, and `vector` installed. Provision them once as the `postgres`
+> superuser:
+>
+> ```sql
+> CREATE EXTENSION timescaledb;
+> CREATE EXTENSION ulid;
+> CREATE EXTENSION pg_jsonschema;
+> CREATE EXTENSION vector;
+> ```
+>
+> The NixOS module (`services.postgresql-setup`) runs those statements automatically when
+> `database.autoSetup = true`; for other deployments run them manually before the first
+> `devenv tasks run db:migrate`.
 
 ### Running Sinex
 ```bash
 # Start core services
-just ingestd                  # Start the ingestion daemon
-just gateway                  # Start the API gateway
+devenv up nats ingestd gateway
 
 # Start event source satellites
-just fs-watcher              # Filesystem events
-just terminal-satellite      # Terminal events (Kitty, Atuin, recordings)
-just desktop-satellite       # Desktop events (clipboard, Hyprland)
-just system-satellite        # System events (D-Bus, systemd, udev)
+devenv up fs-watcher terminal desktop system
+devenv up health document canonicalizer    # Optional processors
 
 # Run satellites in scanner mode
 cargo run --bin sinex-fs-watcher -- scan /path/to/scan
 cargo run --bin sinex-terminal-satellite -- scan --source kitty
 
 # Query recent events
-just query                    # or: ./cli/exo.py query
-just query 50                # Show 50 recent events
+devenv tasks run cli:query          # or: python3 cli/exo.py query
+LIMIT=50 devenv tasks run cli:query # Increase result window
 
 # Monitor satellites via systemd
 systemctl status sinex-ingestd
@@ -200,17 +233,22 @@ The Sinex test suite is optimized for parallel execution, achieving 50%+ faster 
 
 - **Parallel Execution**: Automatically uses all available CPU cores
 - **Database Isolation**: 64-database pool with PostgreSQL advisory locks
-- **Fast Testing**: `just test-parallel` for maximum speed
+- **Fast Testing**: `devenv tasks run dev:test` for the common dev loop (Nextest-only; `cargo test` is unsupported)
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
 See [`TESTING.md`](TESTING.md) for the detailed testing guide.
 
 Quick commands:
 ```bash
-just test-fast      # Fast tests only (~30s)
-just test-parallel  # All tests with max parallelism
-just test-dev       # Quick dev cycle (<2 min)
+devenv tasks run dev:check      # cargo check --workspace
+devenv tasks run dev:test       # Library + property suites via nextest (required workflow)
+devenv tasks run test:all       # Full nextest matrix after db:migrate
+devenv tasks run test:vm        # VM smoke tests
 ```
+
+> Note: Every `devenv tasks …` invocation spins up a transient shell under the hood, so `direnv`
+> will re-evaluate the environment each time. That’s expected; run the underlying `cargo …` or
+> `scripts/…` command directly if you need maximum turnaround speed.
 
 ## 📚 Documentation
 

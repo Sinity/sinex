@@ -295,7 +295,10 @@ impl<'ctx> PropertyTester<'ctx> {
                     .ctx
                     .pool
                     .events()
-                    .get_by_source(&source_ref, Some(10), None)
+                    .get_by_source(
+                        &source_ref,
+                        sinex_core::types::Pagination::new(Some(10), None),
+                    )
                     .await?;
                 assert!(by_source.iter().any(|e| e.id.as_ref() == Some(event_id)));
             }
@@ -306,7 +309,10 @@ impl<'ctx> PropertyTester<'ctx> {
                 .ctx
                 .pool
                 .events()
-                .get_by_event_type(&type_ref, Some(10), None)
+                .get_by_event_type(
+                    &type_ref,
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
                 .await?;
             assert!(by_type.iter().any(|e| e.id == event.id));
         }
@@ -623,7 +629,10 @@ mod tests {
             let events = ctx
                 .pool
                 .events()
-                .get_by_source(&source_ref, Some(10), None)
+                .get_by_source(
+                    &source_ref,
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
                 .await?;
             assert_eq!(events.len(), 5);
             for event in events {

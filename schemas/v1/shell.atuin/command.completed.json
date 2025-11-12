@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Atuin command completion payload.",
+  "properties": {
+    "atuin_id": {
+      "type": "string"
+    },
+    "command": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "exit_status": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "shell": {
+      "type": "string"
+    },
+    "username": {
+      "type": "string"
+    },
+    "working_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "atuin_id",
+    "command",
+    "duration_ms",
+    "exit_status",
+    "hostname",
+    "session_id",
+    "shell",
+    "username",
+    "working_directory"
+  ],
+  "title": "AtuinCommandCompletedPayload",
+  "type": "object"
+}

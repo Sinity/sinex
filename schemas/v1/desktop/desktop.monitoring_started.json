@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "clipboard_enabled": {
+      "type": "boolean"
+    },
+    "start_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "window_manager_enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "clipboard_enabled",
+    "start_time",
+    "window_manager_enabled"
+  ],
+  "title": "DesktopMonitoringStartedPayload",
+  "type": "object"
+}

@@ -555,8 +555,9 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
             interval.tick().await;
 
             // Check for stuck checkpoint processing (satellite architecture)
-            let stuck_checkpoints: Vec<(String, String)> = sqlx::query!(
-                "SELECT id::text, processor_name FROM core.processor_checkpoints
+            let stuck_rows = sqlx::query!(
+                "SELECT id as \"id!: Ulid\", processor_name as \"processor_name!\"
+                 FROM core.processor_checkpoints
                  WHERE processor_name = $1
                    AND checkpoint_data->>'status' = 'processing'
                    AND updated_at < NOW() - INTERVAL '3 seconds'",
@@ -564,15 +565,12 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
             )
             .fetch_all(&detection_pool)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|r| match (r.id, r.processor_name) {
-                (Some(checkpoint_id), Some(processor_name)) => {
-                    Some((checkpoint_id, processor_name))
-                }
-                _ => None,
-            })
-            .collect();
+            .unwrap_or_default();
+
+            let stuck_checkpoints: Vec<(String, String)> = stuck_rows
+                .into_iter()
+                .map(|row| (row.id.to_string(), row.processor_name))
+                .collect();
 
             // Check for active checkpoint processors
             let active_checkpoints: HashSet<String> = sqlx::query_scalar!(
@@ -628,18 +626,18 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::e
                          updated_at = NOW()
                      WHERE processor_name = $1
                        AND checkpoint_data->>'status' = 'processing'
-                       AND updated_at < NOW() - INTERVAL '3 seconds'
-                     RETURNING id::text",
+                       AND updated_at < NOW() - INTERVAL '3 seconds'",
                     detection_agent
                 )
-                .fetch_all(&detection_pool)
+                .execute(&detection_pool)
                 .await
-                .unwrap_or_default();
+                .map(|res| res.rows_affected() as usize)
+                .unwrap_or(0);
 
-                if !recovered_count.is_empty() {
+                if recovered_count > 0 {
                     println!(
                         "Deadlock detector recovered {} items on check {}",
-                        recovered_count.len(),
+                        recovered_count,
                         check
                     );
                 }
@@ -871,7 +869,7 @@ impl RaceConditionWorker {
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING id::text, last_processed_id::text",
+             RETURNING id as "id!: Ulid", last_processed_id as "last_processed_id?: Ulid"",
             self.processor_name,
             serde_json::to_string(&self.worker_id).unwrap()
         )
@@ -880,11 +878,10 @@ impl RaceConditionWorker {
 
         match claimed_checkpoint {
             Ok(Some(checkpoint)) => Ok(Some(WorkItem {
-                queue_id: checkpoint
-                    .id
-                    .ok_or_else(|| eyre!("Missing checkpoint id"))?,
+                queue_id: checkpoint.id.to_string(),
                 event_id: checkpoint
-                    .last_processed_id()
+                    .last_processed_id
+                    .map(|ulid| ulid.to_string())
                     .unwrap_or_else(|| "synthetic_event".to_string()),
                 target_agent: self.processor_name.clone(),
                 created_at: chrono::Utc::now(),
@@ -1394,7 +1391,7 @@ impl StressTestWorker {
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
-             RETURNING id::text, last_processed_id::text, (checkpoint_data->>'attempts')::int as attempts",
+             RETURNING id as \"id!: Ulid\", last_processed_id as \"last_processed_id?: Ulid\", (checkpoint_data->>'attempts')::int as attempts",
             self.processor_name,
             serde_json::to_string(&self.worker_id).unwrap()
         )
@@ -1408,11 +1405,10 @@ impl StressTestWorker {
                 }
 
                 Ok(Some(WorkItem {
-                    queue_id: checkpoint
-                        .id
-                        .ok_or_else(|| eyre!("Missing checkpoint id"))?,
+                    queue_id: checkpoint.id.to_string(),
                     event_id: checkpoint
-                        .last_processed_id()
+                        .last_processed_id
+                        .map(|ulid| ulid.to_string())
                         .unwrap_or_else(|| "synthetic_event".to_string()),
                     target_agent: self.processor_name.clone(),
                     created_at: chrono::Utc::now(),
@@ -1599,16 +1595,16 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::
                      updated_at = NOW()
                      WHERE processor_name = $1
                        AND checkpoint_data->>'status' = 'processing'
-                       AND updated_at < NOW() - INTERVAL '10 seconds'
-                     RETURNING id::text",
+                       AND updated_at < NOW() - INTERVAL '10 seconds'",
                     monitor_agent
                 )
-                .fetch_all(&monitor_pool)
+                .execute(&monitor_pool)
                 .await
-                .unwrap_or_default();
+                .map(|res| res.rows_affected() as usize)
+                .unwrap_or(0);
 
-                if !recovered.is_empty() {
-                    println!("Deadlock monitor recovered {} stuck items", recovered.len());
+                if recovered > 0 {
+                    println!("Deadlock monitor recovered {} stuck items", recovered);
                 }
             }
 
