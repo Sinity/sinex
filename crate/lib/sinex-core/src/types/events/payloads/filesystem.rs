@@ -70,9 +70,31 @@ pub struct DirDiscoveredPayload {
 }
 
 // Test helpers for external tests
-#[cfg(feature = "testing")]
-#[cfg(feature = "testing")]
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
+impl FileCreatedPayload {
+    pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
+        Self {
+            path: path.into(),
+            size: 0,
+            created_at: Utc::now(),
+            permissions: None,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl FileModifiedPayload {
+    pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
+        Self {
+            path: path.into(),
+            size: 0,
+            modified_at: Utc::now(),
+            modification_type: "content".to_string(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
 impl FileDeletedPayload {
     pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
         Self {

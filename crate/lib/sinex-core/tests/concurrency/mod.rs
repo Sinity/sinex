@@ -7,7 +7,7 @@
 //! - Lock contention analysis
 //! - Atomic operation verification
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 /// Concurrent checkpoint update tests

@@ -6,7 +6,7 @@ use sinex_core::{Event, Id, JsonValue, SourceMaterial, Ulid};
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> Result<()> {
+async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let material = ctx.create_source_material(Some("ulid-collision")).await?;
     let collision_id = Ulid::new();
@@ -25,8 +25,9 @@ async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn event_validator_blocks_ulid_time_skew_attack() -> color_eyre::eyre::Result<()> {
+#[sinex_test]
+async fn event_validator_blocks_ulid_time_skew_attack(
+) -> color_eyre::eyre::Result<()> {
     let validator = EventValidator::new();
     let future_ulid = Ulid::from_datetime(Utc::now() + Duration::hours(1));
 
@@ -55,7 +56,7 @@ async fn insert_material_event(
     event_id: Ulid,
     material_id: Id<SourceMaterial>,
     payload: JsonValue,
-) -> Result<()> {
+) -> TestResult<()> {
     let now = Utc::now();
     sqlx::query!(
         r#"

@@ -1,5 +1,7 @@
 # SINEX TEST FILE INVENTORY & PATTERNS
 
+> **Historical context:** Inventory entries referencing gRPC ingestion or sensd-era components describe the repository at the time of the JetStream migration. They remain for traceability; current ingestion is JetStream-only (`docs/way.md`).
+
 ## COMPLETE TEST FILE LISTING
 
 ### sinex-core Tests (93 files, 38,026 LOC)

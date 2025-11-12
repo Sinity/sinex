@@ -17,7 +17,7 @@
 //! Each crate should declare its own domain-specific fixtures using this infrastructure:
 //!
 //! ```rust
-//! // In sinex-db/src/bench_fixtures.rs
+//! // In sinex-core/src/db/bench_fixtures.rs
 //! use sinex_test_utils::static_fixtures::{FixtureSet, DatasetSize};
 //!
 //! /// Database-specific benchmark fixtures
@@ -26,7 +26,7 @@
 //!     .with_events(DatasetSize::Medium, 1337)
 //!     .with_checkpoints(100);
 //!
-//! // In sinex-db benchmarks
+//! // In sinex-core benchmarks
 //! #[cfg(all(test, feature = "bench"))]
 //! mod benches {
 //!     use super::*;
@@ -43,6 +43,7 @@
 //! the generation infrastructure.
 
 use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
+use crate::{Result, TestResult};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -231,7 +232,7 @@ impl FixtureManager {
         &mut self,
         fixture_set: &FixtureSet,
         size: DatasetSize,
-    ) -> Result<Utf8PathBuf, SinexError> {
+    ) -> Result<Utf8PathBuf> {
         let fixture_id = self.fixture_id(fixture_set, size);
         let fixture_dir = self.base_dir.join(&fixture_id);
 
@@ -277,7 +278,7 @@ impl FixtureManager {
         &mut self,
         fixture_id: &str,
         config: &FixtureConfig,
-    ) -> Result<Option<FixtureManifest>, SinexError> {
+    ) -> Result<Option<FixtureManifest>> {
         let fixture_dir = self.base_dir.join(fixture_id);
         let manifest_path = fixture_dir.join("manifest.json");
 
@@ -327,7 +328,7 @@ impl FixtureManager {
         &self,
         fixture_set: &FixtureSet,
         size: DatasetSize,
-    ) -> Result<FixtureManifest, SinexError> {
+    ) -> Result<FixtureManifest> {
         let fixture_id = self.fixture_id(fixture_set, size);
         let fixture_dir = self.base_dir.join(&fixture_id);
 
@@ -418,7 +419,7 @@ mod tests {
     use crate::sinex_test;
 
     #[sinex_test]
-    fn test_fixture_set_builder() -> Result<()> {
+    fn test_fixture_set_builder() -> TestResult<()> {
         let fixtures = FixtureSet::new()
             .with_events(DatasetSize::Small, 42)
             .with_events(DatasetSize::Medium, 1337)
@@ -433,7 +434,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_dataset_size_values() -> Result<()> {
+    fn test_dataset_size_values() -> TestResult<()> {
         assert_eq!(DatasetSize::Empty.event_count(), 0);
         assert_eq!(DatasetSize::Small.event_count(), 1_000);
         assert_eq!(DatasetSize::Medium.event_count(), 100_000);

@@ -421,7 +421,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_assertions_negative_cases(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_error_assertions_negative_cases() -> crate::Result<()> {
         // assert_fails should fail on success
         let success: Result<i32> = Ok(42);
         let result = success.assert_fails();

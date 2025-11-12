@@ -6,7 +6,7 @@
 - **Problem**: EventQueries was using incorrect SQL type annotations (` id::uuid as "id!"`) 
 - **Solution**: Removed type casting annotations to let the database return native types, which are then converted via the `From<EventRecord>` implementation
 - **Files Changed**: 
-  - `/realm/project/sinex/crate/sinex-db/src/queries/events.rs`
+  - `/realm/project/sinex/crate/lib/sinex-core/src/db/repositories/events.rs`
 
 ### 2. Fixture Data Persistence Implementation ✅
 - **Problem**: Fixtures were being regenerated on every test run instead of being persisted to disk

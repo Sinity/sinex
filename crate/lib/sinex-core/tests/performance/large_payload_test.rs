@@ -8,14 +8,14 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::time::Duration as StdDuration;
 
-async fn provision(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
+async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()> {
     let config = StreamConfig {
         name: stream.to_string(),
         subjects: vec![subject.to_string()],
@@ -29,7 +29,7 @@ async fn provision(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_large_payload_roundtrip(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_large_payload_roundtrip() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -99,7 +99,7 @@ async fn jetstream_large_payload_roundtrip(_ctx: TestContext) -> color_eyre::eyr
 }
 
 #[sinex_bench]
-async fn jetstream_large_batch_drain(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_large_batch_drain() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);

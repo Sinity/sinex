@@ -75,7 +75,7 @@ async fn expect_event_type(
                     expected
                 )
             })?;
-        if event.event_type == expected {
+        if event.event_type.as_str() == expected {
             return Ok(());
         }
         attempts += 1;

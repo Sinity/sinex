@@ -8,6 +8,7 @@
 // Expose modules for testing and external use
 pub mod cascade_analyzer;
 pub mod handlers;
+pub mod native_messaging;
 pub mod prelude;
 pub mod replay_control;
 pub mod replay_state_machine;

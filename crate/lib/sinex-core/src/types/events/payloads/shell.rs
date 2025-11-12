@@ -3,7 +3,6 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
-use super::define_event_payload;
 use crate::types::domain::{CommandText, HostName, SanitizedPath, ShellName};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
@@ -81,7 +80,7 @@ define_event_payload! {
 }
 
 // Test helpers for external tests
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 impl KittyCommandExecutedPayload {
     pub fn test_default(command: impl Into<String>) -> Self {
         Self {
@@ -96,7 +95,7 @@ impl KittyCommandExecutedPayload {
     }
 }
 
-#[cfg(feature = "testing")]
+#[cfg(any(test, feature = "testing"))]
 impl AtuinCommandExecutedPayload {
     pub fn test_default(command: impl Into<String>, cwd: impl Into<SanitizedPath>) -> Self {
         Self {

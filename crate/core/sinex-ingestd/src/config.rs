@@ -253,7 +253,7 @@ impl IngestdConfig {
             .await?;
 
         // Test basic query with a simple SELECT 1
-        sqlx::query("SELECT 1")
+        sqlx::query!("SELECT 1 as one")
             .fetch_one(&pool)
             .await
             .map_err(|e| {

@@ -8,14 +8,14 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::time::{Duration, Instant};
 
-async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> Result<()> {
+async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> TestResult<()> {
     let config = StreamConfig {
         name: name.to_string(),
         subjects: vec![subject.to_string()],
@@ -34,7 +34,7 @@ async fn create_consumer(
     subject: &str,
     durable: &str,
     ack_wait: Duration,
-) -> Result<Consumer> {
+) -> TestResult<Consumer> {
     let stream_handle = js.get_stream(stream).await?;
     stream_handle
         .get_or_create_consumer(
@@ -55,7 +55,7 @@ async fn create_consumer(
 }
 
 #[sinex_bench]
-async fn jetstream_backpressure_limits(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_backpressure_limits() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -87,7 +87,7 @@ async fn jetstream_backpressure_limits(_ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_bench]
-async fn jetstream_consumer_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_consumer_recovery() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
@@ -167,7 +167,7 @@ async fn jetstream_consumer_recovery(_ctx: TestContext) -> color_eyre::eyre::Res
 }
 
 #[sinex_bench]
-async fn jetstream_high_concurrency_publish(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_high_concurrency_publish() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());

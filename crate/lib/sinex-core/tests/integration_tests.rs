@@ -63,7 +63,7 @@ async fn test_basic_event_insertion_and_retrieval(
 }
 
 #[sinex_test]
-async fn test_batch_event_insertion(ctx: TestContext) -> Result<()> {
+async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     // Test batch insertion performance and correctness
     let mut events = Vec::new();
     for i in 0..10 {
@@ -320,7 +320,7 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
+async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     // Test concurrent insertions don't interfere with each other
 
     // Share a single test context across concurrent tasks

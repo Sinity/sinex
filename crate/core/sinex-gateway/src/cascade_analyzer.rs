@@ -680,16 +680,19 @@ impl StreamingCascadeAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::{sinex_test, TestResult};
 
-    #[test]
-    fn session_id_validation_enforces_length() {
+    #[sinex_test]
+    fn session_id_validation_enforces_length() -> TestResult<()> {
         assert!(StreamingCascadeAnalyzer::validate_session_id(&"a".repeat(64)).is_ok());
         assert!(StreamingCascadeAnalyzer::validate_session_id(&"a".repeat(65)).is_err());
+        Ok(())
     }
 
-    #[test]
-    fn session_id_validation_rejects_invalid_chars() {
+    #[sinex_test]
+    fn session_id_validation_rejects_invalid_chars() -> TestResult<()> {
         assert!(StreamingCascadeAnalyzer::validate_session_id("valid_session_1").is_ok());
         assert!(StreamingCascadeAnalyzer::validate_session_id("invalid-session").is_err());
+        Ok(())
     }
 }

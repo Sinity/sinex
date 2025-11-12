@@ -5,7 +5,7 @@
 // - Single-writer pattern through ingestd
 // - Schema contract enforcement
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{
     config::EventSourceConfig,

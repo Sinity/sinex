@@ -19,7 +19,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:16
+        image: timescale/timescaledb:2.15.2-pg16  # Keep in sync with main CI runs
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sinex_test

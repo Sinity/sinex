@@ -9,7 +9,7 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use sinex_core::db::validation::EventValidator;
 use chrono::{Duration, TimeZone, Utc};

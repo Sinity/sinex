@@ -1,6 +1,8 @@
 
 # Sinex Exocortex: The Sentient Archive - A Vision for Cognitive Sovereignty (v3.0)
 
+> **Historical note:** Vision document from the sensd/gRPC era. Inspired the JetStream refactor but doesn’t reflect the current implementation—see `docs/way.md`.
+
 [EXTRACTED to README.md - Philosophy section]
 ~~Core philosophical vision and cognitive sovereignty concepts~~
 

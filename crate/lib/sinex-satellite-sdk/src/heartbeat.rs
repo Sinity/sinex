@@ -7,19 +7,24 @@
 
 use crate::stream_processor::ProcessorRuntimeState;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sinex_core::types::events::payloads::process::{
+    ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
+};
 use sinex_core::types::utils::CoordinationPrimitive;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
-use std::time::SystemTime;
-use tokio::time::{interval, Duration};
-use tracing::info;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::time::interval;
+use tracing::{info, warn};
 
 /// Heartbeat metrics and status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatMetrics {
     /// Service name (e.g., "sinex-fs-watcher")
     pub service_name: String,
-    /// Current status: "healthy", "degraded", "failed"
-    pub status: String,
+    /// Current status: healthy, degraded, failed
+    pub status: ProcessStatus,
     /// Number of events processed since last heartbeat
     pub events_processed: u64,
     /// Service uptime in seconds
@@ -42,6 +47,20 @@ pub struct HeartbeatMetrics {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Pluggable sink for heartbeat log emission
+pub trait HeartbeatLogSink: Send + Sync + std::fmt::Debug {
+    fn emit(&self, entry: &serde_json::Value);
+}
+
+#[derive(Debug, Default)]
+struct StdoutHeartbeatSink;
+
+impl HeartbeatLogSink for StdoutHeartbeatSink {
+    fn emit(&self, entry: &serde_json::Value) {
+        println!("{}", entry);
+    }
+}
+
 /// Heartbeat emitter that logs structured JSON to stdout
 #[derive(Debug, Clone)]
 pub struct HeartbeatEmitter {
@@ -53,6 +72,16 @@ pub struct HeartbeatEmitter {
     pub interval_seconds: u64,
     version: String,
     git_hash: String,
+    cpu_sample: Arc<parking_lot::Mutex<Option<CpuSample>>>,
+    cpu_cores: usize,
+    log_sink: Arc<dyn HeartbeatLogSink>,
+    last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CpuSample {
+    cpu_seconds: f64,
+    timestamp: Instant,
 }
 
 impl HeartbeatEmitter {
@@ -60,6 +89,13 @@ impl HeartbeatEmitter {
     pub fn new(service_name: String, interval_seconds: u64) -> Self {
         let version = env!("CARGO_PKG_VERSION").to_string();
         let git_hash = option_env!("GIT_HASH").unwrap_or("unknown").to_string();
+        let initial_cpu_sample = Self::read_process_cpu_seconds().map(|cpu_seconds| CpuSample {
+            cpu_seconds,
+            timestamp: Instant::now(),
+        });
+        let cpu_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
 
         Self {
             service_name,
@@ -70,7 +106,17 @@ impl HeartbeatEmitter {
             interval_seconds,
             version,
             git_hash,
+            cpu_sample: Arc::new(parking_lot::Mutex::new(initial_cpu_sample)),
+            cpu_cores,
+            log_sink: Arc::new(StdoutHeartbeatSink::default()),
+            last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
         }
+    }
+
+    /// Configure a custom log sink (primarily for tests)
+    pub fn with_log_sink(mut self, sink: Arc<dyn HeartbeatLogSink>) -> Self {
+        self.log_sink = sink;
+        self
     }
 
     /// Construct a heartbeat emitter for a runtime with the provided interval
@@ -102,18 +148,13 @@ impl HeartbeatEmitter {
         *self.last_error.lock() = Some(error_message.to_string());
     }
 
-    /// Get current status based on error rate and activity
-    fn get_current_status(&self) -> String {
-        let errors = self.errors_count.get();
-
-        // Simple heuristic: if we have more than 10 errors, we're degraded
-        // If more than 50, we're failed
-        if errors > 50 {
-            "failed".to_string()
-        } else if errors > 10 {
-            "degraded".to_string()
+    fn determine_status(recent_errors: usize) -> ProcessStatus {
+        if recent_errors > 50 {
+            ProcessStatus::Failed
+        } else if recent_errors > 10 {
+            ProcessStatus::Degraded
         } else {
-            "healthy".to_string()
+            ProcessStatus::Healthy
         }
     }
 
@@ -134,10 +175,33 @@ impl HeartbeatEmitter {
         0 // Default if we can't read memory info
     }
 
-    /// Get approximate CPU usage (placeholder implementation)
+    /// Get approximate CPU usage (recent delta across all available cores)
     fn get_cpu_usage_percent(&self) -> f32 {
-        // This is a placeholder - proper CPU usage would require
-        // tracking over time. For now, return 0.0
+        let current_cpu = match Self::read_process_cpu_seconds() {
+            Some(value) => value,
+            None => return 0.0,
+        };
+        let now = Instant::now();
+        let mut sample = self.cpu_sample.lock();
+
+        if let Some(previous) = *sample {
+            let cpu_delta = current_cpu - previous.cpu_seconds;
+            let wall_delta = (now - previous.timestamp).as_secs_f64();
+            if wall_delta > 0.0 && cpu_delta >= 0.0 {
+                let utilization = (cpu_delta / wall_delta) * 100.0;
+                let normalized = utilization / self.cpu_cores as f64;
+                *sample = Some(CpuSample {
+                    cpu_seconds: current_cpu,
+                    timestamp: now,
+                });
+                return normalized.clamp(0.0, 100.0).max(0.0) as f32;
+            }
+        }
+
+        *sample = Some(CpuSample {
+            cpu_seconds: current_cpu,
+            timestamp: now,
+        });
         0.0
     }
 
@@ -147,27 +211,25 @@ impl HeartbeatEmitter {
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
+        let recent_errors = self.errors_count.get();
 
         let events_processed = {
             let old = self.events_processed.get();
             self.events_processed.reset();
             old
         };
-        let errors_count = {
-            let old = self.errors_count.get();
-            self.errors_count.reset();
-            old as u32
-        };
+        self.errors_count.reset();
         let last_error = self.last_error.lock().take();
+        let status = Self::determine_status(recent_errors);
 
         HeartbeatMetrics {
             service_name: self.service_name.clone(),
-            status: self.get_current_status(),
+            status,
             events_processed: events_processed as u64,
             uptime_seconds: uptime,
             memory_usage_mb: self.get_memory_usage_mb(),
             cpu_usage_percent: self.get_cpu_usage_percent(),
-            errors_count,
+            errors_count: recent_errors as u32,
             last_error_message: last_error,
             version: self.version.clone(),
             git_hash: self.git_hash.clone(),
@@ -181,7 +243,7 @@ impl HeartbeatEmitter {
         let metrics = self.create_heartbeat_metrics(metadata);
 
         // Create structured log message that journald will capture
-        let log_entry = serde_json::json!({
+        let log_entry = json!({
             "level": "INFO",
             "message": "heartbeat",
             "target": "heartbeat",
@@ -189,6 +251,7 @@ impl HeartbeatEmitter {
             "file": "heartbeat.rs",
             "line": 1,
             "fields": {
+                "event_type": "satellite.heartbeat",
                 "service_name": metrics.service_name,
                 "status": metrics.status,
                 "events_processed": metrics.events_processed,
@@ -204,8 +267,7 @@ impl HeartbeatEmitter {
             }
         });
 
-        // Print directly to stdout - systemd will capture this
-        println!("{}", log_entry);
+        self.log_sink.emit(&log_entry);
 
         // Also log via tracing for local debugging
         info!(
@@ -217,6 +279,8 @@ impl HeartbeatEmitter {
             errors_count = metrics.errors_count,
             "Satellite heartbeat emitted"
         );
+
+        self.emit_status_alert_if_needed(&metrics);
     }
 
     /// Start periodic heartbeat emission
@@ -248,6 +312,97 @@ impl HeartbeatEmitter {
             errors_count: self.errors_count.clone(),
             last_error: self.last_error.clone(),
         }
+    }
+
+    fn read_process_cpu_seconds() -> Option<f64> {
+        let mut usage = MaybeUninit::<libc::rusage>::uninit();
+        let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+        if result != 0 {
+            return None;
+        }
+        let usage = unsafe { usage.assume_init() };
+        Some(Self::timeval_to_seconds(&usage.ru_utime) + Self::timeval_to_seconds(&usage.ru_stime))
+    }
+
+    fn timeval_to_seconds(tv: &libc::timeval) -> f64 {
+        tv.tv_sec as f64 + tv.tv_usec as f64 / 1_000_000_f64
+    }
+}
+
+impl HeartbeatEmitter {
+    fn emit_status_alert_if_needed(&self, metrics: &HeartbeatMetrics) {
+        let mut last_status = self.last_emitted_status.lock();
+        if metrics.status == *last_status {
+            return;
+        }
+
+        let next_status = metrics.status;
+        *last_status = next_status;
+
+        match next_status {
+            ProcessStatus::Healthy => {
+                info!(
+                    service = %metrics.service_name,
+                    "Satellite recovered to healthy status"
+                );
+            }
+            ProcessStatus::Degraded => {
+                self.log_process_alert("process.degraded", metrics);
+            }
+            ProcessStatus::Failed => {
+                self.log_process_alert("process.failed", metrics);
+            }
+        }
+    }
+
+    fn log_process_alert(&self, event_type: &str, metrics: &HeartbeatMetrics) {
+        let payload = match event_type {
+            "process.failed" => serde_json::to_value(ProcessFailedPayload {
+                process_name: metrics.service_name.clone(),
+                uptime_seconds: metrics.uptime_seconds,
+                errors_in_window: metrics.errors_count,
+                last_error_message: metrics.last_error_message.clone(),
+                metadata: metrics.metadata.clone(),
+            })
+            .unwrap_or_else(|_| json!({})),
+            _ => serde_json::to_value(ProcessDegradedPayload {
+                process_name: metrics.service_name.clone(),
+                uptime_seconds: metrics.uptime_seconds,
+                errors_in_window: metrics.errors_count,
+                last_error_message: metrics.last_error_message.clone(),
+                metadata: metrics.metadata.clone(),
+            })
+            .unwrap_or_else(|_| json!({})),
+        };
+
+        let alert_entry = json!({
+            "level": "WARN",
+            "message": event_type,
+            "target": "heartbeat",
+            "module_path": "sinex_satellite_sdk::heartbeat",
+            "file": "heartbeat.rs",
+            "line": 1,
+            "fields": {
+                "event_type": event_type,
+                "service_name": metrics.service_name,
+                "status": metrics.status,
+                "errors_count": metrics.errors_count,
+                "last_error_message": metrics.last_error_message,
+                "uptime_seconds": metrics.uptime_seconds,
+                "metadata": metrics.metadata,
+                "payload": payload,
+            }
+        });
+
+        self.log_sink.emit(&alert_entry);
+
+        warn!(
+            service = %metrics.service_name,
+            status = %metrics.status,
+            errors = metrics.errors_count,
+            "Satellite transitioned to {} state",
+            event_type
+        );
     }
 }
 

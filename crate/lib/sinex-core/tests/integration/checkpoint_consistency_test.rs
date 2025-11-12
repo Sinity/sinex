@@ -8,17 +8,17 @@
 // - Recovery scenarios and data loss detection
 
 use chrono::{Duration as ChronoDuration, Utc};
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::integrity::checkpoint_verification;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPool;
 use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
 use std::collections::{HashMap, HashSet};
 
 #[sinex_test]
-async fn test_checkpoint_consistency_validation(ctx: TestContext) -> Result<()> {
+async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -110,7 +110,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> Result<()> 
 }
 
 #[sinex_test]
-async fn test_checkpoint_gap_detection(ctx: TestContext) -> Result<()> {
+async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -231,7 +231,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> Result<()> {
+async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResult<()> {
     let service_name = format!("failover_service_{}", Ulid::new());
     let consumer_group = format!("failover_group_{}", Ulid::new());
 
@@ -302,7 +302,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> Result<(
 }
 
 #[sinex_test]
-async fn test_stale_checkpoint_detection(ctx: TestContext) -> Result<()> {
+async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -382,7 +382,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> Result<()> {
+async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create multiple test automatons
@@ -540,7 +540,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> Result<
 }
 
 #[sinex_test]
-async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> Result<()> {
+async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton for recovery scenarios
@@ -724,7 +724,7 @@ async fn analyze_checkpoint(
     processor_name: &str,
     source: &str,
     stale_after: ChronoDuration,
-) -> Result<Vec<CheckpointInconsistency>> {
+) -> TestResult<Vec<CheckpointInconsistency>> {
     struct Snapshot {
         last_processed_id: Option<Ulid>,
         last_activity: chrono::DateTime<Utc>,
@@ -845,7 +845,7 @@ async fn analyze_checkpoint(
     Ok(issues)
 }
 
-async fn fetch_event_ulid_at(pool: &DbPool, source: &str, offset: i64) -> Result<Ulid> {
+async fn fetch_event_ulid_at(pool: &DbPool, source: &str, offset: i64) -> TestResult<Ulid> {
     let row = sqlx::query!(
         r#"
         SELECT id as "id!: Ulid"
@@ -881,7 +881,7 @@ fn checkpoint_format_issue(
 }
 
 #[sinex_test]
-async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> Result<()> {
+async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton

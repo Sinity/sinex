@@ -4,7 +4,7 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};

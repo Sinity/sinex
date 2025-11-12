@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_core::{db::DbPool, environment::SinexEnvironment, types::ulid::Ulid, JsonValue};
-use sqlx::Row;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -439,25 +438,27 @@ impl JetStreamConsumer {
             .iter()
             .map(|prepared| prepared.parsed_id.as_uuid())
             .collect();
-        let sources: Vec<&str> = batch
+        let sources: Vec<String> = batch
             .iter()
-            .map(|prepared| prepared.raw.source.as_str())
+            .map(|prepared| prepared.raw.source.clone())
             .collect();
-        let event_types: Vec<&str> = batch
+        let event_types: Vec<String> = batch
             .iter()
-            .map(|prepared| prepared.raw.event_type.as_str())
+            .map(|prepared| prepared.raw.event_type.clone())
             .collect();
         let ts_origs: Vec<DateTime<Utc>> =
             batch.iter().map(|prepared| prepared.parsed_ts).collect();
-        let hosts: Vec<&str> = batch
+        let hosts: Vec<String> = batch
             .iter()
-            .map(|prepared| prepared.raw.host.as_str())
+            .map(|prepared| prepared.raw.host.clone())
             .collect();
-        let payloads: Vec<&JsonValue> =
-            batch.iter().map(|prepared| &prepared.raw.payload).collect();
+        let payloads: Vec<JsonValue> = batch
+            .iter()
+            .map(|prepared| prepared.raw.payload.clone())
+            .collect();
 
         // Bulk insert using UNNEST for optimal performance
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             INSERT INTO core.events (id, source, event_type, ts_orig, host, payload)
             SELECT
@@ -476,15 +477,15 @@ impl JetStreamConsumer {
                 $6::jsonb[]
             ) AS t(id, source, event_type, ts_orig, host, payload)
             ON CONFLICT (id) DO NOTHING
-            RETURNING id as "id: Ulid"
+            RETURNING id::uuid as "id!"
             "#,
+            &ids,
+            &sources,
+            &event_types,
+            &ts_origs,
+            &hosts,
+            &payloads
         )
-        .bind(&ids)
-        .bind(&sources)
-        .bind(&event_types)
-        .bind(&ts_origs)
-        .bind(&hosts)
-        .bind(&payloads)
         .fetch_all(&self.pool)
         .await
         .map_err(|err| {
@@ -493,7 +494,7 @@ impl JetStreamConsumer {
         })?;
 
         // Extract persisted IDs from RETURNING clause
-        let persisted_ids: Vec<Ulid> = rows.into_iter().map(|row| row.get::<Ulid, _>(0)).collect();
+        let persisted_ids: Vec<Ulid> = rows.into_iter().map(|row| Ulid::from(row.id)).collect();
 
         debug!(
             batch_size = batch.len(),

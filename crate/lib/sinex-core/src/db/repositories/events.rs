@@ -453,7 +453,7 @@ impl<'a> EventRepository<'a> {
                     timing_info_type,
                     metadata
                 ) VALUES (
-                    $1,
+                    $1::uuid::ulid,
                     'annex',
                     'test-material-bootstrap',
                     'completed',
@@ -463,7 +463,7 @@ impl<'a> EventRepository<'a> {
                 ON CONFLICT (id) DO NOTHING
                 "#,
             )
-            .bind(material_ulid)
+            .bind(material_ulid.as_uuid())
             .execute(self.pool)
             .await;
         }
@@ -2131,6 +2131,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+    use sinex_test_utils::sinex_test;
 
     fn base_record() -> EventRecord {
         EventRecord {
@@ -2153,34 +2154,38 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_provenance_is_rejected() {
+    #[sinex_test]
+    fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
         let record = base_record();
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("missing provenance"));
+        Ok(())
     }
 
-    #[test]
-    fn material_provenance_requires_anchor() {
+    #[sinex_test]
+    fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("anchor"));
+        Ok(())
     }
 
-    #[test]
-    fn valid_material_provenance_passes() {
+    #[sinex_test]
+    fn valid_material_provenance_passes() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(sinex_schema::ulid::Ulid::new());
         record.anchor_byte = Some(42);
         assert!(record.try_to_event().is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn synthesis_provenance_requires_non_empty_sources() {
+    #[sinex_test]
+    fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
         let mut record = base_record();
         record.source_event_ids = Some(vec![]);
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("source_event_ids"));
+        Ok(())
     }
 }

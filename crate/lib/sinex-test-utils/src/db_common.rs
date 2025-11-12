@@ -44,6 +44,7 @@
 //! Custom fixtures can be loaded by name from the `fixtures/datasets/` directory.
 
 use crate::Result;
+use crate::TestResult;
 
 use camino::Utf8PathBuf;
 use futures::Future;
@@ -69,7 +70,7 @@ struct OperationIdGuard {
 }
 
 impl OperationIdGuard {
-    async fn apply(conn: &mut PoolConnection<Postgres>, value: &str) -> Result<Self> {
+    async fn apply(conn: &mut PoolConnection<Postgres>, value: &str) -> TestResult<Self> {
         let previous = sqlx::query_scalar::<_, Option<String>>(
             "SELECT current_setting('sinex.operation_id', true)",
         )
@@ -88,7 +89,7 @@ impl OperationIdGuard {
         })
     }
 
-    async fn restore(mut self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
+    async fn restore(mut self, conn: &mut PoolConnection<Postgres>) -> TestResult<()> {
         let outcome = if let Some(prev) = self.previous.take() {
             sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
                 .bind(prev)
@@ -151,13 +152,13 @@ impl Drop for OperationIdGuard {
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::reset_database;
-/// # async fn example(pool: &DbPool) -> Result<()> {
+/// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// reset_database(pool).await?;
 /// // Database is now empty and ready for new test data
 /// # Ok(())
 /// # }
 /// ```
-pub async fn reset_database(pool: &DbPool) -> Result<()> {
+pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
 
     // Disable FK checks for the cleanup session
@@ -334,7 +335,7 @@ pub async fn with_operation_id<F, Fut, T>(
     conn: &mut PoolConnection<Postgres>,
     operation_id: &str,
     f: F,
-) -> Result<T>
+) -> TestResult<T>
 where
     F: FnOnce(&mut PoolConnection<Postgres>) -> Fut,
     Fut: Future<Output = Result<T>>,
@@ -371,7 +372,7 @@ where
         );
     }
 
-    result
+    result.map_err(Into::into)
 }
 
 /// Load a named dataset fixture into the database
@@ -401,7 +402,7 @@ where
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::load_fixture;
-/// # async fn example(pool: &DbPool) -> Result<()> {
+/// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// // Load standard small dataset
 /// load_fixture(pool, "small").await?;
 ///
@@ -410,7 +411,7 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
+pub async fn load_fixture(pool: &DbPool, name: &str) -> TestResult<()> {
     let path = match name {
         "empty" => return Ok(()),
         "small" => Utf8PathBuf::from("fixtures/datasets/small_1k.sql"),
@@ -420,10 +421,9 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
     };
 
     if !path.exists() {
-        return Err(SinexError::not_found(format!(
-            "Fixture file not found: {}",
-            path.as_str()
-        )));
+        return Err(
+            SinexError::not_found(format!("Fixture file not found: {}", path.as_str())).into(),
+        );
     }
 
     let sql = std::fs::read_to_string(&path)?;
@@ -459,7 +459,7 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::clear_pg_cache;
-/// # async fn benchmark(pool: &DbPool) -> Result<()> {
+/// # async fn benchmark(pool: &DbPool) -> TestResult<()> {
 /// // Cold cache measurement
 /// clear_pg_cache(pool).await?;
 /// let cold_time = measure_query(pool).await?;
@@ -475,7 +475,7 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> Result<()> {
 /// This only clears connection-local caches. System-wide buffer cache
 /// clearing requires superuser privileges and is generally not done
 /// in benchmarks to avoid affecting other database users.
-pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
+pub async fn clear_pg_cache(pool: &DbPool) -> TestResult<()> {
     // Discard temporary tables and prepared statements
     sqlx::query("DISCARD TEMP").execute(pool).await?;
     sqlx::query("DISCARD PLANS").execute(pool).await?;
@@ -522,7 +522,7 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::get_row_counts;
-/// # async fn example(pool: &DbPool) -> Result<()> {
+/// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// let counts = get_row_counts(pool).await?;
 /// for (table, count) in counts {
 ///     println!("{}: {} rows", table, count);
@@ -530,7 +530,7 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
+pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
     let mut counts = HashMap::new();
 
     // List of all major tables to count from the schema
@@ -594,13 +594,13 @@ pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::{reset_database, verify_clean_state};
-/// # async fn example(pool: &DbPool) -> Result<()> {
+/// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// reset_database(pool).await?;
 /// verify_clean_state(pool).await?; // Should pass
 /// # Ok(())
 /// # }
 /// ```
-pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
+pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
     let observed_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await?
@@ -670,7 +670,8 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
         return Err(SinexError::validation(format!(
             "Database not in clean state:\n{}",
             details.join("\n")
-        )));
+        ))
+        .into());
     }
 
     Ok(())
@@ -693,13 +694,13 @@ pub async fn verify_clean_state(pool: &DbPool) -> Result<()> {
 ///
 /// ```rust
 /// # use sinex_test_utils::db_common::apply_test_optimizations;
-/// # async fn example(pool: &DbPool) -> Result<()> {
+/// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// apply_test_optimizations(pool).await?;
 /// // Run performance-sensitive operations
 /// # Ok(())
 /// # }
 /// ```
-pub async fn apply_test_optimizations(pool: &DbPool) -> Result<()> {
+pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
     let optimizations = vec![
         "SET work_mem = '64MB'",
         "SET maintenance_work_mem = '256MB'",
@@ -727,7 +728,7 @@ mod tests {
     use crate::sinex_test;
 
     #[sinex_test]
-    async fn test_reset_database() -> Result<()> {
+    async fn test_reset_database() -> TestResult<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -761,7 +762,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_verify_clean_state() -> Result<()> {
+    async fn test_verify_clean_state() -> TestResult<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -804,7 +805,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_get_row_counts() -> Result<()> {
+    async fn test_get_row_counts() -> TestResult<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -836,7 +837,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_clear_pg_cache() -> Result<()> {
+    async fn test_clear_pg_cache() -> TestResult<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -847,7 +848,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_apply_optimizations() -> Result<()> {
+    async fn test_apply_optimizations() -> TestResult<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 

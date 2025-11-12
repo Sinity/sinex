@@ -348,9 +348,10 @@ fn blob_response_payload(
 mod tests {
     use super::*;
     use sinex_core::Blob;
+    use sinex_test_utils::{sinex_test, TestResult};
 
-    #[test]
-    fn blob_response_payload_encodes_base64() {
+    #[sinex_test]
+    fn blob_response_payload_encodes_base64() -> TestResult<()> {
         let blob = Blob::builder()
             .annex_backend("SHA256".into())
             .content_hash("deadbeef".into())
@@ -363,10 +364,11 @@ mod tests {
         assert_eq!(json["content_base64"], "aGk=");
         assert_eq!(json["mime_type"], "application/octet-stream");
         assert_eq!(json["size_bytes"], 2);
+        Ok(())
     }
 
-    #[test]
-    fn parse_replay_state_accepts_known_variants() {
+    #[sinex_test]
+    fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
         let states = [
             ("planning", ReplayState::Planning),
             ("PREVIEWED", ReplayState::Previewed),
@@ -376,15 +378,17 @@ mod tests {
             assert_eq!(parse_replay_state(input).unwrap(), expected);
         }
         assert!(parse_replay_state("unknown").is_err());
+        Ok(())
     }
 
-    #[test]
-    fn parse_ulid_param_validates_input() {
+    #[sinex_test]
+    fn parse_ulid_param_validates_input() -> TestResult<()> {
         let id = Ulid::new();
         let params = json!({"operation_id": id.to_string()});
         assert_eq!(parse_ulid_param(&params, "operation_id").unwrap(), id);
 
         let invalid = json!({"operation_id": "not-ulid"});
         assert!(parse_ulid_param(&invalid, "operation_id").is_err());
+        Ok(())
     }
 }

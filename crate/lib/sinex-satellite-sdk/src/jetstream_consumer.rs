@@ -392,12 +392,16 @@ impl JetStreamEventConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[tokio::test]
-    async fn test_consumer_config_defaults() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    async fn test_consumer_config_defaults() -> TestResult<()> {
         let config = JetStreamEventConsumerConfig::default();
         assert_eq!(config.processing_model, ProcessingModel::StatelessWorker);
         assert_eq!(config.batch_size, 100);
         assert!(!config.enable_provisional_processing);
+        Ok(())
     }
 }

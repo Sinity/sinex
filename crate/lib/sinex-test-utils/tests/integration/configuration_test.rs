@@ -3,7 +3,7 @@
 // This module provides systematic testing of all configuration options across
 // the Sinex ecosystem, including validation, compatibility, and environment testing.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::env;

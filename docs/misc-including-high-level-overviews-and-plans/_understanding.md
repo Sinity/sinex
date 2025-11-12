@@ -28,7 +28,7 @@ Ensures complete data capture across restarts:
 2. **Gap-fill**: Process events from last checkpoint to now
 3. **Continuous**: Enter real-time streaming mode
 
-[EXTRACTED to crate/sinex-db/src/queries/source_material.rs]
+[EXTRACTED to crate/lib/sinex-core/src/db/repositories/source_materials.rs]
 ~~Anchor Byte Principle documentation~~
 
 ### 4. Event Symmetry (Active Inference)
@@ -59,7 +59,7 @@ Never lose data; evolve interpretations:
 - New interpretations created with updated logic
 - Complete provenance chain maintained
 
-[EXTRACTED to crate/sinex-db/src/lib.rs]
+[EXTRACTED to crate/lib/sinex-core/src/db/mod.rs]
 ~~Data Model and Core Tables documentation~~
 
 ## Implementation Status vs Vision
@@ -177,7 +177,7 @@ Zero-downtime deployments through comprehensive checks:
 4. **Archive and Replace**: Evolution without destruction
 5. **Deep Oneness**: Philosophical coherence throughout implementation
 
-[EXTRACTED to crate/sinex-db/src/pool.rs]
+[EXTRACTED to crate/lib/sinex-core/src/db/pool.rs]
 ~~Performance Engineering section~~
 
 ## Error Recovery and Resilience

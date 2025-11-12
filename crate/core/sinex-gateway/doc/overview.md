@@ -29,12 +29,14 @@ The Sinex Gateway acts as the central API hub for the Sinex event capture system
 Starting the gateway server:
 
 ```rust,no_run
-use sinex_gateway::ServiceContainer;
+use sinex_gateway::{rpc_server, ServiceContainer};
+use sinex_core::SanitizedPath;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let container = ServiceContainer::new().await?;
-    container.start_rpc_server("127.0.0.1:8080").await?;
+    let services = ServiceContainer::new(Some("postgres://user:pass@localhost/sinex_dev".into())).await?;
+    let socket = SanitizedPath::from_str_validated("/tmp/sinex-host.sock")?;
+    rpc_server::run(socket, services).await?;
     Ok(())
 }
 ```

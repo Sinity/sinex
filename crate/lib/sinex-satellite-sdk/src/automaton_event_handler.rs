@@ -86,9 +86,12 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[tokio::test]
-    async fn test_automaton_event_handler_basic() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    async fn test_automaton_event_handler_basic() -> TestResult<()> {
         let handler = AutomatonEventHandler::new();
 
         let event_id = Ulid::new();
@@ -110,10 +113,11 @@ mod tests {
         let ids = handler.processed_event_ids().await;
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0], event_id);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_automaton_event_handler_multiple_events() {
+    #[sinex_test]
+    async fn test_automaton_event_handler_multiple_events() -> TestResult<()> {
         let handler = AutomatonEventHandler::new();
 
         let mut event_ids = Vec::new();
@@ -140,5 +144,6 @@ mod tests {
         let tracked_ids = handler.processed_event_ids().await;
         assert_eq!(tracked_ids.len(), 10);
         assert_eq!(tracked_ids, event_ids);
+        Ok(())
     }
 }

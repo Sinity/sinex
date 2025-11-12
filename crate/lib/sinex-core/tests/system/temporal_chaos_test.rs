@@ -44,7 +44,7 @@
 // 3. **Ordering Resilience**: System must cope with impossible event sequences
 // 4. **Concurrency Safety**: No race conditions under maximum contention
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, worker_test_utils};

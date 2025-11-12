@@ -1,5 +1,7 @@
 # TODO Coverage Audit (2025-11-12)
 
+> **Historical context:** Entries that reference sensd/gRPC capture the backlog before the JetStream-only pivot. Keep them for history; current ingestion behaviour is defined in `docs/way.md`.
+
 The following unchecked TODO items currently lack fail-first test coverage. Impact reflects the expected blast radius if the gap ships.
 
 | # | Title | Impact | Coverage Gap |

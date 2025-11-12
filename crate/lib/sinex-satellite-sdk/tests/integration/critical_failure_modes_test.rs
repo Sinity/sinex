@@ -3,7 +3,7 @@
 //! This module tests critical failure scenarios that could break the system
 //! in production, focusing on system resilience and error handling.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_satellite_sdk::VersionInfo;
 use sinex_test_utils::prelude::*;
 use std::fs;
@@ -15,7 +15,7 @@ use tempfile::TempDir;
 
 /// Test version tracking with corrupted git environment
 #[sinex_test]
-async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_version_tracking_corrupted_git() -> color_eyre::eyre::Result<()> {
     // Create a temporary directory with fake git directory
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
@@ -43,7 +43,7 @@ async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> color_eyre::e
 
 /// Test version tracking performance under stress
 #[sinex_test]
-async fn test_version_tracking_stress(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_version_tracking_stress() -> color_eyre::eyre::Result<()> {
     let start_time = std::time::Instant::now();
 
     // Generate many version infos quickly
@@ -324,7 +324,7 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> color_eyre::
 
 /// Test system behavior with invalid configurations
 #[sinex_test]
-async fn test_invalid_configuration_handling(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_invalid_configuration_handling() -> color_eyre::eyre::Result<()> {
     // Test various invalid configuration scenarios
     let invalid_configs = vec![
         // Empty strings

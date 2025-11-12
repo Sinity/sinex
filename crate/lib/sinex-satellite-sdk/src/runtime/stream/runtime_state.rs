@@ -6,7 +6,6 @@ use crate::{
     coordination::SatelliteCoordination,
     event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
-    job_manager::{JobManager, JobManagerConfig},
     lease_manager::LeaseManager,
     lifecycle::LifecycleManager,
     SatelliteResult,
@@ -104,10 +103,6 @@ impl ProcessorRuntimeState {
 
     pub fn heartbeat_emitter(&self, interval_seconds: u64) -> HeartbeatEmitter {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
-    }
-
-    pub fn job_manager(&self, config: JobManagerConfig) -> JobManager {
-        JobManager::from_handles(self.handles(), config)
     }
 
     pub fn lifecycle_manager(&self) -> LifecycleManager {

@@ -17,7 +17,7 @@
 // - **Checkpoint Performance**: Persistence and recovery speed
 // - **Bottleneck Identification**: Tools for identifying JetStream stress cases
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 /// JetStream publish/consume performance tests

@@ -1,12 +1,12 @@
 // Service integration tests covering cross-service flows.
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
 
 // =============================================================================
 // SERVICE INTEGRATION PATTERNS
@@ -19,7 +19,7 @@ async fn create_test_event_with_timestamp(
     event_type: &str,
     payload: serde_json::Value,
     timestamp: chrono::DateTime<Utc>,
-) -> Result<sinex_core::db::models::Event> {
+) -> TestResult<sinex_core::db::models::Event> {
     let event = sinex_core::Event::test_event(
         sinex_core::types::domain::EventSource::from(source),
         sinex_core::types::domain::EventType::from(event_type),
@@ -32,7 +32,7 @@ async fn create_test_event_with_timestamp(
 
 /// Test cross-service data flow: Event creation -> Analytics -> Repository queries
 #[sinex_test]
-async fn test_cross_service_data_flow(ctx: TestContext) -> Result<()> {
+async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service data flow integration");
 
     // 1. Create events through TestContext (simulating ingest service)
@@ -103,7 +103,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> Result<()> {
 
 /// Test service initialization and basic functionality
 #[sinex_test]
-async fn test_service_initialization(ctx: TestContext) -> Result<()> {
+async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service initialization");
 
     // Test Analytics Service initialization
@@ -128,7 +128,7 @@ async fn test_service_initialization(ctx: TestContext) -> Result<()> {
 
 /// Test service error handling and resilience
 #[sinex_test]
-async fn test_service_error_handling(ctx: TestContext) -> Result<()> {
+async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service error handling patterns");
 
     // Create test event with potentially problematic data
@@ -171,7 +171,7 @@ async fn test_service_error_handling(ctx: TestContext) -> Result<()> {
 
 /// Test service performance under load
 #[sinex_test]
-async fn test_service_performance_integration(ctx: TestContext) -> Result<()> {
+async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service performance under load");
 
     let start_time = std::time::Instant::now();
@@ -254,7 +254,7 @@ async fn test_service_performance_integration(ctx: TestContext) -> Result<()> {
 
 /// Test service lifecycle and cleanup
 #[sinex_test]
-async fn test_service_lifecycle(ctx: TestContext) -> Result<()> {
+async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service lifecycle management");
 
     // Create test data
@@ -310,7 +310,7 @@ async fn test_service_lifecycle(ctx: TestContext) -> Result<()> {
 
 /// Test service integration with time-based operations
 #[sinex_test]
-async fn test_time_based_service_integration(ctx: TestContext) -> Result<()> {
+async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing time-based service integration");
 
     let now = Utc::now();
@@ -372,7 +372,7 @@ async fn test_time_based_service_integration(ctx: TestContext) -> Result<()> {
 
 /// Test service configuration patterns
 #[sinex_test]
-async fn test_service_configuration(ctx: TestContext) -> Result<()> {
+async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service configuration patterns");
 
     // Service should accept the pool and work with repository pattern
@@ -411,7 +411,7 @@ async fn test_service_configuration(ctx: TestContext) -> Result<()> {
 
 /// Test error propagation across services
 #[sinex_test]
-async fn test_cross_service_error_handling(ctx: TestContext) -> Result<()> {
+async fn test_cross_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service error handling");
 
     // Create event that might cause issues

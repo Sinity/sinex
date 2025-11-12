@@ -52,6 +52,7 @@ pub use udev_watcher::UdevWatcher;
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{
     DbusStatus, JournalStatus, SystemProcessor, SystemState, SystemdStatus, UdevStatus,
+    WatcherSnapshot,
 };
 
 /// Configuration for system satellite

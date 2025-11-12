@@ -42,6 +42,15 @@ schemas/
    - Diffs JSON schemas against the base branch and invokes
      `sinex-schema validate` for structural comparisons.
 
+### Rust → JSON → Postgres Flow
+
+1. **Update Rust types**: Change the relevant `EventPayload` (or supporting structs) inside `sinex-core`.  
+2. **Regenerate artifacts**: Run `./scripts/schema-dev.sh generate` (inside `nix develop`). This rewrites the JSON files plus `registry.json`.  
+3. **Review drift**: Use `./scripts/schema-dev.sh diff` to inspect the generated changes and commit them alongside the Rust patch.  
+4. **Deploy**: Apply the update locally with `./scripts/schema-dev.sh deploy` (or let CI’s schema workflows publish them after merge). The CLI writes every schema into `sinex_schemas.event_payload_schemas`, which ingestd/gateway read at runtime.
+
+Every stage is wired into CI: schema-validation regenerates + checks compatibility, and schema-management can sync the DB copy. Treat the JSON bundle just like `cargo fmt` output—if CI complains, rerun `schema-dev.sh generate` and commit the results.
+
 ### Schema Evolution Strategy
 
 1. **Non-breaking changes** (add optional fields): Keep same version
@@ -73,6 +82,15 @@ Reference these JSON files directly to understand the expected event payload str
 
 ### For Database Validation
 Schemas are loaded into PostgreSQL and used for runtime validation via `pg_jsonschema`.
+
+### For Non-Rust Contributors
+If you need to propose a schema change but cannot edit the Rust source:
+
+1. Make your JSON edits under `schemas/v1/...` (or a new `v{n}` directory) and open a PR describing the intended change.  
+2. CI will fail because the generated bundle no longer matches the Rust definition—that’s expected.  
+3. Pair with a Rust contributor to update the corresponding `EventPayload` and rerun `./scripts/schema-dev.sh generate`; the PR can then merge once both sides are in sync.
+
+> **Tip:** Include sample events/tests demonstrating the desired shape so the Rust change is unambiguous.
 
 ## Technical Implementation Notes
 

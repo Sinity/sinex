@@ -6,9 +6,10 @@ use sinex_satellite_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
     SnapshotDiff, SnapshotRow, TimeQuality,
 };
+use sinex_test_utils::{sinex_test, TestContext};
 
-#[test]
-fn slice_assembler_emits_complete_lines() {
+#[sinex_test]
+async fn slice_assembler_emits_complete_lines() -> color_eyre::Result<()> {
     let mut assembler = SliceAssembler::line_based();
 
     let records = assembler.push_bytes(b"line1\nline2\nline").unwrap();
@@ -16,17 +17,21 @@ fn slice_assembler_emits_complete_lines() {
 
     let remaining = assembler.flush();
     assert_eq!(remaining, Some(b"line".to_vec()));
+
+    Ok(())
 }
 
-#[test]
-fn idempotence_key_formats_insert_sql() {
+#[sinex_test]
+async fn idempotence_key_formats_insert_sql() -> color_eyre::Result<()> {
     let key = IdempotenceKey::new(Ulid::new(), 12345, EventType::from_static("file.created"));
     assert_eq!(key.anchor_byte, 12345);
     assert!(key.to_insert_sql().contains("ON CONFLICT"));
+
+    Ok(())
 }
 
-#[test]
-fn ledger_reader_prefers_realtime_capture_quality() {
+#[sinex_test]
+async fn ledger_reader_prefers_realtime_capture_quality() -> color_eyre::Result<()> {
     let entries = vec![LedgerEntry {
         offset_start: 0,
         offset_end: 100,
@@ -39,10 +44,12 @@ fn ledger_reader_prefers_realtime_capture_quality() {
     let (_ts, quality) = reader.derive_ts_orig(50, None);
 
     assert_eq!(quality, TimeQuality::RealtimeCapture);
+
+    Ok(())
 }
 
-#[test]
-fn snapshot_diff_detects_inserts() {
+#[sinex_test]
+async fn snapshot_diff_detects_inserts() -> color_eyre::Result<()> {
     let mut diff = SnapshotDiff::new(RowIdentitySpec::new(vec!["id".to_string()]));
 
     let current_rows = vec![
@@ -61,10 +68,12 @@ fn snapshot_diff_detects_inserts() {
     let changes = diff.compute_diff(current_rows);
     assert_eq!(changes.len(), 2);
     assert!(changes.iter().all(|c| c.change_type == ChangeType::Insert));
+
+    Ok(())
 }
 
-#[test]
-fn snapshot_diff_detects_updates() {
+#[sinex_test]
+async fn snapshot_diff_detects_updates() -> color_eyre::Result<()> {
     let identity_spec = RowIdentitySpec::new(vec!["id".to_string()])
         .with_tracked_columns(vec!["name".to_string(), "age".to_string()]);
     let mut diff = SnapshotDiff::new(identity_spec);
@@ -85,10 +94,12 @@ fn snapshot_diff_detects_updates() {
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].change_type, ChangeType::Update);
     assert_eq!(changes[0].changed_columns, vec!["age".to_string()]);
+
+    Ok(())
 }
 
-#[test]
-fn snapshot_diff_detects_deletes() {
+#[sinex_test]
+async fn snapshot_diff_detects_deletes() -> color_eyre::Result<()> {
     let mut diff = SnapshotDiff::new(RowIdentitySpec::new(vec!["id".to_string()]));
     diff.load_previous_snapshot(vec![
         SnapshotRow {
@@ -113,10 +124,12 @@ fn snapshot_diff_detects_deletes() {
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].change_type, ChangeType::Delete);
     assert_eq!(changes[0].row_key, vec!["2".to_string()]);
+
+    Ok(())
 }
 
-#[test]
-fn snapshot_diff_detects_mixed_changes() {
+#[sinex_test]
+async fn snapshot_diff_detects_mixed_changes() -> color_eyre::Result<()> {
     let mut diff = SnapshotDiff::new(RowIdentitySpec::new(vec!["id".to_string()]));
     diff.load_previous_snapshot(vec![
         SnapshotRow {
@@ -155,4 +168,6 @@ fn snapshot_diff_detects_mixed_changes() {
         changes.iter().map(|c| c.change_type.clone()).collect();
     assert!(change_types.contains(&ChangeType::Insert));
     assert!(change_types.contains(&ChangeType::Update));
+
+    Ok(())
 }

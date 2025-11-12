@@ -76,6 +76,21 @@ pub struct SystemdStatus {
     pub recent_state_changes: u32,
 }
 
+/// Snapshot describing which watchers are currently wired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatcherSnapshot {
+    pub dbus_ready: bool,
+    pub journal_ready: bool,
+    pub udev_ready: bool,
+    pub systemd_ready: bool,
+}
+
+impl WatcherSnapshot {
+    pub fn all_ready(&self) -> bool {
+        self.dbus_ready && self.journal_ready && self.udev_ready && self.systemd_ready
+    }
+}
+
 /// Unified system processor implementing StatefulStreamProcessor
 ///
 /// Supports snapshot, historical, and continuous scanning modes for system events.
@@ -230,6 +245,16 @@ impl SystemProcessor {
 
         self.last_state = Some(state.clone());
         Ok(state)
+    }
+
+    /// Expose watcher readiness for tests and diagnostics.
+    pub fn watcher_snapshot(&self) -> WatcherSnapshot {
+        WatcherSnapshot {
+            dbus_ready: self.dbus_watcher.is_some(),
+            journal_ready: self.journal_watcher.is_some(),
+            udev_ready: self.udev_watcher.is_some(),
+            systemd_ready: self.systemd_watcher.is_some(),
+        }
     }
 
     /// Initialize watchers based on enabled sources
@@ -823,6 +848,51 @@ impl ExplorationProvider for SystemProcessor {
             std::fs::write(path.as_str(), content)?;
         }
 
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
+
+    fn enabled_config() -> SystemConfig {
+        SystemConfig {
+            dbus_enabled: true,
+            journal_enabled: true,
+            udev_enabled: true,
+            systemd_enabled: true,
+            ..SystemConfig::default()
+        }
+    }
+
+    #[sinex_test]
+    async fn system_processor_initializes_all_watchers_when_enabled() -> TestResult<()> {
+        let mut processor = SystemProcessor::with_config(enabled_config());
+
+        processor
+            .initialize_watchers()
+            .await
+            .expect("watcher initialization should succeed when sources enabled");
+
+        assert!(
+            processor.dbus_watcher.is_some(),
+            "D-Bus watcher should be instantiated once initialization succeeds"
+        );
+        assert!(
+            processor.journal_watcher.is_some(),
+            "Journal watcher should be instantiated once initialization succeeds"
+        );
+        assert!(
+            processor.udev_watcher.is_some(),
+            "Udev watcher should be instantiated once initialization succeeds"
+        );
+        assert!(
+            processor.systemd_watcher.is_some(),
+            "systemd watcher should be instantiated once initialization succeeds"
+        );
         Ok(())
     }
 }

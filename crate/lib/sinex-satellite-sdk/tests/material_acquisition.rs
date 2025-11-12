@@ -261,22 +261,23 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
 
     let rotation_policy = RotationPolicy::default();
     let futures = (0..4).map(|idx| {
+        let policy = rotation_policy.clone();
         let manager = AcquisitionManager::new(
             nats_client.clone(),
             ctx.pool.clone(),
-            rotation_policy,
+            policy,
             format!("concurrent-{idx}"),
             format!("/concurrent/{idx}"),
         );
         async move {
-            let mut handle = manager.begin_material(format!("session-{idx}")).await?;
+            let session_id = format!("session-{idx}");
+            let mut handle = manager.begin_material(&session_id).await?;
             let material_id = handle.material_id;
             manager
                 .append_slice(&mut handle, format!("slice-{idx}").as_bytes())
                 .await?;
-            manager
-                .finalize(handle, format!("session-{idx} complete"))
-                .await?;
+            let completion_reason = format!("session-{idx} complete");
+            manager.finalize(handle, &completion_reason).await?;
             Result::<Ulid>::Ok(material_id)
         }
     });

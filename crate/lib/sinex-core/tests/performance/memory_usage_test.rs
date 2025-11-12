@@ -4,7 +4,7 @@
 // detect memory leaks, and verify memory efficiency under various load conditions.
 // These tests help identify memory bottlenecks and optimization opportunities.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};

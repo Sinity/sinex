@@ -4,10 +4,10 @@
 
 #![allow(dead_code, unused_imports)]
 
-use color_eyre::eyre::Result;
 use insta::assert_json_snapshot;
 use rstest::*;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
 use tracing_test::traced_test;
 
 mod snapshot_tests {

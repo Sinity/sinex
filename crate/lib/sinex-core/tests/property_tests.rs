@@ -12,14 +12,14 @@ use serde_json::json;
 use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use sinex_test_utils::sinex_test;
+use sinex_test_utils::{sinex_test, TestResult};
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers
 // =============================================================================
 
 #[sinex_test]
-fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
+fn test_ulid_generation_properties() -> TestResult {
     proptest!(|(
         count in 1..1000usize
     )| {
@@ -41,7 +41,7 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
+fn test_ulid_string_properties() -> TestResult {
     proptest!(|(
         bytes in prop::array::uniform16(any::<u8>())
     )| {
@@ -56,7 +56,7 @@ fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_ordering_transitivity() -> color_eyre::eyre::Result<()> {
+fn test_ulid_ordering_transitivity() -> TestResult {
     proptest!(|(
         count in 3..100usize,
         delay_ms in 0..10u64
@@ -122,7 +122,7 @@ prop_compose! {
 }
 
 #[sinex_test]
-fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
+fn test_event_creation_properties() -> TestResult {
     proptest!(|(
         source in arb_event_source(),
         event_type in arb_event_type(),
@@ -151,7 +151,7 @@ fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
+fn test_event_json_serialization_properties() -> TestResult {
     proptest!(|(
         source in "[a-zA-Z0-9_-]{1,20}",
         event_type in "[a-zA-Z0-9_.]{1,30}",
@@ -197,7 +197,7 @@ fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_event_source_properties() -> color_eyre::eyre::Result<()> {
+fn test_event_source_properties() -> TestResult {
     proptest!(|(
         source_str in ".*"
     )| {

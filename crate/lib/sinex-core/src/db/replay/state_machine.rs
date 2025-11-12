@@ -296,19 +296,22 @@ impl ReplayStateMachine {
 
     /// Load existing operation
     pub async fn load_operation(&self, operation_id: Ulid) -> Result<ReplayOperation> {
-        let row = sqlx::query(
-            "SELECT operator, scope, preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        let row = sqlx::query!(
+            r#"
+            SELECT operator, scope, preview_summary
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes())
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
         .fetch_one(&self.pool)
         .await?;
 
-        let operator: String = row.try_get("operator")?;
-        let scope_val: serde_json::Value = row.try_get("scope")?;
-        let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+        let preview = row.preview_summary;
         let meta_val = preview.unwrap_or(serde_json::json!({"state": "planning"}));
 
-        let op = Self::decode_meta_to_operation(operation_id, operator, scope_val, meta_val)?;
+        let scope_val = row.scope.unwrap_or_else(|| serde_json::json!({}));
+        let op = Self::decode_meta_to_operation(operation_id, row.operator, scope_val, meta_val)?;
         Ok(op)
     }
 
@@ -329,13 +332,18 @@ impl ReplayStateMachine {
         new_state: ReplayState,
     ) -> Result<()> {
         // Load current meta JSON
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid FOR UPDATE",
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid
+            FOR UPDATE
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes())
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
         .fetch_one(&mut **tx)
         .await?;
-        let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);
+        let preview = row.preview_summary;
         let mut meta = Self::decode_meta_json(preview)?;
 
         if !meta.state.can_transition_to(new_state) {
@@ -360,13 +368,19 @@ impl ReplayStateMachine {
 
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
-        sqlx::query(
-            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes()),
+            status,
+            msg,
+            meta_json
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
-        .bind(status)
-        .bind(msg)
-        .bind(meta_json)
         .execute(&mut **tx)
         .await?;
 
@@ -381,26 +395,36 @@ impl ReplayStateMachine {
         operation_id: Ulid,
         preview: serde_json::Value,
     ) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes())
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
         .fetch_one(&self.pool)
         .await?;
-        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state == ReplayState::Planning {
             meta.state = ReplayState::Previewed;
         }
         meta.preview = Some(preview);
         let meta_json = serde_json::to_value(&meta)?;
         let (status, msg) = Self::map_state_to_status(&meta.state);
-        sqlx::query(
-            "UPDATE core.operations_log SET preview_summary = $2, result_status = $3, result_message = $4 WHERE id::uuid = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET preview_summary = $2,
+                result_status = $3,
+                result_message = $4
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes()),
+            meta_json,
+            status,
+            msg
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
-        .bind(meta_json)
-        .bind(status)
-        .bind(msg)
         .execute(&self.pool)
         .await?;
 
@@ -478,13 +502,17 @@ impl ReplayStateMachine {
     /// Approve operation for execution
     pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<()> {
         let now = Utc::now();
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes())
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
         .fetch_one(&self.pool)
         .await?;
-        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state != ReplayState::Previewed {
             return Err(eyre!("Operation must be in Previewed state to approve"));
         }
@@ -493,13 +521,19 @@ impl ReplayStateMachine {
         meta.approved_at = Some(now);
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
-        sqlx::query(
-            "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                result_message = $3,
+                preview_summary = $4
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes()),
+            status,
+            msg,
+            meta_json
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
-        .bind(status)
-        .bind(msg)
-        .bind(meta_json)
         .execute(&self.pool)
         .await?;
 
@@ -513,20 +547,28 @@ impl ReplayStateMachine {
         operation_id: Ulid,
         checkpoint: &ReplayCheckpoint,
     ) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
+        let row = sqlx::query!(
+            r#"
+            SELECT preview_summary
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes())
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
         .fetch_one(&self.pool)
         .await?;
-        let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
+        let mut meta = Self::decode_meta_json(row.preview_summary)?;
         meta.checkpoint = checkpoint.clone();
         let meta_json = serde_json::to_value(&meta)?;
-        sqlx::query(
-            "UPDATE core.operations_log SET preview_summary = $2 WHERE id::uuid = $1::uuid",
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET preview_summary = $2
+            WHERE id::uuid = $1::uuid
+            "#,
+            Uuid::from_bytes(operation_id.to_bytes()),
+            meta_json
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
-        .bind(meta_json)
         .execute(&self.pool)
         .await?;
 

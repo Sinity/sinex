@@ -1,12 +1,12 @@
 //! Basic test to verify enhanced sinex_test macro works
 
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
 
 // Test that regular sinex_test still works
 #[sinex_test]
-async fn test_regular_works(ctx: TestContext) -> Result<()> {
+async fn test_regular_works(ctx: TestContext) -> TestResult<()> {
     let event = ctx
         .create_test_event("test", "basic.test", json!({}))
         .await?;
@@ -23,7 +23,7 @@ async fn test_rstest_integration(
     ctx: TestContext,
     #[case] source: &str,
     #[case] event_type: &str,
-) -> Result<()> {
+) -> TestResult<()> {
     let event = ctx.create_test_event(source, event_type, json!({})).await?;
 
     assert_eq!(event.source.as_str(), source);
@@ -33,7 +33,7 @@ async fn test_rstest_integration(
 
 // Test that tracing works
 #[sinex_test(trace = true)]
-async fn test_tracing_enabled(ctx: TestContext) -> Result<()> {
+async fn test_tracing_enabled(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Test with tracing");
     ctx.capture_log("Test with tracing".into());
 

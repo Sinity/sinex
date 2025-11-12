@@ -165,6 +165,16 @@ in
             description = "Database name used by Sinex.";
           };
 
+          extraDatabases = mkOption {
+            type = listOf str;
+            default = [];
+            description = ''
+              Additional PostgreSQL databases to provision alongside the primary one.
+              Useful when you want both `sinex` and `sinex_dev` (or other sandboxes)
+              managed by the module.
+            '';
+          };
+
           user = mkOption {
             type = str;
             default = "sinex";
@@ -223,7 +233,7 @@ in
                 };
                 binary = mkOption {
                   type = str;
-                  default = "sinex-db-migration";
+                  default = "sinex-schema";
                   description = "Migration binary name.";
                 };
                 package = mkOption {

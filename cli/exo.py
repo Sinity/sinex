@@ -38,6 +38,33 @@ except ImportError:
 console = Console()
 
 
+def _rpc_error_guidance(error: SinexRPCError, *, use_db: bool = False) -> List[str]:
+    """Return operator-facing guidance for common RPC failures."""
+    guidance: List[str] = []
+    code = getattr(error, "code", None)
+
+    if code == 401:
+        guidance.append(
+            "Authentication required. Set SINEX_RPC_TOKEN / provide --rpc-token, or rerun with --use-db for direct database access."
+        )
+    elif code == 429:
+        message = "Gateway rate limit exceeded. Reduce the query scope or wait before retrying."
+        if not use_db:
+            message += " You can also rerun with --use-db to bypass the RPC layer."
+        guidance.append(message)
+    elif not use_db:
+        guidance.append("Try running again with --use-db for direct database access if RPC remains unavailable.")
+
+    return guidance
+
+
+def handle_rpc_error(error: SinexRPCError, *, use_db: bool = False) -> None:
+    """Print a rich RPC error with contextual guidance."""
+    console.print(f"[red]RPC Error ({error.code}): {error.message}[/red]")
+    for line in _rpc_error_guidance(error, use_db=use_db):
+        console.print(f"[yellow]{line}[/yellow]")
+
+
 def get_db_connection():
     """Get database connection using environment variable or default."""
     # Default to development database name; production uses 'sinex'
@@ -427,8 +454,7 @@ def query(ctx, source: Optional[str], event_type: Optional[str], since: Optional
             display_events_enhanced(events)
             
     except SinexRPCError as e:
-        console.print(f"[red]RPC Error: {e}[/red]")
-        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        handle_rpc_error(e, use_db=use_db)
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -1102,8 +1128,7 @@ def sources(ctx):
         console.print(table)
         
     except SinexRPCError as e:
-        console.print(f"[red]RPC Error: {e}[/red]")
-        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        handle_rpc_error(e, use_db=use_db)
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -2286,6 +2311,121 @@ def dlq_stats(agent: Optional[str], days: int):
             console.print(f"{day['day']}: {day['count']:,} failures, {day['resolved_count']:,} resolved ({resolved_pct:.1f}%)")
 
 
+@dlq.command('metrics')
+@click.option('--window', '-w', default='7d', help="Time window to analyze (e.g., '24h', '7d', 'all')")
+def dlq_metrics(window: str):
+    """Show aggregated DLQ metrics and backlog leaders."""
+
+    try:
+        base_filters: List[str] = []
+        base_params: List[Any] = []
+
+        if window.lower() != 'all':
+            since_dt = parse_time_argument(window)
+            base_filters.append("failed_at >= %s")
+            base_params.append(since_dt)
+
+        where_clause = f"WHERE {' AND '.join(base_filters)}" if base_filters else ""
+        pending_filters = base_filters + ["resolved_at IS NULL"]
+        pending_where = f"WHERE {' AND '.join(pending_filters)}"
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE resolved_at IS NULL) AS pending,
+                        COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) AS resolved,
+                        COALESCE(AVG(retry_count)::numeric, 0) AS avg_retries,
+                        COALESCE(MAX(retry_count), 0) AS max_retries,
+                        COALESCE(AVG(EXTRACT(EPOCH FROM (now() - failed_at))), 0) AS avg_age_seconds,
+                        COALESCE(MAX(EXTRACT(EPOCH FROM (now() - failed_at))), 0) AS max_age_seconds
+                    FROM sinex_schemas.dlq_events
+                    {where_clause}
+                    """,
+                    base_params,
+                )
+                summary = cur.fetchone()
+
+                cur.execute(
+                    f"""
+                    SELECT error_category, COUNT(*) AS total
+                    FROM sinex_schemas.dlq_events
+                    {where_clause}
+                    GROUP BY error_category
+                    ORDER BY total DESC
+                    """,
+                    base_params,
+                )
+                by_category = cur.fetchall()
+
+                cur.execute(
+                    f"""
+                    SELECT automaton_name,
+                           COUNT(*) AS pending,
+                           MAX(EXTRACT(EPOCH FROM (now() - failed_at))) AS max_age_seconds
+                    FROM sinex_schemas.dlq_events
+                    {pending_where}
+                    GROUP BY automaton_name
+                    ORDER BY pending DESC
+                    LIMIT 5
+                    """,
+                    base_params,
+                )
+                backlog_leaders = cur.fetchall()
+
+        if not summary or summary['total'] == 0:
+            console.print("[yellow]No DLQ activity found for the requested window.[/yellow]")
+            return
+
+        summary_table = Table(title=f"DLQ Metrics (window: {window})", box=box.SIMPLE)
+        summary_table.add_column("Metric", style="cyan")
+        summary_table.add_column("Value", justify="right")
+        summary_table.add_row("Total entries", f"{summary['total']:,}")
+        summary_table.add_row("Pending", f"{summary['pending']:,}")
+        summary_table.add_row("Resolved", f"{summary['resolved']:,}")
+        summary_table.add_row("Avg retries", f"{float(summary['avg_retries']):.2f}")
+        summary_table.add_row("Max retries", f"{summary['max_retries']}")
+        summary_table.add_row(
+            "Avg age",
+            format_duration(int(float(summary['avg_age_seconds']))),
+        )
+        summary_table.add_row(
+            "Max age",
+            format_duration(int(float(summary['max_age_seconds']))),
+        )
+
+        console.print(summary_table)
+
+        if by_category:
+            category_table = Table(title="DLQ by category", box=box.SIMPLE)
+            category_table.add_column("Category", style="magenta")
+            category_table.add_column("Count", justify="right")
+            for row in by_category:
+                category_table.add_row(row['error_category'] or 'unknown', f"{row['total']:,}")
+            console.print(category_table)
+
+        if backlog_leaders:
+            backlog_table = Table(title="Top pending automata", box=box.SIMPLE)
+            backlog_table.add_column("Automaton", style="green")
+            backlog_table.add_column("Pending", justify="right")
+            backlog_table.add_column("Oldest age", justify="right")
+
+            for row in backlog_leaders:
+                backlog_table.add_row(
+                    row['automaton_name'] or 'unknown',
+                    f"{row['pending']:,}",
+                    format_duration(int(float(row['max_age_seconds'] or 0))),
+                )
+
+            console.print(backlog_table)
+
+    except Exception as e:
+        console.print(f"[red]Failed to compute DLQ metrics: {e}[/red]")
+        sys.exit(1)
+
+
 @dlq.command('purge')
 @click.option('--agent', '-a', help='Purge entries for specific agent')
 @click.option('--category', '-c', 
@@ -2410,8 +2550,7 @@ def stats(ctx):
             _stats_with_rpc(rpc_url)
             
     except SinexRPCError as e:
-        console.print(f"[red]RPC Error: {e}[/red]")
-        console.print(f"[yellow]Try using --use-db flag for direct database access[/yellow]")
+        handle_rpc_error(e, use_db=use_db)
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -2641,10 +2780,10 @@ def execute_replay(automaton: str, dependency_graph: Dict[str, List[Dict]],
                     # Archive events in batches
                     for i in range(0, len(event_ids), 100):
                         batch = event_ids[i:i+100]
-                    cur.execute("""
-                        DELETE FROM core.events 
-                        WHERE id = ANY(%s)
-                    """, [batch])
+                        cur.execute("""
+                            DELETE FROM core.events 
+                            WHERE id = ANY(%s)
+                        """, [batch])
                         total_archived += cur.rowcount
                 
                 console.print(f"  Total archived: [red]{total_archived}[/red] events")
@@ -3852,7 +3991,7 @@ def telemetry_prometheus(ctx, rpc_url: Optional[str], format: str):
             console.print(JSON.from_data(response['metrics'], indent=2))
             
     except SinexRPCError as e:
-        console.print(f"[red]RPC Error: {e}[/red]")
+        handle_rpc_error(e)
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -3904,7 +4043,7 @@ def telemetry_events(ctx, component: Optional[str], event_type: Optional[str],
             })
             events = response['events']
         except SinexRPCError as e:
-            console.print(f"[red]RPC Error: {e}[/red]")
+            handle_rpc_error(e, use_db=use_db)
             sys.exit(1)
     
     if not events:
@@ -4022,7 +4161,7 @@ def telemetry_summary(ctx, component: Optional[str], period: str, rpc_url: Optio
             console.print(table)
             
     except SinexRPCError as e:
-        console.print(f"[red]RPC Error: {e}[/red]")
+        handle_rpc_error(e)
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

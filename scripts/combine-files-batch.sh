@@ -26,6 +26,17 @@ EXCLUDES=(
   "$OUTPUT_DIR/*"
 )
 
+SKIP_PATHS=(
+  'docs/misc-including-high-level-overviews-and-plans/_new_ideas_discussion.md'
+  'docs/testing-gap-analysis.md'
+  'docs/TEST_PATTERNS.md'
+  'docs/TODO.md'
+  'nixos/README.md'
+  'docs/vision/emergent-insights-and-extensions.md'
+  'docs/vision/project-target-state.md'
+  'docs/misc-including-high-level-overviews-and-plans/EMERGENT_INSIGHTS_AND_SPECULATIVE_EXTENSIONS.md'
+)
+
 mkdir -p "$OUTPUT_DIR"
 
 is_text_file() {
@@ -103,6 +114,21 @@ sort_array() {
   done
 }
 
+should_skip_file() {
+  local file=$1
+  local rel=$file
+  if [[ $file == "$ROOT"* ]]; then
+    rel=${file#"$ROOT"/}
+  fi
+  for skip in "${SKIP_PATHS[@]}"; do
+    [[ -z $skip ]] && continue
+    if [[ $rel == "$skip" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 path_priority() {
   local rel=$1
   case $rel in
@@ -170,7 +196,10 @@ path_priority() {
 
 collect_files() {
   local dir=$1
-  local -a args=(rg --files "$dir" --hidden --follow)
+  local -a args=(rg --files "$dir" --hidden)
+  if [[ ${FOLLOW_SYMLINKS:-0} -ne 0 ]]; then
+    args+=(--follow)
+  fi
   for ex in "${EXCLUDES[@]}"; do
     args+=( -g "!$ex" )
   done
@@ -272,6 +301,9 @@ main() {
     [[ -f $f ]] || continue
     # Skip generated SQLx cache artifacts regardless of location
     if [[ $f == */.sqlx/* ]]; then
+      continue
+    fi
+    if should_skip_file "$f"; then
       continue
     fi
     if ! is_text_file "$f"; then

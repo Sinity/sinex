@@ -258,7 +258,9 @@ impl PoolConfig {
             std::env::var(name).ok().and_then(|v| v.parse().ok())
         }
 
-        let conn_budget = parse_env_u32("SINEX_TESTUTILS_CONN_BUDGET").unwrap_or(48);
+        // Default to 480 to work with the NixOS module's 500 max_connections minimum
+        // Leaves 20 connections for admin/other processes
+        let conn_budget = parse_env_u32("SINEX_TESTUTILS_CONN_BUDGET").unwrap_or(480);
 
         let slot_max = parse_env_u32("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
             .map(|v| v.clamp(1, 32))

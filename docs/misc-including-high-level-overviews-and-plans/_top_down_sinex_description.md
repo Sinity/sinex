@@ -323,7 +323,7 @@ These are non-negotiable mandates for ensuring the system is robust and maintain
 1. **Dev/Prod Isolation:** The `SINEX_ENVIRONMENT` variable **must** be used to programmatically namespace all shared resources (DB names, Redis streams, socket paths).
 2. **Configuration Canon:** NixOS is the single source of truth. Configuration is passed **only via environment variables**. All file-based parsing logic within the SDK is deprecated and must be removed.
 3. **Test Context Enforcement:** All tests requiring DB or service interaction **must** use the `#[sinex_test]` macro and `TestContext`. A systematic refactoring must be undertaken to migrate legacy tests.
-4. **Query Centralization:** All database logic **must** be centralized in the `sinex-db` crate and exposed via type-safe functions. No raw `sqlx::query!` macros are permitted outside this crate.
+4. **Query Centralization:** All database logic **must** be centralized in the `sinex-core` crate (repositories + query helpers) and exposed via type-safe functions. No raw `sqlx::query!` macros are permitted outside this crate.
 
 ### **Part XI: The Nature of Perception - A Layered and Unified Ingestion Model (Revised)**
 
@@ -490,7 +490,7 @@ This satellite is a perfect example of a multi-role processor:
 * **It could play an Actuator role:** It could subscribe to `command.terminal.send_text` instructional events to programmatically type into a terminal window.
 
 **Architectural Mandate:**
-The core SDK and framework must not create artificial barriers. The `StatefulStreamProcessor` trait is universal. The `sinex-db` crate provides all the necessary primitives for a processor to read/write to `core.events` and `source_material_registry`. **Localization of functionality is a design choice, not an architectural constraint.** You are correct: it is sensible to handle all Hyprland events in one satellite. It is sensible to handle most terminal-related sources in another. This is good design, and the architecture must empower it.
+The core SDK and framework must not create artificial barriers. The `StatefulStreamProcessor` trait is universal. The `sinex-core` crate provides all the necessary primitives for a processor to read/write to `core.events` and `source_material_registry`. **Localization of functionality is a design choice, not an architectural constraint.** You are correct: it is sensible to handle all Hyprland events in one satellite. It is sensible to handle most terminal-related sources in another. This is good design, and the architecture must empower it.
 
 ---
 

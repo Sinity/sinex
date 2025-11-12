@@ -426,7 +426,7 @@ fn test_ulid_ordering_property_in_memory() -> color_eyre::eyre::Result<()> {
 // Range query test temporarily disabled due to direct sqlx usage
 // TODO: Reimplement using repository pattern
 /* #[sinex_test]
-async fn test_ulid_range_query_property(ctx: TestContext) -> Result<()> {
+async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult<()> {
     proptest::proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,

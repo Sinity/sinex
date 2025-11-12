@@ -98,8 +98,8 @@
                 EOF
               '';
               postInstall = ''
-                # Migration binary is now built separately as sinex-db-migration
-                # No need to include SQL files anymore
+                # Database migrations ship via the sinex-schema crate/CLI
+                # Nothing extra to install here.
               '';
             };
           # Package the Python CLI tool

@@ -1,5 +1,7 @@
 # Sinex Critical Assessment Part Three: Hard Truths and Objective Analysis
 
+> **Historical note:** Assessment of the pre–JetStream architecture. Use it for lessons learned; modern guidance is tracked in `docs/way.md`.
+
 *Generated: 2025-01-23*
 
 This document provides brutally honest, non-sycophantic analysis of Sinex's actual innovations, comparative quality, and likely failure modes.

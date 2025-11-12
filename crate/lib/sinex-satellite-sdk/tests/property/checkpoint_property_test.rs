@@ -519,7 +519,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    async fn test_checkpoint_state_methods(_ctx: TestContext) -> Result<()> {
+    async fn test_checkpoint_state_methods() -> Result<()> {
         let mut state = CheckpointState::default();
 
         // Test initial state
