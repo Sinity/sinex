@@ -11,9 +11,9 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 ### Tasks
 - [x] Amend `schemas/README.md` with a “Source of Truth” section that states the rule above and explains how to regenerate artifacts.
 - [x] Create a CI job (or extend schema-validation) that runs `schema-dev.sh generate` and fails when committed JSON is stale (treat like `cargo fmt`).
-- [ ] Teach the merge bot / contributors to commit regenerated JSON (or let CI open an auto-PR) so the repo stays in sync.
-- [ ] Keep `scripts/check-schema-compatibility.sh`, `schema-validation.yml`, and `gitops_schema_sources` pointing at the generated bundle. Document the flow from Rust → JSON → Postgres → downstream consumers.
-- [ ] Document how non-Rust contributors propose schema changes (JSON PR as proposal, build fails until the matching Rust change lands).
+- [x] Teach contributors to commit regenerated JSON (README callouts + PR-template checkbox make this explicit; no merge bot planned).
+- [x] Keep `scripts/check-schema-compatibility.sh`, `schema-validation.yml`, and `gitops_schema_sources` pointing at the generated bundle. Document the flow from Rust → JSON → Postgres → downstream consumers.
+- [x] Document how non-Rust contributors propose schema changes (JSON PR as proposal, build fails until the matching Rust change lands).
 
 **Exit criteria:** CI enforces zero drift; ingestd bootstraps via DB content created from the generated bundle; README explicitly warns against manual JSON edits.
 
@@ -24,9 +24,9 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** All current docs must reflect the JetStream-only ingestion described in `docs/way.md`. Transactional outbox references move to historical sections.
 
 ### Tasks
-- [ ] Sweep docs for “transactional outbox,” “sensd,” or “gRPC ingestion” references and either delete or mark as historical context. (Initial pass applied to `docs/vision/streaming-architecture.md`; continue for the rest.)
-- [ ] Add short banners to historical docs (e.g., `/docs/historical/**`) to clarify their status.
-- [ ] Update `README.md` and satellite guides to mention JetStream confirmations, DLQ subjects, and the confirmation-aware automaton flow.
+- [x] Sweep docs for “transactional outbox,” “sensd,” or “gRPC ingestion” references and either delete or mark as historical context. (Historical banners added to the remaining references in reports/TODO files.)
+- [x] Add short banners to historical docs (e.g., `/docs/historical/**`) to clarify their status.
+- [x] Update `README.md` and satellite guides to mention JetStream confirmations, DLQ subjects, and the confirmation-aware automaton flow.
 
 **Exit criteria:** No current doc suggests that the outbox or sensd are active components; contributors find a single, coherent story that matches `docs/way.md`.
 
@@ -50,10 +50,10 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Keep CI deterministic and aligned with dev workflows.
 
 ### Tasks
-- [ ] Update `.github/workflows/ci.yml` / `sqlx-cache.yml` so migrations run from `crate/lib/sinex-schema` (remove `crate/sinex-db/migration` references) and pin Timescale/PG images to exact tags.
-- [ ] Ensure the Nextest profile used in CI matches the documented “reliable” profile (or document the difference if we stick with default).
-- [ ] Add linters/checks that fail CI when `#[tokio::test]` is used in workspace crates (outside proc-macro/test-harness contexts); everything should use `#[sinex_test]`.
-- [ ] Add lint or static analysis that forbids `sqlx::query(` and `sqlx::query_as(` (non-macro versions) so contributors stick to compile-time-checked macros (`query!`, `query_as!`, etc.).
+- ✅ `.github/workflows/ci.yml` / `sqlx-cache.yml` / `sqlx-check.yml` run migrations from `crate/lib/sinex-schema` and all Postgres images are pinned to `timescale/timescaledb:2.15.2-pg16`.
+- [x] Ensure the Nextest profile used in CI matches the documented “reliable” profile (or document the difference if we stick with default). (CI now runs `cargo nextest … --profile reliable` and coverage inherits it.)
+- [x] Add linters/checks that fail CI when `#[tokio::test]` is used in workspace crates (outside proc-macro/test-harness contexts); everything should use `#[sinex_test]`.
+- [x] Add lint or static analysis that forbids `sqlx::query(` and `sqlx::query_as(` (non-macro versions) so contributors stick to compile-time-checked macros (`query!`, `query_as!`, etc.).
 
 **Exit criteria:** Fresh clone CI runs without touching removed paths; container images are pinned; lint guards protect against reintroducing deprecated patterns.
 
@@ -133,10 +133,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 ### Completed
 - `README.md` now documents the actual crate layout (core/lib/satellites) and calls out sinex-core as the home of database code.
 - `.github/pull_request_template.md` references the current abstractions (sinex-core repositories, `sqlx::query!`, shared validators) instead of legacy crates.
-
-### Remaining Tasks
-- [ ] Purge remaining references to `crate/sinex-db` from docs/scripts and ensure everything points to `crate/lib/sinex-core` + `sinex-schema`.
-- [ ] Audit the repository for obsolete scaffolding (abstractions workflow, unused hooks, tracked-but-ignored artifacts) and remove them or clearly mark them as historical.
+- Remaining references to `crate/sinex-db` in docs/scripts were updated to point at `crate/lib/sinex-core` / `sinex-schema`.
+- Removed legacy scaffolding (abstractions workflow references, unused LLM/test analytics scripts) and refreshed `.github/workflows/README.md`.
 
 **Exit criteria:** New contributors see a single, accurate description of the stack; PR reviewers no longer rely on stale checklists; stray legacy files are either deleted or clearly labelled.
 
