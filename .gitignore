@@ -60,6 +60,7 @@ result-*
 /spec/combo/
 .claude-outputs/
 .direnv/
+.devenv/
 compilation*log
 
 # Rust compiler ICE dumps
