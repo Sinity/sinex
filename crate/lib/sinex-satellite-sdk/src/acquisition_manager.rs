@@ -453,23 +453,22 @@ impl AcquisitionManager {
 
     /// Record ledger entry (ported from TemporalLedger)
     async fn record_ledger_entry(&self, entry: LedgerEntry) -> Result<()> {
-        let material_id_str = entry.source_material_id.to_string();
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger
                 (source_material_id, offset_start, offset_end, offset_kind,
                  ts_capture, precision, clock, source_type)
-            VALUES (CAST($1 AS ULID), $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
             "#,
+            entry.source_material_id.as_uuid(),
+            entry.offset_start,
+            entry.offset_end,
+            &entry.offset_kind,
+            entry.ts_capture,
+            &entry.precision,
+            &entry.clock,
+            &entry.source_type
         )
-        .bind(&material_id_str)
-        .bind(entry.offset_start)
-        .bind(entry.offset_end)
-        .bind(&entry.offset_kind)
-        .bind(entry.ts_capture)
-        .bind(&entry.precision)
-        .bind(&entry.clock)
-        .bind(&entry.source_type)
         .execute(&self.db_pool)
         .await?;
 

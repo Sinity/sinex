@@ -136,9 +136,12 @@ impl ConfirmationBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[tokio::test]
-    async fn test_confirmation_buffer_add_and_confirm() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {
         let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(60));
 
         let event_id = Ulid::new();
@@ -157,10 +160,11 @@ mod tests {
         let confirmed = buffer.confirm(event_id).await;
         assert!(confirmed.is_some());
         assert_eq!(buffer.len().await, 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_confirmation_buffer_timeout() {
+    #[sinex_test]
+    async fn test_confirmation_buffer_timeout() -> TestResult<()> {
         let buffer = ConfirmationBuffer::new(std::time::Duration::from_millis(100));
 
         let event_id = Ulid::new();
@@ -183,5 +187,6 @@ mod tests {
         let removed = buffer.remove_timed_out(&timed_out).await;
         assert_eq!(removed.len(), 1);
         assert_eq!(buffer.len().await, 0);
+        Ok(())
     }
 }

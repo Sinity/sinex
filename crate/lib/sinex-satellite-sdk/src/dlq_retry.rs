@@ -256,13 +256,17 @@ pub struct DlqStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[test]
-    fn test_dlq_retry_config_defaults() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    fn test_dlq_retry_config_defaults() -> TestResult<()> {
         let config = DlqRetryConfig::default();
         assert_eq!(config.consumer_name, "dlq-retry-consumer");
         assert_eq!(config.batch_size, 10);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay, Duration::from_secs(60));
+        Ok(())
     }
 }

@@ -20,7 +20,7 @@ use sinex_core::types::validate_path;
 use sinex_core::DbPoolExt;
 use sinex_core::{Blob, Event, Id, JsonValue, SourceMaterial};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 use tokio::sync::mpsc;
@@ -163,22 +163,29 @@ impl BlobManager {
                 self.add_original_filename(&existing_key, filename).await?;
             }
 
-            self.publish_blob_event(
-                "blob.ingested",
-                BlobIngestedPayload {
-                    blob_id: existing_key.clone(),
-                    size_bytes: existing.size_bytes,
-                    mime_type: existing.mime_type.clone(),
-                    checksum_blake3: blake3_hash,
-                    deduplicated: true,
-                    original_filename: original_filename
-                        .or(existing.original_filename.as_deref())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                },
-                &existing,
-            )
-            .await?;
+            if let Err(e) = self
+                .publish_blob_event(
+                    "blob.ingested",
+                    BlobIngestedPayload {
+                        blob_id: existing_key.clone(),
+                        size_bytes: existing.size_bytes,
+                        mime_type: existing.mime_type.clone(),
+                        checksum_blake3: blake3_hash,
+                        deduplicated: true,
+                        original_filename: original_filename
+                            .or(existing.original_filename.as_deref())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                    },
+                    &existing,
+                )
+                .await
+            {
+                warn!(
+                    error = %e,
+                    "Failed to emit blob.ingested event for deduplicated annex file"
+                );
+            }
 
             return Ok(existing);
         }
@@ -259,19 +266,26 @@ impl BlobManager {
             // Update original_filenames array if this is a new filename
             self.add_original_filename(&existing_key, filename).await?;
 
-            self.publish_blob_event(
-                "blob.ingested",
-                BlobIngestedPayload {
-                    blob_id: existing_key.clone(),
-                    size_bytes: existing.size_bytes,
-                    mime_type: existing.mime_type.clone(),
-                    checksum_blake3: blake3_hash,
-                    deduplicated: true,
-                    original_filename: filename.to_string(),
-                },
-                &existing,
-            )
-            .await?;
+            if let Err(e) = self
+                .publish_blob_event(
+                    "blob.ingested",
+                    BlobIngestedPayload {
+                        blob_id: existing_key.clone(),
+                        size_bytes: existing.size_bytes,
+                        mime_type: existing.mime_type.clone(),
+                        checksum_blake3: blake3_hash,
+                        deduplicated: true,
+                        original_filename: filename.to_string(),
+                    },
+                    &existing,
+                )
+                .await
+            {
+                warn!(
+                    error = %e,
+                    "Failed to emit blob.ingested event for deduplicated blob bytes"
+                );
+            }
 
             return Ok(existing);
         }
@@ -280,7 +294,7 @@ impl BlobManager {
         let mut temp_file = tempfile::Builder::new()
             .prefix("sinex_blob_")
             .suffix(".tmp")
-            .tempfile_in(std::env::temp_dir())
+            .tempfile_in(self.annex.repo_path())
             .wrap_err("Failed to create secure temporary file")?;
 
         use std::io::Write;
@@ -319,19 +333,26 @@ impl BlobManager {
         let blob_key = blob_metadata.annex_key().clone();
         info!("Successfully ingested blob: {}", blob_key);
 
-        self.publish_blob_event(
-            "blob.ingested",
-            BlobIngestedPayload {
-                blob_id: blob_key.clone(),
-                size_bytes,
-                mime_type: Some(content_type.to_string()),
-                checksum_blake3: blake3_hash,
-                deduplicated: false,
-                original_filename: filename.to_string(),
-            },
-            &blob_metadata,
-        )
-        .await?;
+        if let Err(e) = self
+            .publish_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: blob_key.clone(),
+                    size_bytes,
+                    mime_type: Some(content_type.to_string()),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: false,
+                    original_filename: filename.to_string(),
+                },
+                &blob_metadata,
+            )
+            .await
+        {
+            warn!(
+                error = %e,
+                "Failed to emit blob.ingested event for newly ingested file"
+            );
+        }
 
         // Drop the temp file explicitly so it is removed now that git-annex has moved it.
         if let Err(e) = temp_file.close() {

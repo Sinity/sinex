@@ -3,16 +3,21 @@
 //! This module tests security improvements to path handling in database
 //! and migration code, ensuring protection against path traversal attacks.
 
-use color_eyre::eyre::Result;
+use camino::Utf8PathBuf;
+use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::db::security::{SecurityError, SecurityValidator};
 use sinex_core::types::validate_path;
+use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::annex::BlobManager;
-use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_satellite_sdk::annex::AnnexConfig;
 use sinex_satellite_sdk::preflight::validate_toml_file;
 use sinex_test_utils::prelude::*;
 use std::path::Path;
 use tempfile::TempDir;
+use tokio::fs;
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
 #[sinex_test]
 async fn test_path_validation_rejects_traversal_attacks(
@@ -86,19 +91,35 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> color_eyre:
 
 #[sinex_test]
 async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    if !git_annex_available().await {
+        eprintln!("Skipping test: git-annex not available");
+        return Ok(());
+    }
+
     // Create temporary directory and files for testing
     let temp_dir = TempDir::new()?;
+    let annex_path = temp_dir.path().join("test-annex");
+    init_annex_repo(&annex_path).await?;
+
     let temp_file = temp_dir.path().join("test_file.txt");
-    tokio::fs::write(&temp_file, b"test content").await?;
+    fs::write(&temp_file, b"test content").await?;
+
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
 
     // Create blob manager
     let annex_config = AnnexConfig {
-        repo_path: temp_dir.path().to_path_buf().try_into()?,
-        auto_get: false,
+        repo_path: repo_utf8,
+        num_copies: Some(1),
+        large_files: Some("anything".to_string()),
     };
-    // TODO: BlobManager now requires IngestClient - need to implement proper mock for tests
-    // Skipping this test until mock is available
-    return Ok(());
+
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    tokio::spawn(async move {
+        while event_rx.recv().await.is_some() {}
+    });
+
+    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), event_tx)?;
 
     // Test with safe path - should work if file exists
     let safe_path = camino::Utf8PathBuf::try_from(temp_file)?;
@@ -122,13 +143,51 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn test_configuration_file_validation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn blob_manager_rejects_percent_encoded_traversal(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let temp_dir = TempDir::new()?;
+    let annex_path = temp_dir.path().join("percent-encoded-annex");
+
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
+
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    tokio::spawn(async move {
+        while event_rx.recv().await.is_some() {}
+    });
+
+    let annex_config = AnnexConfig {
+        repo_path: repo_utf8,
+        num_copies: None,
+        large_files: None,
+    };
+
+    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), event_tx)?;
+
+    let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
+
+    let result = blob_manager.ingest_file(encoded_path.as_path(), None).await;
+
+    assert!(
+        result
+            .as_ref()
+            .map(|_| false)
+            .unwrap_or_else(|err| err.to_string().contains("Invalid file path")),
+        "BlobManager should reject percent-encoded traversal paths instead of attempting ingestion"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_configuration_file_validation() -> color_eyre::eyre::Result<()> {
     // Create a temporary directory for test files
     let temp_dir = TempDir::new()?;
 
     // Create a legitimate TOML file
     let valid_toml_path = temp_dir.path().join("valid_config.toml");
-    tokio::fs::write(
+    fs::write(
         &valid_toml_path,
         r#"
         [section]
@@ -157,6 +216,53 @@ async fn test_configuration_file_validation(_ctx: TestContext) -> color_eyre::ey
             "Error should mention path validation issue: {}",
             error_msg
         );
+    }
+
+    Ok(())
+}
+
+async fn git_annex_available() -> bool {
+    Command::new("git")
+        .args(["annex", "version"])
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+async fn init_annex_repo(path: &Path) -> color_eyre::eyre::Result<()> {
+    fs::create_dir_all(path).await?;
+
+    let output = Command::new("git")
+        .arg("init")
+        .current_dir(path)
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(color_eyre::eyre::eyre!("Failed to initialize git repository"));
+    }
+
+    Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(path)
+        .output()
+        .await?;
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(path)
+        .output()
+        .await?;
+
+    let output = Command::new("git")
+        .args(["annex", "init", "security-tests"])
+        .current_dir(path)
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(color_eyre::eyre::eyre!(
+            "Failed to initialize git-annex repository: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
     Ok(())
@@ -213,7 +319,7 @@ async fn test_event_sanitization_with_dangerous_paths(
 }
 
 #[sinex_test]
-async fn test_unicode_and_null_byte_handling(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_unicode_and_null_byte_handling() -> color_eyre::eyre::Result<()> {
     // Test various dangerous unicode and null byte patterns
     let dangerous_strings = vec![
         "/path/with/null\0byte",
@@ -253,7 +359,7 @@ async fn test_unicode_and_null_byte_handling(_ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn test_path_length_limits(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_path_length_limits() -> color_eyre::eyre::Result<()> {
     // Test extremely long paths
     let very_long_path = "a".repeat(5000);
     let result = validate_path(&very_long_path);

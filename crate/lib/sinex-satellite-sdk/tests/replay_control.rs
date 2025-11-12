@@ -1,7 +1,8 @@
 use sinex_satellite_sdk::replay::ReplayController;
+use sinex_test_utils::{sinex_test, TestContext};
 
-#[tokio::test]
-async fn pause_and_resume_toggle_state() {
+#[sinex_test]
+async fn pause_and_resume_toggle_state() -> color_eyre::Result<()> {
     let controller = ReplayController::new();
     assert!(!controller.is_paused());
 
@@ -10,20 +11,24 @@ async fn pause_and_resume_toggle_state() {
 
     controller.resume();
     assert!(!controller.is_paused());
+
+    Ok(())
 }
 
-#[tokio::test]
-async fn cancel_sets_flag_and_errors() {
+#[sinex_test]
+async fn cancel_sets_flag_and_errors() -> color_eyre::Result<()> {
     let controller = ReplayController::new();
     assert!(!controller.is_cancelled());
 
     controller.cancel();
     assert!(controller.is_cancelled());
     assert!(controller.check_cancelled().is_err());
+
+    Ok(())
 }
 
-#[tokio::test]
-async fn wait_if_paused_completes_on_resume() {
+#[sinex_test]
+async fn wait_if_paused_completes_on_resume() -> color_eyre::Result<()> {
     let controller = ReplayController::new();
     let controller_clone = controller.clone();
 
@@ -36,10 +41,12 @@ async fn wait_if_paused_completes_on_resume() {
 
     assert!(controller.wait_if_paused().await.is_ok());
     assert!(!controller.is_paused());
+
+    Ok(())
 }
 
-#[tokio::test]
-async fn wait_if_paused_errors_on_cancel() {
+#[sinex_test]
+async fn wait_if_paused_errors_on_cancel() -> color_eyre::Result<()> {
     let controller = ReplayController::new();
     let controller_clone = controller.clone();
 
@@ -52,4 +59,6 @@ async fn wait_if_paused_errors_on_cancel() {
 
     assert!(controller.wait_if_paused().await.is_err());
     assert!(controller.is_cancelled());
+
+    Ok(())
 }

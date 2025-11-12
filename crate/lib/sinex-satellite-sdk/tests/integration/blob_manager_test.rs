@@ -12,16 +12,19 @@
 //! IMPORTANT: These tests require git-annex to be available. If git-annex
 //! is not installed, tests will be skipped with appropriate warnings.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
+use camino::{Utf8Path, Utf8PathBuf};
+use futures;
+use sinex_core::types::events::{event_types, sources};
+use sinex_core::{Event, JsonValue};
+use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager, GitAnnex};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::resources::{create_test_file, temp_dir};
-use futures;
-use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager, GitAnnex};
-use sinex_core::types::events::{sources, event_types};
-use camino::Utf8Path;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::fs;
+use tokio::sync::mpsc;
+use tracing::debug;
 
 /// Test fixture for BlobManager tests with isolated git-annex repository
 struct BlobManagerTest {
@@ -39,16 +42,24 @@ impl BlobManagerTest {
         // Initialize git-annex repository
         Self::init_test_annex(&annex_path).await?;
 
+        let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+            .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
+
         let annex_config = AnnexConfig {
-            repo_path: annex_path.clone(),
+            repo_path: repo_utf8,
             num_copies: Some(1),
             large_files: Some("anything".to_string()), // Accept all files as large
         };
 
-        // TODO: BlobManager now requires IngestClient - need to implement proper mock for tests
-        return Err(color_eyre::eyre::eyre!(
-            "BlobManager tests temporarily disabled - need IngestClient mock implementation"
-        ));
+        // Drain emitted events so the channel never backs up during tests.
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                debug!(?event, "blob manager test event");
+            }
+        });
+
+        let manager = BlobManager::new(annex_config, pool.clone(), event_tx)?;
 
         Ok(Self {
             manager,
@@ -353,6 +364,41 @@ async fn test_git_annex_get_content(ctx: TestContext) -> color_eyre::Result<()> 
 }
 
 #[sinex_test]
+async fn blob_manager_detects_corruption_on_retrieve(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    skip_if_no_git_annex!();
+
+    let fixture = BlobManagerTest::new(ctx.pool()).await?;
+    let original_content = b"Integrity matters for annex-backed blobs";
+
+    let metadata = fixture
+        .manager
+        .ingest_from_bytes(original_content, "corruption_test.txt", "text/plain")
+        .await?;
+
+    let blob_path = fixture.manager.get_blob_path(&metadata.blob_id).await?;
+    assert!(
+        blob_path.exists(),
+        "Blob path should exist on disk after ingestion"
+    );
+
+    tokio::fs::write(&blob_path, b"corrupted payload").await?;
+
+    let retrieved = fixture
+        .manager
+        .retrieve_content(&metadata.annex_key)
+        .await?;
+
+    assert_eq!(
+        retrieved, original_content,
+        "BlobManager should refuse to serve corrupted annex content (TODO #15)"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_git_annex_verification(ctx: TestContext) -> color_eyre::Result<()> {
     skip_if_no_git_annex!();
 
@@ -416,16 +462,18 @@ async fn test_blob_manager_creation_without_git_annex(ctx: TestContext) -> color
     let temp_dir = temp_dir()?;
     let annex_path = temp_dir.path().join("no-annex");
 
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
+        .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
+
     let annex_config = AnnexConfig {
-        repo_path: annex_path,
+        repo_path: repo_utf8,
         num_copies: Some(1),
         large_files: None,
     };
 
-    // TODO: BlobManager now requires IngestClient - need to implement proper mock for tests
-    // Skipping this test until mock is available
-    return Ok(());
+    let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
+    let result = BlobManager::new(annex_config, ctx.pool().clone(), event_tx);
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("git-annex not found"));
 
@@ -437,15 +485,14 @@ async fn test_invalid_repository_path(ctx: TestContext) -> color_eyre::Result<()
     skip_if_no_git_annex!();
 
     let annex_config = AnnexConfig {
-        repo_path: "/nonexistent/path".into(),
+        repo_path: Utf8PathBuf::from("/nonexistent/path"),
         num_copies: Some(1),
         large_files: None,
     };
 
-    // TODO: BlobManager now requires IngestClient - need to implement proper mock for tests
-    // Skipping this test until mock is available
-    return Ok(());
+    let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
+    let result = BlobManager::new(annex_config, ctx.pool().clone(), event_tx);
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("does not exist"));
 

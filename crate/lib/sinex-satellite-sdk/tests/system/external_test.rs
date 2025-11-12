@@ -18,7 +18,7 @@
 // - **Resource usage**: Significant disk I/O, external process spawning
 // - **Dependencies**: Git Annex, external command tools, filesystem access
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_test_utils::prelude::*;
 use sqlx::Row;
