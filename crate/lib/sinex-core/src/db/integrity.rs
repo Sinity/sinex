@@ -38,9 +38,9 @@ impl<'a> IntegrityTester<'a> {
     pub async fn run_integrity_tests(
         &self,
         config: IntegrityTestConfig,
-    ) -> Result<IntegrityTestResults> {
+    ) -> Result<IntegrityResults> {
         if !config.validate_checkpoints {
-            return Ok(IntegrityTestResults {
+            return Ok(IntegrityResults {
                 check_report: CheckReport {
                     checkpoint_inconsistencies: Vec::new(),
                 },
@@ -77,7 +77,7 @@ impl<'a> IntegrityTester<'a> {
             issues.append(&mut detected);
         }
 
-        Ok(IntegrityTestResults {
+        Ok(IntegrityResults {
             check_report: CheckReport {
                 checkpoint_inconsistencies: issues,
             },
@@ -85,7 +85,7 @@ impl<'a> IntegrityTester<'a> {
     }
 }
 
-pub struct IntegrityTestResults {
+pub struct IntegrityResults {
     pub check_report: CheckReport,
 }
 

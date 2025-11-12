@@ -3,8 +3,8 @@ use sinex_core::db::repositories::schema_management::NewEventSchema;
 use sinex_core::repositories::DbPoolExt;
 use sinex_test_utils::{sinex_test, TestContext};
 
-#[test]
-fn schema_content_hash_has_sufficient_entropy() {
+#[sinex_test]
+async fn schema_content_hash_has_sufficient_entropy() -> color_eyre::Result<()> {
     let schema = NewEventSchema {
         source: "hash-source".to_string(),
         event_type: "hash.event".to_string(),
@@ -17,6 +17,8 @@ fn schema_content_hash_has_sufficient_entropy() {
         hash.len() >= 32,
         "expected a stable cryptographic hash, got `{hash}`"
     );
+
+    Ok(())
 }
 
 #[sinex_test]

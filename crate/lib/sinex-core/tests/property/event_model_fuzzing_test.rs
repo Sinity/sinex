@@ -399,7 +399,7 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
 
 /// Test that event creation and database insertion never panics with arbitrary fuzzed events
 #[sinex_test]
-fn test_event_creation_never_panics_with_fuzzed_data() -> Result<()> {
+fn test_event_creation_never_panics_with_fuzzed_data() -> TestResult<()> {
     proptest::proptest!(|(event in fuzzed_events())| {
         // The critical assertion: event creation and serialization should never panic, regardless of input
         // It should either succeed or return an error gracefully
@@ -425,7 +425,7 @@ fn test_event_creation_never_panics_with_fuzzed_data() -> Result<()> {
 
 /// Test filesystem events with extreme payloads
 #[sinex_test]
-fn test_filesystem_events_robustness() -> Result<()> {
+fn test_filesystem_events_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in fuzzed_filesystem_payloads(),
         source in problematic_strings(),
@@ -458,7 +458,7 @@ fn test_filesystem_events_robustness() -> Result<()> {
 
 /// Test terminal events with extreme payloads
 #[sinex_test]
-fn test_terminal_events_robustness() -> Result<()> {
+fn test_terminal_events_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in fuzzed_terminal_payloads(),
         source in prop_oneof![
@@ -495,7 +495,7 @@ fn test_terminal_events_robustness() -> Result<()> {
 
 /// Test clipboard events with extreme payloads
 #[sinex_test]
-fn test_clipboard_events_robustness() -> Result<()> {
+fn test_clipboard_events_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in fuzzed_clipboard_payloads(),
         event_type in prop_oneof![
@@ -523,7 +523,7 @@ fn test_clipboard_events_robustness() -> Result<()> {
 
 /// Test window manager events with extreme payloads
 #[sinex_test]
-fn test_window_manager_events_robustness() -> Result<()> {
+fn test_window_manager_events_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in fuzzed_window_manager_payloads(),
         event_type in prop_oneof![
@@ -557,7 +557,7 @@ fn test_window_manager_events_robustness() -> Result<()> {
 
 /// Test system events with extreme payloads
 #[sinex_test]
-fn test_system_events_robustness() -> Result<()> {
+fn test_system_events_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
@@ -591,7 +591,7 @@ fn test_system_events_robustness() -> Result<()> {
 
 /// Test JSON serialization robustness with extreme payloads
 #[sinex_test]
-fn test_json_serialization_robustness() -> Result<()> {
+fn test_json_serialization_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         payload in malformed_json_values(),
     )| {
@@ -621,7 +621,7 @@ fn test_json_serialization_robustness() -> Result<()> {
 
 /// Test ULID robustness with extreme timestamps
 #[sinex_test]
-fn test_ulid_robustness_with_extreme_timestamps() -> Result<()> {
+fn test_ulid_robustness_with_extreme_timestamps() -> TestResult<()> {
     proptest::proptest!(|(
         timestamp in problematic_timestamps(),
     )| {
@@ -651,7 +651,7 @@ fn test_ulid_robustness_with_extreme_timestamps() -> Result<()> {
 
 /// Test string handling robustness
 #[sinex_test]
-fn test_string_handling_robustness() -> Result<()> {
+fn test_string_handling_robustness() -> TestResult<()> {
     proptest::proptest!(|(
         source in problematic_strings(),
         event_type in problematic_strings(),
@@ -681,7 +681,7 @@ fn test_string_handling_robustness() -> Result<()> {
 
 /// Test database insertion with fuzzed events using modern infrastructure
 #[sinex_test]
-async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
+async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> {
     use proptest::test_runner::TestRunner;
 
     let mut runner = TestRunner::deterministic();
@@ -713,7 +713,7 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
 
 /// Test event creation with extreme payloads in database context
 #[sinex_test]
-async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> {
+async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<()> {
     // Test various extreme payload scenarios
     let test_cases = vec![
         // Very large string payload
@@ -792,7 +792,7 @@ mod additional_tests {
     use std::panic;
 
     #[sinex_test]
-    async fn test_event_with_null_bytes(ctx: TestContext) -> Result<()> {
+    async fn test_event_with_null_bytes(ctx: TestContext) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new("test\0null\0bytes".to_string()),
             EventType::new("test\0event".to_string()),
@@ -809,7 +809,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    async fn test_event_with_extremely_large_payload(ctx: TestContext) -> Result<()> {
+    async fn test_event_with_extremely_large_payload(ctx: TestContext) -> TestResult<()> {
         // Create a very large payload (10MB of data)
         let large_string = "x".repeat(10_000_000);
         let large_payload = serde_json::json!({
@@ -834,7 +834,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    async fn test_event_with_infinite_numbers(ctx: TestContext) -> Result<()> {
+    async fn test_event_with_infinite_numbers(ctx: TestContext) -> TestResult<()> {
         let payload = serde_json::json!({
             "infinity": f64::INFINITY,
             "neg_infinity": f64::NEG_INFINITY,

@@ -5,7 +5,7 @@ use sinex_core::validation::Validate;
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn database_config_validates_fields(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn database_config_validates_fields() -> color_eyre::eyre::Result<()> {
     let valid = DatabaseConfig {
         url: "postgresql://localhost/test".to_string(),
         max_connections: 50,
@@ -25,7 +25,7 @@ async fn database_config_validates_fields(_ctx: TestContext) -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn server_config_checks_required_fields(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn server_config_checks_required_fields() -> color_eyre::eyre::Result<()> {
     let valid = ServerConfig {
         name: "test-server".to_string(),
         bind_address: "127.0.0.1".to_string(),
@@ -45,9 +45,7 @@ async fn server_config_checks_required_fields(_ctx: TestContext) -> color_eyre::
 }
 
 #[sinex_test]
-async fn config_validation_trait_surfaces_errors(
-    _ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn config_validation_trait_surfaces_errors() -> color_eyre::eyre::Result<()> {
     let config = ServerConfig {
         name: "test".to_string(),
         bind_address: "not-an-ip".to_string(),

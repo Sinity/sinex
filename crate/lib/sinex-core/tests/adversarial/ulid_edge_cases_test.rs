@@ -6,7 +6,7 @@
 //! - Wraparound behavior
 //! - Concurrent generation safety
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use sinex_core::types::ulid::Ulid;
 use std::collections::{HashMap, HashSet};

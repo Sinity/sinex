@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 // =============================================================================
 
 #[sinex_test]
-async fn test_version_string_parsing_patterns(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_version_string_parsing_patterns() -> color_eyre::eyre::Result<()> {
     // Test semantic version parsing patterns that the satellite SDK would use
     let version_patterns = vec![
         "1.0.100+abc123",
@@ -52,7 +52,7 @@ async fn test_version_string_parsing_patterns(_ctx: TestContext) -> color_eyre::
 }
 
 #[sinex_test]
-async fn test_version_comparison_logic(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_version_comparison_logic() -> color_eyre::eyre::Result<()> {
     // Test semantic version comparison logic using simple version structs
     let test_cases = vec![
         // (v1, v2, expected_ordering)
@@ -88,7 +88,7 @@ async fn test_version_comparison_logic(_ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_test]
-async fn test_dirty_build_detection(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_dirty_build_detection() -> color_eyre::eyre::Result<()> {
     // Test detection of dirty builds from version strings
     let test_cases = vec![
         ("1.0.100+abc123", false),
@@ -109,7 +109,7 @@ async fn test_dirty_build_detection(_ctx: TestContext) -> color_eyre::eyre::Resu
 }
 
 #[sinex_test]
-async fn test_version_string_validation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_version_string_validation() -> color_eyre::eyre::Result<()> {
     // Test validation of version string formats
     let valid_versions = vec![
         "1.0.100+abc123",
@@ -148,7 +148,7 @@ async fn test_version_string_validation(_ctx: TestContext) -> color_eyre::eyre::
 }
 
 #[sinex_test]
-async fn test_build_timestamp_parsing(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_build_timestamp_parsing() -> color_eyre::eyre::Result<()> {
     // Test parsing of RFC3339 timestamps typically used in build metadata
     let timestamp_examples = vec![
         "2024-01-01T12:00:00Z",
@@ -180,7 +180,7 @@ async fn test_build_timestamp_parsing(_ctx: TestContext) -> color_eyre::eyre::Re
 // =============================================================================
 
 #[sinex_test]
-async fn test_instance_identification_patterns(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_instance_identification_patterns() -> color_eyre::eyre::Result<()> {
     // Test patterns for identifying service instances
     let instance_patterns = vec![
         ("fs-watcher", "instance-123"),
@@ -216,7 +216,7 @@ async fn test_instance_identification_patterns(_ctx: TestContext) -> color_eyre:
 }
 
 #[sinex_test]
-async fn test_instance_metadata_structure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_instance_metadata_structure() -> color_eyre::eyre::Result<()> {
     // Test metadata structure for service instances
     let metadata_examples = vec![
         InstanceMetadata {
@@ -254,7 +254,7 @@ async fn test_instance_metadata_structure(_ctx: TestContext) -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_leadership_election_logic() -> color_eyre::eyre::Result<()> {
     // Test basic leadership election logic
     let newer_version = SimpleVersion {
         major: 1,
@@ -313,7 +313,7 @@ async fn test_leadership_election_logic(_ctx: TestContext) -> color_eyre::eyre::
 }
 
 #[sinex_test]
-async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_tiebreaker_scenarios() -> color_eyre::eyre::Result<()> {
     // Test tiebreaking scenarios for leadership election
     let base_time = std::time::SystemTime::now();
 
@@ -360,9 +360,7 @@ async fn test_tiebreaker_scenarios(_ctx: TestContext) -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-async fn test_version_system_integration_concepts(
-    _ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_version_system_integration_concepts() -> color_eyre::eyre::Result<()> {
     // Test concepts for version system integration
     // Note: Full integration tests are in sinex-satellite-sdk where the
     // actual version system components are available
@@ -408,7 +406,7 @@ async fn test_version_system_integration_concepts(
 // =============================================================================
 
 #[sinex_test]
-async fn test_production_build_detection_logic(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_production_build_detection_logic() -> color_eyre::eyre::Result<()> {
     // Test production build detection logic
     let test_cases = vec![
         // (branch, is_dirty, expected_production)

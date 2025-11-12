@@ -7,7 +7,7 @@
 //! - Zero-width character injection
 //! - Encoding-based attacks
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -546,7 +546,7 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
     vectors
 }
 
-async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), color_eyre::eyre::Error> {
+async fn insert_event(pool: &DbPool, event: &RawEvent) -> TestResult<()> {
     sqlx::query!(
         r#"
         INSERT INTO core.events (id, source, event_type, payload, ts_orig, ts_ingest)

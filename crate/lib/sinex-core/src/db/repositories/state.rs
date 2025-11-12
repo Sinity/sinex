@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{Error, FromRow, PgPool, Postgres, Transaction};
 use std::ops::Bound;
 
 /// Database record for operations_log table
@@ -86,7 +86,7 @@ impl<'a> StateRepository<'a> {
         let scope_window_range = scope_window
             .map(|(start, end)| PgRange::from((Bound::Included(start), Bound::Included(end))));
 
-        let op_uuid: Uuid = sqlx::query_scalar!(
+        let op_uuid: Uuid = match sqlx::query_scalar!(
             r#"SELECT core.start_operation($1, $2, $3::jsonb, $4::tstzrange)::uuid as "id!: Uuid""#,
             "replay",
             operator,
@@ -95,9 +95,42 @@ impl<'a> StateRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "start replay operation"))?;
+        {
+            Ok(uuid) => uuid,
+            Err(Error::Database(db_err)) if db_err.message().contains("core.start_operation") => {
+                self.fallback_start_replay_operation(operator, scope, scope_window_range)
+                    .await?
+            }
+            Err(e) => return Err(db_error(e, "start replay operation")),
+        };
         let op_ulid = uuid_to_ulid(op_uuid);
         Ok(Id::<Operation>::from_ulid(op_ulid))
+    }
+
+    async fn fallback_start_replay_operation(
+        &self,
+        operator: &str,
+        scope: JsonValue,
+        _scope_window: Option<PgRange<DateTime<Utc>>>,
+    ) -> DbResult<Uuid> {
+        let uuid: Uuid = sqlx::query_scalar!(
+            r#"
+            INSERT INTO core.operations_log (
+                operation_type,
+                operator,
+                scope,
+                result_status
+            ) VALUES ($1, $2, $3::jsonb, 'running')
+            RETURNING id::uuid as "id!: Uuid"
+            "#,
+            "replay",
+            operator,
+            scope
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "fallback start replay operation"))?;
+        Ok(uuid)
     }
 
     /// Update result_status, result_message and preview_summary for an operation

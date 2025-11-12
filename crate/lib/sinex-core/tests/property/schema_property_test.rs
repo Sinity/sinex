@@ -8,8 +8,11 @@
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
-use sinex_core::types::validation::validate_json;
-use sinex_test_utils::prelude::*;
+use sinex_core::{
+    db::repositories::schema_management::NewEventSchema, types::validation::validate_json,
+    DbPoolExt,
+};
+use sinex_test_utils::{prelude::*, TestResult};
 
 // =============================================================================
 // JSON Schema Validation Properties
@@ -147,8 +150,8 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
     )
 }
 
-#[sinex_test]
-fn test_json_validation_normal_payloads() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_json_validation_normal_payloads() -> TestResult {
     proptest!(|(payload in arb_event_payload())| {
         // Validation should not panic and should return a consistent result
         let json_str = payload.to_string();
@@ -160,8 +163,8 @@ fn test_json_validation_normal_payloads() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn test_json_validation_security_payloads() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_json_validation_security_payloads() -> TestResult {
     proptest!(|(payload in arb_problematic_payload())| {
         // Validation should handle problematic payloads safely
         let json_str = payload.to_string();
@@ -173,8 +176,8 @@ fn test_json_validation_security_payloads() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn test_json_validation_consistency() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_json_validation_consistency() -> TestResult {
     proptest!(|(payload in arb_event_payload())| {
         // Validation should be deterministic - same payload should always get same result
         let json_str = payload.to_string();
@@ -202,8 +205,8 @@ fn test_json_validation_consistency() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 /// Test schema evolution and backward compatibility
-#[sinex_test]
-fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_schema_evolution_properties() -> TestResult {
     proptest!(|(
         base_payload in arb_event_payload(),
         additional_fields in prop::collection::hash_map(
@@ -268,8 +271,8 @@ fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 /// Test validation chain behavior with various inputs
-#[sinex_test]
-fn test_validation_chain_properties() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_validation_chain_properties() -> TestResult {
     proptest!(|(
         test_strings in prop::collection::vec(".*", 1..=10)
     )| {
@@ -299,8 +302,8 @@ fn test_validation_chain_properties() -> color_eyre::eyre::Result<()> {
 }
 
 /// Test validation chain with numeric values  
-#[sinex_test]
-fn test_validation_chain_numeric_properties() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_validation_chain_numeric_properties() -> TestResult {
     proptest!(|(
         test_numbers in prop::collection::vec(any::<i64>(), 1..=10)
     )| {
@@ -329,84 +332,45 @@ fn test_validation_chain_numeric_properties() -> color_eyre::eyre::Result<()> {
 // Schema Loading and Persistence Properties
 // =============================================================================
 
-// TODO: Fix proptest + async interaction - commented out for compilation
-/*
 #[sinex_test]
-async fn test_schema_persistence_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
-        schema_count in 1..=10usize,
-        schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
-        schema_versions in prop::collection::vec("[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}", 1..=10)
-    )| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        rt.block_on(async {
-            let pool = ctx.pool.clone();
+async fn schema_registry_should_drive_json_validation(ctx: TestContext) -> TestResult {
+    let repo = ctx.pool.schemas();
+    let schema = NewEventSchema {
+        source: "property-schema".into(),
+        event_type: "schema.enforced".into(),
+        schema_version: "1.0.0".into(),
+        schema_content: json!({
+            "type": "object",
+            "properties": {
+                "required_field": { "type": "string" }
+            },
+            "required": ["required_field"]
+        }),
+    };
 
-            // Create test schemas
-            let mut created_schemas = Vec::new();
-            for i in 0..schema_count {
-                let name = &schema_names[i % schema_names.len()];
-                let version = &schema_versions[i % schema_versions.len()];
+    repo.register_schema(schema).await?;
 
-                let schema_def = json!({
-                    "type": "object",
-                    "properties": {
-                        "test_field": {
-                            "type": "string",
-                            "minLength": 1
-                        },
-                        "version": {
-                            "type": "string",
-                            "const": version
-                        }
-                    },
-                    "required": ["test_field"]
-                });
-
-                // For property testing, we'll just track what we want to test
-                // Rather than inserting into actual schema tables
-                created_schemas.push((name.clone(), version.clone()));
-            }
-
-            // Test that schemas are accessible
-            for (name, version) in &created_schemas {
-                // Create an event that should validate against this schema
-                let event = ctx.create_test_event(
-                    "test_source",
-                    name,
-                    json!({
-                        "test_field": "valid_value",
-                        "version": version
-                    })
-                ).await.map_err(|e| proptest::test_runner::TestCaseError::fail(format!("Failed to create event: {}", e)))?;
-
-                // Basic validation should pass or fail gracefully
-                let json_str = event.payload.to_string();
-                let result = validate_json(&json_str);
-                match result {
-                    Ok(_) => {
-                        // Schema validation passed
-                        prop_assert!(true);
-                    },
-                    Err(_) => {
-                        // Validation errors are acceptable for property testing
-                        prop_assert!(true);
-                    }
-                }
-            }
-
-            Ok::<(), proptest::test_runner::TestCaseError>(())
-        })?
+    let invalid_payload = json!({
+        "missing_required": true
     });
+
+    let json_str = invalid_payload.to_string();
+    let result = validate_json(&json_str);
+
+    assert!(
+        result.is_err(),
+        "JSON validation should enforce registered schemas once property tests are restored (TODO #17)"
+    );
+
+    Ok(())
 }
-*/
 
 // =============================================================================
 // Error Handling Properties
 // =============================================================================
 
 #[sinex_test]
-fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
+fn test_json_validation_edge_cases() -> TestResult {
     let long_field = "x".repeat(1000);
 
     let edge_cases = vec![
@@ -444,7 +408,7 @@ fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
 #[sinex_test]
 async fn test_json_validation_database_integration(
     ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult {
     // Test basic JSON validation with database integration
 
     // Should be able to create events and validate them
@@ -476,7 +440,7 @@ async fn test_json_validation_database_integration(
 // =============================================================================
 
 #[sinex_test]
-fn test_validation_performance_properties() -> color_eyre::eyre::Result<()> {
+fn test_validation_performance_properties() -> TestResult {
     proptest!(|(
         payload_sizes in prop::collection::vec(100usize..=10000, 1..=10),
         validation_count in 10usize..=100
@@ -529,7 +493,7 @@ mod unit_tests {
     use super::*;
 
     #[sinex_test]
-    fn test_validator_with_real_events() -> color_eyre::eyre::Result<()> {
+    fn test_validator_with_real_events() -> TestResult {
         // Test JSON validation with realistic event payloads
 
         let valid_payload = json!({
@@ -563,7 +527,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_payload_generators() -> color_eyre::eyre::Result<()> {
+    fn test_payload_generators() -> TestResult {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test normal payload generator
@@ -586,7 +550,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_source_type_generator() -> color_eyre::eyre::Result<()> {
+    fn test_source_type_generator() -> TestResult {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (source, event_type) = arb_event_source_type()
             .new_tree(&mut runner)
@@ -601,7 +565,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_modern_validation_basic_functionality() -> color_eyre::eyre::Result<()> {
+    fn test_modern_validation_basic_functionality() -> TestResult {
         // Test basic validation concepts using simple logic
         let valid_name = "Alice";
         let valid_age = 30u32;
@@ -622,7 +586,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_validation_error_types() -> color_eyre::eyre::Result<()> {
+    fn test_validation_error_types() -> TestResult {
         // Test different validation scenarios
         let empty_value = "";
         let valid_value = "test";

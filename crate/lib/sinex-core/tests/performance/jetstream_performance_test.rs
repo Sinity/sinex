@@ -34,7 +34,7 @@ async fn publish_batch(
     subject: &str,
     batch_id: usize,
     message_count: usize,
-) -> Result<(usize, StdDuration)> {
+) -> TestResult<(usize, StdDuration)> {
     let start = Instant::now();
     let mut published = 0;
 
@@ -54,7 +54,7 @@ async fn publish_batch(
     Ok((published, start.elapsed()))
 }
 
-async fn create_stream(js: &JetStream, stream_name: &str, subject: &str) -> Result<()> {
+async fn create_stream(js: &JetStream, stream_name: &str, subject: &str) -> TestResult<()> {
     let config = StreamConfig {
         name: stream_name.to_string(),
         subjects: vec![subject.to_string()],
@@ -74,7 +74,7 @@ async fn create_pull_consumer(
     durable_name: &str,
     ack_wait: StdDuration,
     max_ack_pending: i32,
-) -> Result<Consumer> {
+) -> TestResult<Consumer> {
     let stream = js.get_stream(stream_name).await?;
     stream
         .get_or_create_consumer(
@@ -94,7 +94,7 @@ async fn create_pull_consumer(
 }
 
 #[sinex_bench]
-async fn jetstream_publish_throughput(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_publish_throughput() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -127,7 +127,6 @@ async fn jetstream_publish_throughput(_ctx: TestContext) -> color_eyre::eyre::Re
 
 #[sinex_bench]
 async fn jetstream_concurrent_consumer_distribution(
-    _ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -247,7 +246,7 @@ async fn jetstream_concurrent_consumer_distribution(
 }
 
 #[sinex_bench]
-async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_redelivery_on_expired_ack() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -323,7 +322,6 @@ async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> color_eyre::e
 
 #[sinex_bench]
 async fn jetstream_sustained_publish_throughput(
-    _ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -399,7 +397,7 @@ async fn jetstream_sustained_publish_throughput(
 }
 
 #[sinex_bench]
-async fn jetstream_consumer_latency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn jetstream_consumer_latency() -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);

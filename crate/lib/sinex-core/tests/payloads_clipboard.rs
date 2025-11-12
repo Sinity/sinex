@@ -4,11 +4,11 @@ use sinex_core::types::events::payloads::clipboard::{
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn clipboard_copied_payload_serializes_expected_fields(_ctx: TestContext) -> Result<()> {
+async fn clipboard_copied_payload_serializes_expected_fields() -> Result<()> {
     let payload = ClipboardCopiedPayload::test_default("abc123")
         .with_operation("copy")
         .with_content_type("text")
-        .with_content_size(100)
+        .with_content_size(100usize)
         .with_text_preview("Hello world")
         .with_source_app("firefox");
 
@@ -23,11 +23,11 @@ async fn clipboard_copied_payload_serializes_expected_fields(_ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn clipboard_selected_payload_serializes_expected_fields(_ctx: TestContext) -> Result<()> {
+async fn clipboard_selected_payload_serializes_expected_fields() -> Result<()> {
     let payload = ClipboardSelectedPayload::test_default("def456")
         .with_selection_type("primary")
         .with_content_type("text")
-        .with_content_size(50)
+        .with_content_size(50usize)
         .with_text_preview("Selected text");
 
     let json_value = serde_json::to_value(&payload)?;
@@ -40,11 +40,11 @@ async fn clipboard_selected_payload_serializes_expected_fields(_ctx: TestContext
 }
 
 #[sinex_test]
-async fn payload_structure_matches_architecture(_ctx: TestContext) -> Result<()> {
+async fn payload_structure_matches_architecture() -> Result<()> {
     let payload = ClipboardCopiedPayload::test_default("hash123")
         .with_operation("copy")
         .with_content_type("text")
-        .with_content_size(100)
+        .with_content_size(100usize)
         .with_text_preview("Test content")
         .with_source_app("test_app");
 
@@ -69,7 +69,7 @@ async fn payload_structure_matches_architecture(_ctx: TestContext) -> Result<()>
 }
 
 #[sinex_test]
-async fn clipboard_file_operations_capture_paths(_ctx: TestContext) -> Result<()> {
+async fn clipboard_file_operations_capture_paths() -> Result<()> {
     let file_paths = vec!["/tmp/file1.txt".to_string(), "/tmp/file2.txt".to_string()];
     let payload = ClipboardCopiedPayload::test_default("file_hash")
         .with_content_type("application/x-file-list")
@@ -85,7 +85,7 @@ async fn clipboard_file_operations_capture_paths(_ctx: TestContext) -> Result<()
 }
 
 #[sinex_test]
-async fn clipboard_selection_types_round_trip(_ctx: TestContext) -> Result<()> {
+async fn clipboard_selection_types_round_trip() -> Result<()> {
     let primary = ClipboardSelectedPayload::test_default("primary_hash")
         .with_selection_type("primary")
         .with_content_type("text/plain")
@@ -103,11 +103,11 @@ async fn clipboard_selection_types_round_trip(_ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn builder_method_chaining_sets_all_fields(_ctx: TestContext) -> Result<()> {
+async fn builder_method_chaining_sets_all_fields() -> Result<()> {
     let payload = ClipboardCopiedPayload::test_default("builder_test")
         .with_operation("paste")
         .with_content_type("image/png")
-        .with_content_size(2048)
+        .with_content_size(2048usize)
         .with_text_preview("Image preview")
         .with_source_app("image_editor")
         .with_file_paths(vec!["/tmp/image.png".to_string()]);

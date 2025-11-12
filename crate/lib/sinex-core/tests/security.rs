@@ -2,7 +2,7 @@ use sinex_core::db::security::SecurityValidator;
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn path_sanitization_rejects_traversal(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn path_sanitization_rejects_traversal() -> color_eyre::eyre::Result<()> {
     assert_eq!(
         SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
         "/home/user/file.txt"
@@ -15,7 +15,7 @@ async fn path_sanitization_rejects_traversal(_ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn unicode_sanitization_strips_nulls(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn unicode_sanitization_strips_nulls() -> color_eyre::eyre::Result<()> {
     assert_eq!(
         SecurityValidator::sanitize_unicode("test\0value"),
         "testvalue"
@@ -28,7 +28,7 @@ async fn unicode_sanitization_strips_nulls(_ctx: TestContext) -> color_eyre::eyr
 }
 
 #[sinex_test]
-async fn json_depth_limits_nested_structures(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn json_depth_limits_nested_structures() -> color_eyre::eyre::Result<()> {
     let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
     assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
     assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
@@ -36,7 +36,7 @@ async fn json_depth_limits_nested_structures(_ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn json_size_guards_total_elements(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn json_size_guards_total_elements() -> color_eyre::eyre::Result<()> {
     let small = serde_json::json!({"a": 1, "b": 2});
     assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
     assert!(SecurityValidator::check_json_size(&small, 2).is_err());

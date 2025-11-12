@@ -51,7 +51,7 @@ async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_queries() -> color_eyre::eyre::Result<()> {
     // Test query pattern setup - demonstrates modern repository pattern
     // Note: Actual database queries skipped due to operator resolution issue
 

@@ -4,6 +4,28 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
+use std::fmt;
+
+/// Strongly typed status for process heartbeat payloads
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessStatus {
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+impl fmt::Display for ProcessStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            ProcessStatus::Healthy => "healthy",
+            ProcessStatus::Degraded => "degraded",
+            ProcessStatus::Failed => "failed",
+        };
+
+        f.write_str(value)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "process.started")]
@@ -22,11 +44,35 @@ pub struct ProcessHeartbeatPayload {
     pub source: String,
     /// Sequence number of this heartbeat (increments each emission)
     pub sequence: u64,
-    /// Status of the process - should probably be an enum
-    pub status: String, // TODO: Make this an enum (healthy, warning, error)
+    /// Status of the process
+    pub status: ProcessStatus,
     /// Optional metrics collected from MetricsProviders
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex", event_type = "process.degraded")]
+pub struct ProcessDegradedPayload {
+    pub process_name: String,
+    pub uptime_seconds: u64,
+    pub errors_in_window: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex", event_type = "process.failed")]
+pub struct ProcessFailedPayload {
+    pub process_name: String,
+    pub uptime_seconds: u64,
+    pub errors_in_window: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

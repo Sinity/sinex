@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
-use sinex_core::{Event, EventId, Id, JsonValue, Ulid};
+use sinex_core::{Event, EventId, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -14,7 +14,7 @@ use tracing::info;
 /// - Testing basic event properties and persistence
 
 #[sinex_test]
-async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> Result<()> {
+async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
@@ -63,7 +63,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> Result<(
 
 /// Test event creation with different sources
 #[sinex_test]
-async fn test_multiple_event_sources(ctx: TestContext) -> Result<()> {
+async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing multiple event sources");
@@ -128,7 +128,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> Result<()> {
 
 /// Test event querying by type
 #[sinex_test]
-async fn test_event_querying_by_type(ctx: TestContext) -> Result<()> {
+async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
@@ -179,7 +179,7 @@ async fn test_event_querying_by_type(ctx: TestContext) -> Result<()> {
 
 /// Test batch event creation
 #[sinex_test]
-async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
+async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -231,7 +231,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
 
 /// Test event payload structure preservation
 #[sinex_test]
-async fn test_event_payload_preservation(ctx: TestContext) -> Result<()> {
+async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");
@@ -267,7 +267,7 @@ async fn test_event_payload_preservation(ctx: TestContext) -> Result<()> {
         }
     });
 
-    let event = ctx
+    let _event = ctx
         .create_test_event("payload-test", "complex.payload", complex_payload.clone())
         .await?;
 
@@ -329,7 +329,7 @@ async fn test_event_payload_preservation(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn provenance_xor_constraint_enforced(ctx: TestContext) -> Result<()> {
+async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let material = ctx.create_source_material(Some("xor-constraint")).await?;
     let parent = ctx
@@ -373,7 +373,7 @@ async fn provenance_xor_constraint_enforced(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> Result<()> {
+async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
 
     let err = sqlx::query(
@@ -406,13 +406,13 @@ async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn duplicate_parent_ids_rejected_by_validator() -> color_eyre::eyre::Result<()> {
+#[sinex_test]
+async fn duplicate_parent_ids_rejected_by_validator() -> color_eyre::eyre::Result<()> {
     let validator = EventValidator::new();
     let parent = EventId::new();
 
     let mut event = Event::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
-        .from_parents(vec![parent, parent])
+        .from_parents(vec![parent.clone(), parent])
         .build();
 
     event.id = Some(EventId::new());
@@ -423,7 +423,8 @@ fn duplicate_parent_ids_rejected_by_validator() -> color_eyre::eyre::Result<()> 
     assert!(
         matches!(
             err,
-            ValidationError::InvalidValue { field, .. } if field == "provenance.source_event_ids"
+            ValidationError::InvalidValue { ref field, .. }
+                if field == "provenance.source_event_ids"
         ),
         "expected duplicate parent validation error, got {err:?}"
     );

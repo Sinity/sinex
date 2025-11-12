@@ -47,7 +47,7 @@ pub use repositories::{
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
+use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::env;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -177,11 +177,14 @@ async fn validate_pool_config_against_postgres(
         .await?;
 
     // Query PostgreSQL max_connections setting
-    let max_connections_row = sqlx::query("SHOW max_connections")
+    let max_connections_str = sqlx::query_scalar!("SHOW max_connections")
         .fetch_one(&temp_pool)
-        .await?;
+        .await?
+        .unwrap_or_else(|| "0".to_string());
 
-    let postgres_max_connections: i32 = max_connections_row.try_get("max_connections")?;
+    let postgres_max_connections: i32 = max_connections_str
+        .parse()
+        .map_err(|e| eyre!("Failed to parse max_connections value: {e}"))?;
 
     // Validate our pool size against PostgreSQL limits
     if config.max_connections as i32 > postgres_max_connections {

@@ -206,7 +206,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_test]
-async fn test_ulid_uuid_conversion_consistency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_uuid_conversion_consistency() -> color_eyre::eyre::Result<()> {
     // Test that ULID <-> UUID conversion is consistent
     let original_ulid = Ulid::new();
     let uuid_form = original_ulid.to_uuid();
