@@ -57,6 +57,9 @@ values derived from `stateRoot` and the global `logLevel`.
 - `database.autoSetup` defaults to `false` unless `services.sinex.enable = true`.
   Flip it on explicitly when you need the cluster even with the main service
 disabled (e.g. staging migrations).
+- `database.extraDatabases` lets you provision additional DBs (e.g. `sinex_dev`)
+  alongside the primary `database.name`; extensions and migrations run against
+  each entry automatically.
 - Shared preload libraries always include TimescaleDB and `pgx_ulid` to support
   hypertables and ULID generation.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both

@@ -1008,7 +1008,7 @@ Test: sensd_job_table_dropped_safely
 ```
 Test: sqlx_cache_regeneration_on_schema_change
   Given: Schema migration applied
-  When: `just sqlx-prepare` runs
+  When: `devenv tasks run sqlx:prepare` runs
   Then:
     - `.sqlx/` files updated
     - New queries cached
@@ -1216,4 +1216,3 @@ pub struct TestSnapshot {
 - **stage_as_you_go_integration_test.rs**: Current E2E pattern
 - **error_testing.rs**: Error assertion utilities (reuse for new tests)
 - **critical_failure_modes_test.rs**: Existing chaos testing patterns
-

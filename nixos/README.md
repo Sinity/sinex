@@ -265,6 +265,12 @@ services.sinex = {
 };
 ```
 
+> **Multiple databases:** use `database.extraDatabases` when you want the module
+> to create and prep additional DBs (for example `sinex_dev`) alongside the
+> primary `database.name`. Extensions such as TimescaleDB are installed in each
+> database listed, so `devenv` migrations “just work” no matter which schema you
+> target.
+
 ### 2. Server/Headless (Data Collection Only)
 
 Minimal setup for server environments:
@@ -325,7 +331,8 @@ services.sinex = {
   
   database = {
     autoSetup = true;
-    name = "sinex_dev";            # Separate dev database
+    name = "sinex";
+    extraDatabases = [ "sinex_dev" ];
   };
   
   monitoring.logging.performance.traceRequests = true;

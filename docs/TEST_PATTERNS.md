@@ -775,7 +775,7 @@ async fn test_custom_snapshot(ctx: TestContext) -> Result<()> {
 
 **Features**:
 - Auto-generated baseline snapshots
-- Update mode: `INSTA_UPDATE=always cargo test`
+- Update mode: `INSTA_UPDATE=always cargo nextest run -p sinex-test-utils`
 - YAML, JSON, debug, and inline formats
 - Git-friendly diffs for review
 
@@ -1101,7 +1101,7 @@ necessary when debugging local Postgres issues:
 ```bash
 # Only needed if the cached template is corrupted locally
 rm target/sinex-test-utils/template_stamp.json
-cargo test
+cargo nextest run -p sinex-test-utils
 ```
 
 ### Issue: "Tests hang on cleanup"

@@ -32,7 +32,7 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 - ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer, analytics-automaton, search-automaton
 
 **Testing**
-- `just test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
+- `devenv tasks run dev:test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
 - Satellite coverage exercises filesystem + terminal pipelines using ephemeral JetStream servers.
 - ingestd JetStream integration/idempotency suites exist (`jetstream_*` tests) but are `#[ignore]`d by default; they assume a full pipeline and can be run manually when a long-lived NATS deployment is available.
 
@@ -115,9 +115,9 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ## 2. JetStream Harness & Local Tooling
 
-- Use the NixOS VM tests (`tests/e2e/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `just db-reset` / `just migrate` then run `just ingestd` + a local NATS (`nix run nixpkgs#nats-server` or container) until a dedicated `just` recipe lands.
+- Use the NixOS VM tests (`tests/e2e/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `devenv tasks run db:reset` / `devenv tasks run db:migrate` then run `devenv up ingestd` (and `devenv up nats`) until a dedicated automation lands.
 - Add reusable test fixtures in `sinex-test-utils` for publishing slices/events to embedded nats (`async_nats::Server::run`) so unit/integration tests can exercise JetStream behavior without spawning external services.
-- Update CI to spin up Postgres + NATS (GitHub Actions service containers or Nix shells) before running `just test`.
+- Update CI to spin up Postgres + NATS (GitHub Actions service containers or Nix shells) before running the Nextest suites (`cargo nextest run --workspace`).
 
 ---
 
@@ -306,7 +306,7 @@ Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 
 ## 6. Operational Guardrails
 
-- Migrations: JetStream work adds no schema changes except for final cleanup (removing sensd tables). Use `just migrate` / `just sqlx-prepare`.
+- Migrations: JetStream work adds no schema changes except for final cleanup (removing sensd tables). Use `devenv tasks run db:migrate` / `devenv tasks run sqlx:prepare`.
 - Feature flags: per-satellite `--ingest` flag or environment variable to switch back during rollout until confident.
 - Backpressure: configure JetStream stream/consumer limits (`max_msgs`, `max_age`, `ack_wait`) to match load patterns; default to explicit ack and sensible pending limits.
 - Annex: ensure Stage-as-You-Go writes annex files to the same layout sensd used; update `SINEX_ANNEX_PATH` handling for local dev.

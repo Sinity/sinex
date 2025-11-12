@@ -14,7 +14,7 @@ module assertions and VM harness.
 ## Running
 
 ```bash
-cargo test -p sinex-e2e-tests
+cargo nextest run -p sinex-e2e-tests
 ```
 
 To execute the VM scenarios, use the helper script (requires Nix):
