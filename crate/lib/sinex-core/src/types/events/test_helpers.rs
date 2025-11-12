@@ -52,8 +52,8 @@ where
 }
 
 // TODO: This function is temporarily disabled to avoid circular dependency
-// between sinex-events and sinex-db. It should be moved to a separate
-// test utilities crate or to sinex-db itself.
+// between sinex-events and sinex-core. It should be moved to a separate
+// test utilities crate or to sinex-core itself.
 /*
 /// Create a test event with a specific payload and schema version
 pub fn test_event_with_version<P: EventPayload>(

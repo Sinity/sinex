@@ -6,7 +6,7 @@ use sinex_core::{Event, EventSource, EventType, Id, Provenance};
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn path_traversal_sanitization(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn path_traversal_sanitization() -> color_eyre::eyre::Result<()> {
     let mut event = Event::dynamic(
         EventSource::new("../../../etc/passwd"),
         EventType::new("security.test"),
@@ -26,7 +26,7 @@ async fn path_traversal_sanitization(_ctx: TestContext) -> color_eyre::eyre::Res
 }
 
 #[sinex_test]
-async fn null_byte_sanitization(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn null_byte_sanitization() -> color_eyre::eyre::Result<()> {
     let mut event = Event::dynamic(
         EventSource::new("test\0source"),
         EventType::new("security.test"),
@@ -42,7 +42,7 @@ async fn null_byte_sanitization(_ctx: TestContext) -> color_eyre::eyre::Result<(
 }
 
 #[sinex_test]
-async fn sql_injection_payload_preserved(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn sql_injection_payload_preserved() -> color_eyre::eyre::Result<()> {
     let mut event = Event::dynamic(
         EventSource::new("security.test"),
         EventType::new("sql.injection"),
@@ -65,7 +65,7 @@ async fn sql_injection_payload_preserved(_ctx: TestContext) -> color_eyre::eyre:
 }
 
 #[sinex_test]
-async fn generic_sanitizer_with_typed_event(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn generic_sanitizer_with_typed_event() -> color_eyre::eyre::Result<()> {
     let payload = FileCreatedPayload {
         path: SanitizedPath::from("../../../malicious/file.txt".to_string()),
         size: 1024,

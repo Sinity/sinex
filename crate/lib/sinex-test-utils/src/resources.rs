@@ -6,7 +6,10 @@
 
 #![allow(clippy::result_large_err)]
 
-use crate::path_validation::{create_test_temp_dir, validate_test_path};
+use crate::{
+    path_validation::{create_test_temp_dir, validate_test_path},
+    Result,
+};
 use camino::{Utf8Path, Utf8PathBuf};
 use sinex_core::types::error::SinexError;
 use std::path::Path;
@@ -16,7 +19,7 @@ use tempfile::TempDir;
 ///
 /// This function creates a temporary directory using the system's temporary
 /// directory with proper validation and cleanup.
-pub fn temp_dir() -> Result<TempDir, SinexError> {
+pub fn temp_dir() -> Result<TempDir> {
     tempfile::tempdir()
         .map_err(|e| SinexError::io(format!("Failed to create temporary directory: {e}")))
 }
@@ -25,11 +28,7 @@ pub fn temp_dir() -> Result<TempDir, SinexError> {
 ///
 /// This function creates a file within a validated directory structure.
 /// The parent directory must exist and be validated.
-pub fn create_test_file(
-    parent_dir: &Path,
-    filename: &str,
-    content: &str,
-) -> Result<Utf8PathBuf, SinexError> {
+pub fn create_test_file(parent_dir: &Path, filename: &str, content: &str) -> Result<Utf8PathBuf> {
     // Convert std::path::Path to camino::Utf8Path
     let utf8_parent = Utf8Path::from_path(parent_dir)
         .ok_or_else(|| SinexError::validation("Parent directory path is not valid UTF-8"))?;
@@ -54,7 +53,7 @@ pub fn create_test_file(
 ///
 /// This creates a subdirectory within the system temporary directory
 /// with proper validation and security checks.
-pub fn create_secure_test_dir(test_name: &str) -> Result<Utf8PathBuf, SinexError> {
+pub fn create_secure_test_dir(test_name: &str) -> Result<Utf8PathBuf> {
     create_test_temp_dir(test_name)
 }
 
@@ -62,7 +61,7 @@ pub fn create_secure_test_dir(test_name: &str) -> Result<Utf8PathBuf, SinexError
 ///
 /// This function creates a test file with a filename that's automatically
 /// sanitized and placed in a secure temporary directory.
-pub fn create_temp_test_file(test_name: &str, content: &str) -> Result<Utf8PathBuf, SinexError> {
+pub fn create_temp_test_file(test_name: &str, content: &str) -> Result<Utf8PathBuf> {
     let temp_dir = create_test_temp_dir(test_name)?;
     let filename = format!("{test_name}.txt");
     let file_path = temp_dir.join(filename);
@@ -81,7 +80,7 @@ pub fn create_test_binary_file(
     parent_dir: &Path,
     filename: &str,
     content: &[u8],
-) -> Result<Utf8PathBuf, SinexError> {
+) -> Result<Utf8PathBuf> {
     // Convert std::path::Path to camino::Utf8Path
     let utf8_parent = Utf8Path::from_path(parent_dir)
         .ok_or_else(|| SinexError::validation("Parent directory path is not valid UTF-8"))?;
@@ -106,7 +105,7 @@ pub fn create_test_binary_file(
 ///
 /// This is a convenience function that wraps the path validation
 /// for use in test resource management.
-pub fn verify_test_path_safety(path: &str) -> Result<(), SinexError> {
+pub fn verify_test_path_safety(path: &str) -> Result<()> {
     validate_test_path(path).map(|_| ())
 }
 

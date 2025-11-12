@@ -5,13 +5,14 @@
 use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use sinex_schema::ulid::Ulid;
+use sinex_test_utils::{sinex_test, TestResult};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
 // Test that ULIDs maintain chronological ordering
-#[test]
-fn test_ulid_chronological_ordering() {
+#[sinex_test]
+fn test_ulid_chronological_ordering() -> TestResult<()> {
     proptest::proptest!(|(
         count in 2usize..10,
         delay_micros in 100u64..1000
@@ -35,11 +36,12 @@ fn test_ulid_chronological_ordering() {
             );
         }
     });
+    Ok(())
 }
 
 // Test ULID uniqueness under concurrent generation
-#[test]
-fn test_ulid_concurrent_uniqueness() {
+#[sinex_test]
+fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
     const THREADS: usize = 10;
     const IDS_PER_THREAD: usize = 100;
 
@@ -68,11 +70,12 @@ fn test_ulid_concurrent_uniqueness() {
     }
 
     assert_eq!(all_ids.len(), THREADS * IDS_PER_THREAD);
+    Ok(())
 }
 
 // Test monotonic generation within same millisecond
-#[test]
-fn test_ulid_monotonic_within_ms() {
+#[sinex_test]
+fn test_ulid_monotonic_within_ms() -> TestResult<()> {
     // Generate many ULIDs rapidly
     let mut ulids = Vec::new();
     let start = std::time::Instant::now();
@@ -94,11 +97,12 @@ fn test_ulid_monotonic_within_ms() {
             );
         }
     }
+    Ok(())
 }
 
 // Test ULID string representation properties
-#[test]
-fn test_ulid_string_properties() {
+#[sinex_test]
+fn test_ulid_string_properties() -> TestResult<()> {
     proptest::proptest!(|(_dummy in 0u8..1)| {
         let ulid = Ulid::new();
         let s = ulid.to_string();
@@ -118,11 +122,12 @@ fn test_ulid_string_properties() {
         let parsed = s.parse::<Ulid>().unwrap();
         prop_assert_eq!(ulid, parsed);
     });
+    Ok(())
 }
 
 // Test ULID timestamp extraction
-#[test]
-fn test_ulid_timestamp_extraction() {
+#[sinex_test]
+fn test_ulid_timestamp_extraction() -> TestResult<()> {
     let before: DateTime<Utc> = Utc::now();
 
     let ulid = Ulid::new();
@@ -136,11 +141,12 @@ fn test_ulid_timestamp_extraction() {
     let late_bound = after + chrono::Duration::seconds(2);
     assert!(timestamp >= early_bound, "Timestamp too early");
     assert!(timestamp <= late_bound, "Timestamp too late");
+    Ok(())
 }
 
 // Test ULID nil value
-#[test]
-fn test_ulid_nil() {
+#[sinex_test]
+fn test_ulid_nil() -> TestResult<()> {
     let nil = Ulid::nil();
     assert_eq!(nil.to_string(), "00000000000000000000000000");
     assert_eq!(nil.timestamp(), DateTime::from_timestamp(0, 0).unwrap());
@@ -148,22 +154,24 @@ fn test_ulid_nil() {
     // Nil should be less than any other ULID
     let regular = Ulid::new();
     assert!(nil < regular);
+    Ok(())
 }
 
 // Test ULID from_bytes and to_bytes
-#[test]
-fn test_ulid_bytes_roundtrip() {
+#[sinex_test]
+fn test_ulid_bytes_roundtrip() -> TestResult<()> {
     proptest::proptest!(|(_dummy in 0u8..1)| {
         let original = Ulid::new();
         let bytes = original.to_bytes();
         let restored = Ulid::from_bytes(bytes).unwrap();
         prop_assert_eq!(original, restored);
     });
+    Ok(())
 }
 
 // Test ULID ordering matches string ordering
-#[test]
-fn test_ulid_string_ordering() {
+#[sinex_test]
+fn test_ulid_string_ordering() -> TestResult<()> {
     proptest::proptest!(|(
         count in 2usize..5,
         delay_micros in 100u64..1000
@@ -191,4 +199,5 @@ fn test_ulid_string_ordering() {
             prop_assert_eq!(ulid.to_string(), string.as_str());
         }
     });
+    Ok(())
 }

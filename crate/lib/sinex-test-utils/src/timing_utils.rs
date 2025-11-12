@@ -7,6 +7,7 @@
 
 use crate::prelude::*;
 use crate::Result;
+use crate::TestResult;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
 use sinex_core::types::*; // Use production primitives from sinex-types
@@ -34,14 +35,15 @@ impl TestSynchronizer {
     }
 
     /// Wait for condition to be signaled or timeout
-    pub async fn wait(&self) -> Result<()> {
+    pub async fn wait(&self) -> TestResult<()> {
         if self.condition.load(Ordering::Acquire) {
             return Ok(());
         }
 
         tokio::time::timeout(self.timeout_duration, self.notify.notified())
             .await
-            .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))
+            .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))?;
+        Ok(())
     }
 
     /// Signal that condition is met
@@ -80,7 +82,7 @@ impl TestBarrier {
     }
 
     /// Wait for all participants to reach the barrier
-    pub async fn wait(&self, timeout_duration: Duration) -> Result<()> {
+    pub async fn wait(&self, timeout_duration: Duration) -> TestResult<()> {
         let current_generation = self.generation.load(Ordering::Acquire);
         let count = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -136,8 +138,11 @@ impl WorkerReadinessCoordinator {
         self.counter.increment()
     }
 
-    pub async fn wait_for_all_ready(&self, timeout_duration: Duration) -> Result<usize> {
-        self.counter.wait_for_threshold(timeout_duration).await
+    pub async fn wait_for_all_ready(&self, timeout_duration: Duration) -> TestResult<usize> {
+        self.counter
+            .wait_for_threshold(timeout_duration)
+            .await
+            .map_err(Into::into)
     }
 
     pub fn ready_count(&self) -> usize {
@@ -154,7 +159,7 @@ impl WaitHelpers {
         pool: &DbPool,
         expected_count: usize,
         timeout_secs: u64,
-    ) -> Result<usize> {
+    ) -> TestResult<usize> {
         let pool = pool.clone(); // Clone for closure
         sinex_core::types::utils::wait_for_condition_adaptive(
             || async {
@@ -193,7 +198,7 @@ impl WaitHelpers {
         source: &str,
         expected_count: usize,
         timeout_secs: u64,
-    ) -> Result<usize> {
+    ) -> TestResult<usize> {
         let pool = pool.clone(); // Clone for closure
         let source = source.to_string(); // Clone for closure
 
@@ -223,7 +228,7 @@ impl WaitHelpers {
     }
 
     /// Wait for condition with timeout using production adaptive wait helpers
-    pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> Result<()>
+    pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> TestResult<()>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
@@ -239,14 +244,15 @@ impl WaitHelpers {
                 .with_context("timeout_duration", format!("{timeout_secs}s"))
                 .with_source(e)
                 .with_operation("wait_for_condition")
-        })
+        })?;
+        Ok(())
     }
 
     /// Wait for multiple conditions to be met simultaneously using production wait helpers
     pub async fn wait_for_multiple_conditions<F, Fut>(
         conditions: Vec<(&str, F)>,
         timeout_secs: u64,
-    ) -> Result<()>
+    ) -> TestResult<()>
     where
         F: Fn() -> Fut + Clone,
         Fut: std::future::Future<Output = Result<bool>>,
@@ -272,7 +278,8 @@ impl WaitHelpers {
                     .with_context("timeout_duration", format!("{timeout_secs}s"))
                     .with_source(e)
                     .with_operation("wait_for_multiple_conditions")
-            })
+            })?;
+        Ok(())
     }
 }
 
@@ -281,7 +288,10 @@ pub struct TimingPatterns;
 
 impl TimingPatterns {
     /// Wait for all workers to reach a checkpoint
-    pub async fn wait_for_workers(worker_count: usize, timeout: Duration) -> Result<TestBarrier> {
+    pub async fn wait_for_workers(
+        worker_count: usize,
+        timeout: Duration,
+    ) -> TestResult<TestBarrier> {
         let barrier = TestBarrier::new(worker_count);
         barrier.wait(timeout).await?;
         Ok(barrier)
@@ -291,7 +301,7 @@ impl TimingPatterns {
     pub async fn wait_for_event_processing(
         target_count: usize,
         _timeout: Duration,
-    ) -> Result<CoordinationPrimitive> {
+    ) -> TestResult<CoordinationPrimitive> {
         // Provide a coordination primitive that callers can increment and await explicitly.
         // The previous implementation attempted to wait immediately, which deadlocked
         // because no increments had occurred yet. Tests and callers now decide when to
@@ -325,7 +335,7 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Wait for specific number of events in database
-    pub async fn wait_for_event_count(&self, expected_count: usize) -> Result<usize> {
+    pub async fn wait_for_event_count(&self, expected_count: usize) -> TestResult<usize> {
         WaitHelpers::wait_for_event_count(&self.ctx.pool, expected_count, 10).await
     }
 
@@ -334,7 +344,7 @@ impl<'ctx> TimingUtils<'ctx> {
         &self,
         source: &str,
         expected_count: usize,
-    ) -> Result<usize> {
+    ) -> TestResult<usize> {
         WaitHelpers::wait_for_source_events(&self.ctx.pool, source, expected_count, 10).await
     }
 
@@ -362,7 +372,11 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Wait for condition with timeout
-    pub async fn wait_for_condition<F, Fut>(&self, condition: F, timeout_secs: u64) -> Result<()>
+    pub async fn wait_for_condition<F, Fut>(
+        &self,
+        condition: F,
+        timeout_secs: u64,
+    ) -> TestResult<()>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
@@ -804,7 +818,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_barrier_generation_tracking() -> Result<()> {
+    fn test_barrier_generation_tracking() -> TestResult<()> {
         let barrier = TestBarrier::new(2);
 
         assert_eq!(barrier.generation(), 0);

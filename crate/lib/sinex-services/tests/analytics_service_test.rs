@@ -6,14 +6,17 @@
 //! Tests use the repository pattern, modern error handling with color-eyre,
 //! and #[sinex_test] macro for async test execution.
 
-use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
+use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
+use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::time::{timeout, Duration as TokioDuration};
 
 /// Helper to create test events with specific timestamps and content using modern patterns
 async fn create_analytics_test_event(
@@ -21,24 +24,22 @@ async fn create_analytics_test_event(
     source: &str,
     event_type: &str,
     payload_content: serde_json::Value,
-    time_offset: Option<Duration>,
+    time_offset: Option<ChronoDuration>,
 ) -> color_eyre::eyre::Result<()> {
     // Create event using the test_event helper with explicit timestamp
     let event = if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
 
         sinex_core::Event::test_event(
-            sinex_core::types::domain::EventSource::new(source),
-            sinex_core::types::domain::EventType::new(event_type),
+            EventSource::new(source),
+            EventType::new(event_type),
             payload_content,
         )
         .at_time(timestamp)
     } else {
-        // Use TestContext convenience method for events without specific timestamps
-        return Ok(ctx
-            .create_test_event(source, event_type, payload_content)
-            .await
-            .map(|_| ())?);
+        ctx.create_test_event(source, event_type, payload_content)
+            .await?;
+        return Ok(());
     };
 
     // Insert the event using repository pattern
@@ -60,7 +61,7 @@ async fn setup_analytics_test_data(ctx: &TestContext) -> color_eyre::eyre::Resul
                 "path": format!("/test/file_{}.txt", i),
                 "size": 1024 * (i + 1)
             }),
-            Some(Duration::minutes(20 * i as i64)),
+            Some(ChronoDuration::minutes(20 * i as i64)),
         )
         .await?;
     }
@@ -85,7 +86,7 @@ async fn setup_analytics_test_data(ctx: &TestContext) -> color_eyre::eyre::Resul
                     "exit_code": 0,
                     "duration_ms": 100 + i * 10
                 }),
-                Some(Duration::minutes(5 * i as i64)),
+                Some(ChronoDuration::minutes(5 * i as i64)),
             )
             .await?;
         }
@@ -102,7 +103,7 @@ async fn setup_analytics_test_data(ctx: &TestContext) -> color_eyre::eyre::Resul
                 "class": "test-app",
                 "workspace": i + 1
             }),
-            Some(Duration::minutes(10 * i as i64)),
+            Some(ChronoDuration::minutes(10 * i as i64)),
         )
         .await?;
     }
@@ -116,7 +117,7 @@ async fn setup_analytics_test_data(ctx: &TestContext) -> color_eyre::eyre::Resul
             "content": "test clipboard content",
             "application": "firefox"
         }),
-        Some(Duration::hours(3)),
+        Some(ChronoDuration::hours(3)),
     )
     .await?;
 
@@ -129,7 +130,7 @@ async fn setup_analytics_test_data(ctx: &TestContext) -> color_eyre::eyre::Resul
             "uptime_seconds": 0,
             "kernel_version": "6.1.0"
         }),
-        Some(Duration::days(2)),
+        Some(ChronoDuration::days(2)),
     )
     .await?;
 
@@ -189,7 +190,7 @@ async fn test_get_event_count_by_source_with_time_filter(
     setup_analytics_test_data(&ctx).await?;
 
     let now = Utc::now();
-    let one_hour_ago = now - Duration::hours(1);
+    let one_hour_ago = now - ChronoDuration::hours(1);
 
     let counts = service
         .get_event_count_by_source(Some(one_hour_ago), Some(now))
@@ -218,9 +219,44 @@ async fn test_get_event_count_by_source_with_time_filter(
 
     tracing::info!(
         recent_sources = counts.len(),
-        time_range = ?Duration::hours(1),
+        time_range = ?ChronoDuration::hours(1),
         "Event count by source with time filter test completed"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn analytics_queries_block_each_other_with_single_connection(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(ctx.database_url())
+        .await?;
+
+    let service = Arc::new(AnalyticsService::new(pool.clone()));
+
+    let blocker_pool = pool.clone();
+    let blocker = tokio::spawn(async move {
+        sqlx::query!("SELECT pg_sleep(0.2)")
+            .execute(&blocker_pool)
+            .await
+            .expect("pg_sleep should succeed");
+    });
+
+    tokio::time::sleep(TokioDuration::from_millis(10)).await;
+
+    let svc = service.clone();
+    let fast_call = tokio::spawn(async move { svc.get_event_count_by_type(None, None).await });
+
+    let result = timeout(TokioDuration::from_millis(50), fast_call).await;
+
+    assert!(
+        result.is_ok(),
+        "Gateway analytics queries should not starve each other when one request holds the entire pool (TODO #22)"
+    );
+
+    let _ = blocker.await;
     Ok(())
 }
 
@@ -275,7 +311,7 @@ async fn test_get_event_count_by_type_with_time_filter(
     setup_analytics_test_data(&ctx).await?;
 
     let now = Utc::now();
-    let two_hours_ago = now - Duration::hours(2);
+    let two_hours_ago = now - ChronoDuration::hours(2);
 
     let counts = service
         .get_event_count_by_type(Some(two_hours_ago), Some(now))
@@ -300,7 +336,7 @@ async fn test_get_event_count_by_type_with_time_filter(
 
     tracing::info!(
         recent_types = counts.len(),
-        time_range = ?Duration::hours(2),
+        time_range = ?ChronoDuration::hours(2),
         "Event count by type with time filter test completed"
     );
     Ok(())
@@ -316,7 +352,7 @@ async fn test_get_events_over_time_hourly_intervals(
     setup_analytics_test_data(&ctx).await?;
 
     let now = Utc::now();
-    let three_hours_ago = now - Duration::hours(3);
+    let three_hours_ago = now - ChronoDuration::hours(3);
 
     let time_series = service
         .get_events_over_time(three_hours_ago, now, 60)
@@ -360,7 +396,7 @@ async fn test_get_events_over_time_different_intervals(
     setup_analytics_test_data(&ctx).await?;
 
     let now = Utc::now();
-    let six_hours_ago = now - Duration::hours(6);
+    let six_hours_ago = now - ChronoDuration::hours(6);
 
     // Test 30-minute intervals
     let thirty_min_data = service.get_events_over_time(six_hours_ago, now, 30).await?;
@@ -463,7 +499,7 @@ async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> color_eyre:
     setup_analytics_test_data(&ctx).await?;
 
     let now = Utc::now();
-    let thirty_minutes_ago = now - Duration::minutes(30);
+    let thirty_minutes_ago = now - ChronoDuration::minutes(30);
 
     let recent_commands = service
         .get_top_commands(Some(thirty_minutes_ago), Some(now), 10)
@@ -487,7 +523,7 @@ async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> color_eyre:
 
     tracing::info!(
         recent_commands = recent_commands.len(),
-        time_range = ?Duration::minutes(30),
+        time_range = ?ChronoDuration::minutes(30),
         "Top commands with time filter test completed"
     );
     Ok(())
@@ -507,7 +543,7 @@ async fn test_analytics_with_empty_database(ctx: TestContext) -> color_eyre::eyr
     assert!(type_counts.is_empty(), "Should have empty type counts");
 
     let now = Utc::now();
-    let one_hour_ago = now - Duration::hours(1);
+    let one_hour_ago = now - ChronoDuration::hours(1);
     let time_series = service.get_events_over_time(one_hour_ago, now, 60).await?;
     assert!(time_series.is_empty(), "Should have empty time series");
 
@@ -567,12 +603,12 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> color_eyre::e
         "boundary.test",
         "boundary.event",
         json!({"boundary": true}),
-        Some(Duration::hours(1)), // 1 hour ago
+        Some(ChronoDuration::hours(1)), // 1 hour ago
     )
     .await?;
 
     // Test time range that exactly includes the event
-    let exactly_one_hour_ago = now - Duration::hours(1);
+    let exactly_one_hour_ago = now - ChronoDuration::hours(1);
     let source_counts = service
         .get_event_count_by_source(Some(exactly_one_hour_ago), Some(now))
         .await?;
@@ -585,7 +621,7 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> color_eyre::e
     );
 
     // Test time range that excludes the event
-    let fifty_minutes_ago = now - Duration::minutes(50);
+    let fifty_minutes_ago = now - ChronoDuration::minutes(50);
     let source_counts_excluded = service
         .get_event_count_by_source(Some(fifty_minutes_ago), Some(now))
         .await?;
@@ -783,7 +819,7 @@ async fn test_analytics_large_dataset_performance(
             &format!("perf_source_{}", i % 5),
             &format!("perf_type_{}", i % 3),
             json!({"sequence": i, "performance_test": true}),
-            Some(Duration::minutes(i % 60)),
+            Some(ChronoDuration::minutes(i % 60)),
         )
         .await?;
     }

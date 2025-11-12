@@ -19,8 +19,6 @@ macro_rules! define_event_payload {
     };
 }
 
-pub(crate) use define_event_payload;
-
 pub mod blob;
 pub mod clipboard;
 pub mod desktop;

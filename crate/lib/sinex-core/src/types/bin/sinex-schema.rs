@@ -7,24 +7,25 @@
 //! - Exports schemas for external use
 
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::Result;
-use schemars::schema_for;
+use color_eyre::eyre::{eyre, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_core::types::events::payloads::*;
-use sinex_core::types::events::EventPayload;
+use sinex_core::types::events::schema_registry::generate_all_schemas;
 use sinex_core::types::Ulid;
 use sqlx::postgres::PgPool;
-use sqlx::Row;
-use std::collections::HashMap;
-use tracing::{info, warn};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use tracing::info;
+use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
 struct Cli {
-    /// Database URL
+    /// Database URL (required for sync/list operations)
     #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
+    database_url: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -67,21 +68,28 @@ enum Commands {
     },
 }
 
-// Macro to register all payload types
-macro_rules! register_payloads {
-    ($($module:ident :: $payload:ident),* $(,)?) => {{
-        let mut schemas = HashMap::new();
-        $(
-            let schema = schema_for!($module::$payload);
-            let source_const = <$module::$payload as EventPayload>::SOURCE;
-            let event_type_const = <$module::$payload as EventPayload>::EVENT_TYPE;
-            let source = source_const.as_str();
-            let event_type = event_type_const.as_str();
-            let schema_name = format!("{}.{}", source, event_type);
-            schemas.insert(schema_name, serde_json::to_value(schema)?);
-        )*
-        schemas
-    }};
+#[derive(Debug, Clone)]
+struct DiscoveredSchema {
+    source: String,
+    event_type: String,
+    version: String,
+    content: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RegistryFile {
+    version: String,
+    generated_at: String,
+    entries: Vec<RegistryEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RegistryEntry {
+    source: String,
+    event_type: String,
+    version: String,
+    path: String,
+    content_hash: String,
 }
 
 #[tokio::main]
@@ -89,198 +97,116 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
-    let pool = PgPool::connect(&cli.database_url).await?;
+
+    let needs_db = matches!(
+        cli.command,
+        Commands::Generate { sync: true, .. } | Commands::Sync { .. } | Commands::List { .. }
+    );
+
+    let pool = if needs_db {
+        Some(
+            PgPool::connect(
+                cli.database_url
+                    .as_deref()
+                    .ok_or_else(|| eyre!("DATABASE_URL is required for this command"))?,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     match cli.command {
         Commands::Generate { output, sync } => {
-            generate_schemas(&pool, &output, sync).await?;
+            generate_schemas(pool.as_ref(), &output, sync).await?;
         }
         Commands::Sync { input } => {
-            sync_schemas(&pool, &input).await?;
+            let pool = pool
+                .as_ref()
+                .ok_or_else(|| eyre!("DATABASE_URL is required for sync"))?;
+            sync_schemas(pool, &input).await?;
         }
         Commands::List { active_only } => {
-            list_schemas(&pool, active_only).await?;
+            let pool = pool
+                .as_ref()
+                .ok_or_else(|| eyre!("DATABASE_URL is required for list"))?;
+            list_schemas(pool, active_only).await?;
         }
         Commands::Validate { from, to } => {
-            validate_compatibility(&pool, &from, &to).await?;
+            validate_compatibility(&from, &to)?;
         }
     }
 
     Ok(())
 }
 
-async fn generate_schemas(pool: &PgPool, output_dir: &str, sync: bool) -> Result<()> {
+async fn generate_schemas(pool: Option<&PgPool>, output_dir: &str, sync: bool) -> Result<()> {
     info!("Generating schemas for EventPayload types...");
 
-    // Register all payload types
-    let schemas = register_payloads![
-        // Filesystem payloads
-        filesystem::FileCreatedPayload,
-        filesystem::FileModifiedPayload,
-        filesystem::FileDeletedPayload,
-        filesystem::FileMovedPayload,
-        filesystem::DirCreatedPayload,
-        filesystem::DirDeletedPayload,
-        filesystem::FileDiscoveredPayload,
-        filesystem::DirDiscoveredPayload,
-        // Shell payloads
-        shell::KittyCommandExecutedPayload,
-        shell::KittyCommandCompletedPayload,
-        shell::KittySessionStartedPayload,
-        shell::KittySessionEndedPayload,
-        shell::KittyProcessChangedPayload,
-        shell::KittyTabFocusedPayload,
-        shell::KittyContentStreamedPayload,
-        shell::AtuinCommandExecutedPayload,
-        shell::AtuinCommandCompletedPayload,
-        shell::AtuinEntryPayload,
-        shell::HistoryCommandImportedPayload,
-        shell::CommandImportedPayload,
-        shell::BashHistoryEntryPayload,
-        shell::BashHistoricalCommandPayload,
-        shell::ZshHistoricalCommandPayload,
-        shell::FishHistoricalCommandPayload,
-        shell::TerminalMonitoringStartedPayload,
-        shell::TerminalCommandHistoricalPayload,
-        shell::TerminalHistoryHistoricalPayload,
-        shell::TerminalSnapshotPayload,
-        shell::CanonicalCommandPayload,
-        shell::ShellOutputCapturedPayload,
-        shell::AsciinemaSessionStartedPayload,
-        shell::AsciinemaSessionEndedPayload,
-        // Clipboard payloads
-        clipboard::ClipboardCopiedPayload,
-        clipboard::ClipboardSelectedPayload,
-        // Window payloads
-        window::HyprlandWindowOpenedPayload,
-        window::HyprlandWindowClosedPayload,
-        window::HyprlandWindowFocusedPayload,
-        window::HyprlandWorkspaceSwitchedPayload,
-        window::HyprlandWindowMovedPayload,
-        window::HyprlandMonitorFocusedPayload,
-        window::HyprlandStateCapturedPayload,
-        // Desktop payloads
-        desktop::DesktopMonitoringStartedPayload,
-        desktop::DesktopSnapshotPayload,
-        desktop::ClipboardHistoricalPayload,
-        desktop::WindowManagerHistoricalPayload,
-        // System payloads
-        system::ScanStartedPayload,
-        system::ScanCompletedPayload,
-        system::JournalEntryPayload,
-        system::JournalSyncCompletedPayload,
-        system::JournalEntryWrittenPayload,
-        system::DbusSignalPayload,
-        system::DbusMethodCalledPayload,
-        system::DbusNotificationSentPayload,
-        system::DbusMediaStateChangedPayload,
-        system::DbusPowerStateChangedPayload,
-        system::DbusDeviceConnectedPayload,
-        system::DbusBluetoothDeviceChangedPayload,
-        system::DbusNetworkStateChangedPayload,
-        system::DbusMountEventPayload,
-        system::SystemdUnitStartedPayload,
-        system::SystemdUnitStoppedPayload,
-        system::SystemdUnitStatusPayload,
-        system::SystemdUnitFailedPayload,
-        system::SystemdUnitReloadedPayload,
-        system::SystemdTimerTriggeredPayload,
-        system::SystemdUnitStartingPayload,
-        system::SystemdUnitStoppingPayload,
-        system::SystemdUnitStateChangedPayload,
-        system::UdevDeviceAddedPayload,
-        system::UdevDeviceRemovedPayload,
-        system::UdevDeviceConnectedPayload,
-        system::UdevDeviceDisconnectedPayload,
-        system::UdevDeviceChangedPayload,
-        system::UdevDeviceDriverChangedPayload,
-        system::UdevDeviceOtherPayload,
-        system::LogLinePayload,
-        system::SystemHealthSummaryPayload,
-        system::SatelliteHeartbeatPayload,
-        system::SystemMonitoringStartedPayload,
-        system::SystemSnapshotPayload,
-        system::JournaldHistoricalPayload,
-        system::SystemdUnitsHistoricalPayload,
-        system::UdevDeviceHistoricalPayload,
-        // Process payloads
-        process::ProcessStartedPayload,
-        process::ProcessHeartbeatPayload,
-        process::ProcessShutdownPayload,
-        process::AutomatonErrorPayload,
-        process::SensorActivatedPayload,
-        process::SensorDeactivatedPayload,
-        // Blob payloads
-        blob::BlobStoredPayload,
-        blob::BlobRetrievedPayload,
-        blob::BlobDeletedPayload,
-        blob::BlobIngestedPayload,
-        blob::BlobVerifiedPayload,
-        blob::StorageStatisticsPayload,
-        // Document payloads
-        document::DocumentIngestedPayload,
-        // RPC payloads
-        rpc::RpcContentResponsePayload,
-        rpc::RpcPkmResponsePayload,
-    ];
-
-    // Create output directory
+    let schemas = generate_all_schemas();
     tokio::fs::create_dir_all(output_dir).await?;
 
-    // Write schemas to files
-    for (schema_name, schema) in &schemas {
-        let file_path = format!("{output_dir}/{schema_name}.json");
+    let mut registry_entries = Vec::new();
+    let mut discovered = Vec::new();
+
+    for ((source, event_type, version), schema) in schemas {
+        let safe_source = sanitize_component(&source);
+        let safe_event = sanitize_component(&event_type);
+        let dir_path = Path::new(output_dir).join(&safe_source);
+        tokio::fs::create_dir_all(&dir_path).await?;
+        let file_path = dir_path.join(format!("{safe_event}.json"));
+
         let pretty_json = serde_json::to_string_pretty(&schema)?;
         tokio::fs::write(&file_path, pretty_json).await?;
-        info!("Generated schema: {file_path}");
+
+        let relative_path = file_path
+            .strip_prefix(output_dir)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
+
+        let content_hash = compute_content_hash(&schema)?;
+
+        registry_entries.push(RegistryEntry {
+            source: source.clone(),
+            event_type: event_type.clone(),
+            version: version.clone(),
+            path: relative_path,
+            content_hash: content_hash.clone(),
+        });
+
+        discovered.push(DiscoveredSchema {
+            source,
+            event_type,
+            version,
+            content: schema,
+        });
     }
 
-    // Write registry file
-    let registry = serde_json::json!({
-        "version": "v1",
-        "schemas": schemas.keys().cloned().collect::<Vec<_>>(),
-        "generated_at": chrono::Utc::now().to_rfc3339(),
-        "total_schemas": schemas.len(),
-    });
-    let registry_path = format!("{output_dir}/registry.json");
+    let registry = RegistryFile {
+        version: "v1".to_string(),
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        entries: registry_entries,
+    };
+    let registry_path = Path::new(output_dir).join("registry.json");
     tokio::fs::write(registry_path, serde_json::to_string_pretty(&registry)?).await?;
 
-    info!("Generated {} schemas", schemas.len());
+    info!(count = registry.entries.len(), "Generated schemas");
 
-    if sync {
-        sync_schemas_to_db(pool, schemas).await?;
+    if sync && !discovered.is_empty() {
+        let pool = pool.ok_or_else(|| eyre!("--sync requires DATABASE_URL"))?;
+        sync_schemas_to_db(pool, &discovered).await?;
     }
 
     Ok(())
 }
 
-async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> Result<()> {
-    info!("Syncing schemas to database...");
+async fn sync_schemas_to_db(pool: &PgPool, schemas: &[DiscoveredSchema]) -> Result<()> {
+    info!(count = schemas.len(), "Syncing schemas to database");
 
-    for (schema_name, schema_content) in schemas {
-        // Extract event types from schema name
-        let event_types = [schema_name.clone()];
+    for schema in schemas {
+        let content_hash = compute_content_hash(&schema.content)?;
 
-        // Parse source and event_type from schema_name (format: "source.event_type")
-        let (_source, _event_type) = if let Some(dot_pos) = schema_name.find('.') {
-            (&schema_name[..dot_pos], &schema_name[dot_pos + 1..])
-        } else {
-            ("unknown", schema_name.as_str())
-        };
-
-        // Compute content hash
-        let schema_text = serde_json::to_string(&schema_content)?;
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(&schema_text);
-        let content_hash = format!("{:x}", hasher.finalize());
-
-        // Insert or update schema - using correct column names from DDL
-        // Note: For now, we'll use a placeholder source and concatenate event types
-        let source = schema_name.clone(); // Use schema_name as source for now
-        let event_type = event_types.join(","); // Concatenate event types
-
-        let id = sqlx::query_scalar!(
+        let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas
                 (source, event_type, schema_version, schema_content, content_hash)
@@ -289,18 +215,23 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
             SET schema_content = EXCLUDED.schema_content,
                 content_hash = EXCLUDED.content_hash,
                 updated_at = NOW()
-            RETURNING id as "id: Ulid"
+            RETURNING id::uuid as "id!"
             "#,
-            &source,
-            &event_type,
-            "1.0.0", // Use proper semantic version
-            &schema_content,
-            &content_hash
+            schema.source,
+            schema.event_type,
+            schema.version,
+            schema.content,
+            content_hash
         )
         .fetch_one(pool)
         .await?;
 
-        info!("Synced schema {} with ID {}", schema_name, id);
+        let id: Ulid = Ulid::from(row.id);
+
+        info!(
+            "Synced schema {}.{} v{} ({})",
+            schema.source, schema.event_type, schema.version, id
+        );
     }
 
     Ok(())
@@ -309,87 +240,445 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
 async fn sync_schemas(pool: &PgPool, input_dir: &str) -> Result<()> {
     info!("Syncing schemas from directory: {}", input_dir);
 
-    let mut schemas = HashMap::new();
+    let registry_path = Path::new(input_dir).join("registry.json");
+    let schemas = if registry_path.exists() {
+        load_schemas_from_registry(input_dir, &registry_path)?
+    } else {
+        load_schemas_by_walking(input_dir)?
+    };
 
-    // Read all JSON files from directory
-    for entry in std::fs::read_dir(input_dir)? {
+    if schemas.is_empty() {
+        info!("No schemas discovered on disk");
+        return Ok(());
+    }
+
+    sync_schemas_to_db(pool, &schemas).await
+}
+
+fn load_schemas_from_registry(
+    input_dir: &str,
+    registry_path: &Path,
+) -> Result<Vec<DiscoveredSchema>> {
+    let contents = fs::read_to_string(registry_path)
+        .with_context(|| format!("Failed to read {}", registry_path.display()))?;
+    let registry: RegistryFile = serde_json::from_str(&contents)
+        .with_context(|| format!("Invalid registry JSON at {}", registry_path.display()))?;
+
+    registry
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let schema_path = Path::new(input_dir).join(&entry.path);
+            let schema_text = fs::read_to_string(&schema_path)
+                .with_context(|| format!("Failed to read schema {}", schema_path.display()))?;
+            let content: Value = serde_json::from_str(&schema_text)
+                .with_context(|| format!("Invalid JSON in {}", schema_path.display()))?;
+
+            Ok(DiscoveredSchema {
+                source: entry.source,
+                event_type: entry.event_type,
+                version: entry.version,
+                content,
+            })
+        })
+        .collect()
+}
+
+fn load_schemas_by_walking(input_dir: &str) -> Result<Vec<DiscoveredSchema>> {
+    let root = Path::new(input_dir);
+    let mut files = Vec::new();
+    collect_json_files(root, &mut files)?;
+
+    let mut schemas = Vec::new();
+    for path in files {
+        let relative_parent = path
+            .parent()
+            .and_then(|dir| dir.strip_prefix(root).ok())
+            .and_then(|p| {
+                let s = p.to_string_lossy().replace('\\', "/");
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let source = relative_parent.replace('/', ".");
+        let event_type = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let schema_text = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read schema {}", path.display()))?;
+        let content: Value = serde_json::from_str(&schema_text)
+            .with_context(|| format!("Invalid JSON in {}", path.display()))?;
+
+        schemas.push(DiscoveredSchema {
+            source,
+            event_type,
+            version: "1.0.0".to_string(),
+            content,
+        });
+    }
+
+    Ok(schemas)
+}
+
+fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+        if path.is_dir() {
+            collect_json_files(&path, files)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
             if path.file_name().and_then(|s| s.to_str()) == Some("registry.json") {
-                continue; // Skip registry file
+                continue;
             }
-
-            let schema_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap()
-                .to_string();
-
-            let content = std::fs::read_to_string(&path)?;
-            let schema: Value = serde_json::from_str(&content)?;
-
-            schemas.insert(schema_name, schema);
+            files.push(path);
         }
     }
 
-    sync_schemas_to_db(pool, schemas).await?;
-
     Ok(())
+}
+
+fn sanitize_component(raw: &str) -> String {
+    let cleaned = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '-',
+            ' ' => '_',
+            _ => c,
+        })
+        .collect::<String>();
+
+    if cleaned.is_empty() {
+        "component".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn compute_content_hash(value: &Value) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let serialized = serde_json::to_vec(value)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&serialized);
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 async fn list_schemas(pool: &PgPool, active_only: bool) -> Result<()> {
-    let query = if active_only {
-        "SELECT id, schema_name, schema_version, event_types, created_at
-         FROM sinex_schemas.event_payload_schemas
-         WHERE is_active = true
-         ORDER BY schema_name, schema_version"
-    } else {
-        "SELECT id, schema_name, schema_version, event_types, created_at, is_active
-         FROM sinex_schemas.event_payload_schemas
-         ORDER BY schema_name, schema_version"
-    };
-
-    let rows = sqlx::query(query).fetch_all(pool).await?;
-
     println!("Schemas in database:");
     println!("{:-<80}", "");
 
-    for row in rows {
-        let id: Ulid = row.get("id");
-        let schema_name: String = row.get("schema_name");
-        let schema_version: String = row.get("schema_version");
-        let event_types: Vec<String> = row.get("event_types");
-        let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
+    if active_only {
+        let rows = sqlx::query!(
+            r#"
+            SELECT 
+                id::uuid as "id!",
+                source,
+                event_type,
+                schema_version,
+                content_hash,
+                updated_at
+            FROM sinex_schemas.event_payload_schemas
+            WHERE is_active = true
+            ORDER BY source, event_type, schema_version
+            "#
+        )
+        .fetch_all(pool)
+        .await?;
 
-        println!("ID: {id}");
-        println!("Name: {schema_name} ({schema_version})");
-        println!("Event Types: {}", event_types.join(", "));
-        println!("Created: {}", created_at.format("%Y-%m-%d %H:%M:%S"));
+        for row in rows {
+            let id: Ulid = Ulid::from(row.id);
+            let updated_at = row.updated_at;
 
-        if !active_only {
-            let is_active: bool = row.get("is_active");
-            println!("Active: {is_active}");
+            println!("ID: {}", id);
+            println!("Source: {}", row.source);
+            println!("Event: {}", row.event_type);
+            println!("Version: {}", row.schema_version);
+            println!("Hash: {}", row.content_hash);
+            println!("Updated: {}", updated_at.format("%Y-%m-%d %H:%M:%S"));
+            println!("{:-<80}", "");
         }
+    } else {
+        let rows = sqlx::query!(
+            r#"
+            SELECT 
+                id::uuid as "id!",
+                source,
+                event_type,
+                schema_version,
+                content_hash,
+                updated_at,
+                is_active
+            FROM sinex_schemas.event_payload_schemas
+            ORDER BY source, event_type, schema_version
+            "#
+        )
+        .fetch_all(pool)
+        .await?;
 
-        println!("{:-<80}", "");
+        for row in rows {
+            let id: Ulid = Ulid::from(row.id);
+            let updated_at = row.updated_at;
+
+            println!("ID: {}", id);
+            println!("Source: {}", row.source);
+            println!("Event: {}", row.event_type);
+            println!("Version: {}", row.schema_version);
+            println!("Hash: {}", row.content_hash);
+            println!("Updated: {}", updated_at.format("%Y-%m-%d %H:%M:%S"));
+            println!("Active: {}", row.is_active);
+            println!("{:-<80}", "");
+        }
     }
 
     Ok(())
 }
 
-async fn validate_compatibility(_pool: &PgPool, from: &str, to: &str) -> Result<()> {
-    warn!("Schema compatibility validation not yet implemented");
-    info!("Would validate compatibility from {} to {}", from, to);
+fn validate_compatibility(from: &str, to: &str) -> Result<()> {
+    let from_schema = load_schema_from_identifier(from)?;
+    let to_schema = load_schema_from_identifier(to)?;
 
-    // TODO: Implement schema compatibility validation
-    // 1. Load both schemas from database
-    // 2. Compare for breaking changes:
-    //    - Removed required fields
-    //    - Changed field types
-    //    - Removed enum values
-    // 3. Store compatibility result in schema_compatibility table
+    let issues = compare_schemas(&from_schema, &to_schema);
+    if issues.is_empty() {
+        println!("Schemas {from} → {to} are compatible.");
+        return Ok(());
+    }
 
-    Ok(())
+    println!(
+        "Found {} compatibility issue(s) between {from} and {to}:",
+        issues.len()
+    );
+    for (idx, issue) in issues.iter().enumerate() {
+        println!("  {}. {}", idx + 1, issue);
+    }
+
+    Err(eyre!(
+        "{} compatibility issue(s) detected between {from} and {to}",
+        issues.len()
+    ))
+}
+
+fn load_schema_from_identifier(identifier: &str) -> Result<Value> {
+    let candidates = candidate_schema_paths(identifier);
+    for path in candidates {
+        if path.exists() {
+            let contents = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read schema from {}", path.display()))?;
+            return serde_json::from_str(&contents)
+                .with_context(|| format!("Invalid JSON in schema {}", path.display()));
+        }
+    }
+
+    Err(eyre!(
+        "Could not locate schema {identifier}. Provide a path or a schemas/v1 relative name."
+    ))
+}
+
+fn candidate_schema_paths(identifier: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let id_path = PathBuf::from(identifier);
+    push_candidates(&id_path, &mut paths);
+
+    let schemas_root = Path::new("schemas/v1");
+    push_candidates(&schemas_root.join(identifier), &mut paths);
+
+    if !identifier.ends_with(".json") {
+        push_candidates(&id_path.with_extension("json"), &mut paths);
+        push_candidates(
+            &schemas_root.join(identifier).with_extension("json"),
+            &mut paths,
+        );
+    }
+
+    paths
+}
+
+fn push_candidates(path: &Path, paths: &mut Vec<PathBuf>) {
+    if !paths.iter().any(|existing| existing == path) {
+        paths.push(path.to_path_buf());
+    }
+}
+
+fn compare_schemas(from: &Value, to: &Value) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    let required_from = extract_required(from);
+    let required_to = extract_required(to);
+    for field in required_from.difference(&required_to) {
+        issues.push(format!("Required property `{}` was removed", field));
+    }
+
+    let props_from = extract_properties(from);
+    let props_to = extract_properties(to);
+
+    for (name, from_prop) in props_from {
+        match props_to.get(&name) {
+            None => issues.push(format!("Property `{}` was removed", name)),
+            Some(to_prop) => {
+                compare_property_types(&name, from_prop, to_prop, &mut issues);
+                compare_property_enums(&name, from_prop, to_prop, &mut issues);
+            }
+        }
+    }
+
+    issues
+}
+
+fn extract_required(schema: &Value) -> BTreeSet<String> {
+    schema
+        .get("required")
+        .and_then(|value| value.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|value| value.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_properties<'a>(schema: &'a Value) -> BTreeMap<String, &'a Value> {
+    schema
+        .get("properties")
+        .and_then(|props| props.as_object())
+        .map(|object| {
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), value))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn compare_property_types(name: &str, from: &Value, to: &Value, issues: &mut Vec<String>) {
+    let from_types = extract_type_set(from);
+    if from_types.is_empty() {
+        return;
+    }
+
+    let to_types = extract_type_set(to);
+    if to_types.is_empty() {
+        issues.push(format!("Property `{}` no longer declares a type", name));
+        return;
+    }
+
+    for ty in from_types.difference(&to_types) {
+        issues.push(format!(
+            "Property `{}` previously allowed type `{}` which is missing now",
+            name, ty
+        ));
+    }
+}
+
+fn compare_property_enums(name: &str, from: &Value, to: &Value, issues: &mut Vec<String>) {
+    if let Some(from_enum) = extract_enum_set(from) {
+        match extract_enum_set(to) {
+            Some(to_enum) => {
+                for variant in from_enum.difference(&to_enum) {
+                    issues.push(format!(
+                        "Enum variant `{}` for property `{}` was removed",
+                        variant, name
+                    ));
+                }
+            }
+            None => issues.push(format!("Property `{}` no longer defines enum values", name)),
+        }
+    }
+}
+
+fn extract_type_set(value: &Value) -> BTreeSet<String> {
+    match value.get("type") {
+        Some(Value::String(single)) => {
+            let mut set = BTreeSet::new();
+            set.insert(single.clone());
+            set
+        }
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => BTreeSet::new(),
+    }
+}
+
+fn extract_enum_set(value: &Value) -> Option<BTreeSet<String>> {
+    value
+        .get("enum")
+        .and_then(|value| value.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    if let Some(s) = v.as_str() {
+                        Some(s.to_string())
+                    } else if let Some(n) = v.as_i64() {
+                        Some(n.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sinex_test_utils::sinex_test;
+
+    #[sinex_test]
+    fn detect_missing_required_fields() -> color_eyre::Result<()> {
+        let from = json!({
+            "required": ["important"],
+            "properties": {
+                "important": {"type": "string"},
+                "optional": {"type": "integer"}
+            }
+        });
+        let to = json!({
+            "required": [],
+            "properties": {
+                "optional": {"type": "integer"}
+            }
+        });
+
+        let issues = compare_schemas(&from, &to);
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("Required property `important`")),
+            "Missing required field should be reported"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn detect_enum_regressions() -> color_eyre::Result<()> {
+        let from = json!({
+            "properties": {
+                "state": {"enum": ["queued", "running", "done"]}
+            }
+        });
+
+        let to = json!({
+            "properties": {
+                "state": {"enum": ["queued", "running"]}
+            }
+        });
+
+        let issues = compare_schemas(&from, &to);
+        assert!(
+            issues.iter().any(|issue| issue.contains("variant `done`")),
+            "Removed enum entries should be reported"
+        );
+        Ok(())
+    }
 }

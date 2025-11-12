@@ -17,9 +17,11 @@ Implements the JSON-RPC 2.0 compliant server that fronts Sinex gateway services 
 - Success: `{"jsonrpc": "2.0", "result": {...}, "id": 1}`.
 - Error: `{"jsonrpc": "2.0", "error": {"code": -1, "message": "..."},"id": 1}`.
 
-## Security Features
+## Security & Resource Guards
 
 - CORS headers configured for local development.
 - Request/response logging for audit trails.
 - Error sanitisation to avoid leaking sensitive details.
-- TODO: add explicit rate limiting and request size caps.
+- Concurrency limit (`SINEX_GATEWAY_MAX_CONCURRENCY`, default 32) enforced via tower middleware.
+- Request timeout (`SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, default 30s) returns JSON-RPC gateway timeout errors.
+- Payload size cap (`SINEX_GATEWAY_MAX_BODY_BYTES`, default 2MB) returns 413 errors when exceeded.

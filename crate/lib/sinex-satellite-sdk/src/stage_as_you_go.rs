@@ -24,6 +24,7 @@ use tracing::{debug, info, warn};
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
+    #[allow(dead_code)]
     db_pool: PgPool,
     event_emitter: EventEmitter,
     blob_manager: Option<Arc<BlobManager>>,
@@ -394,22 +395,22 @@ impl StageAsYouGoContext {
             .map(|info| (info.material_type.as_str(), info.started_at))
             .unwrap_or(("stage-as-you-go", Utc::now()));
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger
-                (material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+                (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
             VALUES
-                (($1::uuid)::ulid, $2, $3, $4, $5, $6, $7, $8)
+                ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
             "#,
+            ulid_to_uuid(material_id),
+            0_i64,
+            total_bytes,
+            "byte",
+            started_at,
+            "millisecond",
+            "system",
+            source_type
         )
-        .bind(ulid_to_uuid(material_id))
-        .bind(0_i64)
-        .bind(total_bytes)
-        .bind("byte")
-        .bind(started_at)
-        .bind("millisecond")
-        .bind("system")
-        .bind(source_type)
         .execute(&self.db_pool)
         .await
         .map_err(|e| SatelliteError::General(eyre!("Failed to append temporal ledger entry: {}", e)))?;

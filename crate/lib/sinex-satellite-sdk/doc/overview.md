@@ -4,8 +4,7 @@ Shared library for building Sinex satellite services (event sources and automata
 
 This crate provides:
 - Common traits and interfaces
-- gRPC client for communicating with sinex-ingestd
-- NATS JetStream client for message bus communication
+- JetStream helpers for publishing to `events.raw.*` and consuming confirmations/DLQs
 - Configuration management
 - Lifecycle management and graceful shutdown
 - State persistence and checkpointing
@@ -20,7 +19,7 @@ across all data capture and processing mechanisms.
 ## Satellite Constellation Architecture
 
 Sinex uses a satellite constellation pattern where independent services communicate via
-gRPC and NATS JetStream. Each satellite implements `StatefulStreamProcessor` with a
+NATS JetStream. Each satellite implements `StatefulStreamProcessor` with a
 unified interface for consistent behavior across all data capture and processing mechanisms.
 
 ```text
@@ -36,9 +35,9 @@ unified interface for consistent behavior across all data capture and processing
 ┌──────────▼──────────┐                 │
 │   NATS JetStream   │                 │
 │                     │                 │
-│ • Event streams     │◀────────────────┘
-│ • Consumer groups   │
-│ • Event filtering   │
+│ • events.raw.*      │◀────────────────┘  (ingested payloads)
+│ • events.confirmations.*               (canonical IDs after persistence)
+│ • events.dlq.*                         (automatic dead-letter subjects)
 └──────────┬──────────┘
 │
 ┌──────────▼──────────┐
@@ -49,6 +48,8 @@ unified interface for consistent behavior across all data capture and processing
 │ • synthesis engines │
 └─────────────────────┘
 ```
+
+Satellites publish provisional events to `events.raw.<source>` with `Nats-Msg-Id` headers for idempotency. After ingestd persists the event, it emits confirmations on `events.confirmations.<event_id>` so automata can wait for canonical IDs, and routes failures to `events.dlq.<source>` for deterministic recovery.
 
 ### Satellite Roles
 

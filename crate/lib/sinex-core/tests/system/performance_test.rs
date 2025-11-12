@@ -20,7 +20,7 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 

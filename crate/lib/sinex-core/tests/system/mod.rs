@@ -56,10 +56,9 @@
 // ## Running System Tests
 //
 // ```bash
-// cargo test --test system                # All system tests
-// cargo test --test system::end_to_end   # End-to-end only
-// cargo test --test system::performance  # Performance only
-// just test-system                       # Via just command
+// cargo nextest run --test system                          # All system tests
+// cargo nextest run --test system -E 'test(end_to_end::)'  # End-to-end only
+// cargo nextest run --test system -E 'test(performance::)' # Performance only
 // ```
 //
 // ## Performance Expectations

@@ -1,5 +1,7 @@
 # Sinex TODO Tracker
 
+> **Historical context:** Some tasks mention sensd or gRPC ingestion from the pre-JetStream era. They remain for archival clarity; consult `docs/way.md` for the current JetStream-only design.
+
 Authoritative backlog for the gaps identified during the recent codebase survey. Each task lists the owning files, concrete steps, and the validation expected (including fail-first tests).
 
 ## Gateway Hardening

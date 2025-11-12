@@ -46,9 +46,9 @@ async fn jetstream_material_ingest_conflicts_with_satellite_inserts(
     let duplicate_insert = sqlx::query!(
         r#"
         INSERT INTO raw.temporal_ledger
-            (material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+            (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
         VALUES
-            (($1::uuid)::ulid, $2, $3, 'byte', now(), 'millisecond', 'system', 'ingestd')
+            ($1::uuid::ulid, $2, $3, 'byte', now(), 'millisecond', 'system', 'ingestd')
         "#,
         material_id.to_uuid(),
         0_i64,

@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::eyre;
+use sinex_test_utils::{sinex_test, TestResult};
 
-#[test]
-fn exo_cli_stays_parseable() -> Result<()> {
+#[sinex_test]
+fn exo_cli_stays_parseable() -> TestResult<()> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()

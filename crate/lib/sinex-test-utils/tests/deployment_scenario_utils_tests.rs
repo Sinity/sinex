@@ -34,7 +34,7 @@ async fn test_development_scenario() -> sinex_test_utils::Result<()> {
 }
 
 #[sinex_test]
-async fn test_environment_types(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_environment_types() -> sinex_test_utils::Result<()> {
     let env_types = vec![
         EnvironmentType::Development,
         EnvironmentType::Staging,
@@ -58,7 +58,7 @@ async fn test_environment_types(_ctx: TestContext) -> sinex_test_utils::Result<(
 }
 
 #[sinex_test]
-async fn test_dependency_types(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_dependency_types() -> sinex_test_utils::Result<()> {
     assert_eq!(DependencyType::Database, DependencyType::Database);
     assert_eq!(DependencyType::Redis, DependencyType::Redis);
     assert_eq!(DependencyType::FileSystem, DependencyType::FileSystem);
@@ -69,7 +69,7 @@ async fn test_dependency_types(_ctx: TestContext) -> sinex_test_utils::Result<()
 }
 
 #[sinex_test]
-async fn test_dependency_availability(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_dependency_availability() -> sinex_test_utils::Result<()> {
     assert_eq!(
         DependencyAvailability::Available,
         DependencyAvailability::Available
@@ -91,7 +91,7 @@ async fn test_dependency_availability(_ctx: TestContext) -> sinex_test_utils::Re
 }
 
 #[sinex_test]
-async fn test_resource_constraints_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_resource_constraints_creation() -> sinex_test_utils::Result<()> {
     let constraints = ResourceConstraints {
         max_memory_mb: Some(1024),
         max_cpu_cores: Some(4),
@@ -108,7 +108,7 @@ async fn test_resource_constraints_creation(_ctx: TestContext) -> sinex_test_uti
 }
 
 #[sinex_test]
-async fn test_component_config_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_component_config_creation() -> sinex_test_utils::Result<()> {
     let mut env_vars = HashMap::new();
     env_vars.insert("LOG_LEVEL".to_string(), "debug".to_string());
     env_vars.insert("PORT".to_string(), "8080".to_string());
@@ -132,7 +132,7 @@ async fn test_component_config_creation(_ctx: TestContext) -> sinex_test_utils::
 }
 
 #[sinex_test]
-async fn test_external_dependency_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_external_dependency_creation() -> sinex_test_utils::Result<()> {
     let dep = ExternalDependency {
         name: "postgres".to_string(),
         dependency_type: DependencyType::Database,
@@ -149,7 +149,7 @@ async fn test_external_dependency_creation(_ctx: TestContext) -> sinex_test_util
 }
 
 #[sinex_test]
-async fn test_expected_outcome_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_expected_outcome_creation() -> sinex_test_utils::Result<()> {
     let outcome = ExpectedOutcome {
         should_succeed: true,
         expected_warnings: vec!["Deprecated config option".to_string()],
@@ -170,7 +170,7 @@ async fn test_expected_outcome_creation(_ctx: TestContext) -> sinex_test_utils::
 }
 
 #[sinex_test]
-async fn test_validation_step_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_validation_step_creation() -> sinex_test_utils::Result<()> {
     let step = ValidationStep {
         step_name: "check_database".to_string(),
         validation_type: ValidationType::DatabaseConnection,
@@ -185,7 +185,7 @@ async fn test_validation_step_creation(_ctx: TestContext) -> sinex_test_utils::R
 }
 
 #[sinex_test]
-async fn test_compatibility_scenario_creation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_compatibility_scenario_creation() -> sinex_test_utils::Result<()> {
     let scenario = CompatibilityTestScenario {
         name: "test_scenario".to_string(),
         description: "Test scenario description".to_string(),
@@ -232,9 +232,7 @@ async fn test_compatibility_scenario_creation(_ctx: TestContext) -> sinex_test_u
 }
 
 #[sinex_test]
-async fn test_config_compatibility_tester_creation(
-    _ctx: TestContext,
-) -> sinex_test_utils::Result<()> {
+async fn test_config_compatibility_tester_creation() -> sinex_test_utils::Result<()> {
     let tester = ConfigCompatibilityTester::new().await?;
     assert!(tester.scenario_count() > 0);
     assert!(tester.temp_dir_path().exists());
@@ -243,7 +241,7 @@ async fn test_config_compatibility_tester_creation(
 }
 
 #[sinex_test]
-async fn test_scenario_execution(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_scenario_execution() -> sinex_test_utils::Result<()> {
     let tester = ConfigCompatibilityTester::new().await?;
     let scenario = tester.get_scenario("development_environment").unwrap();
     let result = tester.run_scenario(scenario).await?;
@@ -255,7 +253,7 @@ async fn test_scenario_execution(_ctx: TestContext) -> sinex_test_utils::Result<
 }
 
 #[sinex_test]
-async fn test_multiple_scenario_management(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_multiple_scenario_management() -> sinex_test_utils::Result<()> {
     let tester = ConfigCompatibilityTester::new().await?;
 
     let scenarios = tester.list_scenarios();
@@ -267,7 +265,7 @@ async fn test_multiple_scenario_management(_ctx: TestContext) -> sinex_test_util
 }
 
 #[sinex_test]
-async fn test_validation_step_execution(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_validation_step_execution() -> sinex_test_utils::Result<()> {
     let step = ValidationStep {
         step_name: "test_step".to_string(),
         validation_type: ValidationType::ConfigurationLoad,
@@ -282,7 +280,7 @@ async fn test_validation_step_execution(_ctx: TestContext) -> sinex_test_utils::
 }
 
 #[sinex_test]
-async fn test_resource_constraint_validation(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_resource_constraint_validation() -> sinex_test_utils::Result<()> {
     let constraints = ResourceConstraints {
         max_memory_mb: Some(1024),
         max_cpu_cores: Some(2),
@@ -306,7 +304,7 @@ async fn test_resource_constraint_validation(_ctx: TestContext) -> sinex_test_ut
 }
 
 #[sinex_test]
-async fn test_environment_setup_combinations(_ctx: TestContext) -> sinex_test_utils::Result<()> {
+async fn test_environment_setup_combinations() -> sinex_test_utils::Result<()> {
     let setups = vec![
         EnvironmentSetup {
             environment_type: EnvironmentType::Development,

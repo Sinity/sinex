@@ -25,7 +25,7 @@
 // - Deadlock detection and recovery mechanisms
 // - Race condition monitoring and reporting
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use futures::future::join_all;
 use sinex_test_utils::prelude::*;
 use sinex_core::types::ulid::Ulid;

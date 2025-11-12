@@ -4,7 +4,7 @@
 target-dir = "target"
 incremental = true
 pipelining = true
-# Use all available CPU cores for compilation
+# Use all available CPU cores for compilation (override locally if needed)
 jobs = 24
 rustc-workspace-wrapper = "scripts/rustc_wrapper.sh"
 
@@ -19,7 +19,7 @@ rustflags = [
   "-C",
   "link-arg=-fuse-ld=mold",     # Fastest linker available
   "-C",
-  "codegen-units=256",          # Maximum parallelism
+  "codegen-units=256",          # Maximize parallelism
   "--check-cfg=cfg(rust_analyzer)",
 ]
 
@@ -57,12 +57,15 @@ cf = [
 # Environment variables for coverage and testing
 [env]
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
+PGHOST = "/run/postgresql"
+PGUSER = "sinity"
+PGDATABASE = "sinex_dev"
+DATABASE_URL = "postgresql:///sinex_dev?host=/run/postgresql"
 
 # Speed optimizations via environment variables
 CARGO_INCREMENTAL = "1"                # Enable incremental compilation
 RUST_BACKTRACE = "0"                   # Disable backtraces for speed
 # RUSTC_WRAPPER set dynamically in nix shell for sccache
-CARGO_BUILD_JOBS = "0"                 # Use all CPU cores
 CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
 
 

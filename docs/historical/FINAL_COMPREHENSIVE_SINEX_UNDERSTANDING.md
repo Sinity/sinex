@@ -1,5 +1,7 @@
 # Final Comprehensive Understanding of Sinex: The Sentient Archive
 
+> **Historical note:** Snapshot of the system before the JetStream-only transition. Treat any mentions of sensd or gRPC ingestion as legacy context; current behaviour is documented in `docs/way.md`.
+
 *Generated: 2025-01-23*
 
 This document represents my deepest, most holistic understanding of the Sinex project after extensive analysis of its codebase, specifications, architectural documents, and the philosophical discussions between the user and various LLMs about its design and future direction.

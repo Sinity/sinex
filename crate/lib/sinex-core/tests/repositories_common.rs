@@ -47,7 +47,7 @@ async fn seaquery_builder_works_with_table_defs(ctx: TestContext) -> color_eyre:
 }
 
 #[sinex_test]
-async fn table_def_constants_match_expectations(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn table_def_constants_match_expectations() -> color_eyre::eyre::Result<()> {
     assert_eq!(Events::table_name(), "events");
     assert_eq!(Events::schema_name(), "core");
     assert_eq!(Events::primary_key(), "id");

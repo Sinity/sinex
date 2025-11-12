@@ -2,6 +2,8 @@
 SINEX TEST INFRASTRUCTURE ANALYSIS - EXECUTIVE SUMMARY
 ================================================================================
 
+NOTE (JetStream Phase 5): This summary references dual-path ingestion (gRPC + JetStream) and other now-retired components. Treat those items as historical context; the live ingestion surface is JetStream-only per `docs/way.md`.
+
 DATE: 2025-10-25
 SCOPE: Complete test suite analysis with coverage assessment and gap identification
 

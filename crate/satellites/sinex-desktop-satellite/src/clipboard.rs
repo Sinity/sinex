@@ -2,10 +2,14 @@
 
 // Use local facade for common types
 use crate::common::*;
+use sinex_core::environment;
+use sinex_core::types::Ulid;
+use sinex_satellite_sdk::annex::GitAnnex;
+use std::sync::Arc;
+use tokio::fs;
 
 // Clipboard-specific imports
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_core::types::Ulid;
 use sqlx::PgPool;
 
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
@@ -50,11 +54,64 @@ pub struct ClipboardWatcher {
     // sensd integration
     db_pool: Option<PgPool>,
     source_identifier: String,
+    blob_manager: Option<Arc<BlobManager>>,
 }
 
 impl ClipboardWatcher {
+    async fn initialize_blob_manager(db_pool: PgPool) -> SatelliteResult<Option<Arc<BlobManager>>> {
+        let repo_path = Self::resolve_annex_repo();
+        if let Err(e) = fs::create_dir_all(repo_path.as_std_path()).await {
+            warn!(error = %e, "Failed to create annex directory for clipboard watcher");
+            return Ok(None);
+        }
+
+        if !repo_path.join(".git").exists() {
+            if let Err(e) = GitAnnex::init(&repo_path, Some("desktop-clipboard")).await {
+                warn!(error = %e, "Failed to initialize git-annex repository for clipboard watcher");
+                return Ok(None);
+            }
+        }
+
+        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+        tokio::spawn(async move {
+            while let Some(event) = blob_event_rx.recv().await {
+                debug!(?event, "Clipboard blob manager emitted event");
+            }
+        });
+
+        let annex_config = AnnexConfig {
+            repo_path,
+            num_copies: None,
+            large_files: None,
+        };
+
+        match BlobManager::new(annex_config, db_pool, blob_event_tx) {
+            Ok(manager) => Ok(Some(Arc::new(manager))),
+            Err(e) => {
+                warn!(error = %e, "Failed to initialize clipboard blob manager");
+                Ok(None)
+            }
+        }
+    }
+
+    fn resolve_annex_repo() -> Utf8PathBuf {
+        if let Ok(path) = std::env::var("SINEX_ANNEX_PATH") {
+            return Utf8PathBuf::from(path);
+        }
+
+        let default_path = environment::environment().work_directory("/tmp/sinex/annex");
+        Utf8PathBuf::from_path_buf(default_path)
+            .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
+    }
+
     /// Create new clipboard watcher with sensd integration
     pub async fn new(poll_interval_secs: u64, db_pool: Option<PgPool>) -> SatelliteResult<Self> {
+        let blob_manager = if let Some(pool) = &db_pool {
+            Self::initialize_blob_manager(pool.clone()).await?
+        } else {
+            None
+        };
+
         let watcher = Self {
             poll_interval: Duration::from_secs(poll_interval_secs),
             last_content: None,
@@ -67,6 +124,7 @@ impl ClipboardWatcher {
             enable_history: true,
             db_pool,
             source_identifier: "desktop_clipboard".to_string(),
+            blob_manager,
         };
 
         // Check for clipboard tools availability
@@ -280,48 +338,42 @@ impl ClipboardWatcher {
         let now = Utc::now();
 
         // Prepare metadata
-        let metadata = serde_json::json!({
-            "selection_type": selection_type,
-            "content_type": content.content_type,
-            "content_size": content.size_bytes,
-            "text_preview": content.text_preview,
-            "file_paths": content.file_paths,
-            "source_app": content.source_app,
-            "window_title": content.window_title,
-            "content_hash": content.hash,
-            "original_hash": self.find_original_hash(&content.hash).map(|h| h.to_string()),
-        });
-
-        // Store in source_material_registry
         let data_bytes = content.text.as_bytes();
-        if data_bytes.len() <= self.max_content_size {
-            // Store inline - we need to create a blob and link it
-            // First create the material registry entry
-            sqlx::query!(
-                r#"
-                INSERT INTO raw.source_material_registry (
-                    id, source_identifier, staged_at,
-                    material_kind, timing_info_type, metadata,
-                    status, staged_by
-                )
-                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
-                "#,
-                material_id as Ulid,    // $1 - id
-                self.source_identifier, // $2 - source_identifier
-                now,                    // $3 - staged_at
-                "clipboard",            // $4 - material_kind
-                "realtime",             // $5 - timing_info_type
-                serde_json::to_value(&metadata).unwrap_or_else(|_| serde_json::json!({})), // $6 - metadata
-                "completed",         // $7 - status
-                "clipboard-monitor", // $8 - staged_by
-            )
-            .execute(db_pool)
-            .await?;
+        let storage = if data_bytes.len() <= self.max_content_size {
+            ClipboardStorage::Inline(content.size_bytes)
+        } else if let Some(reference) = self.ingest_large_clipboard_content(content).await? {
+            ClipboardStorage::Annex(reference)
         } else {
-            // TODO: Large content would need blob storage
-            warn!("Large clipboard content not yet supported, skipping");
+            warn!(
+                "Large clipboard content ({:?} bytes) skipped due to missing blob manager",
+                content.size_bytes
+            );
             return Ok(None);
-        }
+        };
+
+        let metadata = self.build_clipboard_metadata(content, selection_type, &storage);
+        let material_kind = "annex";
+
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id, source_identifier, staged_at,
+                material_kind, timing_info_type, metadata,
+                status, staged_by
+            )
+            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+            material_id as Ulid,    // $1 - id
+            self.source_identifier, // $2 - source_identifier
+            now,                    // $3 - staged_at
+            material_kind,          // $4 - material_kind
+            "realtime",             // $5 - timing_info_type
+            metadata,
+            "completed",         // $7 - status
+            "clipboard-monitor", // $8 - staged_by
+        )
+        .execute(db_pool)
+        .await?;
 
         // Create temporal ledger entry
         sqlx::query!(
@@ -338,7 +390,7 @@ impl ClipboardWatcher {
             data_bytes.len() as i64, // $4 - offset_end
             "byte",                  // $5 - offset_kind
             content.timestamp,       // $6 - ts_capture
-            "millisecond",           // $7 - precision
+            "exact",                 // $7 - precision
             "wall",                  // $8 - clock
             "realtime_capture",      // $9 - source_type
         )
@@ -353,6 +405,61 @@ impl ClipboardWatcher {
         );
 
         Ok(Some(material_id))
+    }
+
+    fn build_clipboard_metadata(
+        &self,
+        content: &ClipboardContent,
+        selection_type: &str,
+        storage: &ClipboardStorage,
+    ) -> JsonValue {
+        serde_json::json!({
+            "selection_type": selection_type,
+            "content_type": content.content_type,
+            "content_size": content.size_bytes,
+            "text_preview": content.text_preview,
+            "file_paths": content.file_paths,
+            "source_app": content.source_app,
+            "window_title": content.window_title,
+            "content_hash": content.hash,
+            "original_hash": self.find_original_hash(&content.hash).map(|h| h.to_string()),
+            "storage": storage.to_metadata(),
+        })
+    }
+
+    async fn ingest_large_clipboard_content(
+        &self,
+        content: &ClipboardContent,
+    ) -> SatelliteResult<Option<AnnexBlobReference>> {
+        let Some(manager) = &self.blob_manager else {
+            return Ok(None);
+        };
+
+        let filename = format!(
+            "clipboard-{}-{}.txt",
+            content.timestamp.format("%Y%m%dT%H%M%S"),
+            &content.hash[..8]
+        );
+        let mime_type = match content.content_type.as_str() {
+            "image" => "application/octet-stream",
+            "files" => "text/plain",
+            _ => "text/plain",
+        };
+
+        let blob = manager
+            .ingest_from_bytes(content.text.as_bytes(), &filename, mime_type)
+            .await
+            .map_err(|e| SatelliteError::Processing(e.to_string()))?;
+
+        let blob_id = Ulid::from(blob.id.as_ulid().clone());
+
+        Ok(Some(AnnexBlobReference {
+            blob_id,
+            annex_key: blob.annex_key(),
+            size_bytes: blob.size_bytes,
+            mime_type: blob.mime_type.or_else(|| Some(mime_type.to_string())),
+            checksum_blake3: blob.checksum_blake3,
+        }))
     }
 
     /// Get enriched clipboard content with metadata
@@ -575,6 +682,108 @@ impl ClipboardWatcher {
                 self.last_primary_content = Some(current_primary);
             }
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ClipboardStorage {
+    Inline(usize),
+    Annex(AnnexBlobReference),
+}
+
+impl ClipboardStorage {
+    fn to_metadata(&self) -> JsonValue {
+        match self {
+            ClipboardStorage::Inline(size) => serde_json::json!({
+                "strategy": "inline",
+                "size_bytes": size,
+            }),
+            ClipboardStorage::Annex(reference) => serde_json::json!({
+                "strategy": "annex_blob",
+                "blob_id": reference.blob_id.to_string(),
+                "annex_key": reference.annex_key,
+                "mime_type": reference.mime_type,
+                "size_bytes": reference.size_bytes,
+                "checksum_blake3": reference.checksum_blake3,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AnnexBlobReference {
+    blob_id: Ulid,
+    annex_key: String,
+    size_bytes: i64,
+    mime_type: Option<String>,
+    checksum_blake3: Option<String>,
+}
+
+#[cfg(test)]
+impl ClipboardWatcher {
+    async fn test_watcher(
+        max_content_size: usize,
+        db_pool: Option<PgPool>,
+    ) -> SatelliteResult<Self> {
+        let mut watcher = ClipboardWatcher::new(1, db_pool).await?;
+        watcher.max_content_size = max_content_size;
+        Ok(watcher)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
+        ClipboardContent {
+            text: text.to_string(),
+            hash: watcher.calculate_hash(text),
+            size_bytes: text.len(),
+            content_type: "text".to_string(),
+            text_preview: Some(text.chars().take(32).collect()),
+            file_paths: None,
+            source_app: Some("test-app".to_string()),
+            window_title: Some("test-window".to_string()),
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[sinex_test]
+    async fn clipboard_large_content_is_persisted(ctx: TestContext) -> color_eyre::Result<()> {
+        let watcher = ClipboardWatcher::test_watcher(16, Some(ctx.pool.clone())).await?;
+        let large_text = "A".repeat(1024);
+        let content = sample_clipboard_content(&large_text, &watcher);
+
+        let stored = watcher
+            .store_clipboard_source_material(&content, "primary")
+            .await?;
+
+        assert!(
+            stored.is_some(),
+            "Large clipboard captures should be persisted rather than silently skipped"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_clipboard_requires_database_pool() -> color_eyre::Result<()> {
+        let watcher = ClipboardWatcher::test_watcher(DEFAULT_MAX_CONTENT_SIZE, None).await?;
+        let content = sample_clipboard_content("clipboard text", &watcher);
+
+        let stored = watcher
+            .store_clipboard_source_material(&content, "primary")
+            .await?;
+
+        assert!(
+            stored.is_some(),
+            "Clipboard ingestion should no longer require a direct Postgres pool"
+        );
+
         Ok(())
     }
 }

@@ -4,7 +4,7 @@
 // index effectiveness, connection pool behavior, and database scalability.
 // These tests help identify database bottlenecks and optimization opportunities.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 use chrono::{Duration, Utc};

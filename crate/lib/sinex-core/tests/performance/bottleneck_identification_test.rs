@@ -53,7 +53,7 @@ async fn create_consumer(
 }
 
 #[sinex_bench]
-async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> Result<()> {
+async fn jetstream_ack_backlog_detection() -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
@@ -123,7 +123,7 @@ async fn jetstream_ack_backlog_detection(_ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_detect_publish_pressure(_ctx: TestContext) -> Result<()> {
+async fn jetstream_detect_publish_pressure() -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());

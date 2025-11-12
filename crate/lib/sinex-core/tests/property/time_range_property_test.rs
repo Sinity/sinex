@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use proptest::prelude::*;
-use sinex_test_utils::sinex_test;
+use sinex_test_utils::{sinex_test, TestResult};
 
 /// Generate arbitrary time ranges within a useful bound.
 fn arb_time_range() -> impl Strategy<Value = (DateTime<Utc>, DateTime<Utc>)> {
@@ -57,8 +57,8 @@ fn partition_range(
     parts
 }
 
-#[sinex_test]
-fn time_range_ordering_invariant() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn time_range_ordering_invariant() -> TestResult {
     proptest!(|(range in arb_time_range())| {
         let (start, end) = range;
         prop_assert!(start <= end);
@@ -67,8 +67,8 @@ fn time_range_ordering_invariant() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn time_range_overlap_symmetry() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn time_range_overlap_symmetry() -> TestResult {
     proptest!(|(ranges in proptest::collection::vec(arb_time_range(), 2..=2))| {
         let a = ranges[0];
         let b = ranges[1];
@@ -81,8 +81,8 @@ fn time_range_overlap_symmetry() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn time_range_partition_covers_interval() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn time_range_partition_covers_interval() -> TestResult {
     proptest!(|((range, count) in arb_time_range().prop_flat_map(|r| (Just(r), 1usize..=16)))| {
         let parts = partition_range(range, count);
         prop_assert_eq!(parts.len(), count);

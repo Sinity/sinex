@@ -20,6 +20,16 @@ use tracing::{info, warn};
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
 use sinex_satellite_sdk::stream_processor::StreamProcessorRunner;
 
+#[allow(dead_code)]
+pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
+    matches!(
+        command,
+        ProcessorCommand::Service { .. }
+            | ProcessorCommand::Scan { .. }
+            | ProcessorCommand::Explore { .. }
+    )
+}
+
 /// Standard CLI arguments for all stream processor satellites
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -160,6 +170,45 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
         parse_checkpoint_json(checkpoint_str)
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
             .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_test_utils::sinex_test;
+
+    #[sinex_test]
+    fn scan_mode_emits_heartbeats() -> color_eyre::eyre::Result<()> {
+        let command = ProcessorCommand::Scan {
+            from: "none".to_string(),
+            until: "snapshot".to_string(),
+            targets: Vec::new(),
+            dry_run: false,
+            interactive: false,
+            max_events: 0,
+            no_skip_duplicates: false,
+            estimate: false,
+        };
+
+        assert!(command_requires_heartbeat(&command));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn explore_mode_emits_heartbeats() -> color_eyre::eyre::Result<()> {
+        let command = ProcessorCommand::Explore {
+            source_state: true,
+            ingestion_history: false,
+            coverage_analysis: false,
+            limit: 5,
+            export_to: None,
+        };
+
+        assert!(command_requires_heartbeat(&command));
+
+        Ok(())
     }
 }
 
@@ -1042,7 +1091,7 @@ macro_rules! processor_main {
             let mut runner = ProcessorCliRunner::new(processor);
 
             // Auto-spawn HeartbeatEmitter and Coordination for service mode
-            if matches!(args.command, ProcessorCommand::Service { .. }) {
+            if $crate::cli::command_requires_heartbeat(&args.command) {
                 let service_name = args
                     .service_name
                     .clone()

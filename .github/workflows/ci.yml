@@ -54,6 +54,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install ripgrep
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ripgrep
+    
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
 
@@ -112,7 +117,7 @@ jobs:
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
         RUST_LOG: debug
-      run: cargo nextest run --all-features --workspace
+      run: cargo nextest run --all-features --workspace --profile reliable
 
   coverage:
     name: Code Coverage
@@ -135,6 +140,11 @@ jobs:
           
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Install ripgrep
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ripgrep
     
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
@@ -186,7 +196,7 @@ jobs:
     - name: Generate code coverage
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      run: cargo llvm-cov --all-features --workspace --profile reliable --lcov --output-path lcov.info
       
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3

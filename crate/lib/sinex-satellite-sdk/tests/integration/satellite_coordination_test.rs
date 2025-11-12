@@ -11,13 +11,13 @@ use sinex_satellite_sdk::{SatelliteInstance, SatelliteVersion};
 use sinex_core::db::distributed_locking::DistributedCoordination;
 use sinex_test_utils::TestContext;
 use sinex_test_utils::sinex_test;
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::time::{timeout, Duration};
 
 #[sinex_test]
-async fn test_satellite_coordination_initialization() -> Result<()> {
+async fn test_satellite_coordination_initialization() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -38,7 +38,7 @@ async fn test_satellite_coordination_initialization() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_single_instance_becomes_leader() -> Result<()> {
+async fn test_single_instance_becomes_leader() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -78,7 +78,7 @@ async fn test_single_instance_becomes_leader() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_multi_instance_leadership_election() -> Result<()> {
+async fn test_multi_instance_leadership_election() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -164,7 +164,7 @@ async fn test_multi_instance_leadership_election() -> Result<()> {
 }
 
 #[sinex_test] 
-async fn test_version_based_handoff() -> Result<()> {
+async fn test_version_based_handoff() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -230,7 +230,7 @@ async fn test_version_based_handoff() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_leader_failure_detection() -> Result<()> {
+async fn test_leader_failure_detection() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -296,7 +296,7 @@ async fn test_leader_failure_detection() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_with_preflight_checks() -> Result<()> {
+async fn test_coordination_with_preflight_checks() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -329,7 +329,7 @@ async fn test_coordination_with_preflight_checks() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_graceful_shutdown() -> Result<()> {
+async fn test_coordination_graceful_shutdown() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -370,7 +370,7 @@ async fn test_coordination_graceful_shutdown() -> Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_database_state_tracking() -> Result<()> {
+async fn test_coordination_database_state_tracking() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     

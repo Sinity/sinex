@@ -36,10 +36,10 @@ impl AdvisoryLock {
         let lock_id = hash_key_to_i64(key);
         let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(lock_id)
+        let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
             .fetch_one(&mut *connection)
-            .await?;
+            .await?
+            .unwrap_or(false);
 
         if !acquired {
             return Ok(None);
@@ -52,8 +52,7 @@ impl AdvisoryLock {
 
         let cleanup = |mut lock: AdvisoryLock| async move {
             if let Some(mut connection) = lock.connection.take() {
-                let _ = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
-                    .bind(lock.lock_id)
+                let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock.lock_id)
                     .fetch_one(&mut *connection)
                     .await;
             }
@@ -97,14 +96,13 @@ impl AdvisoryLock {
         let lock_id = hash_key_to_i64(key);
         let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(lock_id)
+        let acquired: bool = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_id)
             .fetch_one(&mut *connection)
-            .await?;
+            .await?
+            .unwrap_or(false);
 
         if acquired {
-            let _ = sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
-                .bind(lock_id)
+            let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_id)
                 .fetch_one(&mut *connection)
                 .await;
             Ok(false)
@@ -119,10 +117,10 @@ impl AdvisoryLock {
         let lock_id = hash_key_to_i64(key);
         let mut connection = pool.acquire().await.map_err(SinexError::from)?;
 
-        let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
-            .bind(lock_id)
+        let released: bool = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_id)
             .fetch_one(&mut *connection)
-            .await?;
+            .await?
+            .unwrap_or(false);
 
         Ok(released)
     }
@@ -251,14 +249,16 @@ impl LeadershipGuard {
         );
 
         // Perform the leadership record update
-        sqlx::query(
-            "INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
-             VALUES ($1, $2, NOW(), NOW(), 'unknown')
-             ON CONFLICT (service_name) 
-             DO UPDATE SET instance_id = $2, acquired_at = NOW(), last_heartbeat = NOW()"
+        sqlx::query!(
+            r#"
+            INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
+            VALUES ($1, $2, NOW(), NOW(), 'unknown')
+            ON CONFLICT (service_name)
+            DO UPDATE SET instance_id = $2, acquired_at = NOW(), last_heartbeat = NOW()
+            "#,
+            &self.service_name,
+            &self.instance_id.to_string()
         )
-        .bind(&self.service_name)
-        .bind(self.instance_id)
         .execute(&mut *tx)
         .await?;
 

@@ -4,7 +4,7 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use async_nats::jetstream::Context as JetStream;
@@ -814,7 +814,6 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_ey
 
 #[sinex_test]
 async fn test_jetstream_publish_regression_detection(
-    _ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;

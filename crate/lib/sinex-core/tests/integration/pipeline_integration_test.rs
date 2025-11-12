@@ -47,7 +47,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             "terminal",
             "command.executed",
             json!({
-                "command": "cargo test --workspace",
+                "command": "cargo nextest run --workspace",
                 "working_directory": "/home/user/sinex",
                 "exit_code": 0,
                 "duration_ms": 2340

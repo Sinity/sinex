@@ -258,19 +258,24 @@ impl LeaseManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[test]
-    fn test_lease_manager_config_defaults() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    fn test_lease_manager_config_defaults() -> TestResult<()> {
         let config = LeaseManagerConfig::default();
         assert_eq!(config.processor_name, "automaton");
         assert!(!config.instance_id.is_empty());
         assert_eq!(config.lease_ttl, Duration::from_secs(30));
         assert_eq!(config.renewal_interval, Duration::from_secs(10));
+        Ok(())
     }
 
-    #[test]
-    fn test_lease_status() {
+    #[sinex_test]
+    fn test_lease_status() -> TestResult<()> {
         assert_eq!(LeaseStatus::Leader, LeaseStatus::Leader);
         assert_ne!(LeaseStatus::Leader, LeaseStatus::Standby);
+        Ok(())
     }
 }

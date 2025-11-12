@@ -10,9 +10,13 @@ mod serde_tests {
     use serde_json;
     use sinex_schema::schema::records::*;
     use sinex_schema::ulid::Ulid;
+    use sinex_test_utils::TestResult;
 
-    #[test]
-    fn test_event_record_serialization() {
+    #[allow(dead_code)]
+    use sinex_test_utils::sinex_test;
+
+    #[sinex_test]
+    fn test_event_record_serialization() -> TestResult<()> {
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
@@ -45,10 +49,11 @@ mod serde_tests {
         assert_eq!(event.source, deserialized.source);
         assert_eq!(event.event_type, deserialized.event_type);
         assert_eq!(event.host, deserialized.host);
+        Ok(())
     }
 
-    #[test]
-    fn test_blob_record_serialization() {
+    #[sinex_test]
+    fn test_blob_record_serialization() -> TestResult<()> {
         let blob = BlobRecord {
             id: Ulid::new(),
             annex_backend: "SHA256E".to_string(),
@@ -70,10 +75,11 @@ mod serde_tests {
         assert_eq!(blob.id, deserialized.id);
         assert_eq!(blob.annex_backend, deserialized.annex_backend);
         assert_eq!(blob.size_bytes, deserialized.size_bytes);
+        Ok(())
     }
 
-    #[test]
-    fn test_checkpoint_record_serialization() {
+    #[sinex_test]
+    fn test_checkpoint_record_serialization() -> TestResult<()> {
         let checkpoint = CheckpointRecord {
             id: Ulid::new(),
             processor_name: "test-processor".to_string(),
@@ -95,10 +101,11 @@ mod serde_tests {
         assert_eq!(checkpoint.id, deserialized.id);
         assert_eq!(checkpoint.processor_name, deserialized.processor_name);
         assert_eq!(checkpoint.processed_count, deserialized.processed_count);
+        Ok(())
     }
 
-    #[test]
-    fn test_entity_record_serialization() {
+    #[sinex_test]
+    fn test_entity_record_serialization() -> TestResult<()> {
         let entity = EntityRecord {
             id: Ulid::new(),
             entity_type: "person".to_string(),
@@ -121,10 +128,11 @@ mod serde_tests {
         assert_eq!(entity.id, deserialized.id);
         assert_eq!(entity.entity_type, deserialized.entity_type);
         assert_eq!(entity.name, deserialized.name);
+        Ok(())
     }
 
-    #[test]
-    fn test_source_material_record_serialization() {
+    #[sinex_test]
+    fn test_source_material_record_serialization() -> TestResult<()> {
         let material = SourceMaterialRecord {
             id: Ulid::new(),
             material_kind: "annex".to_string(),
@@ -147,10 +155,11 @@ mod serde_tests {
         assert_eq!(material.id, deserialized.id);
         assert_eq!(material.material_kind, deserialized.material_kind);
         assert_eq!(material.source_identifier, deserialized.source_identifier);
+        Ok(())
     }
 
-    #[test]
-    fn test_optional_fields_serialization() {
+    #[sinex_test]
+    fn test_optional_fields_serialization() -> TestResult<()> {
         // Test that optional fields serialize correctly as null
         let event = EventRecord {
             id: Ulid::new(),
@@ -178,10 +187,11 @@ mod serde_tests {
         assert_eq!(event.source_material_id, deserialized.source_material_id);
         assert_eq!(event.anchor_byte, deserialized.anchor_byte);
         assert_eq!(event.source_event_ids, deserialized.source_event_ids);
+        Ok(())
     }
 
-    #[test]
-    fn test_ulid_serialization_in_records() {
+    #[sinex_test]
+    fn test_ulid_serialization_in_records() -> TestResult<()> {
         // Test that ULIDs serialize as strings in records
         let event = EventRecord {
             id: Ulid::new(),
@@ -216,10 +226,11 @@ mod serde_tests {
                 assert!(json.contains(&format!("\"{}\"", ulid)));
             }
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_datetime_serialization_in_records() {
+    #[sinex_test]
+    fn test_datetime_serialization_in_records() -> TestResult<()> {
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
@@ -249,10 +260,11 @@ mod serde_tests {
             (orig_ms - deser_ms).abs() <= 1,
             "DateTime should round-trip accurately"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_json_payload_preservation() {
+    #[sinex_test]
+    fn test_json_payload_preservation() -> TestResult<()> {
         let complex_payload = serde_json::json!({
             "nested": {
                 "array": [1, 2, 3],
@@ -290,10 +302,11 @@ mod serde_tests {
         // JSON payload should be preserved exactly
         assert_eq!(event.payload, deserialized.payload);
         assert_eq!(complex_payload, deserialized.payload);
+        Ok(())
     }
 
-    #[test]
-    fn test_pretty_print_formatting() {
+    #[sinex_test]
+    fn test_pretty_print_formatting() -> TestResult<()> {
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
@@ -323,6 +336,7 @@ mod serde_tests {
         let deserialized: EventRecord =
             serde_json::from_str(&pretty_json).expect("Pretty JSON should deserialize");
         assert_eq!(event.id, deserialized.id);
+        Ok(())
     }
 }
 
@@ -331,9 +345,12 @@ mod serde_tests {
 mod no_serde_tests {
     // When serde feature is disabled, Record structs should not have serde derives
     // This is enforced at compile time, so these tests mainly document the behavior
+    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::TestResult;
 
-    #[test]
-    fn test_serde_feature_disabled() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    fn test_serde_feature_disabled() -> TestResult<()> {
         // This test just documents that without the serde feature,
         // the Record structs don't have serialization capabilities
         // The actual enforcement is at compile time via cfg_attr
@@ -341,5 +358,6 @@ mod no_serde_tests {
             true,
             "Serde feature is disabled - Records do not support serialization"
         );
+        Ok(())
     }
 }

@@ -7,7 +7,7 @@
 //! - Error recovery and resilience
 //! - Graceful shutdown and cleanup
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_satellite_sdk::{
     config::{EventSourceConfig, SatelliteConfig},
     coordination::{SatelliteCoordination, InstanceMode},
@@ -25,7 +25,7 @@ use futures::future;
 
 /// Test complete satellite lifecycle from birth to death
 #[sinex_test]
-async fn test_satellite_complete_lifecycle(ctx: TestContext) -> Result<()> {
+async fn test_satellite_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
     info!("Testing complete satellite lifecycle");
 
     let instance = SatelliteInstance::new(
@@ -93,7 +93,7 @@ async fn test_satellite_complete_lifecycle(ctx: TestContext) -> Result<()> {
 
 /// Test satellite initialization sequence and state setup
 #[sinex_test]
-async fn test_satellite_initialization_sequence(ctx: TestContext) -> Result<()> {
+async fn test_satellite_initialization_sequence(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite initialization sequence");
 
     // Test with multiple configurations to ensure robustness
@@ -141,7 +141,7 @@ async fn test_satellite_initialization_sequence(ctx: TestContext) -> Result<()> 
 
 /// Test satellite health monitoring and heartbeat mechanisms
 #[sinex_test]
-async fn test_satellite_health_monitoring(ctx: TestContext) -> Result<()> {
+async fn test_satellite_health_monitoring(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite health monitoring");
 
     let instance = SatelliteInstance::new(
@@ -208,7 +208,7 @@ async fn test_satellite_health_monitoring(ctx: TestContext) -> Result<()> {
 
 /// Test satellite error recovery and resilience patterns
 #[sinex_test]
-async fn test_satellite_error_recovery(ctx: TestContext) -> Result<()> {
+async fn test_satellite_error_recovery(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite error recovery");
 
     let instance = SatelliteInstance::new(
@@ -277,7 +277,7 @@ async fn test_satellite_error_recovery(ctx: TestContext) -> Result<()> {
 
 /// Test satellite state transitions and mode changes
 #[sinex_test]
-async fn test_satellite_state_transitions(ctx: TestContext) -> Result<()> {
+async fn test_satellite_state_transitions(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite state transitions");
 
     let instance = SatelliteInstance::new(
@@ -334,7 +334,7 @@ async fn test_satellite_state_transitions(ctx: TestContext) -> Result<()> {
 
 /// Test satellite configuration loading and validation
 #[sinex_test]
-async fn test_satellite_configuration_lifecycle(ctx: TestContext) -> Result<()> {
+async fn test_satellite_configuration_lifecycle(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite configuration lifecycle");
 
     // Test configuration creation and validation
@@ -378,7 +378,7 @@ async fn test_satellite_configuration_lifecycle(ctx: TestContext) -> Result<()> 
 
 /// Test satellite shutdown sequence and cleanup
 #[sinex_test]
-async fn test_satellite_graceful_shutdown(ctx: TestContext) -> Result<()> {
+async fn test_satellite_graceful_shutdown(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite graceful shutdown");
 
     let instance = SatelliteInstance::new(
@@ -470,7 +470,7 @@ async fn test_satellite_graceful_shutdown(ctx: TestContext) -> Result<()> {
 
 /// Test satellite lifecycle under concurrent operations
 #[sinex_test]
-async fn test_satellite_concurrent_lifecycle(ctx: TestContext) -> Result<()> {
+async fn test_satellite_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
     info!("Testing satellite lifecycle under concurrency");
 
     // Start multiple satellites concurrently to test coordination

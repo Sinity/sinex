@@ -11,8 +11,8 @@
 //! - Error handling and resilience patterns function correctly
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
 use serde_json::json;
+use sinex_test_utils::TestResult;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{DbPoolExt, EventSource};
 use sinex_satellite_sdk::{Checkpoint, CheckpointManager};
@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use tokio::time::sleep;
 
 /// Test data setup for automation integration tests
-async fn setup_automation_test_data(ctx: &TestContext) -> Result<()> {
+async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     tracing::debug!("Setting up test data for automation integration");
 
     // Create events that various automata should process
@@ -108,7 +108,7 @@ async fn setup_automation_test_data(ctx: &TestContext) -> Result<()> {
 
 /// Test basic automaton lifecycle - startup, processing, shutdown
 #[sinex_test]
-async fn test_automaton_lifecycle_basic(ctx: TestContext) -> Result<()> {
+async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing basic automaton lifecycle");
 
     // Setup test data
@@ -154,7 +154,7 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> Result<()> {
 
 /// Test multiple automata coordination and conflict avoidance
 #[sinex_test]
-async fn test_multiple_automata_coordination(ctx: TestContext) -> Result<()> {
+async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing multiple automata coordination");
 
     // Setup diverse test events
@@ -223,7 +223,7 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> Result<()> {
 
 /// Test automaton recovery from checkpoint after simulated restart
 #[sinex_test]
-async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> Result<()> {
+async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton checkpoint recovery");
 
     setup_automation_test_data(&ctx).await?;
@@ -304,7 +304,7 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> Result<()> {
 
 /// Test automaton event filtering and processing logic
 #[sinex_test]
-async fn test_automaton_event_filtering(ctx: TestContext) -> Result<()> {
+async fn test_automaton_event_filtering(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton event filtering and processing logic");
 
     // Create mixed event types - some relevant, some irrelevant
@@ -389,7 +389,7 @@ async fn test_automaton_event_filtering(ctx: TestContext) -> Result<()> {
 
 /// Test automaton performance under load
 #[sinex_test]
-async fn test_automaton_performance_under_load(ctx: TestContext) -> Result<()> {
+async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton performance under load");
 
     let automaton_name = "performance-test-automaton";
@@ -481,7 +481,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> Result<()> {
 
 /// Test automaton error handling and resilience patterns
 #[sinex_test]
-async fn test_automaton_error_handling(ctx: TestContext) -> Result<()> {
+async fn test_automaton_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton error handling and resilience");
 
     setup_automation_test_data(&ctx).await?;

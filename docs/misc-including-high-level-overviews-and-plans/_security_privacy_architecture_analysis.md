@@ -22,7 +22,7 @@ The system implements multiple security layers with varying degrees of completen
 
 #### Application Layer Security (IMPLEMENTED)
 
-**Input Validation Framework** (`sinex-db/src/security.rs`):
+**Input Validation Framework** (`crate/lib/sinex-core/src/db/security.rs`):
 ```rust
 pub struct SecurityValidator;
 

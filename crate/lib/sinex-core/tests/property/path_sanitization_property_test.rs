@@ -4,7 +4,7 @@ use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::validation::{validate_path, ValidationError};
 use sinex_core::{Event, Id, Ulid};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, TestResult};
 use std::path::Path;
 
 /// Property tests for path sanitization and validation functions
@@ -89,8 +89,8 @@ fn arb_edge_case_path() -> impl Strategy<Value = String> {
     ]
 }
 
-#[sinex_test]
-fn test_validate_path_neutralizes_traversal() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_validate_path_neutralizes_traversal() -> TestResult {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(1000))]
 
@@ -126,8 +126,8 @@ fn test_validate_path_neutralizes_traversal() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_validate_path_preserves_legitimate_paths() -> TestResult {
     proptest! {
         fn property_validate_path_preserves_legitimate_paths(
             legitimate_path in arb_file_path()
@@ -164,8 +164,8 @@ fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<(
     Ok(())
 }
 
-#[sinex_test]
-fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_event_sanitization_is_idempotent() -> TestResult {
     proptest! {
         fn property_event_sanitization_is_idempotent(
             path in prop_oneof![arb_file_path(), arb_malicious_path(), arb_edge_case_path()]
@@ -194,8 +194,8 @@ fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn test_path_sanitization_removes_dangerous_sequences() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_path_sanitization_removes_dangerous_sequences() -> TestResult {
     proptest! {
         fn property_path_sanitization_removes_dangerous_sequences(
             malicious_path in arb_malicious_path()
@@ -237,8 +237,8 @@ fn test_path_sanitization_removes_dangerous_sequences() -> color_eyre::eyre::Res
     Ok(())
 }
 
-#[sinex_test]
-fn test_path_validation_handles_unicode_safely() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_path_validation_handles_unicode_safely() -> TestResult {
     proptest! {
         fn property_path_validation_handles_unicode_safely(
             unicode_path in "[\\u{0}-\\u{FFFF}]{1,50}"
@@ -266,8 +266,8 @@ fn test_path_validation_handles_unicode_safely() -> color_eyre::eyre::Result<()>
     Ok(())
 }
 
-#[sinex_test]
-fn test_safe_content_preservation_in_events() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_safe_content_preservation_in_events() -> TestResult {
     proptest! {
         fn property_safe_content_preservation_in_events(
             safe_string in "[a-zA-Z0-9_. /-]{1,100}"
@@ -299,8 +299,8 @@ fn test_safe_content_preservation_in_events() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-fn test_path_length_limits_enforced() -> color_eyre::eyre::Result<()> {
+#[sinex_test(proptest)]
+fn test_path_length_limits_enforced() -> TestResult {
     proptest! {
         fn property_path_length_limits_enforced(
             path_length in 1usize..10000usize
@@ -381,7 +381,7 @@ mod unit_tests {
     use proptest::strategy::ValueTree;
 
     #[sinex_test]
-    fn test_path_escape_detection() -> color_eyre::eyre::Result<()> {
+    fn test_path_escape_detection() -> TestResult {
         // Test the helper function itself
         assert!(path_escapes_root(&camino::Utf8Path::new(
             "../../etc/passwd"
@@ -399,7 +399,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_path_generators() -> color_eyre::eyre::Result<()> {
+    fn test_path_generators() -> TestResult {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test malicious path generator

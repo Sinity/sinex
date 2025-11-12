@@ -1,14 +1,13 @@
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 #[sinex_test]
-fn exo_dlq_list_command_reports_entries() -> TestResult<()> {
-    let mut cmd = Command::new("python3");
+fn exo_dlq_list_command_reports_entries() -> color_eyre::Result<()> {
+    let mut cmd = std::process::Command::new("python3");
     cmd.current_dir(repo_root())
         .arg("cli/exo.py")
         .arg("dlq")
@@ -28,8 +27,8 @@ fn exo_dlq_list_command_reports_entries() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn exo_confirmations_tail_command_streams_events() -> TestResult<()> {
-    let mut cmd = Command::new("python3");
+fn exo_confirmations_tail_command_streams_events() -> color_eyre::Result<()> {
+    let mut cmd = std::process::Command::new("python3");
     cmd.current_dir(repo_root())
         .arg("cli/exo.py")
         .arg("confirmations")
@@ -49,8 +48,8 @@ fn exo_confirmations_tail_command_streams_events() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn exo_dlq_metrics_command_reports_stats() -> TestResult<()> {
-    let mut cmd = Command::new("python3");
+fn exo_dlq_metrics_command_reports_stats() -> color_eyre::Result<()> {
+    let mut cmd = std::process::Command::new("python3");
     cmd.current_dir(repo_root())
         .arg("cli/exo.py")
         .arg("dlq")

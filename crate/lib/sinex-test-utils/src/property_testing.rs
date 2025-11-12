@@ -5,6 +5,7 @@
 
 use crate::prelude::*;
 use crate::Result;
+use crate::TestResult;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
@@ -216,7 +217,7 @@ impl<'ctx> PropertyTester<'ctx> {
         strategy: S,
         test_cases: u32,
         property: F,
-    ) -> Result<()>
+    ) -> TestResult<()>
     where
         S: Strategy<Value = T>,
         F: Fn(&TestContext, T) -> Fut,
@@ -238,7 +239,7 @@ impl<'ctx> PropertyTester<'ctx> {
     }
 
     /// Test event creation property
-    pub async fn test_event_creation_property(&mut self, test_cases: u32) -> Result<()> {
+    pub async fn test_event_creation_property(&mut self, test_cases: u32) -> TestResult<()> {
         for case_num in 0..test_cases {
             let tree = SinexStrategies::any_event()
                 .new_tree(&mut self.runner)
@@ -266,7 +267,7 @@ impl<'ctx> PropertyTester<'ctx> {
     }
 
     /// Test event querying property
-    pub async fn test_event_querying_property(&mut self, test_cases: u32) -> Result<()> {
+    pub async fn test_event_querying_property(&mut self, test_cases: u32) -> TestResult<()> {
         for case_num in 0..test_cases {
             let tree = SinexStrategies::any_event()
                 .new_tree(&mut self.runner)
@@ -321,7 +322,7 @@ impl<'ctx> PropertyTester<'ctx> {
     }
 
     /// Test malicious input handling
-    pub async fn test_malicious_input_rejection(&mut self, test_cases: u32) -> Result<()> {
+    pub async fn test_malicious_input_rejection(&mut self, test_cases: u32) -> TestResult<()> {
         for _case_num in 0..test_cases {
             let tree = SinexStrategies::malicious_payload()
                 .new_tree(&mut self.runner)
@@ -409,7 +410,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_source_strategy(ctx: TestContext) -> Result<()> {
+    async fn test_event_source_strategy(ctx: TestContext) -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that event source strategy produces valid sources
@@ -436,7 +437,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_type_strategy(ctx: TestContext) -> Result<()> {
+    async fn test_event_type_strategy(ctx: TestContext) -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that event type strategy produces valid types
@@ -460,7 +461,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_file_path_strategy(_ctx: TestContext) -> Result<()> {
+    async fn test_file_path_strategy() -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that file path strategy produces valid paths
@@ -485,7 +486,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_json_payload_strategy(ctx: TestContext) -> Result<()> {
+    async fn test_json_payload_strategy(ctx: TestContext) -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that JSON payload strategy produces valid JSON
@@ -532,7 +533,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_filesystem_event_strategy(ctx: TestContext) -> Result<()> {
+    async fn test_filesystem_event_strategy(ctx: TestContext) -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test filesystem event generation
@@ -568,7 +569,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_property_tester_basic(ctx: TestContext) -> Result<()> {
+    async fn test_property_tester_basic(ctx: TestContext) -> TestResult<()> {
         let mut tester = ctx.property_tester();
 
         // Test basic property using a regular async function
@@ -579,7 +580,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_creation_property(ctx: TestContext) -> Result<()> {
+    async fn test_event_creation_property(ctx: TestContext) -> TestResult<()> {
         let mut tester = ctx.property_tester();
 
         // Test that various event combinations can be created
@@ -589,7 +590,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_querying_property(ctx: TestContext) -> Result<()> {
+    async fn test_event_querying_property(ctx: TestContext) -> TestResult<()> {
         let mut tester = ctx.property_tester();
 
         // Test that inserted events can be queried
@@ -599,7 +600,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_malicious_input_rejection(ctx: TestContext) -> Result<()> {
+    async fn test_malicious_input_rejection(ctx: TestContext) -> TestResult<()> {
         let mut tester = ctx.property_tester();
 
         // Test that malicious inputs are handled safely
@@ -609,7 +610,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
+    async fn test_complex_property_with_context(ctx: TestContext) -> TestResult<()> {
         let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Complex property: events with same source should be grouped correctly
@@ -644,7 +645,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_property_tester_error_handling(ctx: TestContext) -> Result<()> {
+    async fn test_property_tester_error_handling(ctx: TestContext) -> TestResult<()> {
         // Test that property testing infrastructure works
         // This is a simplified test that doesn't use complex async closures
         let mut tester = ctx.property_tester();
@@ -704,7 +705,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_property_based_edge_cases(ctx: TestContext) -> Result<()> {
+    async fn test_property_based_edge_cases(ctx: TestContext) -> TestResult<()> {
         let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies

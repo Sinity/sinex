@@ -1,5 +1,7 @@
 # Experimental Research Analysis: Cutting-Edge Features and Research Directions in Sinex
 
+> **Historical note:** Archived for context. References to sensd/gRPC/transactional outbox reflect pre–JetStream Phase 5 plans; the live architecture is JetStream-only (see `docs/way.md`).
+
 *Generated: 2025-01-23*
 *Analysis Focus: Advanced, experimental, and research-oriented aspects of the Sinex project*
 *Warning: Contains bleeding-edge concepts, speculative capabilities, and theoretical frameworks*

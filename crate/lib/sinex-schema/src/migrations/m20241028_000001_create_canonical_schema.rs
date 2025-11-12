@@ -5,7 +5,11 @@
 //! and triggers in the correct dependency order.
 
 use crate::schema::*;
+use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;
+use tracing::warn;
+
+const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb"];
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -14,49 +18,12 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     /// Applies the full canonical Sinex schema to the database.
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // TimescaleDB is required. We install the server's available version to avoid version drift.
+        ensure_required_extensions(manager.get_connection()).await?;
+
         // --- Phase 1: Setup Schemas and Helper Functions ---
         // These are required before any tables can be created.
-        // Core extensions and schemas (install server-available version of TimescaleDB)
         manager.get_connection().execute_unprepared(
             r#"
-            DO $$
-            BEGIN
-              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'ulid') THEN
-                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "ulid"';
-              ELSIF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ulid') THEN
-                RAISE EXCEPTION 'ULID extension not available on server';
-              END IF;
-            END$$;
-
-            DO $$
-            BEGIN
-              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema') THEN
-                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "pg_jsonschema"';
-              ELSE
-                RAISE NOTICE 'pg_jsonschema extension not available on server; skipping JSON schema validation hooks';
-              END IF;
-            END$$;
-
-            DO $$
-            BEGIN
-              IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
-                EXECUTE 'CREATE EXTENSION IF NOT EXISTS "vector"';
-              ELSE
-                RAISE NOTICE 'pgvector extension not available on server; skipping vector similarity support';
-              END IF;
-            END$$;
-
-            DO $$
-            DECLARE v text;
-            BEGIN
-              SELECT default_version INTO v FROM pg_available_extensions WHERE name = 'timescaledb';
-              IF v IS NULL THEN
-                RAISE EXCEPTION 'TimescaleDB extension not available on server';
-              END IF;
-              EXECUTE format('CREATE EXTENSION IF NOT EXISTS timescaledb WITH VERSION %L CASCADE', v);
-            END$$;
-
             CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA IF NOT EXISTS raw;
             CREATE SCHEMA IF NOT EXISTS audit;
@@ -403,9 +370,6 @@ impl MigrationTrait for Migration {
             .create_table(SatelliteSignals::create_table_statement())
             .await?;
         manager
-            .create_table(SensorJobs::create_table_statement())
-            .await?;
-        manager
             .create_table(ProcessorManifests::create_table_statement())
             .await?;
         manager
@@ -439,9 +403,6 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .create_table(ServiceLeadership::create_table_statement())
-            .await?;
-        manager
-            .create_table(SensorStates::create_table_statement())
             .await?;
         manager
             .create_table(TransactionalOutbox::create_table_statement())
@@ -486,14 +447,6 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(&EventAnnotations::create_updated_at_trigger_sql())
-            .await?;
-        manager
-            .get_connection()
-            .execute_unprepared(&SensorJobs::create_updated_at_trigger_sql())
-            .await?;
-        manager
-            .get_connection()
-            .execute_unprepared(&SensorStates::create_updated_at_trigger_sql())
             .await?;
         manager
             .get_connection()
@@ -573,12 +526,6 @@ impl MigrationTrait for Migration {
                 .execute_unprepared(&index_sql)
                 .await?;
         }
-        for index in SensorJobs::create_indexes() {
-            manager.create_index(index).await?;
-        }
-        for index in SensorStates::create_indexes() {
-            manager.create_index(index).await?;
-        }
         for index in TransactionalOutbox::create_indexes() {
             manager.create_index(index).await?;
         }
@@ -617,4 +564,34 @@ impl MigrationTrait for Migration {
             .await?;
         Ok(())
     }
+}
+
+async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Result<(), DbErr> {
+    for extension in REQUIRED_EXTENSIONS {
+        let check_sql = format!(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{ext}') AS available",
+            ext = extension.replace('\'', "''"),
+        );
+        let available = conn
+            .query_one(Statement::from_string(DatabaseBackend::Postgres, check_sql))
+            .await?
+            .and_then(|row| row.try_get_by_index::<bool>(0).ok())
+            .unwrap_or(false);
+
+        if !available {
+            warn!(
+                extension = %extension,
+                "Skipping unavailable PostgreSQL extension; install it manually if needed"
+            );
+            continue;
+        }
+
+        let statement = format!(
+            r#"CREATE EXTENSION IF NOT EXISTS "{ext}";"#,
+            ext = extension
+        );
+        conn.execute_unprepared(&statement).await?;
+    }
+
+    Ok(())
 }

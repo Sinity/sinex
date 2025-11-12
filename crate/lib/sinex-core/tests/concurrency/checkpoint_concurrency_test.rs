@@ -6,7 +6,7 @@
 //! - Optimistic locking behavior
 //! - Checkpoint versioning under contention
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::db::queries::checkpoints::CheckpointQueries;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -630,7 +630,7 @@ fn create_test_checkpoint(
     }
 }
 
-async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> Result<(), Error> {
+async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> TestResult<()> {
     sqlx::query!(
         r#"
         INSERT INTO core.processor_checkpoints (
@@ -660,7 +660,7 @@ async fn get_checkpoint(
     processor_name: &str,
     consumer_group: &str,
     consumer_name: &str,
-) -> Result<TestCheckpoint, Error> {
+) -> TestResult<TestCheckpoint> {
     let row = sqlx::query!(
         r#"
         SELECT 
@@ -702,7 +702,7 @@ async fn update_checkpoint_atomic(
     consumer_name: &str,
     last_processed_id: Option<String>,
     increment: i64,
-) -> Result<bool, Error> {
+) -> TestResult<bool> {
     let result = sqlx::query!(
         r#"
         UPDATE core.processor_checkpoints

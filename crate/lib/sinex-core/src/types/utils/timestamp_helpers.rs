@@ -27,20 +27,6 @@ pub fn timestamp_with_nanos_to_datetime(timestamp_secs: i64, nanos: u32) -> Resu
     })
 }
 
-/// Convert Unix timestamp in seconds to DateTime<Utc> (legacy fallback version)
-///
-/// Returns current time if conversion fails. Use `timestamp_to_datetime` for proper error handling.
-#[deprecated(note = "Use timestamp_to_datetime for proper error handling")]
-pub fn timestamp_to_datetime_fallback(timestamp_secs: i64) -> DateTime<Utc> {
-    match timestamp_to_datetime(timestamp_secs) {
-        Ok(dt) => dt,
-        Err(err) => {
-            tracing::warn!("Failed to convert timestamp {}: {}", timestamp_secs, err);
-            Utc::now()
-        }
-    }
-}
-
 /// Convert Unix timestamp in milliseconds to DateTime<Utc>
 ///
 /// Returns None if conversion fails
@@ -82,24 +68,6 @@ pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<DateTime<Utc>> {
             .with_context("nanos", nanos)
             .with_context("timestamp_ns", timestamp_ns)
     })
-}
-
-/// Convert Unix timestamp in nanoseconds to DateTime<Utc> (legacy fallback version)
-///
-/// Returns current time if conversion fails. Use `timestamp_nanos_to_datetime` for proper error handling.
-#[deprecated(note = "Use timestamp_nanos_to_datetime for proper error handling")]
-pub fn timestamp_nanos_to_datetime_fallback(timestamp_ns: i64) -> DateTime<Utc> {
-    match timestamp_nanos_to_datetime(timestamp_ns) {
-        Ok(dt) => dt,
-        Err(err) => {
-            tracing::warn!(
-                "Failed to convert nanosecond timestamp {}: {}",
-                timestamp_ns,
-                err
-            );
-            Utc::now()
-        }
-    }
 }
 
 /// Try to parse a timestamp from various common formats

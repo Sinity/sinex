@@ -20,7 +20,7 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::db::models::EventFactory;
 use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
 use sinex_test_utils::prelude::*;

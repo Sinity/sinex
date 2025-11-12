@@ -9,7 +9,7 @@
 // - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
 // - **System Resource Chaos**: Memory exhaustion, disk full, network failures
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use redis::cmd;
 use sinex_test_utils::prelude::*;
 

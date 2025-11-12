@@ -3,30 +3,51 @@
 
 set -euo pipefail
 
-# Function to detect which crate we're in based on current directory or recent changes
-detect_active_crate() {
-    # First, check if we're inside a crate directory
-    current_dir=$(pwd)
-    if [[ "$current_dir" =~ crate/([^/]+) ]]; then
-        echo "${BASH_REMATCH[1]}"
-        return
-    fi
-    
-    # Otherwise, check recent git changes
-    recent_changes=$(git diff --name-only HEAD 2>/dev/null || git diff --name-only --cached 2>/dev/null || echo "")
-    if [ -n "$recent_changes" ]; then
-        crate=$(echo "$recent_changes" | grep '^crate/' | head -1 | cut -d'/' -f2)
-        if [ -n "$crate" ]; then
-            echo "$crate"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+package_from_path() {
+    local path="${1#./}"
+
+    if [[ "$path" == crate/* ]]; then
+        IFS='/' read -r -a parts <<< "$path"
+        if [ "${#parts[@]}" -ge 3 ]; then
+            echo "${parts[2]}"
             return
         fi
     fi
-    
-    # No specific crate detected
+
+    case "$path" in
+        tests/e2e*|tests/e2e/*)
+            echo "sinex-e2e-tests"
+            ;;
+    esac
+}
+
+detect_active_crate() {
+    local rel_path recent_changes pkg
+
+    rel_path="${PWD#"$PROJECT_ROOT"/}"
+    pkg="$(package_from_path "$rel_path")"
+    if [ -n "$pkg" ]; then
+        echo "$pkg"
+        return
+    fi
+
+    recent_changes="$(git diff --name-only HEAD 2>/dev/null || git diff --name-only --cached 2>/dev/null || echo "")"
+    if [ -n "$recent_changes" ]; then
+        while IFS= read -r file; do
+            pkg="$(package_from_path "$file")"
+            if [ -n "$pkg" ]; then
+                echo "$pkg"
+                return
+            fi
+        done <<< "$recent_changes"
+    fi
+
     echo ""
 }
 
-crate=$(detect_active_crate)
+crate="$(detect_active_crate)"
 
 if [ -n "$crate" ]; then
     echo "🎯 Watching crate: $crate"

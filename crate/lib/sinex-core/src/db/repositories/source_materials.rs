@@ -510,14 +510,14 @@ impl<'a> SourceMaterialRepository<'a> {
 
     /// Mark a material as archived via metadata flag
     pub async fn archive_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
             SET metadata = metadata || jsonb_build_object('archived', true, 'archived_at', NOW())
             WHERE id::uuid = $1
             "#,
+            ulid_to_uuid(*id.as_ulid())
         )
-        .bind(ulid_to_uuid(*id.as_ulid()))
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "archive material"))?;
@@ -683,7 +683,7 @@ impl<'a> SourceMaterialRepository<'a> {
             JsonValue::Object(map)
         };
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
             SET optional_blob_id = ($2::uuid)::ulid,
@@ -692,11 +692,11 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time = COALESCE(end_time, NOW())
             WHERE id::uuid = $1
             "#,
+            ulid_to_uuid(*id.as_ulid()),
+            blob_id.map(|bid| ulid_to_uuid(*bid.as_ulid())),
+            metadata_update,
+            status::COMPLETED
         )
-        .bind(ulid_to_uuid(*id.as_ulid()))
-        .bind(blob_id.map(|id| ulid_to_uuid(*id.as_ulid())))
-        .bind(metadata_update)
-        .bind(status::COMPLETED)
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "finalize in-flight material"))?;

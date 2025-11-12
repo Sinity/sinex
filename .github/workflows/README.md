@@ -29,25 +29,12 @@ This directory contains CI/CD workflows for the Sinex project.
 - Updates schema registry in database
 - Maintains schema version history
 
-### `abstractions.yml` - Code Quality Checks
-- Runs additional linting and analysis
-- Checks for code abstractions and patterns
-- Enforces architectural guidelines
-
 ## Local Testing
 
-Run workflows locally using `act`:
-
-```bash
-# Install act
-nix develop  # Includes act
-
-# Run CI workflow
-act -W .github/workflows/ci.yml
-
-# Run specific job
-act -j build_and_test_linux
-```
+Workflows are designed to run inside the `nix develop` environment. If you want to execute
+them locally with [`act`](https://github.com/nektos/act), install `act` separately and point
+it at the desired workflow (for example: `act -W .github/workflows/ci.yml`). There is no
+first-class wrapper in the dev shell today.
 
 ## Nix Integration
 

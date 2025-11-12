@@ -7,8 +7,6 @@ async fn processor_initialization(ctx: TestContext) -> color_eyre::eyre::Result<
         watch_paths: vec!["/tmp/test".to_string()],
         max_depth: Some(5),
         follow_symlinks: false,
-        batch_size: 50,
-        processing_interval_ms: 500,
         max_capture_bytes: 1024 * 1024,
     };
 
@@ -18,7 +16,6 @@ async fn processor_initialization(ctx: TestContext) -> color_eyre::eyre::Result<
     assert_eq!(configured.watch_paths, config.watch_paths);
     assert_eq!(configured.max_depth, config.max_depth);
     assert_eq!(configured.follow_symlinks, config.follow_symlinks);
-    assert_eq!(configured.batch_size, config.batch_size);
 
     Ok(())
 }
@@ -29,20 +26,12 @@ async fn config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         watch_paths: vec!["/tmp/test".to_string()],
         max_depth: Some(10),
         follow_symlinks: false,
-        batch_size: 100,
-        processing_interval_ms: 1000,
         max_capture_bytes: 1024 * 1024,
     };
     assert!(valid_config.validate_config().is_ok());
 
     let invalid_config = FilesystemConfig {
         watch_paths: vec![],
-        ..valid_config.clone()
-    };
-    assert!(invalid_config.validate_config().is_err());
-
-    let invalid_config = FilesystemConfig {
-        batch_size: 2000,
         ..valid_config.clone()
     };
     assert!(invalid_config.validate_config().is_err());

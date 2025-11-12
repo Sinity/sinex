@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use color_eyre::eyre::Result;
+use sinex_test_utils::TestResult;
 use sinex_core::db::models::{EventFactory, RawEvent};
 use sinex_satellite_sdk::{EventSourceConfig, StatefulStreamProcessor};
 use sinex_test_utils::prelude::*;
@@ -66,7 +66,7 @@ impl TestCommandSatellite {
             "ls -la".to_string(),
             "grep -r pattern".to_string(),
             "find . -name '*.rs'".to_string(),
-            "cargo test".to_string(),
+            "cargo nextest run".to_string(),
             "git status".to_string(),
         ];
 
@@ -270,7 +270,13 @@ async fn test_command_satellite_generation(ctx: TestContext) -> color_eyre::eyre
     assert_eq!(generated_events.len(), 8);
     
     // Verify command cycling
-    let expected_commands = ["ls -la", "grep -r pattern", "find . -name '*.rs'", "cargo test", "git status"];
+    let expected_commands = [
+        "ls -la",
+        "grep -r pattern",
+        "find . -name '*.rs'",
+        "cargo nextest run",
+        "git status",
+    ];
     
     for (i, event) in generated_events.iter().enumerate() {
         assert_eq!(event.source, "test-cmd");

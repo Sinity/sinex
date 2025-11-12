@@ -42,26 +42,25 @@ let
   defaultIdentities = [ "/etc/ssh/ssh_host_ed25519_key" ]
     ++ optional (builtins.pathExists "/home/${defaultOwner}/.ssh/id_ed25519") "/home/${defaultOwner}/.ssh/id_ed25519";
 
-in {
+in
+{
   options.sinex.secrets = {
     paths = mkOption {
       type = types.attrsOf types.path;
       description = "Resolved secret paths.";
-      readOnly = true;
       default = {};
     };
     exportScript = mkOption {
       type = types.str;
       description = "Shell snippet exporting decrypted secrets.";
-      readOnly = true;
       default = "";
     };
   };
 
-  config = {
+  config = mkIf (cfg.secrets.enableAgenix or false) {
     age.identityPaths = mkDefault defaultIdentities;
     age.secrets = specs;
-    sinex.secrets.paths = mapAttrs (_: spec: spec.path) specs;
-    sinex.secrets.exportScript = exportScript;
+    sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
+    sinex.secrets.exportScript = mkDefault exportScript;
   };
 }

@@ -93,7 +93,7 @@ fn deserialize_json_with_validation_enforces_schema() -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-fn unicode_normalization_rejects_control_sequences() -> Result<()> {
+fn unicode_normalization_rejects_control_sequences() -> TestResult<()> {
     assert_eq!(normalize_unicode("hello")?, "hello");
     assert!(normalize_unicode("hello\u{200B}world").is_err());
     assert!(normalize_unicode("file\u{202E}txt.exe").is_err());
@@ -101,7 +101,7 @@ fn unicode_normalization_rejects_control_sequences() -> Result<()> {
 }
 
 #[sinex_test]
-fn shell_metacharacter_detection_identifies_risky_strings() -> Result<()> {
+fn shell_metacharacter_detection_identifies_risky_strings() -> TestResult<()> {
     assert!(!contains_shell_metacharacters("normal command"));
     assert!(!contains_shell_metacharacters("rm -rf /"));
     assert!(contains_shell_metacharacters("echo $(whoami)"));

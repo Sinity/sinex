@@ -29,7 +29,11 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::{fs, sync::Mutex};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncSeekExt},
+    sync::Mutex,
+};
 use tracing::{debug, info, instrument, warn};
 use validator::ValidationError;
 
@@ -123,7 +127,7 @@ pub struct TerminalState {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct HistoryState {
-    offset_bytes: usize,
+    offset_bytes: u64,
     line_number: u64,
 }
 
@@ -136,11 +140,13 @@ struct HistoryWatcherContext {
     max_capture_bytes: u64,
     polling_interval: Duration,
     state_path: Option<PathBuf>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    processed_commands: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl HistoryWatcherContext {
     async fn monitor(self) {
-        let mut offset_bytes: usize = 0;
+        let mut offset_bytes: u64 = 0;
         let mut line_number: u64 = 0;
 
         if let Some(state) = self.load_state().await {
@@ -155,49 +161,8 @@ impl HistoryWatcherContext {
         }
 
         loop {
-            match fs::read_to_string(&self.path).await {
-                Ok(contents) => {
-                    if contents.len() < offset_bytes {
-                        offset_bytes = contents.len();
-                        line_number = 0;
-                        self.persist_state(offset_bytes, line_number).await;
-                        tokio::time::sleep(self.polling_interval).await;
-                        continue;
-                    }
-
-                    if contents.len() > offset_bytes {
-                        let new_segment = &contents[offset_bytes..];
-                        let mut consumed_bytes = 0usize;
-
-                        for line in new_segment.split_inclusive('\n') {
-                            // If the line is not newline terminated, keep it for next iteration
-                            if !line.ends_with('\n') && new_segment.ends_with(line) {
-                                break;
-                            }
-
-                            let trimmed = line.trim_end_matches('\n');
-                            consumed_bytes += line.len();
-
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-
-                            line_number += 1;
-
-                            if let Err(e) = process_command(&self, trimmed, line_number).await {
-                                warn!("Failed to process history entry from {}: {}", self.path, e);
-                            }
-                        }
-
-                        offset_bytes += consumed_bytes;
-                        self.persist_state(offset_bytes, line_number).await;
-                    }
-                }
-                Err(e) => {
-                    warn!("History watcher unable to read {}: {}", self.path, e);
-                }
-            }
-
+            self.poll_history_once(&mut offset_bytes, &mut line_number)
+                .await;
             tokio::time::sleep(self.polling_interval).await;
         }
     }
@@ -220,7 +185,7 @@ impl HistoryWatcherContext {
         }
     }
 
-    async fn persist_state(&self, offset_bytes: usize, line_number: u64) {
+    async fn persist_state(&self, offset_bytes: u64, line_number: u64) {
         let path = match &self.state_path {
             Some(path) => path,
             None => return,
@@ -238,6 +203,81 @@ impl HistoryWatcherContext {
                 }
             }
             Err(e) => warn!("Failed to serialize history watcher state: {}", e),
+        }
+    }
+
+    async fn read_new_segment(&self, offset: u64) -> std::io::Result<String> {
+        use std::io::SeekFrom;
+
+        let mut file = tokio::fs::File::open(&self.path).await?;
+        file.seek(SeekFrom::Start(offset)).await?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).await?;
+
+        Ok(String::from_utf8_lossy(&buffer).to_string())
+    }
+
+    async fn poll_history_once(&self, offset_bytes: &mut u64, line_number: &mut u64) {
+        match fs::metadata(&self.path).await {
+            Ok(metadata) => {
+                let file_size = metadata.len();
+
+                if file_size < *offset_bytes {
+                    debug!(
+                        path = %self.path,
+                        previous_offset = *offset_bytes,
+                        new_size = file_size,
+                        "History file truncated; resetting offsets"
+                    );
+                    *offset_bytes = file_size;
+                    *line_number = 0;
+                    self.persist_state(*offset_bytes, *line_number).await;
+                    return;
+                }
+
+                if file_size == *offset_bytes {
+                    return;
+                }
+
+                match self.read_new_segment(*offset_bytes).await {
+                    Ok(new_segment) => {
+                        if new_segment.is_empty() {
+                            return;
+                        }
+
+                        let mut consumed_bytes: u64 = 0;
+
+                        for line in new_segment.split_inclusive('\n') {
+                            if !line.ends_with('\n') && new_segment.ends_with(line) {
+                                break;
+                            }
+
+                            let trimmed = line.trim_end_matches('\n');
+                            consumed_bytes += line.len() as u64;
+
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+
+                            *line_number += 1;
+
+                            if let Err(e) = process_command(self, trimmed, *line_number).await {
+                                warn!("Failed to process history entry from {}: {}", self.path, e);
+                            }
+                        }
+
+                        if consumed_bytes > 0 {
+                            *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
+                            self.persist_state(*offset_bytes, *line_number).await;
+                        }
+                    }
+                    Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
+                }
+            }
+            Err(e) => {
+                warn!("History watcher unable to stat {}: {}", self.path, e);
+            }
         }
     }
 }
@@ -306,7 +346,16 @@ async fn process_command(
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SatelliteError::General(eyre::eyre!("Failed to emit terminal event: {}", e)))
+        .map_err(|e| {
+            SatelliteError::General(eyre::eyre!("Failed to emit terminal event: {}", e))
+        })?;
+
+    #[cfg(test)]
+    if let Some(commands) = &ctx.processed_commands {
+        commands.lock().await.push(command.to_string());
+    }
+
+    Ok(())
 }
 
 /// Terminal processor that monitors history files.
@@ -436,6 +485,7 @@ impl TerminalProcessor {
                 max_capture_bytes: self.config.max_capture_bytes,
                 polling_interval: Duration::from_secs(self.config.polling_interval_secs),
                 state_path,
+                processed_commands: None,
             });
         }
 
@@ -645,10 +695,13 @@ mod tests {
     use sinex_test_utils::sinex_test;
     use sinex_test_utils::{prelude::*, TestRuntime, TestRuntimeBuilder};
     use std::sync::Arc;
-    use tokio::time::{timeout, Duration};
+    use tokio::{
+        io::AsyncWriteExt,
+        time::{timeout, Duration},
+    };
 
-    #[test]
-    fn terminal_config_validation_allows_valid_configuration() {
+    #[sinex_test]
+    fn terminal_config_validation_allows_valid_configuration() -> color_eyre::Result<()> {
         let config = TerminalConfig {
             history_sources: vec![HistorySourceConfig {
                 path: Utf8PathBuf::from("/tmp/.bash_history"),
@@ -659,10 +712,11 @@ mod tests {
         };
 
         assert!(config.validate_config().is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn terminal_config_validation_rejects_empty_sources() {
+    #[sinex_test]
+    fn terminal_config_validation_rejects_empty_sources() -> color_eyre::Result<()> {
         let config = TerminalConfig {
             history_sources: vec![],
             polling_interval_secs: 30,
@@ -670,6 +724,7 @@ mod tests {
         };
 
         assert!(config.validate_config().is_err());
+        Ok(())
     }
 
     #[sinex_test]
@@ -707,6 +762,8 @@ mod tests {
             max_capture_bytes: 1024,
             polling_interval: Duration::from_secs(1),
             state_path: None,
+            #[cfg(test)]
+            processed_commands: None,
         };
 
         let command = "echo 'hello world'";
@@ -749,6 +806,88 @@ mod tests {
             .and_then(|v| v.as_str())
             .expect("payload command present");
         assert_eq!(payload_command, command);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_watcher_tails_incrementally(ctx: TestContext) -> color_eyre::Result<()> {
+        let TestRuntime { runtime, nats, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-watcher-incremental")
+                .with_dry_run(false)
+                .build()
+                .await?;
+        let _ = nats.client_url();
+
+        let publisher = match runtime.transport() {
+            sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
+                publisher.clone()
+            }
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/tmp/history",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("history.txt");
+        tokio::fs::write(&history_path, "echo first\n").await?;
+        let state_path = temp_dir.path().join("history_state.json");
+
+        let history_utf8 =
+            Utf8PathBuf::from_path_buf(history_path.clone()).expect("history path utf8");
+
+        let mut watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            shell: "bash".to_string(),
+            path: history_utf8,
+            max_capture_bytes: 2048,
+            polling_interval: Duration::from_millis(50),
+            state_path: Some(state_path),
+            #[cfg(test)]
+            processed_commands: None,
+        };
+
+        #[cfg(test)]
+        let processed_commands = Arc::new(Mutex::new(Vec::new()));
+        #[cfg(test)]
+        {
+            watcher_ctx.processed_commands = Some(processed_commands.clone());
+        }
+
+        let mut offset_bytes = 0u64;
+        let mut line_number = 0u64;
+
+        watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .await;
+
+        let mut history_file: tokio::fs::File = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&history_path)
+            .await?;
+        history_file.write_all(b"echo second\n").await?;
+        history_file.write_all(b"echo third\n").await?;
+        history_file.flush().await?;
+
+        watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .await;
+
+        #[cfg(test)]
+        {
+            let commands = processed_commands.lock().await.clone();
+            assert_eq!(
+                commands,
+                vec!["echo first", "echo second", "echo third"],
+                "history watcher should append only new commands in order"
+            );
+        }
 
         Ok(())
     }

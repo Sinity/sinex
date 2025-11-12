@@ -5,6 +5,7 @@ with lib;
 let
   cfg = config.services.sinex;
   db = cfg.database;
+  allDatabases = unique ([ db.name ] ++ db.extraDatabases);
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && cfg.core.enable;
@@ -40,16 +41,19 @@ let
   totalServiceCount = coreServiceCount + satelliteServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
+  # Ensure reasonable minimum for dev/test workloads (500) even with no services
+  # Production with services will compute higher based on service count
+  minConnectionsForTests = 500;
   baselineConnections = totalServiceCount * perServiceConnections + 50;
-  computedMaxConnections = max (perServiceConnections + 10) baselineConnections;
+  computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
 
   postgresqlPkg = db.package;
-  postgresqlPackages =
-    if postgresqlPkg ? pkgs then postgresqlPkg.pkgs else pkgs.postgresql16Packages;
+  postgresqlPackages = pkgs.postgresql16Packages;
 
   extensionPackages = unique (
     optionals (postgresqlPackages ? timescaledb) [ postgresqlPackages.timescaledb ]
     ++ optionals (postgresqlPackages ? pgvector) [ postgresqlPackages.pgvector ]
+    ++ optionals (postgresqlPackages ? pg_jsonschema) [ postgresqlPackages.pg_jsonschema ]
     ++ optionals (postgresqlPackages ? pgx_ulid) [ postgresqlPackages.pgx_ulid ]
   );
 
@@ -78,20 +82,40 @@ let
     [ primaryUser ] ++ optionals (satelliteUser != {}) [ satelliteUser ];
 
   baseSettings = {
+    # Timeouts
     statement_timeout = mkDefault "60s";
     lock_timeout = mkDefault "30s";
     idle_in_transaction_session_timeout = mkDefault "300s";
 
-    shared_buffers = mkDefault "256MB";
-    effective_cache_size = mkDefault "1GB";
-    maintenance_work_mem = mkDefault "256MB";
-    checkpoint_completion_target = mkDefault "0.9";
+    # Memory settings - sized for modern systems (16GB+ RAM)
+    # Users can override via services.postgresql.settings for different hardware
+    shared_buffers = mkDefault "1GB";
+    effective_cache_size = mkDefault "8GB";
+    work_mem = mkDefault "32MB";
+    maintenance_work_mem = mkDefault "512MB";
 
+    # Parallelism - utilize multi-core CPUs
+    max_parallel_workers_per_gather = mkDefault 4;
+    max_parallel_workers = mkDefault 8;
+
+    # Checkpointing
+    checkpoint_completion_target = mkDefault "0.9";
+    checkpoint_timeout = mkDefault "15min";
+
+    # WAL settings
+    wal_buffers = mkDefault "16MB";
+    max_wal_size = mkDefault "2GB";
+    min_wal_size = mkDefault "1GB";
+
+    # Prepared transactions for distributed systems
     max_prepared_transactions = mkDefault 256;
+
+    # Logging
     log_statement = mkDefault "mod";
     log_duration = mkDefault true;
     log_min_duration_statement = mkDefault "1000ms";
 
+    # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
     shared_preload_libraries = mkDefault sharedPreloadLibraries;
     listen_addresses = mkDefault db.host;
@@ -113,12 +137,30 @@ in
       services.postgresql = {
         enable = true;
         package = mkForce postgresqlPkg;
-        ensureDatabases = mkDefault [ db.name ];
+        ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
         extensions = extensionPackages;
         settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
       };
+    })
+
+    (mkIf (db.enable && db.autoSetup) {
+      systemd.services.postgresql-setup.script = lib.mkAfter ''
+        ensure_extension() {
+          local dbName="$1"
+          local extName="$2"
+          echo "[sinex] ensuring extension ''${extName} for ''${dbName}"
+          psql -v ON_ERROR_STOP=1 -d "$dbName" -c "CREATE EXTENSION IF NOT EXISTS \"$extName\"" >/dev/null
+        }
+
+        for dbName in ${concatStringsSep " " (map escapeShellArg allDatabases)}; do
+          ensure_extension "$dbName" "timescaledb"
+          ensure_extension "$dbName" "pg_jsonschema"
+          ensure_extension "$dbName" "vector"
+          ensure_extension "$dbName" "ulid"
+        done
+      '';
     })
 
     (mkIf (cfg.enable && db.migration.enable) {

@@ -1,5 +1,7 @@
 # Sinex Test Infrastructure Analysis - Complete Report
 
+> **Historical context:** The artifacts in this directory capture the state of the test suite during the JetStream migration. References to gRPC ingestion or the transactional outbox are preserved for posterity; the active architecture is JetStream-only (`docs/way.md`).
+
 This directory contains a comprehensive analysis of the Sinex test suite, including detailed coverage assessment, test patterns, gaps identification, and improvement recommendations.
 
 ## Report Files
