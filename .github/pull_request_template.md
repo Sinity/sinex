@@ -15,35 +15,29 @@
 
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] All new and existing tests pass locally
-- [ ] I have run `just test-fast` to verify basic functionality
+- [ ] I have run `cargo nextest run --profile fast` to verify basic functionality
 
 ## Abstraction Compliance Checklist
 
 ### Database Operations
-- [ ] All database queries use QueryBuilder from sinex-db
-- [ ] No raw `sqlx::query!` or `sqlx::query_as!` calls
-- [ ] ULID fields are handled by QueryBuilder (no manual `.to_uuid()`)
+- [ ] Database access flows through `sinex-core` repositories/query helpers (no ad-hoc `PgPool` usage).
+- [ ] SQL uses `sqlx::query!`/`query_as!` (compile-time checked) or `sqlx::QueryBuilder` for dynamic clauses—never raw string concatenation.
+- [ ] ULIDs/UUIDs rely on the conversion helpers in `sinex-core::db` (no manual `.to_uuid()` / `.parse()` chains).
 
 ### Error Handling
-- [ ] All errors use CoreError from sinex-error
-- [ ] No `anyhow!` or `bail!` in production code
-- [ ] Errors include proper context via `.context()`
-- [ ] No `.unwrap()` or `.expect()` outside of tests
+- [ ] Workspace crates return typed errors (`sinex_core::CoreError` or component-specific enums) rather than `anyhow!` in production paths.
+- [ ] `.context()` (or equivalent) is used to enrich fallible operations.
+- [ ] No `.unwrap()` / `.expect()` outside tests and intentional crash points.
 
-### String Constants
-- [ ] Event types use constants from `sinex_events::constants::event_types`
-- [ ] Sources use constants from `sinex_events::constants::sources`
-- [ ] Service names use constants from `sinex_events::constants::services`
-- [ ] No hardcoded strings like `"process.heartbeat"` or `"core.events"`
-
-### Validation
-- [ ] Input validation uses ValidationChain from sinex-validation
-- [ ] No manual validation logic for common patterns
+### Validation & Constants
+- [ ] Inputs go through the shared validation / sanitization helpers (`sinex_core::validation`, path sanitizers, etc.) instead of bespoke logic.
+- [ ] Event/source/service identifiers reuse existing constants when available—avoid sprinkling string literals such as `"process.heartbeat"` throughout the codebase.
 
 ## Code Quality
 
 - [ ] I have run `cargo fmt` to format my code
 - [ ] I have run `cargo clippy` and addressed all warnings
+- [ ] If schema definitions changed, I ran `./scripts/schema-dev.sh generate` and committed the updated `schemas/` artifacts
 - [ ] I have added/updated documentation as needed
 - [ ] My code follows the project's style guidelines
 
