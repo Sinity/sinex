@@ -61,12 +61,6 @@ pub struct FilesystemConfig {
     /// Follow symbolic links during monitoring
     pub follow_symlinks: bool,
 
-    /// Legacy field retained for compatibility (unused in JetStream mode)
-    pub batch_size: usize,
-
-    /// Legacy field retained for compatibility (unused in JetStream mode)
-    pub processing_interval_ms: u64,
-
     /// Maximum number of bytes captured per event
     pub max_capture_bytes: u64,
 }
@@ -77,8 +71,6 @@ impl Default for FilesystemConfig {
             watch_paths: vec![],
             max_depth: Some(10),
             follow_symlinks: false,
-            batch_size: 100,
-            processing_interval_ms: 1000,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
@@ -94,14 +86,6 @@ impl FilesystemConfig {
         if let Some(depth) = self.max_depth {
             validate_max_depth(depth)
                 .map_err(|_| "Max depth must be reasonable (1-100)".to_string())?;
-        }
-
-        if !(1..=1000).contains(&self.batch_size) {
-            return Err("Batch size must be between 1 and 1000".to_string());
-        }
-
-        if !(100..=60_000).contains(&self.processing_interval_ms) {
-            return Err("Processing interval must be between 100ms and 60 seconds".to_string());
         }
 
         if !(1024..=512 * 1024 * 1024).contains(&self.max_capture_bytes) {
@@ -844,21 +828,23 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
-    #[test]
-    fn filesystem_config_validation_allows_basic_configuration() {
+    #[sinex_test]
+    fn filesystem_config_validation_allows_basic_configuration() -> color_eyre::Result<()> {
         let mut config = FilesystemConfig::default();
         config.watch_paths = vec!["/tmp".to_string()];
         assert!(config.validate_config().is_ok());
+        Ok(())
     }
 
-    #[test]
-    fn filesystem_config_validation_rejects_missing_paths() {
+    #[sinex_test]
+    fn filesystem_config_validation_rejects_missing_paths() -> color_eyre::Result<()> {
         let config = FilesystemConfig {
             watch_paths: vec![],
             ..FilesystemConfig::default()
         };
 
         assert!(config.validate_config().is_err());
+        Ok(())
     }
 
     #[sinex_test]

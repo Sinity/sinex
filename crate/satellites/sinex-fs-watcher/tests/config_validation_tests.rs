@@ -6,8 +6,6 @@ fn base_config() -> FilesystemConfig {
         watch_paths: vec!["/tmp/test".to_string()],
         max_depth: Some(10),
         follow_symlinks: false,
-        batch_size: 100,
-        processing_interval_ms: 1_000,
         max_capture_bytes: 8 * 1024 * 1024,
     }
 }
@@ -36,40 +34,6 @@ fn enforces_max_depth_bounds() -> color_eyre::eyre::Result<()> {
         ..base_config()
     };
     assert!(too_large.validate_config().is_err());
-
-    Ok(())
-}
-
-#[sinex_test]
-fn enforces_batch_size_bounds() -> color_eyre::eyre::Result<()> {
-    let too_small = FilesystemConfig {
-        batch_size: 0,
-        ..base_config()
-    };
-    assert!(too_small.validate_config().is_err());
-
-    let too_large = FilesystemConfig {
-        batch_size: 5_000,
-        ..base_config()
-    };
-    assert!(too_large.validate_config().is_err());
-
-    Ok(())
-}
-
-#[sinex_test]
-fn enforces_processing_interval_bounds() -> color_eyre::eyre::Result<()> {
-    let too_fast = FilesystemConfig {
-        processing_interval_ms: 50,
-        ..base_config()
-    };
-    assert!(too_fast.validate_config().is_err());
-
-    let too_slow = FilesystemConfig {
-        processing_interval_ms: 120_000,
-        ..base_config()
-    };
-    assert!(too_slow.validate_config().is_err());
 
     Ok(())
 }
