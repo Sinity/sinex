@@ -38,7 +38,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb:2.15.2-pg16
+        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -58,6 +58,7 @@ jobs:
       run: bash scripts/check_forbidden_patterns.sh
 
     - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |
@@ -119,7 +120,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb:2.15.2-pg16
+        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -139,6 +140,7 @@ jobs:
       run: bash scripts/check_forbidden_patterns.sh
 
     - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |

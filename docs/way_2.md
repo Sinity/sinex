@@ -9,8 +9,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Rust `derive(EventPayload)` definitions are the single source of truth. JSON files under `schemas/` exist as generated artifacts for GitOps distribution and downstream SDKs—never hand‑edit them.
 
 ### Tasks
-- [ ] Amend `schemas/README.md` with a “Source of Truth” section that states the rule above and explains how to regenerate artifacts.
-- [ ] Create a CI job (or extend schema-validation) that runs `schema-dev.sh generate` and fails when committed JSON is stale (treat like `cargo fmt`).
+- [x] Amend `schemas/README.md` with a “Source of Truth” section that states the rule above and explains how to regenerate artifacts.
+- [x] Create a CI job (or extend schema-validation) that runs `schema-dev.sh generate` and fails when committed JSON is stale (treat like `cargo fmt`).
 - [ ] Teach the merge bot / contributors to commit regenerated JSON (or let CI open an auto-PR) so the repo stays in sync.
 - [ ] Keep `scripts/check-schema-compatibility.sh`, `schema-validation.yml`, and `gitops_schema_sources` pointing at the generated bundle. Document the flow from Rust → JSON → Postgres → downstream consumers.
 - [ ] Document how non-Rust contributors propose schema changes (JSON PR as proposal, build fails until the matching Rust change lands).
@@ -130,10 +130,12 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 
 **Decision:** The repo must describe the current architecture (sinex-core owns DB, JetStream-only ingestion) and enforce that story across templates/docs.
 
-### Tasks
-- [ ] Purge remaining references to `crate/sinex-db` from README, docs, and helper scripts; point contributors to `crate/lib/sinex-core` and `sinex-schema`.
-- [ ] Update `README.md` project structure and “quick start” sections to reflect the current crate layout and the JetStream confirmation flow.
-- [ ] Rewrite `.github/pull_request_template.md` so the abstraction checklist matches available crates (QueryBuilder in sinex-core, preferred `sqlx::query!` usage, current error types) rather than referencing `sinex-db`, `sinex-error`, or `sinex_events`.
+### Completed
+- `README.md` now documents the actual crate layout (core/lib/satellites) and calls out sinex-core as the home of database code.
+- `.github/pull_request_template.md` references the current abstractions (sinex-core repositories, `sqlx::query!`, shared validators) instead of legacy crates.
+
+### Remaining Tasks
+- [ ] Purge remaining references to `crate/sinex-db` from docs/scripts and ensure everything points to `crate/lib/sinex-core` + `sinex-schema`.
 - [ ] Audit the repository for obsolete scaffolding (abstractions workflow, unused hooks, tracked-but-ignored artifacts) and remove them or clearly mark them as historical.
 
 **Exit criteria:** New contributors see a single, accurate description of the stack; PR reviewers no longer rely on stale checklists; stray legacy files are either deleted or clearly labelled.
