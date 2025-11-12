@@ -39,7 +39,7 @@ mod common {
 
 use crate::common::*;
 use serde_json::json;
-use sinex_core::{environment, Ulid};
+use sinex_core::{environment, types::Result as CoreResult, Ulid};
 use sinex_satellite_sdk::{
     confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
     event_processor::EventTransport,
@@ -332,7 +332,7 @@ impl AnalyticsAutomaton {
         &self,
         db_pool: &PgPool,
         end_time: DateTime<Utc>,
-    ) -> Result<Vec<Event<JsonValue>>, sinex_core::SinexError> {
+    ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time =
             end_time - ChronoDuration::seconds(self.config.analysis_window_seconds.max(60) as i64);
 
@@ -893,6 +893,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_core::types::Id;
+    use sinex_test_utils::sinex_test;
 
     fn test_event(event_type: &str, minutes_ago: i64) -> Event<JsonValue> {
         let provenance = default_provenance();
@@ -903,8 +904,8 @@ mod tests {
         event
     }
 
-    #[test]
-    fn frequency_analysis_finds_top_types() {
+    #[sinex_test]
+    fn frequency_analysis_finds_top_types() -> color_eyre::Result<()> {
         let automaton = AnalyticsAutomaton::new();
         let events = vec![
             test_event("fs.created", 5),
@@ -914,10 +915,11 @@ mod tests {
 
         let report = automaton.generate_frequency_analysis(&events).unwrap();
         assert_eq!(report.event_type.to_string(), "analytics.frequency");
+        Ok(())
     }
 
-    #[test]
-    fn pattern_detection_emits_transition_event() {
+    #[sinex_test]
+    fn pattern_detection_emits_transition_event() -> color_eyre::Result<()> {
         let mut automaton = AnalyticsAutomaton::new();
         automaton.config.min_events_for_pattern = 2;
         let events = vec![
@@ -933,11 +935,12 @@ mod tests {
             patterns[0].event_type.to_string(),
             "analytics.pattern.detected"
         );
+        Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     #[allow(unused_mut)]
-    fn correlation_detection_picks_pairs() {
+    fn correlation_detection_picks_pairs() -> color_eyre::Result<()> {
         let mut automaton = AnalyticsAutomaton::new();
         automaton.config.analysis_window_seconds = 600;
         automaton.config.enable_correlation_analysis = true;
@@ -950,18 +953,20 @@ mod tests {
 
         let correlation = automaton.detect_correlations(&events).unwrap();
         assert_eq!(correlation.event_type.to_string(), "analytics.correlation");
+        Ok(())
     }
 
-    #[test]
-    fn analytics_state_prunes_old_events() {
+    #[sinex_test]
+    fn analytics_state_prunes_old_events() -> color_eyre::Result<()> {
         let mut state = AnalyticsState::default();
         let old_event = test_event("fs.created", 10);
         state.integrate(vec![old_event], 30, 16);
         assert_eq!(state.len(), 0, "old events should be evicted");
+        Ok(())
     }
 
-    #[test]
-    fn analytics_state_dedupes_event_ids() {
+    #[sinex_test]
+    fn analytics_state_dedupes_event_ids() -> color_eyre::Result<()> {
         let mut state = AnalyticsState::default();
         let event = test_event("terminal.command", 1);
         let duplicate = event.clone();
@@ -972,5 +977,6 @@ mod tests {
         let other = test_event("fs.created", 1);
         state.integrate(vec![other], 600, 16);
         assert_eq!(state.len(), 2);
+        Ok(())
     }
 }

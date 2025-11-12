@@ -27,3 +27,6 @@ axum = "0.7"
 tower = "0.5"
 tower-http = { version = "0.5", features = ["cors"] }
 clap = { version = "4.0", features = ["derive"] }
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
