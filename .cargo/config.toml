@@ -4,8 +4,6 @@
 target-dir = "target"
 incremental = true
 pipelining = true
-# Use all available CPU cores for compilation
-jobs = 24
 rustc-workspace-wrapper = "scripts/rustc_wrapper.sh"
 
 # Shared build cache across the workspace (experimental)
@@ -15,11 +13,8 @@ build-std-features = []
 # Default rustflags for stable, fast development
 # NOTE: Cranelift backend disabled due to ICE issues - see config-cranelift.toml for experimental version
 [target.x86_64-unknown-linux-gnu]
+# Add `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` locally if mold is installed and desired.
 rustflags = [
-  "-C",
-  "link-arg=-fuse-ld=mold",     # Fastest linker available
-  "-C",
-  "codegen-units=256",          # Maximum parallelism
   "--check-cfg=cfg(rust_analyzer)",
 ]
 
@@ -57,12 +52,15 @@ cf = [
 # Environment variables for coverage and testing
 [env]
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
+PGHOST = "/run/postgresql"
+PGUSER = "sinity"
+PGDATABASE = "sinex_dev"
+DATABASE_URL = "postgresql:///sinex_dev?host=/run/postgresql"
 
 # Speed optimizations via environment variables
 CARGO_INCREMENTAL = "1"                # Enable incremental compilation
 RUST_BACKTRACE = "0"                   # Disable backtraces for speed
 # RUSTC_WRAPPER set dynamically in nix shell for sccache
-CARGO_BUILD_JOBS = "0"                 # Use all CPU cores
 CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
 
 
