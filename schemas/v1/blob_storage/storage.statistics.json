@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "failed_verifications": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "storage_backend": {
+      "type": "string"
+    },
+    "total_blobs": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "total_size_bytes": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "failed_verifications",
+    "storage_backend",
+    "total_blobs",
+    "total_size_bytes"
+  ],
+  "title": "StorageStatisticsPayload",
+  "type": "object"
+}

@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Describes a journald entry flushed to disk.",
+  "properties": {
+    "cmdline": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cursor": {
+      "type": "string"
+    },
+    "exe": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "facility": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fields": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "gid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "hostname": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "pid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "priority": {
+      "format": "uint8",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "syslog_identifier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "timestamp_us": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "uid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "unit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unit_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "cursor",
+    "fields",
+    "message",
+    "timestamp",
+    "timestamp_us"
+  ],
+  "title": "JournalEntryWrittenPayload",
+  "type": "object"
+}

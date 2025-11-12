@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Raw D-Bus signal payload.",
+  "properties": {
+    "args": true,
+    "bus": {
+      "type": "string"
+    },
+    "interface": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "sender": {
+      "type": "string"
+    },
+    "signal": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "args",
+    "bus",
+    "interface",
+    "path",
+    "sender",
+    "signal",
+    "timestamp"
+  ],
+  "title": "DbusSignalPayload",
+  "type": "object"
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ProcessStatus": {
+      "description": "Strongly typed status for process heartbeat payloads",
+      "enum": [
+        "healthy",
+        "degraded",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "metrics": {
+      "description": "Optional metrics collected from MetricsProviders"
+    },
+    "sequence": {
+      "description": "Sequence number of this heartbeat (increments each emission)",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "source": {
+      "description": "Name of the service/process emitting the heartbeat",
+      "type": "string"
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ProcessStatus"
+        }
+      ],
+      "description": "Status of the process"
+    }
+  },
+  "required": [
+    "sequence",
+    "source",
+    "status"
+  ],
+  "title": "ProcessHeartbeatPayload",
+  "type": "object"
+}

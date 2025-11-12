@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "devpath": {
+      "type": "string"
+    },
+    "devtype": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subsystem": {
+      "type": "string"
+    },
+    "syspath": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "devpath",
+    "subsystem",
+    "syspath"
+  ],
+  "title": "UdevDeviceRemovedPayload",
+  "type": "object"
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "annex_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blob_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_hash": {
+      "type": "string"
+    },
+    "content_size": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "original_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "selection_type": {
+      "type": "string"
+    },
+    "source_app": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text_preview": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "content_hash",
+    "content_size",
+    "content_type",
+    "selection_type"
+  ],
+  "title": "ClipboardSelectedPayload",
+  "type": "object"
+}

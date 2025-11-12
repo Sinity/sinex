@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "line": {
+      "type": "string"
+    },
+    "line_number": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "log_file": {
+      "type": "string"
+    },
+    "log_source": {
+      "type": "string"
+    },
+    "offset_end": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "offset_start": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "source_material_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "line",
+    "line_number",
+    "log_file",
+    "log_source",
+    "offset_end",
+    "offset_start",
+    "source_material_id"
+  ],
+  "title": "LogLinePayload",
+  "type": "object"
+}

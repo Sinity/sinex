@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Entry parsed from a Bash history file.",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "histfile_path": {
+      "type": "string"
+    },
+    "line_number": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "command",
+    "histfile_path",
+    "line_number"
+  ],
+  "title": "BashHistoryEntryPayload",
+  "type": "object"
+}

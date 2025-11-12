@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "focus_timestamp": {
+      "type": "string"
+    },
+    "kitty_tab_id": {
+      "type": "string"
+    },
+    "kitty_window_id": {
+      "type": "string"
+    },
+    "previous_tab_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tab_index": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "tab_title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "focus_timestamp",
+    "kitty_tab_id",
+    "kitty_window_id",
+    "tab_index",
+    "tab_title"
+  ],
+  "title": "KittyTabFocusedPayload",
+  "type": "object"
+}

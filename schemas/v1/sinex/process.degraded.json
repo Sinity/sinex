@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "errors_in_window": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "last_error_message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": true,
+    "process_name": {
+      "type": "string"
+    },
+    "uptime_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "errors_in_window",
+    "process_name",
+    "uptime_seconds"
+  ],
+  "title": "ProcessDegradedPayload",
+  "type": "object"
+}

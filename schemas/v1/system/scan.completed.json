@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Summarises a completed scan.",
+  "properties": {
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "errors": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "items_found": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "items_scanned": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "scan_type": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "duration_ms",
+    "errors",
+    "items_found",
+    "items_scanned",
+    "scan_type",
+    "target"
+  ],
+  "title": "ScanCompletedPayload",
+  "type": "object"
+}

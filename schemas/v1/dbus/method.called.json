@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Invocation of a D-Bus method.",
+  "properties": {
+    "args": true,
+    "bus": {
+      "type": "string"
+    },
+    "destination": {
+      "type": "string"
+    },
+    "interface": {
+      "type": "string"
+    },
+    "method": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "sender": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "args",
+    "bus",
+    "destination",
+    "interface",
+    "method",
+    "path",
+    "sender",
+    "timestamp"
+  ],
+  "title": "DbusMethodCalledPayload",
+  "type": "object"
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Records the outcome of a journald cursor sync.",
+  "properties": {
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "end_cursor": {
+      "type": "string"
+    },
+    "entries_count": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "start_cursor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sync_type": {
+      "type": "string"
+    },
+    "time_end": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "time_start": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "duration_ms",
+    "end_cursor",
+    "entries_count",
+    "sync_type"
+  ],
+  "title": "JournalSyncCompletedPayload",
+  "type": "object"
+}

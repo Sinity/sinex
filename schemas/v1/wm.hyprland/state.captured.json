@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "captured_at": {
+      "type": "string"
+    },
+    "current_monitor": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "current_workspace": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "monitors": {
+      "items": true,
+      "type": "array"
+    },
+    "windows": {
+      "items": true,
+      "type": "array"
+    },
+    "workspaces": {
+      "items": true,
+      "type": "array"
+    }
+  },
+  "required": [
+    "captured_at",
+    "current_monitor",
+    "current_workspace",
+    "monitors",
+    "windows",
+    "workspaces"
+  ],
+  "title": "HyprlandStateCapturedPayload",
+  "type": "object"
+}

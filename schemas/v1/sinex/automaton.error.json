@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "automaton_name": {
+      "type": "string"
+    },
+    "context": true,
+    "error_code": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "stack_trace": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "automaton_name",
+    "error_message"
+  ],
+  "title": "AutomatonErrorPayload",
+  "type": "object"
+}

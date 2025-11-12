@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "WindowGeometry": {
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "x": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "y": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "height",
+        "width",
+        "x",
+        "y"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "floating": {
+      "type": "boolean"
+    },
+    "geometry": {
+      "$ref": "#/definitions/WindowGeometry"
+    },
+    "monitor_id": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "window_class": {
+      "type": "string"
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "window_title": {
+      "type": "string"
+    },
+    "workspace_id": {
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "floating",
+    "geometry",
+    "monitor_id",
+    "window_class",
+    "window_id",
+    "window_title",
+    "workspace_id"
+  ],
+  "title": "HyprlandWindowOpenedPayload",
+  "type": "object"
+}

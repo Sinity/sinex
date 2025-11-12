@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "active_watchers": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "clipboard_enabled": {
+      "type": "boolean"
+    },
+    "snapshot_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "window_manager_enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "active_watchers",
+    "clipboard_enabled",
+    "snapshot_time",
+    "window_manager_enabled"
+  ],
+  "title": "DesktopSnapshotPayload",
+  "type": "object"
+}

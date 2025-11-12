@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "chunk_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "git_annex_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "git_annex_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "has_ansi_codes": {
+      "type": "boolean"
+    },
+    "includes_screen": {
+      "type": "boolean"
+    },
+    "is_chunked": {
+      "type": "boolean"
+    },
+    "scrollback_chunks": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "scrollback_lines": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "scrollback_size_bytes": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "scrollback_text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "terminal_type": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "window_title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cwd",
+    "has_ansi_codes",
+    "includes_screen",
+    "is_chunked",
+    "scrollback_lines",
+    "scrollback_size_bytes",
+    "terminal_type",
+    "timestamp",
+    "window_id",
+    "window_title"
+  ],
+  "title": "ShellOutputCapturedPayload",
+  "type": "object"
+}

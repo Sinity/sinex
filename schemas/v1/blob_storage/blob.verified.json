@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "blob_id": {
+      "type": "string"
+    },
+    "checksum_matched": {
+      "type": "boolean"
+    },
+    "verification_status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "blob_id",
+    "checksum_matched",
+    "verification_status"
+  ],
+  "title": "BlobVerifiedPayload",
+  "type": "object"
+}

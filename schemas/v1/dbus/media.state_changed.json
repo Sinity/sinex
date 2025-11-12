@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Media player metadata snapshot extracted from D-Bus.",
+  "properties": {
+    "album": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "album_artist": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "art_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artist": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "can_go_next": {
+      "type": "boolean"
+    },
+    "can_go_previous": {
+      "type": "boolean"
+    },
+    "can_pause": {
+      "type": "boolean"
+    },
+    "can_play": {
+      "type": "boolean"
+    },
+    "can_seek": {
+      "type": "boolean"
+    },
+    "length": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "loop_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "player": {
+      "type": "string"
+    },
+    "player_instance": {
+      "type": "string"
+    },
+    "position": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "shuffle": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "track_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "track_number": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "volume": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "can_go_next",
+    "can_go_previous",
+    "can_pause",
+    "can_play",
+    "can_seek",
+    "player",
+    "player_instance",
+    "status",
+    "timestamp"
+  ],
+  "title": "DbusMediaStateChangedPayload",
+  "type": "object"
+}

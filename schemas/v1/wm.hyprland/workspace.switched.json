@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "active_window_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "from_workspace_id": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "monitor_id": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "to_workspace_id": {
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from_workspace_id",
+    "monitor_id",
+    "to_workspace_id"
+  ],
+  "title": "HyprlandWorkspaceSwitchedPayload",
+  "type": "object"
+}

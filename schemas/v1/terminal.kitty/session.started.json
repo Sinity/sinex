@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Kitty terminal session start.",
+  "properties": {
+    "env_vars": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "shell_type": {
+      "type": "string"
+    },
+    "tab_id": {
+      "type": "string"
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "working_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "shell_type",
+    "tab_id",
+    "window_id",
+    "working_directory"
+  ],
+  "title": "KittySessionStartedPayload",
+  "type": "object"
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "active_state": {
+      "type": "string"
+    },
+    "main_pid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "sub_state": {
+      "type": "string"
+    },
+    "unit_name": {
+      "type": "string"
+    },
+    "unit_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "active_state",
+    "sub_state",
+    "unit_name",
+    "unit_type"
+  ],
+  "title": "SystemdUnitStartedPayload",
+  "type": "object"
+}

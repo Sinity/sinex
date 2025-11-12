@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Emitted when a system scan kicks off.",
+  "properties": {
+    "options": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "scan_type": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "options",
+    "scan_type",
+    "target"
+  ],
+  "title": "ScanStartedPayload",
+  "type": "object"
+}
