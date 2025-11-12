@@ -43,7 +43,7 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
         "semver-source",
         "semver.event",
         &json!({ "modern": "value" }),
-    )?;
+    );
 
     match result {
         ValidationResult::Valid => Ok(()),
@@ -87,7 +87,7 @@ async fn validator_handles_double_digit_versions(ctx: TestContext) -> color_eyre
         "digit-source",
         "digit.event",
         &json!({ "modern": "value" }),
-    )?;
+    );
 
     match result {
         ValidationResult::Valid => Ok(()),
