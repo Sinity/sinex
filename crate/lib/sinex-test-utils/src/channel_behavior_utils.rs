@@ -7,6 +7,8 @@ use crate::channel_helpers::{
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
 };
 use crate::prelude::*;
+#[cfg(test)]
+use crate::TestResult;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -728,7 +730,7 @@ mod comprehensive_tests {
     use tokio::sync::mpsc;
 
     #[sinex_test]
-    async fn test_channel_setup_creation(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_setup_creation() -> crate::Result<()> {
         // Test different channel setup methods
         let zero_cap = TestChannelSetup::<i32>::zero_capacity();
         assert_eq!(zero_cap.monitor.stats().sent, 0);
@@ -744,7 +746,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_basic_send_receive_behavior(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_basic_send_receive_behavior() -> crate::Result<()> {
         let mut setup = TestChannelSetup::<String>::new(10);
 
         // Test successful send/receive
@@ -763,7 +765,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_timeout_behavior(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_timeout_behavior() -> crate::Result<()> {
         let mut setup = TestChannelSetup::<i32>::new(1);
 
         // Test timeout when no data
@@ -779,7 +781,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_backpressure_handling(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_backpressure_handling() -> crate::Result<()> {
         let setup = TestChannelSetup::<i32>::zero_capacity();
         let _backpressure = BackpressureManager::new(
             10, // high watermark
@@ -801,7 +803,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_batch_receive_operations(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_batch_receive_operations() -> crate::Result<()> {
         let mut setup = TestChannelSetup::<String>::new(20);
 
         // Send multiple items
@@ -831,7 +833,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_monitoring(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_monitoring() -> crate::Result<()> {
         let monitor = Arc::new(ChannelMonitor::new());
 
         // Record various operations
@@ -851,7 +853,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_extension_traits(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_extension_traits() -> crate::Result<()> {
         let (sender, mut receiver) = mpsc::channel::<i32>(5);
 
         // Test send_or_log
@@ -876,7 +878,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_error_handling(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_error_handling() -> crate::Result<()> {
         let (sender, receiver) = mpsc::channel::<String>(1);
 
         // Drop receiver to cause send errors
@@ -894,7 +896,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_drain_operations(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_drain_operations() -> crate::Result<()> {
         let (sender, mut receiver) = mpsc::channel::<i32>(10);
 
         // Send multiple items
@@ -915,7 +917,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_concurrent_channel_operations(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_concurrent_channel_operations() -> crate::Result<()> {
         let setup = TestChannelSetup::<i32>::new(100);
         let sender = setup.sender.clone();
         let monitor = setup.monitor.clone();
@@ -947,7 +949,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_queue_management(_ctx: TestContext) -> crate::Result<()> {
+    async fn test_channel_queue_management() -> crate::Result<()> {
         let (sender, mut receiver) = mpsc::channel::<String>(2);
         let mut queue = Vec::new();
 
@@ -980,7 +982,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    fn test_channel_monitor_thread_safety() -> Result<()> {
+    fn test_channel_monitor_thread_safety() -> TestResult<()> {
         use std::thread;
 
         let monitor = Arc::new(ChannelMonitor::new());

@@ -20,6 +20,28 @@ pub use sinex_core::types::error::SinexError;
 
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
+pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
+pub struct ProptestCasesGuard {
+    previous: Option<String>,
+}
+
+impl ProptestCasesGuard {
+    pub fn new(cases: u32) -> Self {
+        let previous = std::env::var("PROPTEST_CASES").ok();
+        std::env::set_var("PROPTEST_CASES", cases.to_string());
+        Self { previous }
+    }
+}
+
+impl Drop for ProptestCasesGuard {
+    fn drop(&mut self) {
+        if let Some(prev) = self.previous.take() {
+            std::env::set_var("PROPTEST_CASES", prev);
+        } else {
+            std::env::remove_var("PROPTEST_CASES");
+        }
+    }
+}
 
 // Import all the existing modules - all private
 mod builders;
@@ -65,6 +87,7 @@ pub mod prelude {
     // Core test infrastructure
     pub use crate::sinex_test;
     pub use crate::TestContext;
+    pub use crate::TestResult;
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
@@ -496,7 +519,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_concurrent_test_execution(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_concurrent_test_execution() -> color_eyre::eyre::Result<()> {
         // Test body disabled pending refactor - currently just returns Ok()
         Ok(())
 
@@ -638,7 +661,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_result_type_alias(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_result_type_alias() -> color_eyre::eyre::Result<()> {
         // Test that Result is properly aliased
         fn returns_test_result() -> color_eyre::eyre::Result<String> {
             Ok("success".to_string())
@@ -776,7 +799,7 @@ mod tests {
         let (result, duration) = ctx
             .measure(async {
                 tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
-                Ok("measured")
+                Ok::<_, ()>("measured")
             })
             .await?;
 

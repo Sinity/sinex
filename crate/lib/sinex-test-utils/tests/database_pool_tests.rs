@@ -29,7 +29,9 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
             tokio::spawn(async move {
                 let db = acquire_test_database().await?;
 
-                verify_clean_state(db.pool()).await?;
+                verify_clean_state(db.pool()).await.map_err(|e| {
+                    SinexError::database(format!("failed to verify pool state: {e}"))
+                })?;
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
 

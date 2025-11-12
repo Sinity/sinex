@@ -21,9 +21,9 @@
 //! - Cross-branch comparisons
 //! - Regression detection
 
+use crate::TestResult;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// A complete benchmark run with metadata and results
@@ -99,7 +99,7 @@ pub struct BenchmarkResult {
 
 impl BenchmarkRun {
     /// Create a new benchmark run with current environment info
-    pub fn new() -> Result<Self> {
+    pub fn new() -> TestResult<Self> {
         Ok(Self {
             timestamp: Utc::now(),
             git_commit: get_git_commit()?,
@@ -121,7 +121,7 @@ impl BenchmarkRun {
     /// - Divan JSON output (if available)
     /// - Iai results (future support)
     /// - Manual recordings via BenchContext
-    pub fn collect() -> Result<Self> {
+    pub fn collect() -> TestResult<Self> {
         let mut run = Self::new()?;
 
         // Collect from divan results if available
@@ -141,7 +141,7 @@ impl BenchmarkRun {
     ///
     /// Results are saved to `target/benchmarks/{timestamp}-{branch}-{commit}.json`
     /// with validated path operations for security.
-    pub fn save(&self) -> Result<Utf8PathBuf> {
+    pub fn save(&self) -> TestResult<Utf8PathBuf> {
         use crate::path_validation::validate_test_path;
 
         let dir = Utf8PathBuf::from("target/benchmarks");
@@ -173,7 +173,7 @@ impl BenchmarkRun {
 
     /// Load results from a file
     /// Path is validated for security before loading.
-    pub fn load(path: &Utf8Path) -> Result<Self> {
+    pub fn load(path: &Utf8Path) -> TestResult<Self> {
         use crate::path_validation::validate_test_path;
 
         // Validate the file path before reading
@@ -363,7 +363,7 @@ impl ComparisonReport {
 
 // Environment detection functions
 
-fn get_git_commit() -> Result<String> {
+fn get_git_commit() -> TestResult<String> {
     Ok(std::process::Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()?
@@ -375,7 +375,7 @@ fn get_git_commit() -> Result<String> {
         .to_string())
 }
 
-fn get_git_branch() -> Result<String> {
+fn get_git_branch() -> TestResult<String> {
     Ok(std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()?
@@ -387,14 +387,14 @@ fn get_git_branch() -> Result<String> {
         .to_string())
 }
 
-fn is_git_dirty() -> Result<bool> {
+fn is_git_dirty() -> TestResult<bool> {
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .output()?;
     Ok(!output.stdout.is_empty())
 }
 
-fn get_hostname() -> Result<String> {
+fn get_hostname() -> TestResult<String> {
     #[cfg(feature = "bench")]
     {
         Ok(hostname::get()?.to_string_lossy().to_string())
@@ -405,7 +405,7 @@ fn get_hostname() -> Result<String> {
     }
 }
 
-fn get_cpu_model() -> Result<String> {
+fn get_cpu_model() -> TestResult<String> {
     #[cfg(all(feature = "bench", target_os = "linux"))]
     {
         let cpuinfo = std::fs::read_to_string("/proc/cpuinfo")?;
@@ -434,7 +434,7 @@ fn get_cpu_count() -> usize {
     }
 }
 
-fn get_memory_gb() -> Result<f64> {
+fn get_memory_gb() -> TestResult<f64> {
     #[cfg(feature = "bench")]
     {
         use sysinfo::System;
@@ -448,13 +448,13 @@ fn get_memory_gb() -> Result<f64> {
     }
 }
 
-fn get_postgres_version() -> Result<String> {
+fn get_postgres_version() -> TestResult<String> {
     // This would need a database connection to query
     // For now, return a placeholder
     Ok("unknown".to_string())
 }
 
-fn get_rust_version() -> Result<String> {
+fn get_rust_version() -> TestResult<String> {
     Ok(std::process::Command::new("rustc")
         .args(["--version"])
         .output()?
@@ -467,7 +467,7 @@ fn get_rust_version() -> Result<String> {
 }
 
 /// Read results from Divan JSON output
-fn read_divan_results() -> Result<Vec<BenchmarkResult>> {
+fn read_divan_results() -> TestResult<Vec<BenchmarkResult>> {
     // This would parse target/divan-results.json if it exists
     // For now, return empty vec
     Ok(Vec::new())
@@ -480,7 +480,7 @@ mod tests {
     use crate::sinex_test;
 
     #[sinex_test]
-    fn test_benchmark_comparison() -> Result<()> {
+    fn test_benchmark_comparison() -> TestResult<()> {
         let baseline = BenchmarkResult {
             name: "test_query".to_string(),
             suite: "db".to_string(),
@@ -512,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_environment_detection() -> Result<()> {
+    fn test_environment_detection() -> TestResult<()> {
         // These should not panic
         let _ = get_git_commit();
         let _ = get_git_branch();
@@ -526,7 +526,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_markdown_generation() -> Result<()> {
+    fn test_markdown_generation() -> TestResult<()> {
         let baseline_run = BenchmarkRun {
             timestamp: Utc::now(),
             git_commit: "abcd1234".to_string(),

@@ -3,11 +3,11 @@
 //! This shows how sinex_test seamlessly integrates rstest, insta, and tracing-test
 //! without requiring separate attributes or manual setup.
 
-use color_eyre::eyre::Result;
 use serde_json::{json, Value};
 use sinex_core::DbPoolExt;
 use sinex_core::EventSource;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::TestResult;
 
 // Example 1: Basic rstest integration with automatic TestContext
 #[sinex_test]
@@ -19,7 +19,7 @@ async fn test_automatic_rstest_integration(
     #[case] source: &str,
     #[case] event_type: &str,
     #[case] payload: Value,
-) -> Result<()> {
+) -> TestResult<()> {
     // The sinex_test macro detects #[case] attributes and automatically:
     // 1. Adds #[rstest] attribute
     // 2. Creates TestContext for each case
@@ -41,7 +41,7 @@ async fn test_automatic_rstest_integration(
 
 // Example 2: Tracing integration with sinex_test
 #[sinex_test]
-async fn test_automatic_tracing(ctx: TestContext) -> Result<()> {
+async fn test_automatic_tracing(ctx: TestContext) -> TestResult<()> {
     // With trace = true, tracing is automatically enabled
     tracing::info!("Starting test with automatic tracing");
 
@@ -75,7 +75,7 @@ async fn test_rstest_with_tracing(
     ctx: TestContext,
     #[case] level: &str,
     #[case] message: &str,
-) -> Result<()> {
+) -> TestResult<()> {
     // Both features work together seamlessly
     match level {
         "info" => tracing::info!("{}", message),
@@ -101,7 +101,7 @@ async fn test_snapshots_with_rstest(
     ctx: TestContext,
     #[case] operation: &str,
     #[case] data: Value,
-) -> Result<()> {
+) -> TestResult<()> {
     let _event = ctx
         .create_test_event("filesystem", &format!("file.{operation}"), data)
         .await?;
@@ -126,7 +126,7 @@ async fn test_all_features_combined(
     #[case] size_name: &str,
     #[case] count: usize,
     #[case] tags: Vec<&str>,
-) -> Result<()> {
+) -> TestResult<()> {
     ctx.force_cleanup().await?;
     let baseline = ctx.current_event_count().await?;
     let source_ref = sinex_core::EventSource::from("bulk-test");
@@ -207,14 +207,15 @@ async fn test_all_features_combined(
 }
 
 #[cfg(not(feature = "slow-tests"))]
-#[test]
-fn test_all_features_combined_skipped() {
+#[sinex_test]
+fn test_all_features_combined_skipped() -> TestResult<()> {
     eprintln!("test_all_features_combined skipped; enable --features slow-tests to run");
+    Ok(())
 }
 
 // Example 6: Property testing still works with sinex_test
 #[sinex_test]
-async fn test_property_testing_integration(ctx: TestContext) -> Result<()> {
+async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
     // Test context is available for actual database operations
     let _event = ctx
         .create_test_event(
@@ -241,7 +242,7 @@ async fn test_with_fixtures(
     test_sources: Vec<&'static str>, // Fixture from test-utils
     test_paths: Vec<Utf8PathBuf>,    // Another fixture
     #[case] operation: &str,
-) -> Result<()> {
+) -> TestResult<()> {
     // Fixtures are injected alongside rstest parameters
     for source in &test_sources {
         for path in &test_paths {

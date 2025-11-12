@@ -208,7 +208,10 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .path
                 .segments
                 .last()
-                .map(|seg| seg.ident == "Result")
+                .map(|seg| {
+                    let ident = &seg.ident;
+                    ident == "Result" || ident == "TestResult"
+                })
                 .unwrap_or(false)
         } else {
             false
@@ -218,12 +221,16 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     if !has_result_return {
+        if has_proptest {
+            // We'll inject a default Result<()> return type downstream
+        } else {
         return syn::Error::new_spanned(
             &input.sig.output,
             "sinex_test functions must return Result<()> or Result<T>",
         )
         .to_compile_error()
         .into();
+        }
     }
 
     // Check if function takes TestContext parameter

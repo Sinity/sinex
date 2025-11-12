@@ -16,7 +16,7 @@
 //!
 //! ```rust
 //! #[sinex_test]
-//! async fn test_example(ctx: TestContext) -> Result<()> {
+//! async fn test_example(ctx: TestContext) -> TestResult<()> {
 //!     // Direct production API - no wrapper
 //!     let event = Event::<JsonValue>::test_event(
 //!         "fs-watcher",
@@ -42,8 +42,8 @@ use crate::database_pool::{acquire_test_database, TestDatabase};
 use crate::db_common::verify_clean_state;
 use crate::nats::EphemeralNats;
 use crate::timing_utils::TimingUtils;
+use crate::TestResult;
 use async_nats::Client as NatsClient;
-use color_eyre::eyre::Result;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
@@ -51,6 +51,7 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Ulid};
+use std::result::Result as StdResult;
 
 use sinex_core::DbPoolExt;
 use std::collections::HashSet;
@@ -158,12 +159,12 @@ impl TestContext {
     }
 
     /// Create new test context
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> TestResult<Self> {
         Self::with_name("unnamed_test").await
     }
 
     /// Create test context with custom name
-    pub async fn with_name(test_name: &str) -> Result<Self> {
+    pub async fn with_name(test_name: &str) -> TestResult<Self> {
         let db = acquire_test_database().await?;
         let pool = db.pool().clone();
 
@@ -224,7 +225,7 @@ impl TestContext {
     ///
     /// This starts an ephemeral NATS server with JetStream enabled
     /// and connects a client to it. Required for JetStream integration tests.
-    pub async fn with_nats(mut self) -> Result<Self> {
+    pub async fn with_nats(mut self) -> TestResult<Self> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         self.nats_client = Some(client);
@@ -277,7 +278,7 @@ impl TestContext {
     }
 
     /// Check if a log message was captured
-    pub fn assert_logged(&self, message: &str) -> Result<()> {
+    pub fn assert_logged(&self, message: &str) -> TestResult<()> {
         let logs = self.captured_logs.lock();
         if logs.iter().any(|log| log.contains(message)) {
             Ok(())
@@ -311,16 +312,16 @@ impl TestContext {
     }
 
     /// Current total number of events
-    pub async fn current_event_count(&self) -> Result<i64> {
+    pub async fn current_event_count(&self) -> TestResult<i64> {
         Ok(self.pool.events().count_all().await?)
     }
 
     /// Difference between current and baseline event count
-    pub async fn event_delta(&self) -> Result<i64> {
+    pub async fn event_delta(&self) -> TestResult<i64> {
         Ok(self.current_event_count().await? - self.baseline_events)
     }
 
-    async fn ensure_material_entry(&self, id: &Id<SourceMaterial>) -> Result<()> {
+    async fn ensure_material_entry(&self, id: &Id<SourceMaterial>) -> TestResult<()> {
         let material_ulid_uuid = id.to_uuid();
         let source_identifier = format!("test-material-{id}");
 
@@ -374,7 +375,7 @@ impl TestContext {
     }
 
     /// Force cleanup of the underlying database (use with caution)
-    pub async fn force_cleanup(&self) -> Result<()> {
+    pub async fn force_cleanup(&self) -> TestResult<()> {
         self.db
             .force_cleanup()
             .await
@@ -385,7 +386,7 @@ impl TestContext {
     ///
     /// This verifies that the database is empty and ready for use.
     /// If not clean, attempts cleanup and verification.
-    pub async fn ensure_clean(&self) -> Result<()> {
+    pub async fn ensure_clean(&self) -> TestResult<()> {
         match crate::db_common::verify_clean_state(&self.pool).await {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -402,7 +403,7 @@ impl TestContext {
         source: S,
         event_type: T,
         payload: JsonValue,
-    ) -> Result<Event<JsonValue>>
+    ) -> TestResult<Event<JsonValue>>
     where
         S: AsRef<str>,
         T: AsRef<str>,
@@ -439,7 +440,7 @@ impl TestContext {
         &self,
         id: Id<SourceMaterial>,
         source_identifier: Option<&str>,
-    ) -> Result<()> {
+    ) -> TestResult<()> {
         let material_ulid_uuid = id.to_uuid();
         let identifier = source_identifier.map(|s| s.to_string()).unwrap_or_else(|| {
             if id.to_string() == BOOTSTRAP_MATERIAL_ID {
@@ -496,7 +497,7 @@ impl TestContext {
     pub async fn create_source_material(
         &self,
         source_identifier: Option<&str>,
-    ) -> Result<Id<SourceMaterial>> {
+    ) -> TestResult<Id<SourceMaterial>> {
         let id = Id::<SourceMaterial>::new();
         self.ensure_source_material(id, source_identifier).await?;
         Ok(id)
@@ -507,19 +508,25 @@ impl TestContext {
         &self,
         material_id: sinex_core::Ulid,
         source_identifier: Option<&str>,
-    ) -> Result<Id<SourceMaterial>> {
+    ) -> TestResult<Id<SourceMaterial>> {
         let id = Id::<SourceMaterial>::from_ulid(material_id);
         self.ensure_source_material(id, source_identifier).await?;
         Ok(id)
     }
 
     /// Convenience helper returning a schema-layer ULID for compatibility tests.
-    pub async fn ensure_schema_material(&self, source_identifier: Option<&str>) -> Result<Ulid> {
+    pub async fn ensure_schema_material(
+        &self,
+        source_identifier: Option<&str>,
+    ) -> TestResult<Ulid> {
         let id = self.create_source_material(source_identifier).await?;
         Ok(id.as_ulid().clone())
     }
 
-    async fn insert_with_provenance(&self, event: Event<JsonValue>) -> Result<Event<JsonValue>> {
+    async fn insert_with_provenance(
+        &self,
+        event: Event<JsonValue>,
+    ) -> TestResult<Event<JsonValue>> {
         if let Provenance::Material { id, .. } = &event.provenance {
             self.ensure_material_entry(id).await?;
         }
@@ -538,7 +545,7 @@ impl TestContext {
     }
 
     /// Insert multiple events (batch operation)
-    pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> Result<()> {
+    pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> TestResult<()> {
         for event in events {
             if let Provenance::Material { id, .. } = &event.provenance {
                 self.ensure_material_entry(id).await?;
@@ -575,9 +582,9 @@ impl TestContext {
     }
 
     /// Measure execution time of an operation
-    pub async fn measure<F, T>(&self, operation: F) -> Result<(Result<T>, Duration)>
+    pub async fn measure<F, T, E>(&self, operation: F) -> TestResult<(StdResult<T, E>, Duration)>
     where
-        F: std::future::Future<Output = Result<T>>,
+        F: std::future::Future<Output = StdResult<T, E>>,
     {
         let start = Instant::now();
         let result = operation.await;
@@ -595,7 +602,7 @@ impl TestContext {
         &self,
         actual: &Event<JsonValue>,
         expected: &Event<JsonValue>,
-    ) -> Result<()> {
+    ) -> TestResult<()> {
         if actual.source != expected.source {
             color_eyre::eyre::bail!(
                 "Event sources differ: actual='{}' expected='{}'",
@@ -626,7 +633,7 @@ impl TestContext {
     }
 
     /// Assert that no error-level logs were captured
-    pub fn assert_no_errors_logged(&self) -> Result<()> {
+    pub fn assert_no_errors_logged(&self) -> TestResult<()> {
         let logs = self.captured_logs.lock();
         let error_logs: Vec<_> = logs
             .iter()
@@ -646,7 +653,7 @@ impl TestContext {
     }
 
     /// Assert similar values with detailed diff
-    pub fn assert_similar<T>(&self, left: &T, right: &T, msg: &str) -> Result<()>
+    pub fn assert_similar<T>(&self, left: &T, right: &T, msg: &str) -> TestResult<()>
     where
         T: std::fmt::Debug + PartialEq,
     {
@@ -694,7 +701,7 @@ impl TestContext {
     }
 }
 
-async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -> Result<()> {
+async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -> TestResult<()> {
     if records.is_empty() {
         return Ok(());
     }
@@ -795,7 +802,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert two values are equal
-    pub fn eq<T>(self, left: &T, right: &T) -> Result<Self>
+    pub fn eq<T>(self, left: &T, right: &T) -> TestResult<Self>
     where
         T: std::fmt::Debug + PartialEq,
     {
@@ -811,7 +818,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert a condition is true
-    pub fn that(self, condition: bool, message: &str) -> Result<Self> {
+    pub fn that(self, condition: bool, message: &str) -> TestResult<Self> {
         if !condition {
             color_eyre::eyre::bail!("{}: {}", self.context, message);
         }
@@ -819,7 +826,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert collection is not empty
-    pub fn not_empty<T>(self, collection: &[T]) -> Result<Self> {
+    pub fn not_empty<T>(self, collection: &[T]) -> TestResult<Self> {
         if collection.is_empty() {
             color_eyre::eyre::bail!("{}: collection should not be empty", self.context);
         }
@@ -827,7 +834,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert collection has specific size
-    pub fn has_size<T>(self, collection: &[T], expected_size: usize) -> Result<Self> {
+    pub fn has_size<T>(self, collection: &[T], expected_size: usize) -> TestResult<Self> {
         if collection.len() != expected_size {
             color_eyre::eyre::bail!(
                 "{}: collection size mismatch. Expected: {}, Actual: {}",
@@ -840,7 +847,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert option is Some
-    pub fn some<T>(self, option: &Option<T>) -> Result<Self> {
+    pub fn some<T>(self, option: &Option<T>) -> TestResult<Self> {
         if option.is_none() {
             color_eyre::eyre::bail!("{}: option should be Some, but was None", self.context);
         }
@@ -848,7 +855,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert option is None
-    pub fn none<T>(self, option: &Option<T>) -> Result<Self> {
+    pub fn none<T>(self, option: &Option<T>) -> TestResult<Self> {
         if option.is_some() {
             color_eyre::eyre::bail!("{}: option should be None, but was Some", self.context);
         }
@@ -856,7 +863,11 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert result contains error with specific message
-    pub fn error_contains<T, E>(self, result: &Result<T, E>, expected_error: &str) -> Result<Self>
+    pub fn error_contains<T, E>(
+        self,
+        result: &Result<T, E>,
+        expected_error: &str,
+    ) -> TestResult<Self>
     where
         E: std::fmt::Display,
     {

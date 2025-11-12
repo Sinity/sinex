@@ -2,6 +2,7 @@
 // Provides test handles for satellites, ingestd, and automata
 
 use crate::Result;
+use crate::TestResult;
 
 use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
@@ -42,7 +43,7 @@ pub struct TestIngestdHandle {
 
 impl TestIngestdHandle {
     /// Stop the ingestd process
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(service) = self.service.as_mut() {
             service.shutdown().await?;
         }
@@ -54,11 +55,11 @@ impl TestIngestdHandle {
         if let Some(join) = self.join_handle.take() {
             match join.await {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => return Err(err),
+                Ok(Err(err)) => return Err(err.into()),
                 Err(join_err) => {
-                    return Err(SinexError::service(format!(
-                        "ingestd task join error: {join_err}"
-                    )))
+                    return Err(
+                        SinexError::service(format!("ingestd task join error: {join_err}")).into(),
+                    )
                 }
             }
         }
@@ -78,7 +79,7 @@ impl Drop for TestIngestdHandle {
 /// Start a test ingestd instance with custom configuration
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
-) -> Result<TestIngestdHandle> {
+) -> TestResult<TestIngestdHandle> {
     let work_dir_temp = match &config.work_dir {
         Some(_existing) => None,
         None => Some(
@@ -146,7 +147,7 @@ pub struct TestSatelliteHandle {
 
 impl TestSatelliteHandle {
     /// Start a new test satellite
-    pub async fn start(config: serde_json::Value, _pool: DbPool) -> Result<Self> {
+    pub async fn start(config: serde_json::Value, _pool: DbPool) -> TestResult<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: config
@@ -159,7 +160,7 @@ impl TestSatelliteHandle {
     }
 
     /// Stop the satellite process
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -175,7 +176,7 @@ pub struct TestAutomatonHandle {
 
 impl TestAutomatonHandle {
     /// Start a new test automaton
-    pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> Result<Self> {
+    pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> TestResult<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: format!("test-{automaton_type}"),
@@ -184,7 +185,7 @@ impl TestAutomatonHandle {
     }
 
     /// Stop the automaton process
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -214,7 +215,7 @@ impl SatelliteOrchestrator {
         self.automata.lock().insert(name.to_string(), handle);
     }
 
-    pub async fn shutdown_all(&self) -> Result<()> {
+    pub async fn shutdown_all(&self) -> TestResult<()> {
         // Shutdown all satellites
         let satellite_handles: Vec<_> = {
             let mut satellites = self.satellites.lock();
@@ -257,7 +258,7 @@ mod tests {
     use crate::SinexError;
 
     #[sinex_test]
-    async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
+    async fn test_ingestd_config_default() -> TestResult<()> {
         let config = TestIngestdConfig::default();
 
         assert_eq!(config.nats_url, "nats://127.0.0.1:4222");
@@ -270,7 +271,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_creation(ctx: TestContext) -> Result<()> {
+    async fn test_ingestd_handle_creation(ctx: TestContext) -> TestResult<()> {
         use crate::nats::EphemeralNats;
 
         let nats = EphemeralNats::start().await?;
@@ -292,7 +293,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_stop(ctx: TestContext) -> Result<()> {
+    async fn test_ingestd_handle_stop(ctx: TestContext) -> TestResult<()> {
         use crate::nats::EphemeralNats;
 
         let nats = EphemeralNats::start().await?;
@@ -316,7 +317,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_creation(ctx: TestContext) -> Result<()> {
+    async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
         let config = serde_json::json!({
             "name": "test-satellite",
             "source": "test",
@@ -331,7 +332,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_stop(ctx: TestContext) -> Result<()> {
+    async fn test_satellite_handle_stop(ctx: TestContext) -> TestResult<()> {
         let config = serde_json::json!({
             "name": "stop-test-satellite",
         });
@@ -348,7 +349,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_default_name(ctx: TestContext) -> Result<()> {
+    async fn test_satellite_handle_default_name(ctx: TestContext) -> TestResult<()> {
         // Config without name should use default
         let config = serde_json::json!({
             "source": "test",
@@ -362,7 +363,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_automaton_handle_creation(_ctx: TestContext) -> Result<()> {
+    async fn test_automaton_handle_creation() -> TestResult<()> {
         let handle = TestAutomatonHandle {
             name: "test-automaton".to_string(),
             process: None,
@@ -374,7 +375,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_automaton_handle_stop(_ctx: TestContext) -> Result<()> {
+    async fn test_automaton_handle_stop() -> TestResult<()> {
         let mut handle = TestAutomatonHandle {
             name: "stop-test".to_string(),
             process: None,
@@ -387,7 +388,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_creation(_ctx: TestContext) -> Result<()> {
+    async fn test_satellite_orchestrator_creation() -> TestResult<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Initial state should be empty
@@ -398,7 +399,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_register(ctx: TestContext) -> Result<()> {
+    async fn test_satellite_orchestrator_register(ctx: TestContext) -> TestResult<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register a satellite
@@ -417,7 +418,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_shutdown(_ctx: TestContext) -> Result<()> {
+    async fn test_satellite_orchestrator_shutdown() -> TestResult<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register some handles
@@ -445,7 +446,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_config_builder(_ctx: TestContext) -> Result<()> {
+    async fn test_satellite_config_builder() -> TestResult<()> {
         let config = build_test_satellite_config("test-service");
 
         assert_eq!(config["name"], "test-service");
@@ -456,7 +457,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_multiple_satellite_management(ctx: TestContext) -> Result<()> {
+    async fn test_multiple_satellite_management(ctx: TestContext) -> TestResult<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register multiple satellites
@@ -479,7 +480,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_handling_in_shutdown(_ctx: TestContext) -> Result<()> {
+    async fn test_error_handling_in_shutdown() -> TestResult<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Even with no satellites/automata, shutdown should work

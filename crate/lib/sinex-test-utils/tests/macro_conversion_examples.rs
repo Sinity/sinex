@@ -5,9 +5,9 @@
 //! This file demonstrates before/after examples of converting verbose
 //! test implementations to use the powerful test macro system.
 
-use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::test_macros::*;
+use sinex_test_utils::TestResult;
 
 // =============================================================================
 // EXAMPLE 1: Simple Event Insertion
@@ -267,7 +267,7 @@ test_time_range_query!(
 
 // BEFORE: Complex Redis stream setup (40+ lines)
 #[sinex_test]
-async fn test_redis_event_streaming_old(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_redis_event_streaming_old() -> color_eyre::eyre::Result<()> {
     use redis::{cmd, AsyncCommands};
 
     let redis_client = redis::Client::open("redis://localhost:6379")?;

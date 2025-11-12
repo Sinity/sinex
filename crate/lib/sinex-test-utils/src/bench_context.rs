@@ -35,6 +35,7 @@
 //! ```
 
 use crate::db_common;
+use crate::TestResult;
 use color_eyre::eyre::{eyre, Result};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -72,7 +73,7 @@ pub struct BenchContext {
 #[cfg(feature = "bench")]
 impl BenchContext {
     /// Create a new benchmark context
-    async fn new() -> Result<Arc<Self>> {
+    async fn new() -> TestResult<Arc<Self>> {
         // Use a dedicated benchmark database URL if provided
         let database_url = std::env::var("BENCH_DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_bench?host=/run/postgresql".to_string());
@@ -118,14 +119,14 @@ impl BenchContext {
     /// - `medium` - 100K events
     /// - `large` - 10M events
     /// - Custom fixtures from fixtures/datasets/
-    pub async fn reset_and_load(&self, fixture: &str) -> Result<()> {
+    pub async fn reset_and_load(&self, fixture: &str) -> TestResult<()> {
         db_common::reset_database(&self.pool).await?;
         db_common::load_fixture(&self.pool, fixture).await?;
         Ok(())
     }
 
     /// Clear PostgreSQL caches for cold cache measurements
-    pub async fn clear_cache(&self) -> Result<()> {
+    pub async fn clear_cache(&self) -> TestResult<()> {
         db_common::clear_pg_cache(&self.pool)
             .await
             .map_err(|e| eyre!("Failed to clear cache: {}", e))
@@ -135,7 +136,7 @@ impl BenchContext {
     ///
     /// This method provides both cold and warm cache measurements for
     /// database operations, giving insight into cache effects.
-    pub async fn run_isolated<F, Fut>(&self, dataset: &str, f: F) -> Result<DualMeasurement>
+    pub async fn run_isolated<F, Fut>(&self, dataset: &str, f: F) -> TestResult<DualMeasurement>
     where
         F: Fn(&DbPool) -> Fut + Clone,
         Fut: std::future::Future<Output = Result<()>>,
@@ -175,7 +176,7 @@ impl BenchContext {
         &self,
         fixture_set: &crate::static_fixtures::FixtureSet,
         size: crate::static_fixtures::DatasetSize,
-    ) -> Result<()> {
+    ) -> TestResult<()> {
         crate::static_fixtures::ensure_fixture(&self.pool, fixture_set, size)
             .await
             .map_err(|e| eyre!("Failed to load fixture: {}", e))
@@ -190,7 +191,7 @@ impl BenchContext {
     /// ```rust
     /// ctx.time_series(DatasetSize::Medium).await?;
     /// ```
-    pub async fn time_series(&self, size: crate::static_fixtures::DatasetSize) -> Result<()> {
+    pub async fn time_series(&self, size: crate::static_fixtures::DatasetSize) -> TestResult<()> {
         use crate::standard_fixtures::TIME_SERIES_FIXTURE;
         self.load_fixture(&TIME_SERIES_FIXTURE, size).await
     }
@@ -204,7 +205,7 @@ impl BenchContext {
     /// ```rust
     /// ctx.query_bench(DatasetSize::Large).await?;
     /// ```
-    pub async fn query_bench(&self, size: crate::static_fixtures::DatasetSize) -> Result<()> {
+    pub async fn query_bench(&self, size: crate::static_fixtures::DatasetSize) -> TestResult<()> {
         use crate::standard_fixtures::QUERY_BENCH_FIXTURE;
         self.load_fixture(&QUERY_BENCH_FIXTURE, size).await
     }
@@ -218,7 +219,7 @@ impl BenchContext {
     /// ```rust
     /// ctx.load_test(DatasetSize::Large).await?;
     /// ```
-    pub async fn load_test(&self, size: crate::static_fixtures::DatasetSize) -> Result<()> {
+    pub async fn load_test(&self, size: crate::static_fixtures::DatasetSize) -> TestResult<()> {
         use crate::standard_fixtures::LOAD_TEST_FIXTURE;
         self.load_fixture(&LOAD_TEST_FIXTURE, size).await
     }
@@ -232,7 +233,10 @@ impl BenchContext {
     /// ```rust
     /// ctx.satellite_bench(DatasetSize::Medium).await?;
     /// ```
-    pub async fn satellite_bench(&self, size: crate::static_fixtures::DatasetSize) -> Result<()> {
+    pub async fn satellite_bench(
+        &self,
+        size: crate::static_fixtures::DatasetSize,
+    ) -> TestResult<()> {
         use crate::standard_fixtures::SATELLITE_BENCH_FIXTURE;
         self.load_fixture(&SATELLITE_BENCH_FIXTURE, size).await
     }
@@ -246,7 +250,10 @@ impl BenchContext {
     /// ```rust
     /// ctx.operations_bench(DatasetSize::Small).await?;
     /// ```
-    pub async fn operations_bench(&self, size: crate::static_fixtures::DatasetSize) -> Result<()> {
+    pub async fn operations_bench(
+        &self,
+        size: crate::static_fixtures::DatasetSize,
+    ) -> TestResult<()> {
         use crate::standard_fixtures::OPERATIONS_FIXTURE;
         self.load_fixture(&OPERATIONS_FIXTURE, size).await
     }
