@@ -9,7 +9,7 @@ use tokio::time::{timeout, Duration};
 
 #[sinex_test]
 async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_eyre::Result<()> {
-    let runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
+    let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
         .with_dry_run(false)
         .build()
         .await?;

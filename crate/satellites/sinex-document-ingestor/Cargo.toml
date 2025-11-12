@@ -2,7 +2,7 @@
 name = "sinex-document-ingestor"
 version = "0.5.0"
 edition = "2021"
-description = "Document ingestor that consumes MaterialSliceStream from sensd"
+description = "Direct document ingestor for Sinex satellites"
 
 [dependencies]
 mimalloc = { workspace = true }
@@ -12,12 +12,8 @@ chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { workspace = true, features = ["net"] }
-futures = { workspace = true }
-async-stream = "0.3"
 tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
-sqlx = { workspace = true }
 
 # Sinex dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
@@ -27,3 +23,7 @@ camino = { workspace = true }
 
 # Document processing
 mime_guess = "2.0"
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+tempfile = "3.10"
