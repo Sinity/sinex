@@ -6,6 +6,10 @@
 
 ---
 
+# Sinex Testing Gap Analysis
+
+> **Historical context (JetStream Phase 5):** This document captures the dual-path (gRPC + JetStream) world that existed before the JetStream-first refactor completed. The gRPC-specific scenarios remain here for historical reference and to inform future audits, but the live system now ingests exclusively via NATS JetStream as described in `docs/way.md`.
+
 ## Executive Summary
 
 The sinex codebase demonstrates strong testing infrastructure with:
