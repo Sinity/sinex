@@ -179,9 +179,11 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::{sinex_test, TestResult};
 
-    #[test]
-    fn prepared_search_clamps_pagination() {
+    #[allow(dead_code)]
+    #[sinex_test]
+    fn prepared_search_clamps_pagination() -> TestResult<()> {
         let query = SearchQuery {
             text: None,
             sources: vec![],
@@ -211,10 +213,11 @@ mod tests {
             Pagination::DEFAULT_LIMIT
         );
         assert_eq!(prepared.filters.pagination.offset(), 0);
+        Ok(())
     }
 
-    #[test]
-    fn prepared_search_validates_time_range() {
+    #[sinex_test]
+    fn prepared_search_validates_time_range() -> TestResult<()> {
         let start = Utc::now();
         let end = start - chrono::Duration::hours(1);
 
@@ -229,5 +232,6 @@ mod tests {
         };
 
         assert!(PreparedSearch::new(query).is_err());
+        Ok(())
     }
 }

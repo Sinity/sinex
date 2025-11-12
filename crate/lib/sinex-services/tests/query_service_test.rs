@@ -67,7 +67,7 @@ async fn setup_query_test_data(ctx: &TestContext) -> color_eyre::Result<Vec<Ulid
             "shell.bash",
             "command.executed",
             json!({
-                "command": "cargo test --lib query",
+                "command": "cargo nextest run --lib query",
                 "exit_code": 0,
                 "directory": "/home/user/projects/rust",
                 "duration_ms": 1500
