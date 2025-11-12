@@ -1,5 +1,7 @@
 # SINEX COMPREHENSIVE TEST INFRASTRUCTURE ANALYSIS
 
+> **Historical context (JetStream Phase 5):** This report includes findings from the transitional period when ingestd supported both gRPC and JetStream transports. Those references remain for archival clarity; the production pipeline is JetStream-only per `docs/way.md`.
+
 ## EXECUTIVE SUMMARY
 
 The Sinex project has **176 test files** across the codebase with **60,362 lines of test code**. The test infrastructure is well-organized with modern tooling (rstest, proptest, insta, tracing-test) and a sophisticated parallel database pool supporting 64 concurrent isolated test databases. However, critical gaps exist in satellite testing coverage and core service test depth.
@@ -602,4 +604,3 @@ OVERALL ASSESSMENT:                     55% ✗ NEEDS SIGNIFICANT WORK
 - **Database Pool Isolation**: 64 concurrent slots
 - **Estimated Test Execution**: 10-15 minutes (full suite)
 - **Critical Gaps**: 9 satellite services + 3 core services
-
