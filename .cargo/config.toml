@@ -4,6 +4,8 @@
 target-dir = "target"
 incremental = true
 pipelining = true
+# Use all available CPU cores for compilation (override locally if needed)
+jobs = 24
 rustc-workspace-wrapper = "scripts/rustc_wrapper.sh"
 
 # Shared build cache across the workspace (experimental)
@@ -13,8 +15,11 @@ build-std-features = []
 # Default rustflags for stable, fast development
 # NOTE: Cranelift backend disabled due to ICE issues - see config-cranelift.toml for experimental version
 [target.x86_64-unknown-linux-gnu]
-# Add `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` locally if mold is installed and desired.
 rustflags = [
+  "-C",
+  "link-arg=-fuse-ld=mold",     # Fastest linker available
+  "-C",
+  "codegen-units=256",          # Maximize parallelism
   "--check-cfg=cfg(rust_analyzer)",
 ]
 
