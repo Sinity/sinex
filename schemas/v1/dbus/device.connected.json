@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "D-Bus announcement for a newly connected device.",
+  "properties": {
+    "device_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "device_path": {
+      "type": "string"
+    },
+    "device_type": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "properties": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "serial": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "vendor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "device_path",
+    "device_type",
+    "event_type",
+    "properties",
+    "timestamp"
+  ],
+  "title": "DbusDeviceConnectedPayload",
+  "type": "object"
+}

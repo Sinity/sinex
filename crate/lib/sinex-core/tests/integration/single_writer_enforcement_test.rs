@@ -5,17 +5,16 @@
 //! - Satellites must go through ingestd for all event writes
 //! - Events only appear in DB after commit (post-commit publish property)
 
-use color_eyre::eyre::Result as EyreResult;
 use sinex_core::{
     types::domain::{EventSource, EventType},
     Event, JsonValue,
 };
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::prelude::*;
 use sqlx::Row;
 
 /// Test that satellites cannot directly write to core.events table
 #[sinex_test]
-async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> EyreResult<()> {
+async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Result<()> {
     // This test would need to be run with different connection permissions
     // In a real CI environment, we'd have:
     // 1. A satellite connection with restricted permissions
@@ -25,12 +24,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Ey
     // In production, satellites should only have SELECT permission on core.events
 
     // Try to insert directly as a satellite (should fail in production)
-    let event = Event::<JsonValue>::test_event(
-        EventSource::from_static("fs-watcher"),
-        EventType::from_static("file.created"),
-        serde_json::json!({ "path": "/test/file.txt" }),
-    );
-
+    //
     // In production with proper permissions, this would fail with:
     // "permission denied for table events"
 
@@ -58,7 +52,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Ey
 
 /// Test that ingestd is the only service that can write events
 #[sinex_test]
-async fn test_only_ingestd_writes_events(ctx: TestContext) -> EyreResult<()> {
+async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
     // In a proper setup, we would:
     // 1. Start a satellite service
     // 2. Have it attempt to write directly
@@ -97,7 +91,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> EyreResult<()> {
 
 /// Test that events appear in DB only after commit (post-commit publish)
 #[sinex_test]
-async fn test_post_commit_publish_property(ctx: TestContext) -> EyreResult<()> {
+async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool.clone();
 
     // Start a transaction
@@ -190,7 +184,7 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> EyreResult<()> {
 
 /// CI check: Verify no live events reference archived events
 #[sinex_test]
-async fn test_no_live_to_archived_references(ctx: TestContext) -> EyreResult<()> {
+async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
     let violations = sqlx::query(
         r#"
@@ -216,7 +210,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> EyreResult<()>
 
 /// CI check: Verify XOR provenance constraint
 #[sinex_test]
-async fn test_provenance_xor_constraint(ctx: TestContext) -> EyreResult<()> {
+async fn test_provenance_xor_constraint(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
     let violations = sqlx::query(
         r#"
@@ -242,7 +236,7 @@ async fn test_provenance_xor_constraint(ctx: TestContext) -> EyreResult<()> {
 
 /// CI check: Verify anchor uniqueness for first-order events
 #[sinex_test]
-async fn test_anchor_uniqueness(ctx: TestContext) -> EyreResult<()> {
+async fn test_anchor_uniqueness(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
     let duplicates = sqlx::query(
         r#"

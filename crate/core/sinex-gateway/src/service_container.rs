@@ -1,5 +1,7 @@
 //! Service container that holds all service instances
 
+use crate::replay_control::{spawn_replay_control, ReplayControlClient};
+use crate::replay_state_machine::ReplayStateMachine;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use sinex_core::{
@@ -10,7 +12,7 @@ use sinex_core::{
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 // (no mpsc channel needed here)
 
 /// Container holding all service instances
@@ -20,6 +22,7 @@ pub struct ServiceContainer {
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
     pub search: Arc<SearchService>,
+    pub replay_control: Option<ReplayControlClient>,
 }
 
 impl ServiceContainer {
@@ -77,11 +80,27 @@ impl ServiceContainer {
         );
 
         // Initialize all services
+        let replay = Arc::new(ReplayStateMachine::new(pool.clone()));
+
+        let control_client = match spawn_replay_control(
+            replay.clone(),
+            &std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into()),
+        )
+        .await
+        {
+            Ok(client) => Some(client),
+            Err(err) => {
+                warn!(error = %err, "Replay control bus disabled (NATS connection failed)");
+                None
+            }
+        };
+
         Ok(Self {
             analytics: Arc::new(AnalyticsService::new(pool.clone())),
             content: Arc::new(ContentService::new(pool.clone(), blob_manager)),
             pkm: Arc::new(PkmService::new(pool.clone())),
             search: Arc::new(SearchService::new(pool)),
+            replay_control: control_client,
         })
     }
 }

@@ -2,11 +2,13 @@
 //!
 //! This module contains all database-related functionality that was previously in sinex-db.
 
+pub mod integrity;
 pub mod models;
 pub mod pool;
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
+pub mod validation;
 
 // Core modules
 pub mod distributed_locking;
@@ -17,7 +19,6 @@ pub mod repositories;
 
 // Database schema definitions using SeaQuery
 pub use sinex_schema::schema;
-pub mod seaquery_helpers;
 
 // Migration support
 #[cfg(feature = "migration")]
@@ -36,9 +37,6 @@ pub use sinex_schema::ulid_conversions::{
     from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid,
     uuid_to_ulid, DbUuidCollectionExt, DbUuidExt, UlidArrayExt, UlidExt,
 };
-
-// Re-export SeaQuery ULID helpers
-pub use seaquery_helpers::SeaQueryUlidExt;
 
 // Re-export repository pattern
 pub use repositories::{

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "close_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "window_class": {
+      "type": "string"
+    },
+    "window_id": {
+      "type": "string"
+    },
+    "window_title": {
+      "type": "string"
+    },
+    "workspace_id": {
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "window_class",
+    "window_id",
+    "window_title",
+    "workspace_id"
+  ],
+  "title": "HyprlandWindowClosedPayload",
+  "type": "object"
+}

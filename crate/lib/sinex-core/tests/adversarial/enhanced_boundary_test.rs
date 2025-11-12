@@ -2,7 +2,6 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use std::sync::Arc;
@@ -10,7 +9,7 @@ use tokio::time::{Duration, timeout};
 
 /// Test system behavior with maximum payload sizes
 #[sinex_test]
-async fn test_maximum_payload_sizes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
     let payload_sizes = vec![
         1024,           // 1KB
         64 * 1024,      // 64KB
@@ -49,7 +48,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> color_eyre::eyre::Resul
 
 /// Test system behavior with zero and minimal values
 #[sinex_test]
-async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     // Test empty payload
     let empty_event = ctx.create_test_event(
         "boundary_test",
@@ -93,7 +92,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Res
 
 /// Test system behavior with Unicode and special characters
 #[sinex_test]
-async fn test_unicode_boundary_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
     let unicode_cases = vec![
         // Basic multilingual plane
         ("emoji", "🎉🎊🎈🎁🎀"),
@@ -131,7 +130,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> color_eyre::eyre::Resu
 
 /// Test timestamp boundaries
 #[sinex_test]
-async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
     use chrono::{DateTime, Utc, TimeZone};
 
     let timestamp_cases = vec![
@@ -167,7 +166,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::eyre::Result
 
 /// Test array and collection boundaries
 #[sinex_test]
-async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     // Empty arrays
     let empty_array = ctx.create_test_event(
         "collection_test",
@@ -220,7 +219,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Resul
 
 /// Test numeric boundaries
 #[sinex_test]
-async fn test_numeric_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_numeric_boundaries(ctx: TestContext) -> Result<()> {
     let numeric_cases = vec![
         ("i64_max", serde_json::json!(i64::MAX)),
         ("i64_min", serde_json::json!(i64::MIN)),
@@ -255,31 +254,34 @@ async fn test_numeric_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<(
 
 /// Test concurrent access boundaries
 #[sinex_test]
-async fn test_concurrent_access_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
+    use futures::future;
+
+    let ctx = Arc::new(ctx);
     let event_count = 1000;
     let concurrent_tasks = 100;
     let events_per_task = event_count / concurrent_tasks;
 
-    let mut handles = vec![];
+    let mut handles = Vec::new();
 
     for task_id in 0..concurrent_tasks {
-        let ctx_clone = ctx.clone();
+        let ctx_task = Arc::clone(&ctx);
 
-        let handle = tokio::spawn(async move {
+        let handle = tokio::spawn(async move -> Result<()> {
+            let pool = ctx_task.pool.clone();
             for i in 0..events_per_task {
-                let event = ctx_clone.create_test_event(
-                    "concurrent_test",
-                    &format!("task_{}_event_{}", task_id, i),
-                    serde_json::json!({
-                        "task_id": task_id,
-                        "event_index": i
-                    }),
-                );
+                let event = ctx_task
+                    .create_test_event(
+                        "concurrent_test",
+                        &format!("task_{}_event_{}", task_id, i),
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "event_index": i
+                        }),
+                    )
+                    .await?;
 
-                if let Err(e) = ctx_clone.pool.events().insert(event).await {
-                    eprintln!("Failed to insert event: {}", e);
-                    return Err(e);
-                }
+                pool.events().insert(event).await?;
             }
             Ok(())
         });
@@ -290,25 +292,25 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> color_eyre::eyre
     // Wait for all tasks with timeout
     let results = timeout(
         Duration::from_secs(30),
-        futures::future::join_all(handles)
-    ).await?;
+        future::join_all(handles),
+    )
+    .await?;
 
-    let mut success_count = 0;
     for result in results {
-        if result.is_ok() && result.unwrap().is_ok() {
-            success_count += 1;
-        }
+        result??;
     }
 
-    println!("Concurrent tasks completed: {}/{}", success_count, concurrent_tasks);
-    assert!(success_count >= concurrent_tasks * 9 / 10, "Too many concurrent failures");
+    println!(
+        "Concurrent tasks completed without failure ({} tasks)",
+        concurrent_tasks
+    );
 
     Ok(())
 }
 
 /// Test string length boundaries
 #[sinex_test]
-async fn test_string_length_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
     let string_lengths = vec![
         0,      // Empty string
         1,      // Single character
@@ -339,7 +341,7 @@ async fn test_string_length_boundaries(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Property-based testing for boundary conditions
 #[sinex_test]
-async fn test_property_based_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_property_based_boundaries(ctx: TestContext) -> Result<()> {
     proptest!(|(
         array_size in 0..1000usize,
         string_len in 0..10000usize,

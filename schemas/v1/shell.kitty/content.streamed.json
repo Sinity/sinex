@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "capture_timestamp": {
+      "type": "string"
+    },
+    "kitty_window_id": {
+      "type": "string"
+    },
+    "line_start_offset": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "new_lines": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "capture_timestamp",
+    "kitty_window_id",
+    "line_start_offset",
+    "new_lines"
+  ],
+  "title": "KittyContentStreamedPayload",
+  "type": "object"
+}

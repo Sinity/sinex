@@ -48,8 +48,8 @@ fn automaton_config_loads_and_overrides() -> color_eyre::eyre::Result<()> {
             consumer_group = "canon-group"
             consumer_name = "canon-instance"
             topics = ["sinex:events:terminal"]
-            stream_batch_size = 25
-            stream_timeout_secs = 9
+            processing_batch_size = 25
+            checkpoint_interval_secs = 9
         "#,
     )?;
 
@@ -58,8 +58,8 @@ fn automaton_config_loads_and_overrides() -> color_eyre::eyre::Result<()> {
     assert_eq!(config.base.service_name, "terminal-canonicalizer");
     assert_eq!(config.consumer_group, "canon-group");
     assert_eq!(config.consumer_name, "canon-instance");
-    assert_eq!(config.stream_batch_size, 25);
-    assert_eq!(config.stream_timeout_secs, 9);
+    assert_eq!(config.processing_batch_size, 25);
+    assert_eq!(config.checkpoint_interval_secs, 9);
     assert_eq!(config.topics, vec!["sinex:events:terminal"]);
     config.validate_config()?;
     Ok(())

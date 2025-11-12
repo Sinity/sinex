@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "config": true,
+    "pid": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "process_name": {
+      "type": "string"
+    },
+    "process_type": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "config",
+    "pid",
+    "process_name",
+    "process_type",
+    "version"
+  ],
+  "title": "ProcessStartedPayload",
+  "type": "object"
+}

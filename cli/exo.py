@@ -1705,7 +1705,7 @@ def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
                 # Step 3: Find dependent events (events that depend on events from this blob)
                 cur.execute("""
                     WITH blob_events AS (
-                        SELECT event_id FROM core.events WHERE source_material_id = %s::uuid
+                        SELECT id as event_id FROM core.events WHERE source_material_id = %s::uuid
                     ),
                     all_dependent_events AS (
                         SELECT DISTINCT d.event_id, d.dependency_depth
@@ -1777,7 +1777,7 @@ def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
                 if dependent_count > 0:
                     cur.execute("""
                         WITH blob_events AS (
-                            SELECT event_id FROM core.events WHERE source_material_id = %s::uuid
+                            SELECT id as event_id FROM core.events WHERE source_material_id = %s::uuid
                         ),
                         all_dependent_events AS (
                             SELECT DISTINCT d.event_id
@@ -1785,7 +1785,7 @@ def blob_archive(blob_id: str, reason: str, dry_run: bool, force: bool):
                             CROSS JOIN LATERAL core.find_dependent_events(be.event_id) d
                         )
                         DELETE FROM core.events 
-                        WHERE event_id IN (SELECT event_id FROM all_dependent_events)
+                        WHERE id IN (SELECT event_id FROM all_dependent_events)
                     """, (blob_id,))
                     dependent_deleted = cur.rowcount
                 else:
@@ -2561,7 +2561,7 @@ def build_dependency_graph(target_events: List[Dict]) -> Dict[str, List[Dict]]:
                     # Get the full event details
                     cur.execute("""
                         SELECT id, source, event_type, ts_orig, ts_ingest, payload
-                        FROM core.events WHERE event_id = %s
+                        FROM core.events WHERE id = %s
                     """, [row['event_id']])
                     
                     event = cur.fetchone()
@@ -2641,10 +2641,10 @@ def execute_replay(automaton: str, dependency_graph: Dict[str, List[Dict]],
                     # Archive events in batches
                     for i in range(0, len(event_ids), 100):
                         batch = event_ids[i:i+100]
-                        cur.execute("""
-                            DELETE FROM core.events 
-                            WHERE event_id = ANY(%s)
-                        """, [batch])
+                    cur.execute("""
+                        DELETE FROM core.events 
+                        WHERE id = ANY(%s)
+                    """, [batch])
                         total_archived += cur.rowcount
                 
                 console.print(f"  Total archived: [red]{total_archived}[/red] events")
@@ -2703,10 +2703,10 @@ def event_archive(ctx, event_id: str, reason: str, dry_run: bool, force: bool):
             with conn.cursor() as cur:
                 # Step 1: Verify event exists
                 cur.execute("""
-                    SELECT event_id, source, event_type, ts_orig, host, 
+                    SELECT id, source, event_type, ts_orig, host, 
                            source_material_id, source_event_ids
                     FROM core.events 
-                    WHERE event_id = %s::uuid
+                    WHERE id = %s::uuid
                 """, (event_id,))
                 event_info = cur.fetchone()
                 
@@ -2798,7 +2798,7 @@ def event_archive(ctx, event_id: str, reason: str, dry_run: bool, force: bool):
                 # First delete dependent events (deepest first)
                 for dep in dependent_events:
                     cur.execute(
-                        "DELETE FROM core.events WHERE event_id = %s::uuid",
+                        "DELETE FROM core.events WHERE id = %s::uuid",
                         (dep['event_id'],)
                     )
                     if cur.rowcount > 0:
@@ -2806,7 +2806,7 @@ def event_archive(ctx, event_id: str, reason: str, dry_run: bool, force: bool):
                 
                 # Then delete the target event
                 cur.execute(
-                    "DELETE FROM core.events WHERE event_id = %s::uuid",
+                    "DELETE FROM core.events WHERE id = %s::uuid",
                     (event_id,)
                 )
                 if cur.rowcount > 0:
@@ -2896,7 +2896,7 @@ def restore(ctx, event_id: str, cascade: bool, dry_run: bool, force: bool):
                     # Build dependency graph for replacement subtree
                     cur.execute("""
                         SELECT id, source, event_type, ts_orig, ts_ingest, payload
-                        FROM core.events WHERE event_id = %s
+                        FROM core.events WHERE id = %s
                     """, [replacement_id])
                     
                     replacement_event = cur.fetchone()
@@ -2994,7 +2994,7 @@ def execute_restore(cur, archived_graph: Dict[int, List[Dict]], replacement_grap
                 
                 # Archive events
                 for event_id_to_archive in event_ids:
-                    cur.execute("DELETE FROM core.events WHERE event_id = %s", [event_id_to_archive])
+                    cur.execute("DELETE FROM core.events WHERE id = %s", [event_id_to_archive])
         
         # Step 2: Restore the archived subtree
         console.print("  Restoring archived subtree...")
@@ -3463,7 +3463,7 @@ def explore_curate(ctx, time_range: str, source: Optional[str], event_type: Opti
                                 (getpass.getuser(), f"auto_curate: exact duplicate resolved", None)
                             )
                             cur.execute(
-                                "DELETE FROM core.events WHERE event_id = %s",
+                                "DELETE FROM core.events WHERE id = %s",
                                 (event_id,)
                             )
                         
@@ -3494,7 +3494,7 @@ def explore_curate(ctx, time_range: str, source: Optional[str], event_type: Opti
                                 (getpass.getuser(), f"manual_curate: duplicate resolved", None)
                             )
                             cur.execute(
-                                "DELETE FROM core.events WHERE event_id = %s",
+                                "DELETE FROM core.events WHERE id = %s",
                                 (event_id,)
                             )
                         
@@ -3519,7 +3519,7 @@ def explore_curate(ctx, time_range: str, source: Optional[str], event_type: Opti
                                 (getpass.getuser(), f"manual_curate: preferred {preferred_event}", None)
                             )
                             cur.execute(
-                                "DELETE FROM core.events WHERE event_id = %s",
+                                "DELETE FROM core.events WHERE id = %s",
                                 (event_id,)
                             )
                         

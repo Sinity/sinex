@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "active_watchers": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "dbus_enabled": {
+      "type": "boolean"
+    },
+    "journal_enabled": {
+      "type": "boolean"
+    },
+    "snapshot_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "systemd_enabled": {
+      "type": "boolean"
+    },
+    "udev_enabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "active_watchers",
+    "dbus_enabled",
+    "journal_enabled",
+    "snapshot_time",
+    "systemd_enabled",
+    "udev_enabled"
+  ],
+  "title": "SystemSnapshotPayload",
+  "type": "object"
+}

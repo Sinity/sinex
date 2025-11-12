@@ -26,9 +26,8 @@ members = [
   "tests/e2e",
 
   # Automaton crates
-  # Note: Type aliases added but compilation errors remain - needs refactoring
-  # "crate/satellites/sinex-analytics-automaton",
-  # "crate/satellites/sinex-search-automaton",
+  "crate/satellites/sinex-analytics-automaton",
+  "crate/satellites/sinex-search-automaton",
 
   # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",

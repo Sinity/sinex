@@ -74,8 +74,9 @@ When touching a crate, run through this list:
        exercising private-only helpers.
 6. [ ] Inline tests are justified (proc-macro parsing, minimal helper coverage).
 7. [ ] Workspace docs are linked when they provide extended rationale.
-8. [ ] `just check` and `just test` succeed locally after documentation or test
-       moves.
+8. [ ] `devenv tasks run dev:check` and `devenv tasks run dev:test` succeed
+       locally after documentation or test moves (Nextest-only; `cargo test`
+       is unsupported).
 
 Keeping these steps in sync ensures documentation stays discoverable and aligned
 with the code that implements it.

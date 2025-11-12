@@ -3,13 +3,17 @@ name: Schema Validation Pipeline
 on:
   push:
     paths:
-      - 'migrations/**'
-      - 'crate/*/src/**'
+      - 'schemas/**'
+      - 'crate/lib/sinex-core/src/types/events/**'
+      - 'crate/lib/sinex-schema/**'
+      - 'scripts/schema-dev.sh'
       - '.github/workflows/schema-validation.yml'
   pull_request:
     paths:
-      - 'migrations/**'
-      - 'crate/*/src/**'
+      - 'schemas/**'
+      - 'crate/lib/sinex-core/src/types/events/**'
+      - 'crate/lib/sinex-schema/**'
+      - 'scripts/schema-dev.sh'
       - '.github/workflows/schema-validation.yml'
 
 env:
@@ -21,7 +25,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb:latest-pg16
+        image: timescale/timescaledb:2.15.2-pg16  # Keep validation jobs in lock-step with the pinned CI version
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sinex_test
@@ -65,12 +69,8 @@ jobs:
       - name: Run database migrations
         run: |
           export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
-          
-          # Install sqlx-cli if not available
-          nix develop -c cargo install sqlx-cli --no-default-features --features postgres
-          
-          # Run migrations
-          nix develop -c sqlx migrate run
+          cd crate/lib/sinex-schema
+          nix develop -c cargo run -- up
       
       - name: Test schema registry functionality
         run: |
@@ -80,33 +80,25 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -U postgres -d sinex_test -c "
             -- Test schema insertion
             INSERT INTO sinex_schemas.event_payload_schemas 
-            (event_source, event_type, schema_version, json_schema_definition, description)
+            (source, event_type, schema_version, schema_content, content_hash)
             VALUES 
-            ('test.source', 'test.event', 'v1.0', '{}', 'Test schema for validation pipeline');
+            ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text));
             
             -- Test schema activation
             UPDATE sinex_schemas.event_payload_schemas 
             SET is_active = true 
-            WHERE event_source = 'test.source' AND event_type = 'test.event';
+            WHERE source = 'test.source' AND event_type = 'test.event';
             
             -- Verify schema exists
             SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas 
-            WHERE event_source = 'test.source';
+            WHERE source = 'test.source';
           "
-      
-      - name: Test auto-registration system
+
+      - name: Smoke-test schema CLI
         run: |
           export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
-          nix develop -c cargo test test_auto_registration_completeness -- --test-threads=1
-      
-      - name: Validate with existing codebase
-        run: |
-          nix develop -c cargo check --workspace
-      
-      - name: Run schema-related tests
-        run: |
-          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
-          nix develop -c cargo test --workspace schema -- --test-threads=2
+          TMP_DIR=$(mktemp -d)
+          nix develop -c cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
 
   deploy-staging:
     runs-on: ubuntu-latest

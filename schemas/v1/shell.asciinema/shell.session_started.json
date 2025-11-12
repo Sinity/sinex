@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "dimensions": true,
+    "environment": true,
+    "recording_file": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "start_time": {
+      "type": "string"
+    },
+    "terminal_id": {
+      "type": "string"
+    },
+    "terminal_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cwd",
+    "dimensions",
+    "environment",
+    "recording_file",
+    "session_id",
+    "start_time",
+    "terminal_id",
+    "terminal_type"
+  ],
+  "title": "AsciinemaSessionStartedPayload",
+  "type": "object"
+}

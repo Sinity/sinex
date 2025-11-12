@@ -1,4 +1,3 @@
-use sea_query::{Alias, PostgresQueryBuilder, Query};
 use sinex_core::db::schema::*;
 use sinex_core::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
 use sinex_core::types::ulid::Ulid;
@@ -35,16 +34,12 @@ async fn repository_trait_methods_work_across_tables(
 
 #[sinex_test]
 async fn seaquery_builder_works_with_table_defs(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let query = Query::select()
-        .column(Alias::new(Events::primary_key()))
-        .column(Alias::new("source"))
-        .column(Alias::new("event_type"))
-        .from((
-            Alias::new(Events::schema_name()),
-            Alias::new(Events::table_name()),
-        ))
-        .limit(1)
-        .to_string(PostgresQueryBuilder);
+    let query = format!(
+        "SELECT {}, source, event_type FROM {}.{} LIMIT 1",
+        Events::primary_key(),
+        Events::schema_name(),
+        Events::table_name()
+    );
 
     let _rows: Vec<(sqlx::types::Uuid, String, String)> =
         sqlx::query_as(&query).fetch_all(&ctx.pool).await?;

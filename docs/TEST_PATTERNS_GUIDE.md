@@ -291,19 +291,19 @@ sinex-test-utils/
 
 ```bash
 # Run tests with custom pool size
-SINEX_TESTUTILS_POOL_SIZE=20 cargo test
+SINEX_TESTUTILS_POOL_SIZE=20 cargo nextest run -p sinex-test-utils
 
 # Rebuild template database
-rm target/sinex-test-utils/template_stamp.json && cargo test
+rm target/sinex-test-utils/template_stamp.json && cargo nextest run -p sinex-test-utils
 
 # Run with tracing
-RUST_LOG=debug cargo test
+RUST_LOG=debug cargo nextest run -p sinex-test-utils
 
 # Run specific test
-cargo test test_name -- --exact
+cargo nextest run -p sinex-test-utils -E 'test(test_name)'
 
 # Update snapshots
-INSTA_UPDATE=always cargo test
+INSTA_UPDATE=always cargo nextest run -p sinex-test-utils
 
 # Check pool health (in test code)
 let report = check_pool_health().await?;

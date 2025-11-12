@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Atuin command execution captured from history ingestion.",
+  "properties": {
+    "atuin_history_id": {
+      "type": "string"
+    },
+    "atuin_session_id": {
+      "type": "string"
+    },
+    "command_string": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "duration_ns": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "exit_code": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "hostname": {
+      "type": "string"
+    },
+    "terminal_session_ulid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "ts_end_orig": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "ts_start_orig": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "atuin_history_id",
+    "atuin_session_id",
+    "command_string",
+    "cwd",
+    "duration_ns",
+    "exit_code",
+    "hostname",
+    "timestamp",
+    "ts_end_orig",
+    "ts_start_orig"
+  ],
+  "title": "AtuinCommandExecutedPayload",
+  "type": "object"
+}

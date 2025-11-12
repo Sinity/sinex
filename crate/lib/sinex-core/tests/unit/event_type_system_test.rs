@@ -225,7 +225,10 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
     let fs_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("fs-watcher"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(fs_events.len(), 2, "Should have 2 filesystem events");

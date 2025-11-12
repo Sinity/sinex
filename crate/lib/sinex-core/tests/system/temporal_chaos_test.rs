@@ -777,11 +777,7 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
     // Phase 3: Verify events were stored with correct ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events = ctx.pool.events().get_by_source(
-        &sinex_core::types::domain::EventSource::from_static("fs"),
-        Some(10),
-        None
-    ).await?;
+    let stored_events = ctx.pool.events().get_by_source(&sinex_core::types::domain::EventSource::from_static("fs"), sinex_core::types::Pagination::new(Some(10), None)).await?;
 
     // Events should be ordered by ingestion time (ULID), not by ts_orig
     for window in stored_events.windows(2) {
@@ -928,11 +924,7 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
     // Phase 4: Verify database ordering matches ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events = ctx.pool.events().get_by_source(
-        &sinex_core::types::domain::EventSource::from_static("timing_test"),
-        Some(all_ids.len() as i64),
-        None
-    ).await?;
+    let stored_events = ctx.pool.events().get_by_source(&sinex_core::types::domain::EventSource::from_static("timing_test"), sinex_core::types::Pagination::new(Some(all_ids.len() as i64), None)).await?;
 
     // Database should maintain ULID ordering
     for window in stored_events.windows(2) {

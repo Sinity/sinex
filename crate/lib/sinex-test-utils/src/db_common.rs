@@ -47,15 +47,21 @@ use crate::Result;
 
 use camino::Utf8PathBuf;
 use futures::Future;
+use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
+use sinex_core::types::ulid::Ulid;
 use sqlx::pool::PoolConnection;
 use sqlx::Postgres;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 static BASELINE_EVENT_COUNT: AtomicI64 = AtomicI64::new(-1);
 static BASELINE_MATERIAL_COUNT: AtomicI64 = AtomicI64::new(-1);
+static BOOTSTRAP_MATERIAL_ID: Lazy<Ulid> = Lazy::new(|| {
+    Ulid::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap material id")
+});
 
 struct OperationIdGuard {
     previous: Option<String>,
@@ -259,7 +265,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     sqlx::query(
         r#"
         DELETE FROM core.events
-        WHERE source_material_id = $1::text::ulid
+        WHERE source_material_id = $1::uuid::ulid
            OR source_material_id IN (
                 SELECT id
                 FROM raw.source_material_registry
@@ -267,7 +273,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             )
         "#,
     )
-    .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .execute(conn.as_mut())
     .await?;
     operation_guard2.restore(&mut conn).await?;
@@ -282,7 +288,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             timing_info_type,
             metadata
         ) VALUES (
-            $1::text::ulid,
+            $1::uuid::ulid,
             'annex',
             'test-material-bootstrap',
             'completed',
@@ -296,7 +302,7 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
             metadata = EXCLUDED.metadata
         "#,
     )
-    .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .execute(conn.as_mut())
     .await?;
 
@@ -305,12 +311,12 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
     sqlx::query(
         r#"
         DELETE FROM raw.source_material_registry
-        WHERE id = $1::text::ulid
+        WHERE id = $1::uuid::ulid
            OR source_identifier = $2
            OR source_identifier LIKE 'test-material-%'
         "#,
     )
-    .bind("014D2PF2DBSQQZXQ5TK1V58CGG")
+    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .bind("test-material-bootstrap")
     .execute(conn.as_mut())
     .await?;

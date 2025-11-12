@@ -7,12 +7,15 @@
 //! - Cross-component type safety integration
 //! - Repository type safety guarantees
 
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::models::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
+use sinex_test_utils::constants::{
+    EVENT_SOURCE_REPO_PRIMARY, EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY,
+    SOURCE_FIXTURE_REPO_PRIMARY, SOURCE_FIXTURE_REPO_SECONDARY,
+};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
@@ -24,7 +27,7 @@ struct TestCheckpoint;
 // =============================================================================
 
 #[sinex_test]
-async fn test_generic_id_type_isolation(ctx: TestContext) -> EyreResult<()> {
+async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
     // Create IDs of different types
     let event_id = Id::<Event>::new();
     let checkpoint_id = Id::<TestCheckpoint>::new();
@@ -51,7 +54,7 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> EyreResult<()> {
 }
 
 #[sinex_test]
-async fn test_id_database_integration_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()> {
     // Create an event and verify its ID type is preserved through database operations
     let event = ctx
         .create_test_event(
@@ -86,7 +89,7 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> EyreResul
 }
 
 #[sinex_test]
-async fn test_id_collection_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     // Create multiple events
     let mut event_ids = Vec::new();
 
@@ -129,7 +132,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> EyreResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_source_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
     let dynamic_source = EventSource::new("dynamic-test-source");
@@ -159,13 +162,19 @@ async fn test_event_source_type_safety(ctx: TestContext) -> EyreResult<()> {
     let static_events = ctx
         .pool
         .events()
-        .get_by_source(&static_source, None, None)
+        .get_by_source(
+            &static_source,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .get_by_source(&dynamic_source, None, None)
+        .get_by_source(
+            &dynamic_source,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -175,7 +184,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> EyreResult<()> {
 }
 
 #[sinex_test]
-async fn test_event_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
     let dynamic_type = EventType::new("dynamic.test");
@@ -205,13 +214,16 @@ async fn test_event_type_safety(ctx: TestContext) -> EyreResult<()> {
     let static_events = ctx
         .pool
         .events()
-        .get_by_event_type(&static_type, None, None)
+        .get_by_event_type(&static_type, sinex_core::types::Pagination::new(None, None))
         .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .get_by_event_type(&dynamic_type, None, None)
+        .get_by_event_type(
+            &dynamic_type,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -221,7 +233,7 @@ async fn test_event_type_safety(ctx: TestContext) -> EyreResult<()> {
 }
 
 #[sinex_test]
-async fn test_domain_string_const_support(ctx: TestContext) -> EyreResult<()> {
+async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
     // Test compile-time constants for domain strings
     const TEST_SOURCE: EventSource = EventSource::from_static("const-source");
     const TEST_TYPE: EventType = EventType::from_static("const.type");
@@ -247,7 +259,7 @@ async fn test_domain_string_const_support(ctx: TestContext) -> EyreResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_payload_validation_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
     // Test that payload validation preserves type safety
     let valid_payload = json!({
         "required_field": "value",
@@ -278,7 +290,7 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> EyreResult<()>
 }
 
 #[sinex_test]
-async fn test_nested_payload_type_preservation(ctx: TestContext) -> EyreResult<()> {
+async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
     // Test deeply nested payload structure preservation
     let complex_payload = json!({
         "metadata": {
@@ -340,59 +352,77 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> EyreResult<(
 // =============================================================================
 
 #[sinex_test]
-async fn test_repository_query_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     // Create test data
     let _events = vec![
-        ctx.create_test_event("repo-test", "query.safety", json!({"index": 1}))
-            .await?,
-        ctx.create_test_event("repo-test", "query.safety", json!({"index": 2}))
-            .await?,
-        ctx.create_test_event("other-source", "query.safety", json!({"index": 3}))
-            .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_PRIMARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 1}),
+        )
+        .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_PRIMARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 2}),
+        )
+        .await?,
+        ctx.create_test_event(
+            SOURCE_FIXTURE_REPO_SECONDARY,
+            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            json!({"index": 3}),
+        )
+        .await?,
     ];
 
     // Test source-based queries return correct types
-    let repo_source = EventSource::from_static("repo-test");
+    let repo_source = EVENT_SOURCE_REPO_PRIMARY;
     let repo_events = ctx
         .pool
         .events()
-        .get_by_source(&repo_source, None, None)
+        .get_by_source(&repo_source, sinex_core::types::Pagination::new(None, None))
         .await?;
 
     assert_eq!(repo_events.len(), 2);
     for event in &repo_events {
-        assert_eq!(event.source.as_str(), "repo-test");
+        assert_eq!(event.source.as_str(), SOURCE_FIXTURE_REPO_PRIMARY);
         assert!(event.id.is_some()); // All events should have IDs
     }
 
     // Test type-based queries
-    let repo_event_type = EventType::from_static("query.safety");
+    let repo_event_type = EVENT_TYPE_QUERY_SAFETY;
     let safety_events = ctx
         .pool
         .events()
-        .get_by_event_type(&repo_event_type, None, None)
+        .get_by_event_type(
+            &repo_event_type,
+            sinex_core::types::Pagination::new(None, None),
+        )
         .await?;
 
     assert_eq!(safety_events.len(), 3);
     for event in &safety_events {
-        assert_eq!(event.event_type.as_str(), "query.safety");
+        assert_eq!(event.event_type.as_str(), EVENT_TYPE_FIXTURE_QUERY_SAFETY);
     }
 
     // Test combined queries
     let filters = EventSearchFilters {
-        source: Some(EventSource::from_static("repo-test")),
-        event_type: Some(EventType::from_static("query.safety")),
+        sources: vec![EVENT_SOURCE_REPO_PRIMARY],
+        event_types: vec![EVENT_TYPE_QUERY_SAFETY],
         ..Default::default()
     };
     let specific_events = ctx.pool.events().search(filters).await?;
 
     assert_eq!(specific_events.len(), 2);
+    assert!(specific_events
+        .iter()
+        .all(|row| row.source.as_str() == SOURCE_FIXTURE_REPO_PRIMARY));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_repository_id_query_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
     // Create an event
     let event = ctx
         .create_test_event(
@@ -429,7 +459,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> EyreResult<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()> {
     // Test that types are preserved through the entire event creation pipeline
 
     // 1. Domain type construction
@@ -480,7 +510,7 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> EyreResul
 }
 
 #[sinex_test]
-async fn test_concurrent_type_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     use std::sync::Arc;
     use tokio::task::JoinSet;
 
@@ -544,7 +574,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> EyreResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_type_conversion_safety(ctx: TestContext) -> EyreResult<()> {
+async fn test_ulid_type_conversion_safety(ctx: TestContext) -> Result<()> {
     // Test edge cases in ULID type conversions
 
     // Create ULID directly
@@ -570,7 +600,7 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> EyreResult<()> {
 }
 
 #[sinex_test]
-async fn test_type_safety_boundary_conditions(ctx: TestContext) -> EyreResult<()> {
+async fn test_type_safety_boundary_conditions(ctx: TestContext) -> Result<()> {
     // Test type safety at system boundaries
 
     // Empty but valid domain strings

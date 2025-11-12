@@ -1,54 +1,32 @@
 # Sinex Event Schemas
 
-This directory contains the canonical JSON Schema definitions for all Sinex event payloads.
+> **Source of Truth:** Rust `EventPayload` structs (via `derive(EventPayload)`) define every schema.  
+> JSON files under `schemas/` are generated artifacts for GitOps distribution and downstream clients—do **not** edit them by hand.  
+> Regenerate them with `./scripts/schema-dev.sh generate` (CI enforces this, similar to `cargo fmt`).
 
 ## Directory Structure
 
 ```
 schemas/
-├── v1/                     # Version 1 schemas
-│   ├── common/            # Common definitions used across schemas
-│   │   └── provenance.json
-│   ├── filesystem/        # File system event schemas
-│   │   ├── file_created.json
-│   │   ├── file_modified.json
-│   │   ├── file_deleted.json
-│   │   ├── file_moved.json
-│   │   ├── dir_created.json
-│   │   └── dir_deleted.json
-│   ├── shell/             # Shell/terminal event schemas
-│   │   ├── command_executed.json
-│   │   ├── command_completed.json
-│   │   ├── session_started.json
-│   │   └── session_ended.json
-│   ├── clipboard/         # Clipboard event schemas
-│   │   ├── content_copied.json
-│   │   └── content_selected.json
-│   ├── window_manager/    # Window manager event schemas
-│   │   ├── window_opened.json
-│   │   ├── window_closed.json
-│   │   ├── window_focused.json
-│   │   └── workspace_switched.json
-│   ├── system/            # System event schemas
-│   │   ├── journal_entry.json
-│   │   └── state_changed.json
-│   ├── scan/              # Scanner event schemas
-│   │   ├── scan_started.json
-│   │   └── scan_completed.json
-│   └── process/           # Process lifecycle schemas
-│       ├── process_started.json
-│       ├── process_heartbeat.json
-│       └── process_shutdown.json
-└── v2/                     # Version 2 schemas (backward-incompatible changes)
+├── v1/
+│   ├── registry.json              # Metadata (source, event_type, version, hash)
+│   ├── fs-watcher/                # One directory per EventPayload::SOURCE
+│   │   ├── file.created.json      # Files are named after EVENT_TYPE
+│   │   └── ...
+│   ├── canonical.terminal/
+│   ├── document-ingestor/
+│   └── ...
+└── (future versions live beside v1/)
 ```
 
 ## Schema Management Workflow (GitOps)
 
 ### Current Implementation
 
-1. **Development**: Schemas are maintained as JSON files in this directory
-   - Each schema must have a unique `$id` field
-   - Follow JSON Schema draft-07 specification
+1. **Development**: Schemas are generated directly from the Rust `EventPayload`
+   implementations via the `sinex-schema` CLI (see below). Each run rewrites
+   `schemas/v1/<source>/<event>.json` plus the accompanying `registry.json`.  
+   _Reminder: treat those files as generated output—run the generator rather than editing JSON manually._
    
 2. **CI/CD Pipeline**: `.github/workflows/schema-validation.yml`
    - Validates JSON syntax on every push/PR
@@ -56,13 +34,13 @@ schemas/
    - Runs compatibility checks between versions
    
 3. **Deployment**: `scripts/deploy-schemas.sh`
-   - Syncs schemas from Git to `sinex_schemas.schema_registry` table
+   - Syncs schemas from Git to `sinex_schemas.event_payload_schemas` table
    - Handles version activation/deactivation
    - Idempotent - safe to run multiple times
    
 4. **Compatibility Checking**: `scripts/check-schema-compatibility.sh`
-   - Validates that new versions are backward compatible
-   - Fails CI if breaking changes detected without version bump
+   - Diffs JSON schemas against the base branch and invokes
+     `sinex-schema validate` for structural comparisons.
 
 ### Schema Evolution Strategy
 
@@ -81,7 +59,14 @@ schemas/
 ## Usage
 
 ### For Rust Developers
-Schemas are automatically generated from structs with `#[derive(JsonSchema)]` in the `sinex-events` crate.
+Use the helper script to regenerate schemas whenever an `EventPayload` changes:
+
+```bash
+./scripts/schema-dev.sh generate
+```
+
+Pass `DATABASE_URL=... ./scripts/schema-dev.sh deploy` to push the freshly
+generated schemas into Postgres.
 
 ### For Python Plugin Developers
 Reference these JSON files directly to understand the expected event payload structure.
@@ -92,10 +77,10 @@ Schemas are loaded into PostgreSQL and used for runtime validation via `pg_jsons
 ## Technical Implementation Notes
 
 ### Schema Registry Table
-Schemas are stored in `sinex_schemas.schema_registry` with:
+Schemas are stored in `sinex_schemas.event_payload_schemas` with:
 - ULID primary keys for time-ordered identification
-- Version tracking with activation flags
-- JSON Schema definitions stored as JSONB
+- `source`, `event_type`, and `schema_version` columns that uniquely identify a contract
+- JSON Schema definitions stored as JSONB, plus a SHA-256 content hash to detect drift
 
 ### Event Validation
 Events reference schemas via `payload_schema_id` foreign key, enabling:

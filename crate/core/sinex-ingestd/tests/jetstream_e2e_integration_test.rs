@@ -266,8 +266,7 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
         .events()
         .get_by_source(
             &sinex_core::EventSource::new("idempotency-test".to_string()),
-            Some(100),
-            None,
+            sinex_core::types::Pagination::new(Some(100), None),
         )
         .await?;
 

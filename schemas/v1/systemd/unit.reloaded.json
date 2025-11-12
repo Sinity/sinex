@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "cursor": {
+      "type": "string"
+    },
+    "journal_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "pid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "uid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unit_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "cursor",
+    "message",
+    "timestamp"
+  ],
+  "title": "SystemdUnitReloadedPayload",
+  "type": "object"
+}

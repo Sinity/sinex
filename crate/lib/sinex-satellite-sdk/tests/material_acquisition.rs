@@ -1,3 +1,4 @@
+use futures::future::try_join_all;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::Id;
 use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
@@ -238,6 +239,64 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     .await?;
 
     assert_eq!(ledger_bytes.unwrap_or_default(), expected_size);
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
+/// Ensure multiple concurrent acquisitions remain isolated and complete successfully.
+#[sinex_test]
+async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
+
+    let ingest_config = TestIngestdConfig {
+        nats_url: format!("nats://{}", nats.client_url()),
+        database_url: ctx.database_url().to_string(),
+        work_dir: None,
+    };
+
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let rotation_policy = RotationPolicy::default();
+    let futures = (0..4).map(|idx| {
+        let manager = AcquisitionManager::new(
+            nats_client.clone(),
+            ctx.pool.clone(),
+            rotation_policy,
+            format!("concurrent-{idx}"),
+            format!("/concurrent/{idx}"),
+        );
+        async move {
+            let mut handle = manager.begin_material(format!("session-{idx}")).await?;
+            let material_id = handle.material_id;
+            manager
+                .append_slice(&mut handle, format!("slice-{idx}").as_bytes())
+                .await?;
+            manager
+                .finalize(handle, format!("session-{idx} complete"))
+                .await?;
+            Result::<Ulid>::Ok(material_id)
+        }
+    });
+
+    let material_ids = try_join_all(futures).await?;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    for material_id in material_ids {
+        let record = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_ulid(material_id))
+            .await?
+            .expect("material should exist");
+        assert_eq!(
+            record.status.as_str(),
+            "completed",
+            "material {material_id} should complete independently"
+        );
+    }
 
     ingest_handle.stop().await?;
     Ok(())

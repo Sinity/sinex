@@ -94,7 +94,10 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
     let filesystem_events = ctx
         .pool
         .events()
-        .get_by_source(&FileCreatedPayload::SOURCE, Some(100), None)
+        .get_by_source(
+            &FileCreatedPayload::SOURCE,
+            sinex_core::types::Pagination::new(Some(100), None),
+        )
         .await?;
     assert!(filesystem_events.len() >= 2);
 
@@ -179,7 +182,10 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
     let filesystem_events = ctx
         .pool
         .events()
-        .get_by_source(&FileCreatedPayload::SOURCE, Some(100), None)
+        .get_by_source(
+            &FileCreatedPayload::SOURCE,
+            sinex_core::types::Pagination::new(Some(100), None),
+        )
         .await?;
     assert!(filesystem_events.len() >= 5);
 

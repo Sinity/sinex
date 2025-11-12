@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "blob_id": {
+      "type": "string"
+    },
+    "checksum_blake3": {
+      "type": "string"
+    },
+    "deduplicated": {
+      "type": "boolean"
+    },
+    "mime_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "original_filename": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "blob_id",
+    "checksum_blake3",
+    "deduplicated",
+    "original_filename",
+    "size_bytes"
+  ],
+  "title": "BlobIngestedPayload",
+  "type": "object"
+}

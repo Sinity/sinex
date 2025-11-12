@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ComponentHealth": {
+      "properties": {
+        "events_processed": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "git_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_heartbeat": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "memory_usage_mb": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/HealthStatus"
+        },
+        "uptime_seconds": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "last_heartbeat",
+        "service_name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "HealthStatus": {
+      "enum": [
+        "healthy",
+        "degraded",
+        "failed",
+        "missing"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "components": {
+      "additionalProperties": {
+        "$ref": "#/definitions/ComponentHealth"
+      },
+      "type": "object"
+    },
+    "degraded_components": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "failed_components": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "healthy_components": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "last_updated": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "missing_components": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "overall_status": {
+      "$ref": "#/definitions/HealthStatus"
+    },
+    "total_components": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "components",
+    "degraded_components",
+    "failed_components",
+    "healthy_components",
+    "last_updated",
+    "missing_components",
+    "overall_status",
+    "total_components"
+  ],
+  "title": "SystemHealthSummaryPayload",
+  "type": "object"
+}

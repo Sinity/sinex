@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "action": {
+      "type": "string"
+    },
+    "device_path": {
+      "type": "string"
+    },
+    "device_type": {
+      "type": "string"
+    },
+    "devtype": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "properties": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "serial": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subsystem": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "vendor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "action",
+    "device_path",
+    "device_type",
+    "properties",
+    "timestamp"
+  ],
+  "title": "UdevDeviceConnectedPayload",
+  "type": "object"
+}

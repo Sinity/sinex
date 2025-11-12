@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+export DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,18 +46,20 @@ EOF
 # Change to project root
 cd "$PROJECT_ROOT"
 
+SCHEMA_CLI=(cargo run -p sinex-core --bin sinex-schema --features schema-manager --)
+
 # Command: generate schemas
 cmd_generate() {
-    echo "🔨 Generating schemas from Rust structs..."
-    
-    if ! nix develop --command cargo run --package sinex-events --bin generate-schemas; then
+    echo "🔨 Generating schemas from registered EventPayload types..."
+
+    if ! "${SCHEMA_CLI[@]}" generate --output schemas/v1; then
         echo -e "${RED}❌ Schema generation failed${NC}"
         exit 1
     fi
-    
+
     echo -e "${GREEN}✅ Schemas generated successfully${NC}"
     echo
-    echo "Run '$0 diff' to see changes"
+    echo "Run '$0 diff' to review changes"
 }
 
 # Command: validate schemas
@@ -64,8 +68,8 @@ cmd_validate() {
     
     # Check if ajv is installed
     if ! command -v ajv &> /dev/null; then
-        echo -e "${YELLOW}Installing ajv-cli...${NC}"
-        npm install -g ajv-cli ajv-formats
+        echo -e "${RED}ajv-cli is required but not available on PATH.${NC}"
+        exit 1
     fi
     
     local count=0
@@ -96,13 +100,17 @@ cmd_validate() {
 # Command: deploy to database
 cmd_deploy() {
     echo "🚀 Deploying schemas to local database..."
-    "$SCRIPT_DIR/deploy-schemas.sh"
+    "${SCHEMA_CLI[@]}" sync --input schemas/v1
 }
 
 # Command: check compatibility
 cmd_check() {
     echo "🔄 Checking backward compatibility..."
-    "$SCRIPT_DIR/check-schema-compatibility.sh" "${1:-master}"
+    if [ -n "${1:-}" ]; then
+        CI_BASE_BRANCH="$1" "$SCRIPT_DIR/check-schema-compatibility.sh"
+    else
+        "$SCRIPT_DIR/check-schema-compatibility.sh"
+    fi
 }
 
 # Command: show diff
@@ -160,10 +168,10 @@ cmd_stats() {
     done
     
     # If connected to database, show deployment status
-    if psql "${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" -c "SELECT 1" > /dev/null 2>&1; then
+    if psql "${DATABASE_URL}" -c "SELECT 1" > /dev/null 2>&1; then
         echo
         echo "Database deployment status:"
-        local deployed=$(psql "${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" -t -c "SELECT COUNT(DISTINCT schema_id) FROM sinex_schemas.schema_registry WHERE is_active = true" 2>/dev/null || echo "0")
+        local deployed=$(psql "${DATABASE_URL}" -t -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE is_active = true" 2>/dev/null || echo "0")
         echo "  Active schemas in DB: $deployed"
     fi
 }

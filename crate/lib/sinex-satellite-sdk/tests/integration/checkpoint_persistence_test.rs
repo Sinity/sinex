@@ -84,7 +84,7 @@ async fn test_checkpoint_manager_basic_functionality(
     let created_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("checkpoint-test"), Some(100), None)
+        .get_by_source(&EventSource::from_static("checkpoint-test"), sinex_core::types::Pagination::new(Some(100), None))
         .await?;
     ctx.assert("test event creation")
         .eq(&created_events.len(), &3)?;
@@ -224,7 +224,7 @@ async fn test_checkpoint_with_events_context(
     let events_in_db = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("checkpoint-context"), Some(100), None)
+        .get_by_source(&EventSource::from_static("checkpoint-context"), sinex_core::types::Pagination::new(Some(100), None))
         .await?;
     ctx.assert("events in database")
         .eq(&events_in_db.len(), &2)?;

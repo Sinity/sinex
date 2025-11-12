@@ -9,7 +9,6 @@
 //! These tests validate the core ingestion patterns that satellites use
 //! to submit events for processing and storage.
 
-use color_eyre::eyre::Result as EyreResult;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
@@ -21,7 +20,7 @@ use tokio::time::timeout;
 
 /// Test ingest service initialization patterns
 #[sinex_test]
-async fn test_ingest_service_startup(ctx: TestContext) -> EyreResult<()> {
+async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingest service startup and initialization");
 
     // Verify database connectivity for ingest service
@@ -54,7 +53,7 @@ async fn test_ingest_service_startup(ctx: TestContext) -> EyreResult<()> {
 
 /// Test event ingestion through the service API
 #[sinex_test]
-async fn test_event_ingestion_flow(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing event ingestion through service API");
 
     // Create test event that would come from a satellite
@@ -101,7 +100,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> EyreResult<()> {
 
 /// Test batch ingestion functionality
 #[sinex_test]
-async fn test_batch_ingestion(ctx: TestContext) -> EyreResult<()> {
+async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing batch event ingestion");
 
     // Create multiple events as would be sent in a batch
@@ -164,7 +163,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> EyreResult<()> {
 
 /// Test event validation during ingestion
 #[sinex_test]
-async fn test_ingestion_validation(ctx: TestContext) -> EyreResult<()> {
+async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing event validation during ingestion");
 
     // Test valid event with complete payload
@@ -225,7 +224,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> EyreResult<()> {
 
 /// Test source and event type patterns
 #[sinex_test]
-async fn test_source_and_type_patterns(ctx: TestContext) -> EyreResult<()> {
+async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing source and event type patterns");
 
     // Test events with different sources and types for pattern validation
@@ -325,7 +324,7 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> EyreResult<()> {
 
 /// Test ingestion performance characteristics
 #[sinex_test]
-async fn test_ingestion_performance(ctx: TestContext) -> EyreResult<()> {
+async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service performance");
 
     let start_time = std::time::Instant::now();
@@ -382,7 +381,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> EyreResult<()> {
 
 /// Test sequential ingestion handling (modified from concurrent due to TestContext constraints)
 #[sinex_test]
-async fn test_sequential_ingestion(ctx: TestContext) -> EyreResult<()> {
+async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing sequential event ingestion");
 
     // Generate events to test ingestion capacity
@@ -417,7 +416,10 @@ async fn test_sequential_ingestion(ctx: TestContext) -> EyreResult<()> {
     let recent_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("sequential-ingest"), Some(25), None)
+        .get_by_source(
+            &EventSource::from("sequential-ingest"),
+            sinex_core::types::Pagination::new(Some(25), None),
+        )
         .await?;
     assert!(
         recent_events.len() >= total_events,
@@ -435,7 +437,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> EyreResult<()> {
 
 /// Test ingestion error handling and recovery
 #[sinex_test]
-async fn test_ingestion_error_handling(ctx: TestContext) -> EyreResult<()> {
+async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service error handling and recovery");
 
     // Test successful ingestion
@@ -547,7 +549,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> EyreResult<()> {
 
 /// Test schema patterns during ingestion
 #[sinex_test]
-async fn test_schema_validation_patterns(ctx: TestContext) -> EyreResult<()> {
+async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing schema validation patterns during ingestion");
 
     // Test events with different schema patterns
@@ -599,7 +601,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> EyreResult<()> {
 
 /// Test payload validation patterns
 #[sinex_test]
-async fn test_payload_validation_patterns(ctx: TestContext) -> EyreResult<()> {
+async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing payload validation patterns");
 
     // Test various payload structures that should be valid
@@ -664,7 +666,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> EyreResult<()> {
 
 /// Test service health indicators
 #[sinex_test]
-async fn test_service_health_monitoring(ctx: TestContext) -> EyreResult<()> {
+async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing service health monitoring");
 
     // Test basic health indicators through event processing
@@ -722,7 +724,10 @@ async fn test_service_health_monitoring(ctx: TestContext) -> EyreResult<()> {
     let status_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("health-monitor"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("health-monitor"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     assert!(
         status_events.len() >= 4,
@@ -739,7 +744,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> EyreResult<()> {
 
 /// Test resource management during ingestion
 #[sinex_test]
-async fn test_resource_management(ctx: TestContext) -> EyreResult<()> {
+async fn test_resource_management(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing resource management during ingestion");
 
     // Generate events with varying resource requirements
@@ -796,7 +801,10 @@ async fn test_resource_management(ctx: TestContext) -> EyreResult<()> {
     let resource_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from("resource-test"), Some(20), None)
+        .get_by_source(
+            &EventSource::from("resource-test"),
+            sinex_core::types::Pagination::new(Some(20), None),
+        )
         .await?;
     assert!(
         resource_events.len() >= 15,
@@ -813,7 +821,7 @@ async fn test_resource_management(ctx: TestContext) -> EyreResult<()> {
 
 /// Test timeout and deadline handling
 #[sinex_test]
-async fn test_timeout_and_deadline_handling(ctx: TestContext) -> EyreResult<()> {
+async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing timeout and deadline handling");
 
     // Test normal operation within reasonable timeouts

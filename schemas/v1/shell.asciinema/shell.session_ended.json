@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "duration_seconds": {
+      "format": "double",
+      "type": "number"
+    },
+    "end_time": {
+      "type": "string"
+    },
+    "event_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "file_size_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "git_annex_key": true,
+    "git_annex_path": true,
+    "recording_file": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "terminal_id": {
+      "type": "string"
+    },
+    "terminal_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "duration_seconds",
+    "end_time",
+    "event_count",
+    "recording_file",
+    "session_id",
+    "terminal_id",
+    "terminal_type"
+  ],
+  "title": "AsciinemaSessionEndedPayload",
+  "type": "object"
+}

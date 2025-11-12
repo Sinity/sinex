@@ -9,7 +9,6 @@
 //! - Clock skew detection and handling
 //! - Performance analysis of ordering operations
 
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_core::DbPool;
@@ -25,7 +24,7 @@ use uuid::Uuid;
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> EyreResult<()> {
+async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> {
     // Generate a sequence of events with known ordering
     let mut event_ulids = Vec::new();
 
@@ -43,7 +42,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> EyreResult<
     }
 
     // Extract raw ULIDs for verification utilities
-    let raw_ulids: Vec<Ulid> = event_ulids.iter().map(|id| id.into()).collect();
+    let raw_ulids: Vec<Ulid> = event_ulids.iter().map(|id| id.as_ulid().clone()).collect();
 
     // Verify ordering using the utility function
     let ordering_result = verify_ulid_sequence_ordering(&raw_ulids);
@@ -71,7 +70,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> EyreResult<
     .map(|row| row.id)
     .collect();
 
-    let expected_order: Vec<Ulid> = event_ulids.iter().map(|id| *id.as_ulid()).collect();
+    let expected_order: Vec<Ulid> = event_ulids.iter().map(|id| id.as_ulid().clone()).collect();
     assert_eq!(
         db_ordered_ulids, expected_order,
         "Database ordering should match ULID ordering"
@@ -81,7 +80,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> EyreResult<
 }
 
 #[sinex_test]
-async fn test_timestamp_progression_verification(ctx: TestContext) -> EyreResult<()> {
+async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()> {
     // Create events with specific timestamp patterns
     let base_time = chrono::Utc::now() - chrono::TimeDelta::try_hours(1).unwrap();
     let mut test_ulids = Vec::new();
@@ -128,10 +127,10 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> EyreResult
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> EyreResult<()> {
+async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()> {
     // Test concurrent event insertion
-    let num_concurrent_tasks = 10;
-    let events_per_task = 20;
+    let num_concurrent_tasks = 10usize;
+    let events_per_task = 20u64;
     let mut handles = Vec::new();
 
     // Create barrier to synchronize concurrent insertions
@@ -159,8 +158,8 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> EyreResul
 
                 task_ulids.push(event.id.expect("Event should have ID"));
 
-                // Small random delay to increase contention
-                let delay_ms = fastrand::u64(1..=5);
+                // Deterministic jitter to increase contention without external RNGs
+                let delay_ms = 1 + (((task_id as u64) + i) % 5);
                 sleep(Duration::from_millis(delay_ms)).await;
             }
 
@@ -179,30 +178,33 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> EyreResul
 
     println!("Generated {} concurrent ULIDs", all_ulids.len());
 
+    // Convert to raw ULIDs for ordering checks
+    let all_ulid_values: Vec<Ulid> = all_ulids.iter().map(|id| id.as_ulid().clone()).collect();
+
     // Verify all ULIDs are unique
     let mut seen = HashSet::new();
-    for ulid in &all_ulids {
+    for ulid in &all_ulid_values {
         assert!(seen.insert(*ulid), "All concurrent ULIDs should be unique");
     }
 
     // Verify overall ordering (should be mostly correct with some tolerance for concurrent generation)
-    let mut sorted_ulids = all_ulids.clone();
+    let mut sorted_ulids = all_ulid_values.clone();
     sorted_ulids.sort();
 
     // Count ordering violations
     let mut violations = 0;
-    for i in 1..all_ulids.len() {
-        if all_ulids[i] < all_ulids[i - 1] {
+    for i in 1..all_ulid_values.len() {
+        if all_ulid_values[i] < all_ulid_values[i - 1] {
             violations += 1;
         }
     }
 
-    let violation_rate = violations as f64 / all_ulids.len() as f64;
+    let violation_rate = violations as f64 / all_ulid_values.len() as f64;
     println!(
         "ULID ordering violation rate: {:.2}% ({}/{})",
         violation_rate * 100.0,
         violations,
-        all_ulids.len()
+        all_ulid_values.len()
     );
 
     // Some violations are expected with concurrent generation, but should be minimal
@@ -219,7 +221,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> EyreResul
 // =============================================================================
 
 #[sinex_test]
-async fn test_database_ordering_consistency(ctx: TestContext) -> EyreResult<()> {
+async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     // Insert events in batches with different timing patterns
     let mut all_event_ulids = Vec::new();
 
@@ -337,7 +339,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> EyreResult<()> 
 // =============================================================================
 
 #[sinex_test]
-async fn test_clock_skew_detection(ctx: TestContext) -> EyreResult<()> {
+async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
     // Generate test ULIDs with known ordering violations
     let violation_test_ulids = generate_ordering_violation_test_ulids();
 
@@ -410,7 +412,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> EyreResult<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> EyreResult<()> {
+async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()> {
     // Generate a large number of events to test ordering performance
     let num_events = 1000;
     let batch_size = 100;
@@ -516,10 +518,10 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> EyreResult
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> EyreResult<()> {
+async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
     // Test ULID uniqueness under high concurrent load
-    let num_tasks = 20;
-    let events_per_task = 50;
+    let num_tasks = 20usize;
+    let events_per_task = 50usize;
     let mut handles = Vec::new();
 
     // Create events concurrently from multiple tasks
@@ -567,7 +569,7 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> EyreResult<()> {
     );
 
     // Verify uniqueness
-    let unique_ids: HashSet<_> = all_ids.iter().collect();
+    let unique_ids: HashSet<_> = all_ids.iter().map(|id| id.as_ulid().clone()).collect();
     assert_eq!(
         unique_ids.len(),
         all_ids.len(),
@@ -575,12 +577,14 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> EyreResult<()> {
     );
 
     // Verify ordering properties
-    let mut sorted_ids = all_ids.clone();
+    let mut sorted_ids: Vec<Ulid> = all_ids.iter().map(|id| id.as_ulid().clone()).collect();
     sorted_ids.sort();
+
+    let all_ulids: Vec<Ulid> = all_ids.iter().map(|id| id.as_ulid().clone()).collect();
 
     // Count how many IDs are in the correct temporal order
     let mut correct_positions = 0;
-    for (i, id) in all_ids.iter().enumerate() {
+    for (i, id) in all_ulids.iter().enumerate() {
         if let Some(sorted_pos) = sorted_ids.iter().position(|x| x == id) {
             // Allow some tolerance for concurrent generation
             let position_diff = (sorted_pos as i64 - i as i64).abs();
@@ -608,7 +612,7 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> EyreResult<()> {
     Ok(())
 }
 
-async fn fetch_ordered_ulids(pool: &DbPool, source: &str, order_by: &str) -> EyreResult<Vec<Ulid>> {
+async fn fetch_ordered_ulids(pool: &DbPool, source: &str, order_by: &str) -> Result<Vec<Ulid>> {
     let query = format!(
         "SELECT id FROM core.events WHERE source = $1 ORDER BY {}",
         order_by

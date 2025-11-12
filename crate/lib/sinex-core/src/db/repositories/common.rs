@@ -1,5 +1,6 @@
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::{Result as SinexResult, SinexError};
+use crate::types::{Pagination, TimeRange};
 use crate::Ulid;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -47,14 +48,13 @@ pub struct TimeBucketResult {
 /// Event search filters
 #[derive(Debug, Default)]
 pub struct EventSearchFilters {
-    pub source: Option<EventSource>,
-    pub event_type: Option<EventType>,
-    pub after: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub sources: Vec<EventSource>,
+    pub event_types: Vec<EventType>,
     pub host: Option<HostName>,
     pub payload_contains: Option<JsonValue>,
-    pub limit: Option<u64>,
-    pub offset: Option<u64>,
+    pub text_query: Option<String>,
+    pub time_range: Option<TimeRange>,
+    pub pagination: Pagination,
 }
 
 /// Base repository trait that all repositories should implement

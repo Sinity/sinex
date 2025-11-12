@@ -287,8 +287,10 @@ impl ReplayService {
                         .get_by_time_range(
                             *start_time,
                             end_time,
-                            Some(self.batch_size as i64),
-                            Some(offset as i64),
+                            sinex_core::types::Pagination::new(
+                                Some(self.batch_size as i64),
+                                Some(offset as i64),
+                            ),
                         )
                         .await?
                 }
@@ -303,8 +305,10 @@ impl ReplayService {
                             .events()
                             .get_by_source(
                                 &event_source,
-                                Some(self.batch_size as i64),
-                                Some(offset as i64),
+                                sinex_core::types::Pagination::new(
+                                    Some(self.batch_size as i64),
+                                    Some(offset as i64),
+                                ),
                             )
                             .await?
                     } else {
@@ -318,8 +322,10 @@ impl ReplayService {
                                 &event_source,
                                 start_time,
                                 end_time,
-                                Some(self.batch_size as i64),
-                                Some(offset as i64),
+                                sinex_core::types::Pagination::new(
+                                    Some(self.batch_size as i64),
+                                    Some(offset as i64),
+                                ),
                             )
                             .await?
                     }
@@ -335,8 +341,10 @@ impl ReplayService {
                             .events()
                             .get_by_event_type(
                                 &event_type,
-                                Some(self.batch_size as i64),
-                                Some(offset as i64),
+                                sinex_core::types::Pagination::new(
+                                    Some(self.batch_size as i64),
+                                    Some(offset as i64),
+                                ),
                             )
                             .await?
                     } else {
@@ -346,7 +354,11 @@ impl ReplayService {
                         let events = self
                             .db_pool()
                             .events()
-                            .get_by_time_range(start, end, Some(limit), None)
+                            .get_by_time_range(
+                                start,
+                                end,
+                                sinex_core::types::Pagination::new(Some(limit), None),
+                            )
                             .await?;
                         let allowed: HashSet<&str> =
                             event_types.iter().map(|s| s.as_str()).collect();
@@ -365,7 +377,11 @@ impl ReplayService {
                     let events = self
                         .db_pool()
                         .events()
-                        .get_by_time_range(start, end, Some(limit), None)
+                        .get_by_time_range(
+                            start,
+                            end,
+                            sinex_core::types::Pagination::new(Some(limit), None),
+                        )
                         .await?;
 
                     let source_filter: Option<HashSet<&str>> = filters

@@ -81,8 +81,8 @@ pub type EventResult<T = ()> = std::result::Result<T, SinexError>;
 pub use db::{
     create_database_if_not_exists, create_pool, create_pool_strict, create_pool_with_config,
     create_pool_with_config_strict, create_test_pool, distributed_locking, get_database_url,
-    models, pool, query_helpers, repositories, run_migrations, sanitization, seaquery_helpers,
-    security, DbPool, DbPoolRef, PoolConfig,
+    models, pool, query_helpers, repositories, run_migrations, sanitization, security, DbPool,
+    DbPoolRef, PoolConfig,
 };
 
 // Re-export the most commonly used database models at crate root
@@ -102,7 +102,7 @@ pub use db::repositories::{
     BatchRepository, BlobRepository, Checkpoint, CheckpointExt, CheckpointRecord,
     CheckpointRepository, CommandCount, CreateEntity, CreateEntityRelation, DbPoolExt, DbResult,
     EnhancedRepository, EntityRecord, EntityRelationRecord, EntityType, EventAnnotation,
-    EventPayloadSchema, EventRepository, EventSearchFilters, EventTypeCount,
+    EventPayloadSchema, EventRepository, EventRepositoryTx, EventSearchFilters, EventTypeCount,
     KnowledgeGraphRepository, NewSchema, Operation, OperationRecord, OperationStatistics,
     Repository, SourceActivity, SourceMaterialExt, SourceMaterialRepository, StateRepository,
     StorageStats, SystemHealthReport, TableDef, TransactionSupport, TransactionalRepository,
@@ -126,9 +126,6 @@ pub use query_helpers::{
     opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid, with_retry_transaction,
     with_transaction, DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
 };
-
-// Re-export SeaQuery ULID helpers
-pub use seaquery_helpers::SeaQueryUlidExt;
 
 // Re-export repository pattern (DbPoolExt already re-exported above)
 pub use repositories::DbResult as RepoResult;
@@ -196,8 +193,6 @@ pub mod prelude {
         NewSchema,
         PoolConfig,
         RetryConfig,
-        // SeaQuery helpers
-        SeaQueryUlidExt,
         SourceMaterialRepository,
         StateRepository,
         UlidArrayExt,

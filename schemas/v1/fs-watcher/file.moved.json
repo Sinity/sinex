@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "moved_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "new_path": {
+      "type": "string"
+    },
+    "old_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "moved_at",
+    "new_path",
+    "old_path"
+  ],
+  "title": "FileMovedPayload",
+  "type": "object"
+}

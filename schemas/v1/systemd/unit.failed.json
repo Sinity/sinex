@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "cursor": {
+      "type": "string"
+    },
+    "journal_timestamp": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "pid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "uid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "unit_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cursor",
+    "message",
+    "timestamp",
+    "unit_name"
+  ],
+  "title": "SystemdUnitFailedPayload",
+  "type": "object"
+}

@@ -24,24 +24,23 @@ There is no long-lived dual path. We land work in small, compiling increments, b
 - ✅ Automaton bridge: health-aggregator now consumes JetStream confirmations via StreamProcessorRunner
 - **Phase 3 - Source Material Slices**: `AcquisitionManager` + Stage-as-You-Go capture git-annex materials, MaterialAssembler survives restarts, ledger + blob metadata populated
 - **Phase 5 - Cleanup**: gRPC surface removed, sensd code paths deleted, transactional outbox retired, docs updated
+- ✅ Replay control surface: gateway RPC + CLI `exo replay` now issue plan/preview/approve/execute via `sinex.control.replay`.
 
-**Satellites**: 6/8 modern and buildable (75% complete)
+**Satellites**: 8/8 modern and buildable (100% complete)
 - ✅ All using `processor_main!` and NATS JetStream
 - ✅ Zero legacy gRPC patterns
-- ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
-- 🔄 Blocked: analytics-automaton, search-automaton (deeper refactoring)
+- ✅ Modern: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer, analytics-automaton, search-automaton
 
 **Testing**
-- `just test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
+- `devenv tasks run dev:test` uses Nextest’s `reliable` profile (2 threads) to keep property/fixture suites stable.
 - Satellite coverage exercises filesystem + terminal pipelines using ephemeral JetStream servers.
 - ingestd JetStream integration/idempotency suites exist (`jetstream_*` tests) but are `#[ignore]`d by default; they assume a full pipeline and can be run manually when a long-lived NATS deployment is available.
 
 ### In Progress 🔄
-- Replay tooling polish (`sinex.control.*` subjects) and analytics/search automaton migrations.
+- _None._ Replay telemetry and analyzer polish wrapped (2025-02-23).
 
 ### Pending ⏳
-- Analytics/search automaton migrations to JetStream primitives.
-- Replay control surface (`sinex.control.*`) integration in CLI/gateway.
+- _None._ JetStream ingestion playbook is fully executed; future work now tracks in the public roadmap instead of this document.
 
 ---
 
@@ -116,9 +115,9 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 
 ## 2. JetStream Harness & Local Tooling
 
-- Use the NixOS VM tests (`tests/e2e/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `just db-reset` / `just migrate` then run `just ingestd` + a local NATS (`nix run nixpkgs#nats-server` or container) until a dedicated `just` recipe lands.
+- Use the NixOS VM tests (`tests/e2e/nixos-vm`) as the canonical harness while we wire up Postgres + NATS. Short term, rely on `devenv tasks run db:reset` / `devenv tasks run db:migrate` then run `devenv up ingestd` (and `devenv up nats`) until a dedicated automation lands.
 - Add reusable test fixtures in `sinex-test-utils` for publishing slices/events to embedded nats (`async_nats::Server::run`) so unit/integration tests can exercise JetStream behavior without spawning external services.
-- Update CI to spin up Postgres + NATS (GitHub Actions service containers or Nix shells) before running `just test`.
+- Update CI to spin up Postgres + NATS (GitHub Actions service containers or Nix shells) before running the Nextest suites (`cargo nextest run --workspace`).
 
 ---
 
@@ -165,11 +164,10 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 - [x] Remove sensd client + sensor guards once all satellites migrate.
 
 ### Satellites
-- [x] **All buildable satellites modernized (6/8 - 75% complete)** ✅ 2025-01
+- [x] **All buildable satellites modernized (8/8 - 100% complete)** ✅ 2025-01
   - All using `processor_main!` macro and NATS JetStream
   - Zero legacy gRPC patterns remain
-  - Completed: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer
-  - Blocked: analytics-automaton, search-automaton (deeper refactoring needed)
+  - Completed: fs-watcher, desktop, terminal, system, document-ingestor, health-aggregator, terminal-canonicalizer, analytics-automaton, search-automaton
 - Migratory template for each satellite:
   1. Integrate `AcquisitionManager` + Stage-as-You-Go to capture materials.
   2. [x] Publish slices/events to JetStream; confirm ingestion locally. ✅ NatsPublisher integrated
@@ -194,9 +192,17 @@ Headers: `Nats-Msg-Id` (idempotency) is mandatory. Materials carry hash, slice i
 Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 - 64-slot database pool for parallel execution
 - `EphemeralNats` harness for JetStream testing
+- `sinex_test_utils::TestRuntimeBuilder` to stand up fully wired satellite runtimes (NATS publisher, checkpoint manager, telemetry) inside integration tests without bespoke scaffolding
 - `#[sinex_test]` macro with 30s timeout
 - `TestContext` fixtures with automatic cleanup
 - proptest for property-based testing
+
+### Fresh Coverage (2025-02-23)
+- `jetstream_consumer_test::duplicate_events_are_idempotent` – proves duplicate publishes do not create extra rows even across restarts.
+- `jetstream_consumer_test::dlq_captures_multiple_validation_failures` – routes multiple schema violations to the DLQ without starving good events.
+- `pipeline_resilience_test::{ingestion_handles_burst_under_latency_budget,replaying_events_after_restart_does_not_duplicate}` – burst/throughput verification and crash/restart replay coverage.
+- `material_acquisition::material_acquisition_concurrent_sessions_isolated` – exercises out-of-order, concurrent source-material assembly.
+- `replay_control::tests::replay_client_errors_when_broker_disappears` – HA regression for the replay control bus.
 
 ### Critical Test Gaps (from analysis in `docs/testing-gap-analysis.md`)
 
@@ -221,6 +227,13 @@ Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 **Phase 4 - Coordination & Control Plane:** ✅ COMPLETE (2025-01)
 - [x] Leader election and failover ✅ LeaseManager with NATS KV
 - [x] NATS KV lease management ✅ Integrated into StreamProcessorRunner
+
+### Operational Playbooks
+
+#### Replay Control Failover
+1. Replay RPCs ride `sinex.control.replay`. If NATS disappears mid-flight, clients must surface the transport error and retry once the broker returns. (`replay_control::tests::replay_client_errors_when_broker_disappears` exercises this path.)
+2. Gateway telemetry now samples active operations every 30s and exposes them via logs/RPC. Use this snapshot to decide whether to failover or wait.
+3. For rollback, issue `plan -> cancel` against any long-lived operation, drain the stream via `sinex.control.replay.cancelled.*`, then restart the gateway with a fresh lease (no manual DB fiddling required).
 
 ### Test Organization
 
@@ -293,7 +306,7 @@ Use existing test infrastructure documented in `docs/TEST_PATTERNS.md`:
 
 ## 6. Operational Guardrails
 
-- Migrations: JetStream work adds no schema changes except for final cleanup (removing sensd tables). Use `just migrate` / `just sqlx-prepare`.
+- Migrations: JetStream work adds no schema changes except for final cleanup (removing sensd tables). Use `devenv tasks run db:migrate` / `devenv tasks run sqlx:prepare`.
 - Feature flags: per-satellite `--ingest` flag or environment variable to switch back during rollout until confident.
 - Backpressure: configure JetStream stream/consumer limits (`max_msgs`, `max_age`, `ack_wait`) to match load patterns; default to explicit ack and sensible pending limits.
 - Annex: ensure Stage-as-You-Go writes annex files to the same layout sensd used; update `SINEX_ANNEX_PATH` handling for local dev.

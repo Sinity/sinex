@@ -25,7 +25,7 @@ SET payload = jsonb_set(
     to_jsonb(pgsodium.crypto_aead_det_encrypt(
         payload->>'password'::text,
         'event_encryption'::text,
-        event_id::uuid
+        id::uuid
     ))
 )
 WHERE event_type = 'auth.login_attempt';

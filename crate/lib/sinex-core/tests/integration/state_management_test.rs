@@ -10,7 +10,6 @@
 //! 3. Running the health checks exposed by the state repository to ensure the
 //!    database plumbing is provisioned for tests exactly like production.
 
-use color_eyre::eyre::Result as EyreResult;
 use serde_json::json;
 use sinex_core::db::repositories::{
     checkpoints::Checkpoint,
@@ -35,7 +34,7 @@ fn build_operation(processor: &ProcessorName, scope: serde_json::Value) -> Opera
 }
 
 #[sinex_test]
-async fn test_checkpoint_and_operation_flow(ctx: TestContext) -> EyreResult<()> {
+async fn test_checkpoint_and_operation_flow(ctx: TestContext) -> Result<()> {
     let state_repo = ctx.pool.state();
     let processor_name: ProcessorName = "state.integration".into();
 
@@ -84,7 +83,7 @@ async fn test_checkpoint_and_operation_flow(ctx: TestContext) -> EyreResult<()> 
 }
 
 #[sinex_test]
-async fn test_processor_registration_and_heartbeat(ctx: TestContext) -> EyreResult<()> {
+async fn test_processor_registration_and_heartbeat(ctx: TestContext) -> Result<()> {
     let repo = ctx.pool.state();
     let processor: ProcessorName = format!("processor-{}", Id::<ProcessorName>::new()).into();
     let hostname = "state-host";
@@ -108,7 +107,7 @@ async fn test_processor_registration_and_heartbeat(ctx: TestContext) -> EyreResu
 }
 
 #[sinex_test]
-async fn test_state_repository_health_checks(ctx: TestContext) -> EyreResult<()> {
+async fn test_state_repository_health_checks(ctx: TestContext) -> Result<()> {
     let repo: StateRepository<'_> = ctx.pool.state();
     let report = repo.run_system_health_checks().await?;
 

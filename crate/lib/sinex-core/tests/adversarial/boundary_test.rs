@@ -58,7 +58,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> color_eyr
                     r#"
                     UPDATE core.events
                     SET payload = payload || jsonb_build_object('extra_data', $2::text)
-                    WHERE event_id::uuid = $1::uuid
+                    WHERE id::uuid = $1::uuid
                     "#,
                     event.id.to_uuid(),
                     extra_data
@@ -596,7 +596,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> color_eyre
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
                 .fetch_one(&pool)
@@ -666,7 +666,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> color_eyr
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
                 .fetch_one(&pool)

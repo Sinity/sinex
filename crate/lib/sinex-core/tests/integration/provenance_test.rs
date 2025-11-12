@@ -1,6 +1,8 @@
-use color_eyre::eyre::Result as EyreResult;
+use chrono::Utc;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::validation::{EventValidator, ValidationError};
+use sinex_core::{Event, EventId, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -12,7 +14,7 @@ use tracing::info;
 /// - Testing basic event properties and persistence
 
 #[sinex_test]
-async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> EyreResult<()> {
+async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
@@ -61,7 +63,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> EyreResu
 
 /// Test event creation with different sources
 #[sinex_test]
-async fn test_multiple_event_sources(ctx: TestContext) -> EyreResult<()> {
+async fn test_multiple_event_sources(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing multiple event sources");
@@ -91,15 +93,24 @@ async fn test_multiple_event_sources(ctx: TestContext) -> EyreResult<()> {
     // Query events by source
     let events_from_a = pool
         .events()
-        .get_by_source(&EventSource::from("source-a"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-a"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let events_from_b = pool
         .events()
-        .get_by_source(&EventSource::from("source-b"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-b"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let events_from_c = pool
         .events()
-        .get_by_source(&EventSource::from("source-c"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("source-c"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(events_from_a.len(), 1, "Should have 1 event from source-a");
@@ -117,7 +128,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> EyreResult<()> {
 
 /// Test event querying by type
 #[sinex_test]
-async fn test_event_querying_by_type(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_querying_by_type(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
@@ -138,11 +149,17 @@ async fn test_event_querying_by_type(ctx: TestContext) -> EyreResult<()> {
     // Query by event type
     let type_a_events = pool
         .events()
-        .get_by_event_type(&EventType::from("type.a"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from("type.a"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
     let type_b_events = pool
         .events()
-        .get_by_event_type(&EventType::from("type.b"), Some(10), None)
+        .get_by_event_type(
+            &EventType::from("type.b"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(type_a_events.len(), 2, "Should have 2 events of type.a");
@@ -162,7 +179,7 @@ async fn test_event_querying_by_type(ctx: TestContext) -> EyreResult<()> {
 
 /// Test batch event creation
 #[sinex_test]
-async fn test_batch_event_creation(ctx: TestContext) -> EyreResult<()> {
+async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -191,13 +208,16 @@ async fn test_batch_event_creation(ctx: TestContext) -> EyreResult<()> {
     // Query events by source to verify batch
     let batch_events = pool
         .events()
-        .get_by_source(&EventSource::from("batch-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from("batch-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(batch_events.len(), 5, "Should have 5 batch events");
 
     // Verify events are in correct order and have correct content
-    for (i, event) in batch_events.iter().enumerate() {
+    for event in &batch_events {
         assert_eq!(event.source.as_str(), "batch-test");
         assert_eq!(event.event_type.as_str(), "batch.item");
         // Note: The order might not be guaranteed, so we check that all indices exist
@@ -211,7 +231,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> EyreResult<()> {
 
 /// Test event payload structure preservation
 #[sinex_test]
-async fn test_event_payload_preservation(ctx: TestContext) -> EyreResult<()> {
+async fn test_event_payload_preservation(ctx: TestContext) -> Result<()> {
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");
@@ -251,12 +271,13 @@ async fn test_event_payload_preservation(ctx: TestContext) -> EyreResult<()> {
         .create_test_event("payload-test", "complex.payload", complex_payload.clone())
         .await?;
 
-    let event_id = event.id.expect("Event should have ID");
-
     // Retrieve the event and verify payload integrity
     let retrieved_events = pool
         .events()
-        .get_by_source(&EventSource::from("payload-test"), Some(1), None)
+        .get_by_source(
+            &EventSource::from("payload-test"),
+            sinex_core::types::Pagination::new(Some(1), None),
+        )
         .await?;
 
     assert_eq!(
@@ -304,5 +325,108 @@ async fn test_event_payload_preservation(ctx: TestContext) -> EyreResult<()> {
     );
 
     info!("✅ Event payload preservation verified");
+    Ok(())
+}
+
+#[sinex_test]
+async fn provenance_xor_constraint_enforced(ctx: TestContext) -> Result<()> {
+    let pool = ctx.pool();
+    let material = ctx.create_source_material(Some("xor-constraint")).await?;
+    let parent = ctx
+        .create_test_event("prov-parent", "prov.event", json!({ "p": true }))
+        .await?
+        .id
+        .expect("parent event id");
+
+    let err = sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload,
+            ts_orig, source_material_id, source_event_ids,
+            anchor_byte, offset_kind
+        ) VALUES (
+            $1::uuid, $2, $3, $4, $5,
+            $6, $7::uuid, ARRAY[$8::uuid]::uuid[]::ulid[],
+            0, 'byte'
+        )
+        "#,
+        Ulid::new().to_uuid(),
+        "prov-xor",
+        "dual.provenance",
+        "provenance-suite",
+        json!({"attack": "dual-provenance"}),
+        Utc::now(),
+        material.as_ulid().to_uuid(),
+        parent.as_ulid().to_uuid()
+    )
+    .execute(pool)
+    .await;
+
+    assert!(err.is_err(), "dual provenance insert should fail");
+    let message = format!("{:?}", err.unwrap_err());
+    assert!(
+        message.contains("check constraint"),
+        "expected check constraint violation, got: {message}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> Result<()> {
+    let pool = ctx.pool();
+
+    let err = sqlx::query(
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload,
+            ts_orig, source_material_id, source_event_ids,
+            anchor_byte, offset_kind
+        ) VALUES (
+            $1::uuid, 'prov-malformed', 'synthesis.bad', 'provenance-suite', $2,
+            $3, NULL, ARRAY[$4::uuid]::uuid[]::ulid[],
+            0, 'byte'
+        )
+        "#,
+    )
+    .bind(Ulid::new().to_uuid())
+    .bind(json!({"case": "malformed-ulid"}))
+    .bind(Utc::now())
+    .bind("not-a-valid-ulid")
+    .execute(pool)
+    .await;
+
+    assert!(err.is_err(), "malformed ULID should be rejected");
+    let message = format!("{:?}", err.unwrap_err());
+    assert!(
+        message.contains("invalid input syntax for type uuid"),
+        "expected UUID parse error, got: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn duplicate_parent_ids_rejected_by_validator() -> color_eyre::eyre::Result<()> {
+    let validator = EventValidator::new();
+    let parent = EventId::new();
+
+    let mut event = Event::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
+        .from_parents(vec![parent, parent])
+        .build();
+
+    event.id = Some(EventId::new());
+
+    let err = validator
+        .validate(&event)
+        .expect_err("validator must reject duplicate parent list");
+    assert!(
+        matches!(
+            err,
+            ValidationError::InvalidValue { field, .. } if field == "provenance.source_event_ids"
+        ),
+        "expected duplicate parent validation error, got {err:?}"
+    );
+
     Ok(())
 }

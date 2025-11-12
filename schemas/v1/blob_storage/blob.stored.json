@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "blob_id": {
+      "type": "string"
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "hash_sha256": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "stored_at": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "blob_id",
+    "content_type",
+    "hash_sha256",
+    "size_bytes",
+    "stored_at"
+  ],
+  "title": "BlobStoredPayload",
+  "type": "object"
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "end_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "enrichment_history": {
+      "items": true,
+      "type": "array"
+    },
+    "environment_hash": {
+      "type": "string"
+    },
+    "exit_code": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "source_events": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "start_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "user": {
+      "type": "string"
+    },
+    "working_directory": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "command",
+    "duration_ms",
+    "end_time",
+    "enrichment_history",
+    "environment_hash",
+    "exit_code",
+    "session_id",
+    "source_events",
+    "start_time",
+    "user",
+    "working_directory"
+  ],
+  "title": "CanonicalCommandPayload",
+  "type": "object"
+}

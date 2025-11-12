@@ -680,7 +680,10 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
     let retrieved_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("ordering-test"), Some(10), None)
+        .get_by_source(
+            &EventSource::from_static("ordering-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     assert_eq!(retrieved_events.len(), 5);

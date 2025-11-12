@@ -127,7 +127,7 @@ impl IngestdConfig {
 
     /// Load configuration including a specific config file.
     pub fn load_from_path(path: impl AsRef<str>) -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base().merge(Toml::file(path.as_ref()).nested());
+        let figment = Self::build_figment_base().merge(Toml::file(path.as_ref()));
         Self::add_env(figment).extract()
     }
 

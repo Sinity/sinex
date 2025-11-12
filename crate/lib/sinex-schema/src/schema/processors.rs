@@ -174,6 +174,7 @@ pub enum OperationsLog {
     OperationType,
     Operator,
     Scope,
+    ScopeWindow,
     ResultStatus,
     ResultMessage,
     PreviewSummary,
@@ -210,6 +211,7 @@ impl OperationsLog {
             )
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())
             .col(ColumnDef::new(OperationsLog::Scope).json_binary()) // Parameters of the operation
+            .col(ColumnDef::new(OperationsLog::ScopeWindow).custom(Alias::new("tstzrange")))
             .col(
                 ColumnDef::new(OperationsLog::ResultStatus)
                     .text()
