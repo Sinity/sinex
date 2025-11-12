@@ -1,7 +1,8 @@
 use sinex_system_satellite::systemd_integration::{SystemdMonitor, SystemdUnitType};
+use sinex_test_utils::{sinex_test, TestResult};
 
-#[test]
-fn unit_type_detection_matches_suffix() {
+#[sinex_test]
+fn unit_type_detection_matches_suffix() -> TestResult<()> {
     assert_eq!(
         SystemdUnitType::from_name("sshd.service"),
         SystemdUnitType::Service
@@ -18,10 +19,11 @@ fn unit_type_detection_matches_suffix() {
         SystemdUnitType::from_name("multi-user.target"),
         SystemdUnitType::Target
     );
+    Ok(())
 }
 
-#[tokio::test]
-async fn systemd_monitor_creation_is_resilient() {
+#[sinex_test]
+async fn systemd_monitor_creation_is_resilient() -> TestResult<()> {
     match SystemdMonitor::new() {
         Ok(monitor) => {
             let _ = monitor.list_service_units();
@@ -30,4 +32,5 @@ async fn systemd_monitor_creation_is_resilient() {
             eprintln!("SystemdMonitor not available in this environment: {}", e);
         }
     }
+    Ok(())
 }
