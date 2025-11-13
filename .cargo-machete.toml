@@ -11,10 +11,6 @@ sinex-satellite-sdk = ["tonic-build"]
 sinex-services = ["sinex-test-utils"]
 sinex-terminal-command-canonicalizer = ["sinex-test-utils"]
 sinex-health-aggregator = ["sinex-test-utils"] 
-sinex-db = ["tokio-test"]
-
-# Used by feature flags or conditional compilation
-sinex-db = ["sea-orm-migration", "prometheus", "sysinfo", "procfs", "parking_lot", "sinex-macros"]
 
 # Used in binaries that need logging setup
 sinex-desktop-satellite = ["tracing-subscriber"]
