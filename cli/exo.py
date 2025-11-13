@@ -36,6 +36,12 @@ except ImportError:
     from replay_commands import replay
 
 console = Console()
+_GLOBAL_RPC_TOKEN: Optional[str] = None
+
+
+def set_global_rpc_token(token: Optional[str]) -> None:
+    global _GLOBAL_RPC_TOKEN
+    _GLOBAL_RPC_TOKEN = token
 
 
 def _rpc_error_guidance(error: SinexRPCError, *, use_db: bool = False) -> List[str]:
@@ -72,12 +78,21 @@ def get_db_connection():
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 
-def get_rpc_client(rpc_url: Optional[str] = None) -> SinexRPCClient:
+def _report_db_unavailable(error: Exception) -> None:
+    console.print(
+        "[yellow]Database connection unavailable. "
+        "Set DATABASE_URL or run inside the dev shell.[/yellow]"
+    )
+    console.print(f"[yellow]Underlying error: {error}[/yellow]")
+
+
+def get_rpc_client(rpc_url: Optional[str] = None, rpc_token: Optional[str] = None) -> SinexRPCClient:
     """Get RPC client using environment variable or default."""
     if rpc_url is None:
         rpc_url = os.environ.get('SINEX_RPC_URL', 'http://127.0.0.1:9999')
     
-    return SinexRPCClient(rpc_url)
+    token = rpc_token or _GLOBAL_RPC_TOKEN or os.environ.get('SINEX_RPC_TOKEN')
+    return SinexRPCClient(rpc_url, token=token)
 
 
 def parse_time_delta(time_str: str) -> timedelta:
@@ -100,10 +115,10 @@ def parse_time_delta(time_str: str) -> timedelta:
 
 def _query_with_rpc(rpc_url: Optional[str], source: Optional[str], event_type: Optional[str],
                    since: Optional[str], until: Optional[str], last: Optional[str], 
-                   limit: int, host: Optional[str]) -> List[Dict]:
+                   limit: int, host: Optional[str], rpc_token: Optional[str]) -> List[Dict]:
     """Query events using RPC client."""
     try:
-        client = get_rpc_client(rpc_url)
+        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
         events = client.query_events_compatible(
             source=source,
             event_type=event_type,
@@ -177,10 +192,10 @@ def _query_with_database(source: Optional[str], event_type: Optional[str],
     return events
 
 
-def _sources_with_rpc(rpc_url: Optional[str]) -> List[Dict]:
+def _sources_with_rpc(rpc_url: Optional[str], rpc_token: Optional[str]) -> List[Dict]:
     """Get sources statistics using RPC client."""
     try:
-        client = get_rpc_client(rpc_url)
+        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
         sources = client.get_sources_statistics()
         return sources
     except SinexRPCError:
@@ -212,10 +227,10 @@ def _sources_with_database() -> List[Dict]:
     return sources
 
 
-def _stats_with_rpc(rpc_url: Optional[str]) -> None:
+def _stats_with_rpc(rpc_url: Optional[str], rpc_token: Optional[str]) -> None:
     """Show stats using RPC client - limited functionality."""
     try:
-        client = get_rpc_client(rpc_url)
+        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
         
         # Get basic event counts by source
         counts = client.get_event_count_by_source(days_back=7)
@@ -393,14 +408,19 @@ def parse_datetime(date_str: str) -> datetime:
 @click.group()
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive query builder')
 @click.option('--rpc-url', help='RPC server URL (default: http://127.0.0.1:9999)', envvar='SINEX_RPC_URL')
+@click.option('--rpc-token', help='RPC authentication token (env: SINEX_RPC_TOKEN)', envvar='SINEX_RPC_TOKEN')
 @click.option('--use-db', is_flag=True, help='Use direct database connection instead of RPC')
 @click.pass_context
-def cli(ctx, interactive, rpc_url, use_db):
+def cli(ctx, interactive, rpc_url, rpc_token, use_db):
     """Sinex CLI - Query your digital memory."""
     # Store config in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj['rpc_url'] = rpc_url
+    ctx.obj['rpc_token'] = rpc_token
     ctx.obj['use_db'] = use_db
+    set_global_rpc_token(rpc_token)
+    if rpc_token:
+        os.environ['SINEX_RPC_TOKEN'] = rpc_token
     
     if interactive:
         try:
@@ -437,7 +457,17 @@ def query(ctx, source: Optional[str], event_type: Optional[str], since: Optional
             events = _query_with_database(source, event_type, since, until, last, limit, host)
         else:
             # Use RPC (default mode)
-            events = _query_with_rpc(rpc_url, source, event_type, since, until, last, limit, host)
+            events = _query_with_rpc(
+                rpc_url,
+                source,
+                event_type,
+                since,
+                until,
+                last,
+                limit,
+                host,
+                ctx.obj.get('rpc_token'),
+            )
         
         # Apply JQ filter if specified
         if payload_jq and events:
@@ -1097,7 +1127,7 @@ def sources(ctx):
             sources = _sources_with_database()
         else:
             # Use RPC (default mode)
-            sources = _sources_with_rpc(rpc_url)
+            sources = _sources_with_rpc(rpc_url, ctx.obj.get('rpc_token'))
         
         table = Table(title="Event Sources")
         table.add_column("Source", style="cyan")
@@ -1891,9 +1921,9 @@ def dlq():
 def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[str], 
              category: Optional[str], limit: int, include_resolved: bool, output_format: str):
     """List DLQ entries with filtering options."""
-    
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
             # Build dynamic query
             query_parts = [
                 "SELECT dlq_id, automaton_name, source, event_type, failure_reason, "
@@ -1933,7 +1963,10 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
             query_sql = " ".join(query_parts)
             cur.execute(query_sql, params)
             dlq_entries = cur.fetchall()
-    
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
+
     if not dlq_entries:
         console.print("[yellow]No DLQ entries found.[/yellow]")
         return
@@ -2007,21 +2040,25 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
 def dlq_show(dlq_id: str):
     """Show detailed information about a specific DLQ entry."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Handle partial DLQ ID matching
-            if len(dlq_id) < 26:  # Partial ULID
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id::text LIKE %s
-                """, (f"{dlq_id}%",))
-            else:
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id = %s
-                """, (dlq_id,))
-            
-            entry = cur.fetchone()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Handle partial DLQ ID matching
+                if len(dlq_id) < 26:  # Partial ULID
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id::text LIKE %s
+                    """, (f"{dlq_id}%",))
+                else:
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id = %s
+                    """, (dlq_id,))
+                
+                entry = cur.fetchone()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     
     if not entry:
         console.print(f"[red]DLQ entry not found: {dlq_id}[/red]")
@@ -2072,22 +2109,26 @@ def dlq_show(dlq_id: str):
 def dlq_retry(dlq_id: str, dry_run: bool):
     """Retry a specific DLQ entry."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Find the DLQ entry
-            if len(dlq_id) < 26:  # Partial ULID
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
-                """, (f"{dlq_id}%",))
-            else:
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id = %s AND resolved_at IS NULL
-                """, (dlq_id,))
-            
-            entry = cur.fetchone()
-    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Find the DLQ entry
+                if len(dlq_id) < 26:  # Partial ULID
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
+                    """, (f"{dlq_id}%",))
+                else:
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id = %s AND resolved_at IS NULL
+                    """, (dlq_id,))
+                
+                entry = cur.fetchone()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
+
     if not entry:
         console.print(f"[red]Unresolved DLQ entry not found: {dlq_id}[/red]")
         return
@@ -2103,21 +2144,25 @@ def dlq_retry(dlq_id: str, dry_run: bool):
         return
     
     # Update retry information
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Calculate next retry time with exponential backoff
-            next_retry_seconds = min(300 * (2 ** entry['retry_count']), 3600)  # Cap at 1 hour
-            next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=next_retry_seconds)
-            
-            cur.execute("""
-                UPDATE sinex_schemas.dlq_events 
-                SET retry_count = retry_count + 1,
-                    last_retry_at = now(),
-                    next_retry_at = %s
-                WHERE dlq_id = %s
-            """, (next_retry_at, entry['dlq_id']))
-            
-            conn.commit()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Calculate next retry time with exponential backoff
+                next_retry_seconds = min(300 * (2 ** entry['retry_count']), 3600)  # Cap at 1 hour
+                next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=next_retry_seconds)
+                
+                cur.execute("""
+                    UPDATE sinex_schemas.dlq_events 
+                    SET retry_count = retry_count + 1,
+                        last_retry_at = now(),
+                        next_retry_at = %s
+                    WHERE dlq_id = %s
+                """, (next_retry_at, entry['dlq_id']))
+                
+                conn.commit()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     
     console.print(f"[green]✅ DLQ entry marked for retry[/green]")
     console.print(f"Next retry scheduled for: {next_retry_at}")
@@ -2132,21 +2177,25 @@ def dlq_retry(dlq_id: str, dry_run: bool):
 def dlq_resolve(dlq_id: str, resolution: str, dry_run: bool):
     """Manually resolve a DLQ entry."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            # Find the DLQ entry
-            if len(dlq_id) < 26:  # Partial ULID
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
-                """, (f"{dlq_id}%",))
-            else:
-                cur.execute("""
-                    SELECT * FROM sinex_schemas.dlq_events 
-                    WHERE dlq_id = %s AND resolved_at IS NULL
-                """, (dlq_id,))
-            
-            entry = cur.fetchone()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Find the DLQ entry
+                if len(dlq_id) < 26:  # Partial ULID
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id::text LIKE %s AND resolved_at IS NULL
+                    """, (f"{dlq_id}%",))
+                else:
+                    cur.execute("""
+                        SELECT * FROM sinex_schemas.dlq_events 
+                        WHERE dlq_id = %s AND resolved_at IS NULL
+                    """, (dlq_id,))
+                
+                entry = cur.fetchone()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     
     if not entry:
         console.print(f"[red]Unresolved DLQ entry not found: {dlq_id}[/red]")
@@ -2163,17 +2212,21 @@ def dlq_resolve(dlq_id: str, resolution: str, dry_run: bool):
         return
     
     # Mark as resolved
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE sinex_schemas.dlq_events 
-                SET resolved_at = now(),
-                    resolved_by = %s
-                WHERE dlq_id = %s
-            """, (resolution, entry['dlq_id']))
-            
-            conn.commit()
-    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE sinex_schemas.dlq_events 
+                    SET resolved_at = now(),
+                        resolved_by = %s
+                    WHERE dlq_id = %s
+                """, (resolution, entry['dlq_id']))
+                
+                conn.commit()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
+
     console.print(f"[green]✅ DLQ entry resolved as: {resolution}[/green]")
 
 
@@ -2183,8 +2236,9 @@ def dlq_resolve(dlq_id: str, resolution: str, dry_run: bool):
 def dlq_stats(agent: Optional[str], days: int):
     """Show DLQ statistics and trends."""
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
             # Build base query conditions
             where_clause = "WHERE failed_at > now() - interval '%s days'"
             params = [days]
@@ -2248,6 +2302,9 @@ def dlq_stats(agent: Optional[str], days: int):
                 ORDER BY day DESC
             """, params)
             daily_trends = cur.fetchall()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     
     # Display overall statistics
     console.print(f"\n[bold]📊 DLQ Statistics (Last {days} days)[/bold]")
@@ -2426,6 +2483,64 @@ def dlq_metrics(window: str):
         sys.exit(1)
 
 
+@cli.group()
+def confirmations():
+    """Confirmation stream utilities."""
+    pass
+
+
+@confirmations.command('tail')
+@click.option('--limit', '-n', default=20, help='Number of confirmation events to display')
+def confirmations_tail(limit: int):
+    """
+    Show the latest confirmation events stored in core.events.
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 
+                        id::text AS event_id,
+                        source,
+                        event_type,
+                        ts_ingest,
+                        payload->>'status' AS status
+                    FROM core.events
+                    WHERE event_type LIKE 'confirmations.%'
+                    ORDER BY ts_ingest DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                confirmations = cur.fetchall()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
+
+    if not confirmations:
+        console.print("[yellow]No confirmation events found.[/yellow]")
+        return
+
+    table = Table(title=f"Recent Confirmations (showing {len(confirmations)})", box=box.SIMPLE)
+    table.add_column("Event ID", style="cyan")
+    table.add_column("Source", style="green")
+    table.add_column("Event Type", style="blue")
+    table.add_column("Status", style="magenta")
+    table.add_column("Ingested At", style="white")
+
+    for entry in confirmations:
+        table.add_row(
+            entry["event_id"][:8],
+            entry["source"],
+            entry["event_type"],
+            entry.get("status") or "unknown",
+            entry["ts_ingest"].isoformat() if entry["ts_ingest"] else "n/a",
+        )
+
+    console.print(table)
+
+
 @dlq.command('purge')
 @click.option('--agent', '-a', help='Purge entries for specific agent')
 @click.option('--category', '-c', 
@@ -2469,20 +2584,24 @@ def dlq_purge(agent: Optional[str], category: Optional[str], older_than: Optiona
         return
     
     # Check what would be purged
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            where_clause = "WHERE " + " AND ".join(conditions)
-            
-            cur.execute(f"""
-                SELECT 
-                    COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
-                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved
-                FROM sinex_schemas.dlq_events
-                {where_clause}
-            """, params)
-            
-            counts = cur.fetchone()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                where_clause = "WHERE " + " AND ".join(conditions)
+                
+                cur.execute(f"""
+                    SELECT 
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                        COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved
+                    FROM sinex_schemas.dlq_events
+                    {where_clause}
+                """, params)
+                
+                counts = cur.fetchone()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     
     if counts['total'] == 0:
         console.print("[yellow]No DLQ entries match the purge criteria.[/yellow]")
@@ -2505,16 +2624,20 @@ def dlq_purge(agent: Optional[str], category: Optional[str], older_than: Optiona
             return
     
     # Perform the purge
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                DELETE FROM sinex_schemas.dlq_events
-                {where_clause}
-            """, params)
-            
-            deleted_count = cur.rowcount
-            conn.commit()
-    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    DELETE FROM sinex_schemas.dlq_events
+                    {where_clause}
+                """, params)
+                
+                deleted_count = cur.rowcount
+                conn.commit()
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
+
     console.print(f"[green]✅ Purged {deleted_count:,} DLQ entries[/green]")
 
 
@@ -2547,7 +2670,7 @@ def stats(ctx):
             _stats_with_database()
         else:
             # Use RPC (default mode) - limited functionality for now
-            _stats_with_rpc(rpc_url)
+            _stats_with_rpc(rpc_url, ctx.obj.get('rpc_token'))
             
     except SinexRPCError as e:
         handle_rpc_error(e, use_db=use_db)
@@ -3979,7 +4102,7 @@ def telemetry():
 def telemetry_prometheus(ctx, rpc_url: Optional[str], format: str):
     """Export current Prometheus metrics."""
     try:
-        client = get_rpc_client(rpc_url)
+        client = get_rpc_client(rpc_url, rpc_token=ctx.obj.get('rpc_token'))
         
         # Call gateway RPC to get metrics
         response = client.call('telemetry.export_prometheus', {'format': format})
@@ -4034,7 +4157,7 @@ def telemetry_events(ctx, component: Optional[str], event_type: Optional[str],
     else:
         # Use RPC
         try:
-            client = get_rpc_client(ctx.obj.get('rpc_url'))
+            client = get_rpc_client(ctx.obj.get('rpc_url'), rpc_token=ctx.obj.get('rpc_token'))
             response = client.call('telemetry.query_events', {
                 'component': component,
                 'event_type': event_type,
@@ -4070,7 +4193,7 @@ def telemetry_events(ctx, component: Optional[str], event_type: Optional[str],
 def telemetry_summary(ctx, component: Optional[str], period: str, rpc_url: Optional[str]):
     """Show telemetry summary statistics."""
     try:
-        client = get_rpc_client(rpc_url)
+        client = get_rpc_client(rpc_url, rpc_token=ctx.obj.get('rpc_token'))
         
         response = client.call('telemetry.summary', {
             'component': component,

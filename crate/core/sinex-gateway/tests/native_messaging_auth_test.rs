@@ -90,3 +90,61 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
 
     Ok(())
 }
+
+#[sinex_test]
+async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext) -> Result<()> {
+    let db_url = ctx.database_url().to_string();
+    let services = ServiceContainer::new(Some(db_url)).await?;
+
+    let config = NativeMessagingConfig::with_trusted_entries(vec![(
+        "chrome-extension://trusted-sinex".to_string(),
+        Some("s3cr3t".to_string()),
+    )]);
+
+    let request = NativeMessage::rpc(
+        "analytics.event_count_by_source",
+        json!({ "days_back": 1 }),
+        "1",
+    )
+    .with_extension_id("chrome-extension://trusted-sinex")
+    .with_extension_secret("s3cr3t");
+
+    let transport = HarnessTransport::new(vec![request]);
+    let probe = transport.clone();
+
+    run_with_transport(services, config, transport).await?;
+
+    let responses = probe.responses().await;
+    assert!(!responses.is_empty());
+    assert_eq!(responses[0].message_type(), "response");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()> {
+    let db_url = ctx.database_url().to_string();
+    let services = ServiceContainer::new(Some(db_url)).await?;
+
+    let config = NativeMessagingConfig::with_trusted_entries(vec![(
+        "chrome-extension://trusted-sinex".to_string(),
+        Some("s3cr3t".to_string()),
+    )]);
+
+    let request = NativeMessage::rpc(
+        "analytics.event_count_by_source",
+        json!({ "days_back": 1 }),
+        "1",
+    )
+    .with_extension_id("chrome-extension://trusted-sinex");
+
+    let transport = HarnessTransport::new(vec![request]);
+    let probe = transport.clone();
+
+    run_with_transport(services, config, transport).await?;
+
+    let responses = probe.responses().await;
+    assert!(!responses.is_empty());
+    assert_eq!(responses[0].message_type(), "error");
+    Ok(())
+}

@@ -4,7 +4,7 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
 #[sinex_test]
-async fn blob_events_forwarded_to_consumers(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn blob_routes_do_not_persist_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = TempDir::new()?;
     std::env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
 
@@ -36,9 +36,9 @@ async fn blob_events_forwarded_to_consumers(ctx: TestContext) -> color_eyre::eyr
     .await?
     .unwrap_or(0);
 
-    assert!(
-        after_count > initial_count,
-        "Blob manager should emit blob.ingested events instead of silently draining its channel"
+    assert_eq!(
+        after_count, initial_count,
+        "Gateway helpers must never write blob.ingested events; ingestd is the single writer"
     );
 
     Ok(())

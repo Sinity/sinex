@@ -51,6 +51,10 @@ enum Commands {
         #[arg(long, default_value = DEFAULT_SOCKET_PATH, value_parser = validate_socket_path)]
         socket: SanitizedPath,
 
+        /// Optional TCP listen address in host:port form (or via SINEX_GATEWAY_TCP_LISTEN)
+        #[arg(long, env = "SINEX_GATEWAY_TCP_LISTEN")]
+        tcp_listen: Option<String>,
+
         /// Database URL
         #[arg(long, env = "DATABASE_URL")]
         database_url: Option<String>,
@@ -85,6 +89,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::RpcServer {
             socket,
+            tcp_listen,
             database_url,
         } => {
             info!("Starting RPC server on {:?}", socket);
@@ -95,7 +100,7 @@ async fn main() -> Result<()> {
             })?;
 
             // Start RPC server
-            rpc_server::run(socket, services)
+            rpc_server::run(socket, tcp_listen.as_deref(), services)
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
         }
