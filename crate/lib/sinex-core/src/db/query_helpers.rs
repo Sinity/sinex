@@ -2,9 +2,9 @@
 
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{retry, timeouts};
-use crate::{DbPool, DbPoolRef};
-use sqlx::{Error as SqlxError, Postgres, QueryBuilder, Transaction};
+use crate::{DbPool, DbPoolRef, DbTransaction};
 use std::future::Future;
+use sqlx::{Error as SqlxError, Postgres, QueryBuilder};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
@@ -50,18 +50,39 @@ impl Default for RetryConfig {
     }
 }
 
-/// Execute a function within a transaction with automatic rollback on error
-pub async fn with_transaction<F, Fut, T>(pool: &DbPool, f: F) -> SinexResult<T>
+/// Trait implemented for closures that operate within a transaction.
+///
+/// This lets callers pass plain async closures without manually boxing their futures
+/// while still allowing the helper to borrow the transaction for the duration of the future.
+pub trait TransactionFn<T> {
+    type Future<'tx>: Future<Output = SinexResult<T>> + Send + 'tx;
+
+    fn call<'tx>(&mut self, tx: &'tx mut DbTransaction<'tx>) -> Self::Future<'tx>;
+}
+
+impl<T, F, Fut> TransactionFn<T> for F
 where
-    F: FnOnce(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = SinexResult<T>>,
+    F: for<'tx> FnMut(&'tx mut DbTransaction<'tx>) -> Fut<'tx>,
+    for<'tx> Fut<'tx>: Future<Output = SinexResult<T>> + Send + 'tx,
+{
+    type Future<'tx> = Fut<'tx>;
+
+    fn call<'tx>(&mut self, tx: &'tx mut DbTransaction<'tx>) -> Self::Future<'tx> {
+        self(tx)
+    }
+}
+
+/// Execute a function within a transaction with automatic rollback on error
+pub async fn with_transaction<F, T>(pool: &DbPool, mut f: F) -> SinexResult<T>
+where
+    F: TransactionFn<T>,
 {
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| db_error(e, "Failed to begin transaction"))?;
 
-    match f(&mut tx).await {
+    match f.call(&mut tx).await {
         Ok(result) => {
             tx.commit()
                 .await
@@ -76,14 +97,13 @@ where
 }
 
 /// Execute a function within a transaction with retry logic for deadlocks
-pub async fn with_retry_transaction<F, Fut, T>(
+pub async fn with_retry_transaction<F, T>(
     pool: &DbPool,
     config: RetryConfig,
-    f: F,
+    mut f: F,
 ) -> SinexResult<T>
 where
-    F: Fn(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = SinexResult<T>>,
+    F: TransactionFn<T>,
 {
     let mut attempts = 0;
     let mut delay = config.initial_delay;
@@ -96,7 +116,7 @@ where
             .await
             .map_err(|e| db_error(e, "Failed to begin transaction"))?;
 
-        match f(&mut tx).await {
+        match f.call(&mut tx).await {
             Ok(result) => {
                 tx.commit()
                     .await
