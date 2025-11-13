@@ -59,7 +59,7 @@ impl BlobManagerTest {
             }
         });
 
-        let manager = BlobManager::new(annex_config, pool.clone(), event_tx)?;
+        let manager = BlobManager::new(annex_config, pool.clone(), Some(event_tx))?;
 
         Ok(Self {
             manager,
@@ -473,7 +473,7 @@ async fn test_blob_manager_creation_without_git_annex(ctx: TestContext) -> color
 
     let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
-    let result = BlobManager::new(annex_config, ctx.pool().clone(), event_tx);
+    let result = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx));
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("git-annex not found"));
 
@@ -492,7 +492,7 @@ async fn test_invalid_repository_path(ctx: TestContext) -> color_eyre::Result<()
 
     let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
 
-    let result = BlobManager::new(annex_config, ctx.pool().clone(), event_tx);
+    let result = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx));
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("does not exist"));
 
