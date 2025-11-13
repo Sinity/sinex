@@ -1,4 +1,5 @@
 Status: canonical
+> **Purpose:** Operational reference for observability, integrity, and service orchestration (keep in sync with the systemd/NixOS modules).
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
 
 *   **Version:** 2.0
