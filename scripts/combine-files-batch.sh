@@ -39,6 +39,10 @@ SKIP_PATHS=(
 
 mkdir -p "$OUTPUT_DIR"
 
+ensure_git_available() {
+  git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 is_text_file() {
   local mime
   mime=$(file --mime-type -b "$1")
@@ -288,6 +292,63 @@ build_bundle() {
   echo "Wrote $outfile (${total_files} files)."
 }
 
+generate_tokei_plus_gitlog() {
+  local outfile="$OUTPUT_DIR/tokei_plus_gitlog.md"
+  : >"$outfile"
+  echo "# Tokei Report" >>"$outfile"
+  echo >>"$outfile"
+  if command -v tokei >/dev/null 2>&1; then
+    echo '```text' >>"$outfile"
+    tokei "$ROOT" >>"$outfile"
+    echo '```' >>"$outfile"
+  else
+    echo "_tokei not installed; skipping code statistics._" >>"$outfile"
+  fi
+
+  echo >>"$outfile"
+  echo "# Git Log (reverse, summary + stat)" >>"$outfile"
+  echo >>"$outfile"
+  if ensure_git_available; then
+    echo '```text' >>"$outfile"
+    git -C "$ROOT" log --reverse --summary --stat >>"$outfile"
+    echo '```' >>"$outfile"
+  else
+    echo "_Not a git repository; skipping log output._" >>"$outfile"
+  fi
+
+  echo "Wrote $outfile"
+}
+
+generate_git_diff_parts() {
+  if ! ensure_git_available; then
+    echo "Skipping git diff parts (not a git repository)."
+    return
+  fi
+
+  local parts=8
+  local total_commits
+  total_commits=$(git -C "$ROOT" rev-list --count HEAD)
+  if ((total_commits == 0)); then
+    echo "Skipping git diff parts (no commits)."
+    return
+  fi
+
+  local chunk=$(((total_commits + parts - 1) / parts))
+  local part=1
+  while ((part <= parts)); do
+    local skip=$(((part - 1) * chunk))
+    local outfile="$OUTPUT_DIR/all_diffs_part_${part}.md"
+    if ((skip >= total_commits)); then
+      : >"$outfile"
+      ((part++))
+      continue
+    fi
+    git -C "$ROOT" log --reverse --summary --stat -p --max-count=$chunk --skip=$skip >"$outfile"
+    echo "Wrote $outfile"
+    ((part++))
+  done
+}
+
 main() {
   mapfile -t files < <(collect_files "$ROOT")
   if [[ ${#files[@]} -eq 0 ]]; then
@@ -323,6 +384,8 @@ main() {
   build_bundle sources "${sources_files[@]}"
   build_bundle tests "${tests_files[@]}"
   build_bundle docs "${docs_files[@]}"
+  generate_tokei_plus_gitlog
+  generate_git_diff_parts
 }
 
 main "$@"
