@@ -29,6 +29,16 @@ This directory contains CI/CD workflows for the Sinex project.
 - Updates schema registry in database
 - Maintains schema version history
 
+### `schema-auto-update.yml` - Schema Drift Automation
+- Runs `./scripts/schema-dev.sh generate` on pushes to `main`
+- Opens an automated PR when `schemas/` differs from generated output
+- Requires `contents` + `pull-requests` write permissions so `peter-evans/create-pull-request@v5` can push branches
+
+### `sqlx-auto-update.yml` - SQLx Cache Automation
+- Runs `cargo sqlx prepare --workspace -- --all-targets` on pushes to `main`
+- Opens an automated PR when `.sqlx/` changes
+- Also pinned to `contents`/`pull-requests` write permissions for the auto-PR helper
+
 ## Local Testing
 
 Workflows are designed to run inside the `nix develop` environment. If you want to execute
