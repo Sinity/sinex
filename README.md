@@ -151,6 +151,7 @@ NixOS VM harness.
 
 ### Prerequisites
 - Nix package manager with flakes enabled
+- [devenv](https://devenv.sh) CLI (installed alongside the dev environment; all helper commands assume it exists)
 - PostgreSQL (automatically set up in dev shell)
 - Git (for git-annex integration)
 
@@ -163,13 +164,19 @@ cd sinex
 # Enter development shell (sets up PostgreSQL, migrations, etc.)
 nix develop                # or: direnv allow && direnv reload
 
-# Inspect available helper tasks (devenv CLI requires an explicit subcommand)
+# Generate an RPC token (gateway refuses to start without one)
+export SINEX_RPC_TOKEN=$(openssl rand -hex 32)   # or: SINEX_RPC_TOKEN_FILE=$HOME/.config/sinex/rpc-token
+
+# Inspect available helper tasks
 devenv tasks help                  # Shows the run/export subcommands
 devenv tasks run --help            # Lists all task labels defined in devenv.nix
 ```
 
 Direnv users will see a status banner (MOTD) sourced from `scripts/dev-env-banner.sh` whenever the
 environment loads, matching the `nix develop` experience.
+
+> **Note:** Nothing in this repository is expected to work outside `nix develop` / the devenv shell.
+> Always enter the shell (or let `direnv` manage it) before invoking Cargo, scripts, or CLI helpers.
 
 ### Database defaults
 The dev shell and Cargo configuration export the Postgres settings automatically:
@@ -217,7 +224,7 @@ cargo run --bin sinex-fs-watcher -- scan /path/to/scan
 cargo run --bin sinex-terminal-satellite -- scan --source kitty
 
 # Query recent events
-devenv tasks run cli:query          # or: python3 cli/exo.py query
+devenv tasks run cli:query          # or: python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
 LIMIT=50 devenv tasks run cli:query # Increase result window
 
 # Monitor satellites via systemd
@@ -227,6 +234,18 @@ systemctl status sinex-fs-watcher
 
 ### Configuration
 Configuration is managed through the NixOS module system. Each satellite can be enabled/disabled independently. See `nixos/example.nix` for example configuration.
+
+### Combined Bundles (LLM/analysis helpers)
+- `scripts/combine-files-batch.sh` snapshots sources/tests/docs into `combined-bundles/combined-{sources,tests,docs}.md`.
+- The same helper emits `combined-bundles/tokei_plus_gitlog.md` plus eight commit-diff shards (`all_diffs_part_{1-8}.md`).
+- The directory stays gitignored (`.gitignore` keeps `combined-bundles/` out of history); regenerate locally whenever you need a fresh view.
+- Pass a root dir and optional output dir if you need custom slices: `./scripts/combine-files-batch.sh . combined-bundles`.
+- Each bundle includes metadata (timestamp, token estimate) and raw file dumps so AI assistants have deterministic context without touching git history.
+
+### RPC Authentication
+- `sinex-gateway` **requires** a token via `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) before serving JSON-RPC. The CLI automatically reads the same environment variable or accepts `--rpc-token`.
+- For automated tests or local experiments you can temporarily bypass auth via `SINEX_GATEWAY_ALLOW_INSECURE=1`, but never enable this in shared environments.
+- Blob uploads are additionally capped by `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB). Oversized payloads are rejected before they reach git-annex, keeping RPC handling predictable.
 
 ## 🧪 Testing
 

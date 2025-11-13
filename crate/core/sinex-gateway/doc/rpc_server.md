@@ -22,6 +22,8 @@ Implements the JSON-RPC 2.0 compliant server that fronts Sinex gateway services 
 - CORS headers configured for local development.
 - Request/response logging for audit trails.
 - Error sanitisation to avoid leaking sensitive details.
+- Mandatory RPC auth token (`SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE`); requests must send `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). Set `SINEX_GATEWAY_ALLOW_INSECURE=1` only for tests.
 - Concurrency limit (`SINEX_GATEWAY_MAX_CONCURRENCY`, default 32) enforced via tower middleware.
 - Request timeout (`SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, default 30s) returns JSON-RPC gateway timeout errors.
 - Payload size cap (`SINEX_GATEWAY_MAX_BODY_BYTES`, default 2MB) returns 413 errors when exceeded.
+- Blob uploads have an explicit content quota (`SINEX_GATEWAY_MAX_BLOB_BYTES`, default 5MB) that is enforced after base64 decoding to keep git-annex writes bounded.
