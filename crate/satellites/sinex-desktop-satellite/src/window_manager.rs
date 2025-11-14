@@ -6,7 +6,11 @@ use crate::common::*;
 // Window manager specific imports
 use sinex_core::types::Ulid;
 use sqlx::PgPool;
-use std::{fmt, str::FromStr, time::SystemTime};
+use std::{
+    fmt,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
@@ -274,6 +278,25 @@ impl WindowManagerWatcher {
         })
     }
 
+    fn backoff_delay(attempts: u32) -> Duration {
+        let capped_attempts = attempts.min(6);
+        let base_delay = Duration::from_secs(1) * 2u32.pow(capped_attempts);
+        base_delay + Self::jitter_component()
+    }
+
+    fn jitter_component() -> Duration {
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => Duration::from_millis((duration.as_millis() % 1000) as u64),
+            Err(err) => {
+                debug!(
+                    "System clock skew detected while computing Hyprland jitter: {}",
+                    err
+                );
+                Duration::from_secs(0)
+            }
+        }
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(&mut self, line: &str) -> SatelliteResult<()> {
         if line.is_empty() {
@@ -526,17 +549,7 @@ impl WindowManagerWatcher {
                         consecutive_failures, e
                     );
 
-                    // Use exponential backoff with jitter, max 60 seconds
-                    let base_delay = Duration::from_secs(1);
-                    let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
-                    // Add simple jitter using timestamp-based pseudo-random
-                    let jitter = (std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                        % 1000) as u64;
-                    let jittered_delay = delay + Duration::from_millis(jitter);
-
+                    let jittered_delay = Self::backoff_delay(consecutive_failures);
                     warn!("Reconnecting to Hyprland in {:?}...", jittered_delay);
                     sleep(jittered_delay).await;
                     continue;
@@ -545,17 +558,7 @@ impl WindowManagerWatcher {
 
             consecutive_failures += 1;
 
-            // Use exponential backoff for reconnection after connection loss
-            let base_delay = Duration::from_secs(1);
-            let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
-            // Add simple jitter using timestamp-based pseudo-random
-            let jitter = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-                % 1000) as u64;
-            let jittered_delay = delay + Duration::from_millis(jitter);
-
+            let jittered_delay = Self::backoff_delay(consecutive_failures);
             warn!(
                 "Hyprland connection lost, reconnecting in {:?}...",
                 jittered_delay
