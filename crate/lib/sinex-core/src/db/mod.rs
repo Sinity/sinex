@@ -29,7 +29,7 @@ pub use migration::run_migrations_for_url;
 // Re-export query helpers for easier access
 pub use query_helpers::{
     count, db_error, exists, is_retryable_db_error, with_retry_transaction, with_transaction,
-    RetryConfig, TransactionFn,
+    RetryConfig,
 };
 
 // Re-export ULID conversion utilities from sinex-schema
