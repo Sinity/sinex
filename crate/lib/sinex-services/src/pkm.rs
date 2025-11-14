@@ -420,10 +420,10 @@ impl PkmService {
             })
             .collect();
 
-        Ok(summaries
+        summaries
             .into_iter()
-            .map(|s| serde_json::to_value(s).unwrap())
-            .collect())
+            .map(Self::material_summary_to_json)
+            .collect::<ServiceResult<Vec<_>>>()
     }
 
     /// Search source materials by metadata
@@ -452,10 +452,10 @@ impl PkmService {
             })
             .collect();
 
-        Ok(summaries
+        summaries
             .into_iter()
-            .map(|s| serde_json::to_value(s).unwrap())
-            .collect())
+            .map(Self::material_summary_to_json)
+            .collect::<ServiceResult<Vec<_>>>()
     }
 
     /// Create a safe content preview with UTF-8 character boundary awareness
@@ -473,6 +473,13 @@ impl PkmService {
         } else {
             format!("[Binary content - {} bytes]", content.len())
         }
+    }
+
+    fn material_summary_to_json(summary: MaterialSummary) -> ServiceResult<serde_json::Value> {
+        serde_json::to_value(summary).map_err(|err| {
+            SinexError::serialization("Failed to serialize material summary")
+                .with_source(err.to_string())
+        })
     }
 }
 
