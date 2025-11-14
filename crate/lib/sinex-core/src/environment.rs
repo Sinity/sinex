@@ -128,7 +128,7 @@ impl SinexEnvironment {
 
             *value = self.database_name(value);
             Self::rewrite_query(&mut url, &query_pairs);
-            return Ok(url.into_string());
+            return Ok(url.into());
         }
 
         let mut segments: Vec<String> = url
@@ -165,7 +165,7 @@ impl SinexEnvironment {
         }
         url.set_path(&new_path);
 
-        Ok(url.into_string())
+        Ok(url.into())
     }
 
     fn is_dbname_param(key: &str) -> bool {
