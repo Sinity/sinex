@@ -13,7 +13,6 @@ use sinex_core::{
     DbPoolExt,
 };
 use sinex_test_utils::{prelude::*, TestResult};
-use std::collections::HashMap;
 
 // =============================================================================
 // JSON Schema Validation Properties
@@ -151,43 +150,53 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
     )
 }
 
-#[sinex_prop]
-fn test_json_validation_normal_payloads(
-    #[strategy(arb_event_payload())] payload: Value,
-) -> TestResult<()> {
-    let json_str = payload.to_string();
-    let result = validate_json(&json_str);
-    drop(result);
+#[sinex_test(proptest)]
+fn test_json_validation_normal_payloads() -> TestResult {
+    proptest!(|(payload in arb_event_payload())| {
+        // Validation should not panic and should return a consistent result
+        let json_str = payload.to_string();
+        let result = validate_json(&json_str);
+
+        // Any result is acceptable - just ensure it doesn't crash
+        drop(result);
+    });
     Ok(())
 }
 
-#[sinex_prop]
-fn test_json_validation_security_payloads(
-    #[strategy(arb_problematic_payload())] payload: Value,
-) -> TestResult<()> {
-    let json_str = payload.to_string();
-    let result = validate_json(&json_str);
-    drop(result);
+#[sinex_test(proptest)]
+fn test_json_validation_security_payloads() -> TestResult {
+    proptest!(|(payload in arb_problematic_payload())| {
+        // Validation should handle problematic payloads safely
+        let json_str = payload.to_string();
+        let result = validate_json(&json_str);
+
+        // Should not panic or cause memory issues
+        drop(result);
+    });
     Ok(())
 }
 
-#[sinex_prop]
-fn test_json_validation_consistency(
-    #[strategy(arb_event_payload())] payload: Value,
-) -> TestResult<()> {
-    let json_str = payload.to_string();
-    let result1 = validate_json(&json_str);
-    let result2 = validate_json(&json_str);
+#[sinex_test(proptest)]
+fn test_json_validation_consistency() -> TestResult {
+    proptest!(|(payload in arb_event_payload())| {
+        // Validation should be deterministic - same payload should always get same result
+        let json_str = payload.to_string();
+        let result1 = validate_json(&json_str);
+        let result2 = validate_json(&json_str);
 
-    match (&result1, &result2) {
-        (Ok(_), Ok(_)) => {}
-        (Err(e1), Err(e2)) => {
-            prop_assert_eq!(std::mem::discriminant(e1), std::mem::discriminant(e2));
+        match (&result1, &result2) {
+            (Ok(_), Ok(_)) => {
+                // Both passed
+            },
+            (Err(e1), Err(e2)) => {
+                // Both failed - error types should be the same
+                prop_assert_eq!(std::mem::discriminant(e1), std::mem::discriminant(e2));
+            },
+            _ => {
+                prop_assert!(false, "Validation was not consistent");
+            }
         }
-        _ => {
-            prop_assert!(false, "Validation was not consistent");
-        }
-    }
+    });
     Ok(())
 }
 
@@ -196,11 +205,11 @@ fn test_json_validation_consistency(
 // =============================================================================
 
 /// Test schema evolution and backward compatibility
-#[sinex_prop]
-fn test_schema_evolution_properties(
-    #[strategy(arb_event_payload())] base_payload: Value,
-    #[strategy(
-        prop::collection::hash_map(
+#[sinex_test(proptest)]
+fn test_schema_evolution_properties() -> TestResult {
+    proptest!(|(
+        base_payload in arb_event_payload(),
+        additional_fields in prop::collection::hash_map(
             "[a-zA-Z][a-zA-Z0-9_]{0,20}",
             prop_oneof![
                 any::<String>().prop_map(|s| json!(s)),
@@ -209,41 +218,51 @@ fn test_schema_evolution_properties(
             ],
             0..=5
         )
-    )]
-    additional_fields: HashMap<String, Value>,
-) -> TestResult<()> {
-    let mut evolved_payload = base_payload.clone();
-    if let Value::Object(ref mut obj) = evolved_payload {
-        for (key, value) in additional_fields {
-            obj.insert(key, value);
+    )| {
+        // Create evolved payload with additional fields
+        let mut evolved_payload = base_payload.clone();
+        if let Value::Object(ref mut obj) = evolved_payload {
+            for (key, value) in additional_fields {
+                obj.insert(key, value);
+            }
+        } else {
+            // If base is not an object, create a new object with the base as a field
+            let mut new_obj = serde_json::Map::new();
+            new_obj.insert("base".to_string(), base_payload.clone());
+            for (key, value) in additional_fields {
+                new_obj.insert(key, value);
+            }
+            evolved_payload = Value::Object(new_obj);
         }
-    } else {
-        let mut new_obj = serde_json::Map::new();
-        new_obj.insert("base".to_string(), base_payload.clone());
-        for (key, value) in additional_fields {
-            new_obj.insert(key, value);
-        }
-        evolved_payload = Value::Object(new_obj);
-    }
 
-    let base_json = base_payload.to_string();
-    let evolved_json = evolved_payload.to_string();
-    let base_result = validate_json(&base_json);
-    let evolved_result = validate_json(&evolved_json);
+        // Validation should handle both versions gracefully
+        let base_json = base_payload.to_string();
+        let evolved_json = evolved_payload.to_string();
+        let base_result = validate_json(&base_json);
+        let evolved_result = validate_json(&evolved_json);
 
-    match (base_result, evolved_result) {
-        (Ok(_), Ok(_)) => {}
-        (Err(e1), Err(e2)) => {
-            prop_assert_eq!(
-                std::mem::discriminant(&e1),
-                std::mem::discriminant(&e2),
-                "Schema evolution should not change fundamental validation behavior"
-            );
+        // Both should either pass or fail with the same error type
+        // (since schema evolution should not break validation completely)
+        match (base_result, evolved_result) {
+            (Ok(_), Ok(_)) => {
+                // Both passed - ideal scenario
+            },
+            (Err(e1), Err(e2)) => {
+                // Both failed - error types should be compatible
+                prop_assert_eq!(
+                    std::mem::discriminant(&e1),
+                    std::mem::discriminant(&e2),
+                    "Schema evolution should not change fundamental validation behavior"
+                );
+            },
+            (Ok(_), Err(_)) => {
+                // Base passed, evolved failed - acceptable if additional fields are invalid
+            },
+            (Err(_), Ok(_)) => {
+                // Base failed, evolved passed - could happen if additional fields fix validation
+            }
         }
-        _ => {
-            // Mixed outcomes are acceptable; evolution may introduce new constraints.
-        }
-    }
+    });
     Ok(())
 }
 
@@ -252,63 +271,60 @@ fn test_schema_evolution_properties(
 // =============================================================================
 
 /// Test validation chain behavior with various inputs
-#[sinex_prop]
-fn test_validation_chain_properties(
-    #[strategy(
-        prop::collection::vec(
-            proptest::string::string_regex(".*").unwrap(),
-            1..=10
-        )
-    )]
-    test_strings: Vec<String>,
-) -> TestResult<()> {
-    for test_string in test_strings.iter() {
-        let is_empty = test_string.is_empty();
-        let is_too_long = test_string.len() > 1000;
+#[sinex_test(proptest)]
+fn test_validation_chain_properties() -> TestResult {
+    proptest!(|(
+        test_strings in prop::collection::vec(".*", 1..=10)
+    )| {
+        for test_string in test_strings.iter() {
+            // Use basic validation patterns instead of complex chaining
+            let is_empty = test_string.is_empty();
+            let is_too_long = test_string.len() > 1000;
 
-        if is_empty {
-            prop_assert!(test_string.is_empty(), "Empty strings should be empty");
-        }
+            // Property: Empty strings should be considered invalid
+            if is_empty {
+                prop_assert!(test_string.is_empty(), "Empty strings should be empty");
+            }
 
-        if is_too_long {
-            prop_assert!(test_string.len() > 1000, "Long strings should be long");
-        }
+            // Property: Very long strings should be detectable
+            if is_too_long {
+                prop_assert!(test_string.len() > 1000, "Long strings should be long");
+            }
 
-        if !is_empty && !is_too_long {
-            prop_assert!(!test_string.is_empty(), "Valid strings should not be empty");
-            prop_assert!(
-                test_string.len() <= 1000,
-                "Valid strings should not be too long"
-            );
+            // Property: Non-empty, reasonable length strings should be valid
+            if !is_empty && !is_too_long {
+                prop_assert!(!test_string.is_empty(), "Valid strings should not be empty");
+                prop_assert!(test_string.len() <= 1000, "Valid strings should not be too long");
+            }
         }
-    }
+    });
     Ok(())
 }
 
 /// Test validation chain with numeric values  
-#[sinex_prop]
-fn test_validation_chain_numeric_properties(
-    #[strategy(prop::collection::vec(any::<i64>(), 1..=10))] test_numbers: Vec<i64>,
-) -> TestResult<()> {
-    for &test_number in test_numbers.iter() {
-        let in_valid_range = (0..=1000).contains(&test_number);
-        let too_small = test_number < 0;
-        let too_large = test_number > 1000;
+#[sinex_test(proptest)]
+fn test_validation_chain_numeric_properties() -> TestResult {
+    proptest!(|(
+        test_numbers in prop::collection::vec(any::<i64>(), 1..=10)
+    )| {
+        for &test_number in test_numbers.iter() {
+            // Property: Numbers should have predictable range behavior
+            let in_valid_range = (0..=1000).contains(&test_number);
+            let too_small = test_number < 0;
+            let too_large = test_number > 1000;
 
-        let flags = [in_valid_range, too_small, too_large];
-        let true_count = flags.iter().filter(|&&x| x).count();
-        prop_assert_eq!(
-            true_count,
-            1,
-            "Exactly one range condition should be true for {}",
-            test_number
-        );
+            // Exactly one should be true
+            let flags = [in_valid_range, too_small, too_large];
+            let true_count = flags.iter().filter(|&&x| x).count();
+            prop_assert_eq!(true_count, 1, "Exactly one range condition should be true for {}", test_number);
 
-        if in_valid_range {
-            prop_assert!(test_number >= 0, "Valid range numbers should be >= 0");
-            prop_assert!(test_number <= 1000, "Valid range numbers should be <= 1000");
+            // Verify range classifications
+            if in_valid_range {
+                prop_assert!(test_number >= 0, "Valid range numbers should be >= 0");
+                prop_assert!(test_number <= 1000, "Valid range numbers should be <= 1000");
+            }
         }
-    }
+    });
     Ok(())
 }
 
@@ -423,43 +439,48 @@ async fn test_json_validation_database_integration(
 // Performance Properties
 // =============================================================================
 
-#[sinex_prop]
-fn test_validation_performance_properties(
-    #[strategy(prop::collection::vec(100usize..=10000, 1..=10))] payload_sizes: Vec<usize>,
-    #[strategy(10usize..=100usize)] validation_count: usize,
-) -> TestResult<()> {
-    for &payload_size in &payload_sizes {
-        let large_payload = json!({
-            "data": "x".repeat(payload_size),
-            "size": payload_size,
-            "type": "performance_test"
-        });
+#[sinex_test]
+fn test_validation_performance_properties() -> TestResult {
+    proptest!(|(
+        payload_sizes in prop::collection::vec(100usize..=10000, 1..=10),
+        validation_count in 10usize..=100
+    )| {
+        for &payload_size in &payload_sizes {
+            // Create payload of specified size
+            let large_payload = json!({
+                "data": "x".repeat(payload_size),
+                "size": payload_size,
+                "type": "performance_test"
+            });
 
-        let start = std::time::Instant::now();
-        let json_str = large_payload.to_string();
-        for _ in 0..validation_count {
-            let _ = validate_json(&json_str);
-        }
+            // Measure validation time
+            let start = std::time::Instant::now();
 
-        let elapsed = start.elapsed();
-        let avg_time = elapsed.as_nanos() as f64 / validation_count as f64;
+            let json_str = large_payload.to_string();
+            for _ in 0..validation_count {
+                let _ = validate_json(&json_str);
+            }
 
-        prop_assert!(
-            avg_time < 5_000_000.0,
-            "Validation too slow: {:.2}ns average for {} byte payload",
-            avg_time,
-            payload_size
-        );
+            let elapsed = start.elapsed();
+            let avg_time = elapsed.as_nanos() as f64 / validation_count as f64;
 
-        if payload_size > 1000 {
+            // Property: Average validation time should be reasonable
             prop_assert!(
-                avg_time < (payload_size as f64 * 2000.0),
-                "Validation scaling poorly: {:.2}ns for {} bytes",
-                avg_time,
-                payload_size
+                avg_time < 5_000_000.0, // Allow up to 5ms per validation to accommodate CI variance
+                "Validation too slow: {:.2}ns average for {} byte payload",
+                avg_time, payload_size
             );
+
+            // Property: Validation time should not grow exponentially with size
+            if payload_size > 1000 {
+                prop_assert!(
+                    avg_time < (payload_size as f64 * 2000.0), // Less than 2ns per byte
+                    "Validation scaling poorly: {:.2}ns for {} bytes",
+                    avg_time, payload_size
+                );
+            }
         }
-    }
+    });
     Ok(())
 }
 

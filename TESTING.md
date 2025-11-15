@@ -89,10 +89,10 @@ tests are reserved for scenarios that truly span multiple crates or binaries.
       .await?;
   ```
 - **Property tests:** place proptest suites alongside the crate they fuzz (see
-  below). Use `#[sinex_prop]` (or the block-style `sinex_proptest!`) so the
-  harness provides tracing, timeouts, context wiring, and seed persistence.
-  Add `cases = 256` (or any number) to lock the runner config. Capture any
-  failing seeds in that crate’s `tests/property/*.proptest-regressions` files.
+  below). Use `#[sinex_test(proptest)]` so the harness provides tracing,
+  timeouts, and `TestContext`; add `cases = 256` (or any other number) to fix
+  the `PROPTEST_CASES` used by `TestRunner`. Capture any new failing seeds in
+  that crate’s `tests/property/*.proptest-regressions` files.
 
 ## Property Testing Guidelines
 

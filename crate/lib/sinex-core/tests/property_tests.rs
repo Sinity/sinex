@@ -12,44 +12,55 @@ use serde_json::json;
 use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use sinex_test_utils::{sinex_proptest, TestResult};
+use sinex_test_utils::{sinex_test, TestResult};
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers
 // =============================================================================
 
-sinex_proptest! {
-    fn test_ulid_generation_properties(count: usize in 1..1000usize) -> TestResult<()> {
+#[sinex_test]
+fn test_ulid_generation_properties() -> TestResult {
+    proptest!(|(
+        count in 1..1000usize
+    )| {
         let mut ulids = Vec::with_capacity(count);
         for _ in 0..count {
             ulids.push(Ulid::new());
         }
 
+        // Property: All ULIDs should be unique
         let unique: HashSet<_> = ulids.iter().cloned().collect();
         prop_assert_eq!(unique.len(), ulids.len());
 
+        // Property: First timestamp should be less than or equal to the final timestamp
         if let (Some(first), Some(last)) = (ulids.first(), ulids.last()) {
             prop_assert!(first.timestamp() <= last.timestamp());
         }
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_ulid_string_properties(
-        bytes: [u8; 16] in prop::array::uniform16(any::<u8>())
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_ulid_string_properties() -> TestResult {
+    proptest!(|(
+        bytes in prop::array::uniform16(any::<u8>())
+    )| {
         let ulid = Ulid::from_bytes(bytes).expect("Raw bytes should always form a ULID");
         let ulid_str = ulid.to_string();
         let parsed = ulid_str
             .parse::<Ulid>()
             .expect("String produced from ULID should parse");
         prop_assert_eq!(parsed, ulid);
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_ulid_ordering_transitivity(
-        count: usize in 3..100usize,
-        delay_ms: u64 in 0..10u64
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_ulid_ordering_transitivity() -> TestResult {
+    proptest!(|(
+        count in 3..100usize,
+        delay_ms in 0..10u64
+    )| {
         let mut ulids = Vec::new();
         for _ in 0..count {
             ulids.push(Ulid::new());
@@ -60,13 +71,14 @@ sinex_proptest! {
             }
         }
 
+        // Property: Ordering should be transitive
         for i in 0..ulids.len().saturating_sub(2) {
-            if ulids[i] <= ulids[i + 1] && ulids[i + 1] <= ulids[i + 2] {
-                prop_assert!(ulids[i] <= ulids[i + 2]);
+            if ulids[i] <= ulids[i+1] && ulids[i+1] <= ulids[i+2] {
+                prop_assert!(ulids[i] <= ulids[i+2]);
             }
         }
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
 // =============================================================================
@@ -109,37 +121,44 @@ prop_compose! {
     }
 }
 
-sinex_proptest! {
-    fn test_event_creation_properties(
-        source: EventSource in arb_event_source(),
-        event_type: EventType in arb_event_type(),
-        payload: JsonValue in arb_json_value()
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_event_creation_properties() -> TestResult {
+    proptest!(|(
+        source in arb_event_source(),
+        event_type in arb_event_type(),
+        payload in arb_json_value()
+    )| {
         let mut event = Event::<JsonValue>::test_event(
             source.clone(),
             event_type.clone(),
             payload.clone(),
         );
+        // Simulate DB-assigned ID to derive ingest time
         event.id = Some(Id::from_ulid(Ulid::new()));
 
+        // Property: Event should preserve all input values
         prop_assert_eq!(event.source, source);
         prop_assert_eq!(event.event_type, event_type);
         prop_assert_eq!(event.payload, payload);
 
+        // Property: Event should have a reasonable ULID-based ingest time
         let now = chrono::Utc::now();
         let ts = event.id.as_ref().unwrap().as_ulid().timestamp();
         prop_assert!(ts <= now);
         prop_assert!(ts > now - chrono::Duration::minutes(1));
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_event_json_serialization_properties(
-        source: String in "[a-zA-Z0-9_-]{1,20}",
-        event_type: String in "[a-zA-Z0-9_.]{1,30}",
-        string_value: String in "[a-zA-Z0-9 ._-]*",
-        number_value: i64 in any::<i64>(),
-        bool_value: bool in any::<bool>()
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_event_json_serialization_properties() -> TestResult {
+    proptest!(|(
+        source in "[a-zA-Z0-9_-]{1,20}",
+        event_type in "[a-zA-Z0-9_.]{1,30}",
+        string_value in "[a-zA-Z0-9 ._-]*",
+        number_value in any::<i64>(),
+        bool_value in any::<bool>()
+    )| {
         let payload = json!({
             "string": string_value,
             "number": number_value,
@@ -152,103 +171,144 @@ sinex_proptest! {
             payload,
         );
 
+        // Property: Serialization should never fail for valid events
         let json_result = serde_json::to_string(&original_event);
         prop_assert!(json_result.is_ok());
 
         let json_str = json_result.expect("JSON serialization should succeed for valid event");
+
+        // Property: Deserialization should be inverse of serialization
         let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
         prop_assert!(deserialize_result.is_ok());
 
-        let deserialized_event =
-            deserialize_result.expect("JSON deserialization should succeed for valid JSON");
+        let deserialized_event = deserialize_result.expect("JSON deserialization should succeed for valid JSON");
 
+        // Property: Round-trip should preserve all fields
         prop_assert_eq!(deserialized_event.source, original_event.source);
         prop_assert_eq!(deserialized_event.event_type, original_event.event_type);
         prop_assert_eq!(deserialized_event.payload, original_event.payload);
         prop_assert_eq!(deserialized_event.id, original_event.id);
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
 // =============================================================================
 // DOMAIN TYPE PROPERTY TESTS - String wrapper robustness
 // =============================================================================
 
-sinex_proptest! {
-    fn test_event_source_properties(source_str: String in ".*") -> TestResult<()> {
+#[sinex_test]
+fn test_event_source_properties() -> TestResult {
+    proptest!(|(
+        source_str in ".*"
+    )| {
         let source = EventSource::new(&source_str);
+
+        // Property: EventSource should preserve input string
         prop_assert_eq!(source.as_str(), source_str.as_str());
 
+        // Property: Clone should be identical
         let cloned = source.clone();
         prop_assert_eq!(source.clone(), cloned);
 
+        // Property: Different creation methods should be equal for same string
         let static_source = EventSource::new(&source_str);
         prop_assert_eq!(source.clone(), static_source);
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_event_type_properties(type_str: String in ".*") -> TestResult<()> {
+#[sinex_test]
+fn test_event_type_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        type_str in ".*"
+    )| {
         let event_type = EventType::new(&type_str);
+
+        // Property: EventType should preserve input string
         prop_assert_eq!(event_type.as_str(), type_str.as_str());
 
+        // Property: Clone should be identical
         let cloned = event_type.clone();
         prop_assert_eq!(event_type, cloned);
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_hostname_properties(
-        hostname_str: String in "[a-zA-Z0-9._-]{1,100}"
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_hostname_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        hostname_str in "[a-zA-Z0-9._-]{1,100}"
+    )| {
         let hostname = HostName::new(&hostname_str);
+
+        // Property: HostName should preserve input string
         prop_assert_eq!(hostname.as_str(), hostname_str.as_str());
 
+        // Property: Clone should be identical
         let cloned = hostname.clone();
         prop_assert_eq!(hostname, cloned);
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
 // =============================================================================
 // GENERIC ID PROPERTY TESTS - Type-safe identifier properties
 // =============================================================================
 
-sinex_proptest! {
-    fn test_generic_id_properties(count: usize in 1..1000usize) -> TestResult<()> {
-        let mut ids = Vec::with_capacity(count);
+#[sinex_test]
+fn test_generic_id_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        count in 1..1000usize
+    )| {
+        let mut ids = Vec::new();
         for _ in 0..count {
             ids.push(Id::<Event<JsonValue>>::new());
         }
 
+        // Property: All IDs should be unique (check pairwise)
         for (i, id1) in ids.iter().enumerate() {
             for id2 in ids.iter().skip(i + 1) {
                 prop_assert_ne!(id1, id2);
             }
         }
 
+        // Property: All IDs should have valid string representations
         for id in &ids {
             let id_str = id.to_string();
             prop_assert_eq!(id_str.len(), 26);
             prop_assert!(id_str.chars().all(|c| c.is_ascii_alphanumeric()));
         }
 
+        // Property: IDs should be sortable by string representation
         let mut id_strings: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         id_strings.sort();
+
+        // Property: Sorting should be consistent
         for window in id_strings.windows(2) {
             prop_assert!(window[0] <= window[1]);
         }
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_id_ulid_conversion_properties(count: usize in 1..100usize) -> TestResult<()> {
+#[sinex_test]
+fn test_id_ulid_conversion_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        count in 1..100usize
+    )| {
         for _ in 0..count {
             let original_id = Id::<Event<JsonValue>>::new();
+
+            // Property: ID → ULID → ID should be identity
             let ulid: Ulid = original_id.clone().into();
             let converted_id = Id::<Event<JsonValue>>::from(ulid);
             prop_assert_eq!(original_id.clone(), converted_id);
+
+            // Property: String conversion should be consistent
             prop_assert_eq!(original_id.to_string(), ulid.to_string());
         }
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
 // =============================================================================
@@ -263,12 +323,13 @@ sinex_proptest! {
 // EDGE CASE PROPERTY TESTS - Boundary conditions and special cases
 // =============================================================================
 
-sinex_proptest! {
-    fn test_unicode_handling_properties(
-        unicode_source: String in "\\PC*",
-        unicode_type: String in "\\PC*",
-        unicode_value: String in "\\PC*"
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_unicode_handling_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        unicode_source in "\\PC*",  // Any valid Unicode except control characters
+        unicode_type in "\\PC*",
+        unicode_value in "\\PC*"
+    )| {
         let event = Event::<JsonValue>::test_event(
             EventSource::new(&unicode_source),
             EventType::new(&unicode_type),
@@ -279,10 +340,12 @@ sinex_proptest! {
             }),
         );
 
+        // Property: Unicode should be preserved in all fields
         prop_assert_eq!(event.source.as_str(), unicode_source.as_str());
         prop_assert_eq!(event.event_type.as_str(), unicode_type.as_str());
         prop_assert_eq!(event.payload["unicode_value"].clone(), json!(unicode_value));
 
+        // Property: Event should serialize/deserialize correctly with Unicode
         let json_result = serde_json::to_string(&event);
         prop_assert!(json_result.is_ok());
 
@@ -292,13 +355,16 @@ sinex_proptest! {
         let deserialized = deserialized_result.unwrap();
         prop_assert_eq!(deserialized.source.as_str(), unicode_source.as_str());
         prop_assert_eq!(deserialized.event_type.as_str(), unicode_type.as_str());
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_large_payload_properties(
-        string_size: usize in 1000..100000usize,
-        array_size: usize in 100..10000usize
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_large_payload_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        string_size in 1000..100000usize,
+        array_size in 100..10000usize
+    )| {
         let large_string = "x".repeat(string_size);
         let large_array: Vec<i32> = (0..array_size).map(|i| i as i32).collect();
 
@@ -317,6 +383,7 @@ sinex_proptest! {
             payload.clone(),
         );
 
+        // Property: Large payloads should be handled correctly
         prop_assert_eq!(event.payload.clone(), payload);
         prop_assert_eq!(
             event.payload["large_string"].as_str().unwrap().len(),
@@ -327,25 +394,31 @@ sinex_proptest! {
             array_size
         );
 
+        // Property: Large events should serialize successfully
         let json_result = serde_json::to_string(&event);
         prop_assert!(json_result.is_ok());
 
+        // Property: Serialized large events should deserialize successfully
         let json_str = json_result.unwrap();
         let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
         prop_assert!(deserialize_result.is_ok());
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_concurrent_operation_properties(
-        thread_count: usize in 2..10usize,
-        operations_per_thread: usize in 10..100usize
-    ) -> TestResult<()> {
+#[sinex_test]
+fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        thread_count in 2..10usize,
+        operations_per_thread in 10..100usize
+    )| {
         use std::sync::{Arc, Mutex};
         use std::thread;
 
         let results = Arc::new(Mutex::new(Vec::new()));
         let mut handles = Vec::new();
 
+        // Property: Concurrent ULID generation should always produce unique IDs
         for _ in 0..thread_count {
             let results_clone = results.clone();
             let handle = thread::spawn(move || {
@@ -366,25 +439,37 @@ sinex_proptest! {
         let final_results = results.lock().expect("mutex poisoned");
         let expected_count = thread_count * operations_per_thread;
 
+        // Property: Should have expected number of ULIDs
         prop_assert_eq!(final_results.len(), expected_count);
+
+        // Property: All ULIDs should be unique despite concurrent generation
         let unique: HashSet<_> = final_results.iter().cloned().collect();
         prop_assert_eq!(unique.len(), final_results.len());
-        Ok(())
-    }
+    });
+    Ok(())
+}
 
-    fn test_validation_properties(
-        source_len: usize in 0..1000usize,
-        type_len: usize in 0..1000usize
-    ) -> TestResult<()> {
+// =============================================================================
+// VALIDATION PROPERTY TESTS - Input validation and error handling
+// =============================================================================
+
+#[sinex_test]
+fn test_validation_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        source_len in 0..1000usize,
+        type_len in 0..1000usize
+    )| {
         let source_str = "a".repeat(source_len);
         let type_str = "b".repeat(type_len);
 
         let source = EventSource::new(&source_str);
         let event_type = EventType::new(&type_str);
 
+        // Property: Domain types should accept any length input
         prop_assert_eq!(source.as_str().len(), source_len);
         prop_assert_eq!(event_type.as_str().len(), type_len);
 
+        // Property: Events should be creatable with any valid domain types
         let event = Event::<JsonValue>::test_event(
             source,
             event_type,
@@ -393,8 +478,8 @@ sinex_proptest! {
 
         prop_assert_eq!(event.source.as_str().len(), source_len);
         prop_assert_eq!(event.event_type.as_str().len(), type_len);
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
 // REGRESSION PROPERTY TESTS - Preserve important system invariants

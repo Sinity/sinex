@@ -3,16 +3,15 @@
 // Provides property-based testing capabilities that integrate seamlessly
 // with the unified test infrastructure and event builders.
 
-use once_cell::sync::Lazy;
+use crate::prelude::*;
+use crate::Result;
+use crate::TestResult;
 use proptest::prelude::*;
+use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use proptest::test_runner::{FileFailurePersistence, RngAlgorithm, RngSeed, TestRunner};
 use serde_json::{json, Value};
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use tracing::warn;
+use sinex_core::types::error::SinexError;
+use sinex_core::DbPoolExt;
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -195,137 +194,550 @@ impl SinexStrategies {
     }
 }
 
-/// Harness overrides provided by procedural macros.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RunnerOverrides {
-    pub cases: Option<u32>,
-    pub seed: Option<u64>,
-    pub max_shrink_time_ms: Option<u64>,
+/// Property test runner that integrates with TestContext
+pub struct PropertyTester<'ctx> {
+    ctx: &'ctx TestContext,
+    runner: proptest::test_runner::TestRunner,
 }
 
-/// Build a [`TestRunner`] honoring env overrides plus harness settings.
-pub fn make_runner(overrides: RunnerOverrides) -> TestRunner {
-    static DEFAULT_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let workspace_root = manifest_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .map(PathBuf::from)
-            .unwrap_or(manifest_dir);
-
-        let target_dir = env::var("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| workspace_root.join("target"));
-
-        target_dir.join("proptest-regressions")
-    });
-
-    let mut config = proptest::test_runner::Config::default();
-    config.cases = overrides.cases.or_else(env_cases).unwrap_or(256).max(1);
-
-    if let Some(seed) = overrides.seed.or_else(env_seed) {
-        config.rng_algorithm = RngAlgorithm::ChaCha;
-        config.rng_seed = RngSeed::Fixed(seed);
+impl<'ctx> PropertyTester<'ctx> {
+    pub fn new(ctx: &'ctx TestContext) -> Self {
+        Self {
+            ctx,
+            runner: proptest::test_runner::TestRunner::deterministic(),
+        }
     }
 
-    if let Some(ms) = overrides.max_shrink_time_ms.or_else(env_max_shrink_time_ms) {
-        let clamped = ms.min(u64::from(u32::MAX)) as u32;
-        config.max_shrink_time = clamped.max(1);
-    }
+    /// Run property test with custom strategy
+    ///
+    /// Note: Due to Rust lifetime limitations with async closures, the property function
+    /// must be written carefully. Use the pattern shown in the examples.
+    pub async fn test_property<S, T, F, Fut>(
+        &mut self,
+        strategy: S,
+        test_cases: u32,
+        property: F,
+    ) -> TestResult<()>
+    where
+        S: Strategy<Value = T>,
+        F: Fn(&TestContext, T) -> Fut,
+        Fut: std::future::Future<Output = Result<()>> + 'ctx,
+        T: 'ctx,
+    {
+        for case_num in 0..test_cases {
+            let tree = strategy.new_tree(&mut self.runner).map_err(|e| {
+                SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
+            })?;
+            let value = tree.current();
 
-    static PERSISTENCE_COMPONENT: OnceLock<&'static str> = OnceLock::new();
-    let component = PERSISTENCE_COMPONENT.get_or_init(|| {
-        let dir = env::var("SINEX_PROPTEST_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| DEFAULT_DIR.clone());
-
-        if let Err(err) = fs::create_dir_all(&dir) {
-            warn!("Failed to create persistence directory {:?}: {}", dir, err);
+            property(self.ctx, value).await.map_err(|e| {
+                SinexError::validation(format!("Property test case {case_num} failed: {e}"))
+            })?;
         }
 
-        Box::leak(dir.to_string_lossy().into_owned().into_boxed_str())
-    });
+        Ok(())
+    }
 
-    config.failure_persistence = Some(Box::new(FileFailurePersistence::SourceParallel(component)));
+    /// Test event creation property
+    pub async fn test_event_creation_property(&mut self, test_cases: u32) -> TestResult<()> {
+        for case_num in 0..test_cases {
+            let tree = SinexStrategies::any_event()
+                .new_tree(&mut self.runner)
+                .map_err(|e| {
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
+                })?;
+            let (source, event_type, payload) = tree.current();
 
-    TestRunner::new(config)
+            // Property: All valid events should be creatable and insertable
+            let event = self
+                .ctx
+                .create_test_event(&source, &event_type, payload)
+                .await
+                .map_err(|e| {
+                    SinexError::validation(format!("Property test case {case_num} failed: {e}"))
+                })?;
+
+            // Verify basic properties
+            assert_eq!(event.source.as_str(), source);
+            assert_eq!(event.event_type.as_str(), event_type);
+            assert!(event.id.is_some()); // Should have an ID after insertion
+        }
+
+        Ok(())
+    }
+
+    /// Test event querying property
+    pub async fn test_event_querying_property(&mut self, test_cases: u32) -> TestResult<()> {
+        for case_num in 0..test_cases {
+            let tree = SinexStrategies::any_event()
+                .new_tree(&mut self.runner)
+                .map_err(|e| {
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
+                })?;
+            let (source, event_type, payload) = tree.current();
+
+            // Property: Inserted events should be retrievable
+            let event = self
+                .ctx
+                .create_test_event(&source, &event_type, payload)
+                .await
+                .map_err(|e| {
+                    SinexError::validation(format!("Property test case {case_num} failed: {e}"))
+                })?;
+
+            // Should be findable by ID
+            if let Some(event_id) = &event.id {
+                let by_id = self.ctx.pool.events().get_by_id(event_id.clone()).await?;
+                assert!(by_id.is_some());
+
+                // Should be findable by source
+                let source_ref = sinex_core::EventSource::from(source.as_str());
+                let by_source = self
+                    .ctx
+                    .pool
+                    .events()
+                    .get_by_source(
+                        &source_ref,
+                        sinex_core::types::Pagination::new(Some(10), None),
+                    )
+                    .await?;
+                assert!(by_source.iter().any(|e| e.id.as_ref() == Some(event_id)));
+            }
+
+            // Should be findable by type
+            let type_ref = sinex_core::EventType::from(event_type.as_str());
+            let by_type = self
+                .ctx
+                .pool
+                .events()
+                .get_by_event_type(
+                    &type_ref,
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
+                .await?;
+            assert!(by_type.iter().any(|e| e.id == event.id));
+        }
+
+        Ok(())
+    }
+
+    /// Test malicious input handling
+    pub async fn test_malicious_input_rejection(&mut self, test_cases: u32) -> TestResult<()> {
+        for _case_num in 0..test_cases {
+            let tree = SinexStrategies::malicious_payload()
+                .new_tree(&mut self.runner)
+                .map_err(|e| {
+                    SinexError::unknown(format!("Strategy tree generation failed: {e:?}"))
+                })?;
+            let malicious_payload = tree.current();
+
+            // Property: Malicious payloads should be rejected or sanitized
+            let result = self
+                .ctx
+                .create_test_event("security_test", "malicious.input", malicious_payload)
+                .await;
+
+            // Either the event is rejected (preferred) or it's sanitized
+            match result {
+                Ok(event) => {
+                    // If accepted, verify it doesn't contain dangerous patterns
+                    let payload_str = event.payload.to_string();
+                    assert!(!payload_str.contains("DROP TABLE"));
+                    assert!(!payload_str.contains("<script>"));
+                    assert!(!payload_str.contains("../"));
+                }
+                Err(_) => {
+                    // Rejection is fine - shows proper validation
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
-fn env_cases() -> Option<u32> {
-    env::var("SINEX_PROPTEST_CASES")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
+/// Extension trait to add property testing to TestContext
+pub trait PropertyTestExt {
+    /// Get property tester
+    fn property_tester(&self) -> PropertyTester<'_>;
 }
 
-fn env_seed() -> Option<u64> {
-    env::var("SINEX_PROPTEST_SEED")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
+impl PropertyTestExt for TestContext {
+    fn property_tester(&self) -> PropertyTester<'_> {
+        PropertyTester::new(self)
+    }
 }
 
-fn env_max_shrink_time_ms() -> Option<u64> {
-    env::var("SINEX_PROPTEST_MAX_SHRINK_MS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-}
-
+// Comprehensive property testing tests
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{sinex_prop, sinex_test, TestContext, TestResult};
+    use crate::sinex_test;
 
-    #[sinex_prop(cases = 8)]
-    async fn property_creates_filesystem_events(
-        ctx: &TestContext,
-        #[strategy(SinexStrategies::filesystem_event())] (source, event_type, payload): (
-            String,
-            String,
-            Value,
-        ),
-    ) -> TestResult<()> {
-        let event = ctx.create_test_event(&source, &event_type, payload).await?;
-        assert_eq!(event.source.as_str(), "filesystem");
-        assert!(event.id.is_some());
-        Ok(())
+    fn json_values_equivalent(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+                (Some(xf), Some(yf)) => {
+                    if xf == yf {
+                        true
+                    } else {
+                        let diff = (xf - yf).abs();
+                        let scale = xf.abs().max(yf.abs()).max(1.0);
+                        diff <= 1e-9 * scale
+                    }
+                }
+                _ => x == y,
+            },
+            (Value::String(x), Value::String(y)) => x == y,
+            (Value::Array(x), Value::Array(y)) => {
+                x.len() == y.len()
+                    && x.iter()
+                        .zip(y.iter())
+                        .all(|(xa, xb)| json_values_equivalent(xa, xb))
+            }
+            (Value::Object(x), Value::Object(y)) => {
+                x.len() == y.len()
+                    && x.iter().all(|(k, vx)| {
+                        y.get(k)
+                            .map(|vy| json_values_equivalent(vx, vy))
+                            .unwrap_or(false)
+                    })
+            }
+            _ => false,
+        }
     }
 
-    #[sinex_prop(cases = 8, seed = 42)]
-    async fn property_json_payload_sanitization(
-        ctx: &TestContext,
-        #[strategy(SinexStrategies::json_payload())] payload: Value,
-    ) -> TestResult<()> {
-        let inserted = ctx
-            .create_test_event("json-test", "test.json", payload.clone())
-            .await?;
-        let mut expected = payload.clone();
-        TestContext::sanitize_payload(&mut expected);
-        assert_eq!(inserted.payload, expected);
-        Ok(())
-    }
+    #[sinex_test]
+    async fn test_event_source_strategy(ctx: TestContext) -> TestResult<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
-    #[sinex_prop(cases = 16)]
-    fn property_event_source_pattern(
-        #[strategy(SinexStrategies::event_source())] source: String,
-    ) -> TestResult<()> {
-        assert!(
-            source
+        // Test that event source strategy produces valid sources
+        for _ in 0..20 {
+            let tree = SinexStrategies::event_source()
+                .new_tree(&mut runner)
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
+            let source = tree.current();
+
+            // Should be non-empty and match pattern
+            assert!(!source.is_empty());
+            assert!(source
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_'),
-            "source not normalized: {source}",
-        );
+                .all(|c| c.is_alphanumeric() || c == '.' || c == '_'));
+
+            // Should be usable in event creation
+            let event = ctx
+                .create_test_event(&source, "test.property", json!({}))
+                .await?;
+            assert_eq!(event.source.as_str(), source);
+        }
+
         Ok(())
     }
 
     #[sinex_test]
-    fn runner_honors_env_variables() -> TestResult<()> {
-        std::env::set_var("SINEX_PROPTEST_CASES", "13");
-        std::env::set_var("SINEX_PROPTEST_SEED", "1234");
-        std::env::remove_var("SINEX_PROPTEST_MAX_SHRINK_MS");
+    async fn test_event_type_strategy(ctx: TestContext) -> TestResult<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
-        let runner = make_runner(RunnerOverrides::default());
-        assert_eq!(runner.config().cases, 13);
-        assert_eq!(runner.config().rng_seed, Some(1234));
+        // Test that event type strategy produces valid types
+        for _ in 0..20 {
+            let tree = SinexStrategies::event_type()
+                .new_tree(&mut runner)
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
+            let event_type = tree.current();
+
+            // Should contain at least one dot
+            assert!(event_type.contains('.'));
+
+            // Should be usable in event creation
+            let event = ctx
+                .create_test_event("test", &event_type, json!({}))
+                .await?;
+            assert_eq!(event.event_type.as_str(), event_type);
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_file_path_strategy() -> TestResult<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Test that file path strategy produces valid paths
+        for _ in 0..20 {
+            let tree = SinexStrategies::file_path()
+                .new_tree(&mut runner)
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
+            let path = tree.current();
+
+            // Should start with /
+            assert!(path.starts_with('/'));
+
+            // Should have an extension
+            assert!(path.contains('.'));
+
+            // Should not contain dangerous patterns
+            assert!(!path.contains(".."));
+            assert!(!path.contains("//"));
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_json_payload_strategy(ctx: TestContext) -> TestResult<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Test that JSON payload strategy produces valid JSON
+        for _ in 0..10 {
+            let tree = SinexStrategies::json_payload()
+                .new_tree(&mut runner)
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
+            let payload = tree.current();
+
+            // Align expectations with sanitization applied by TestContext
+            let mut expected_payload = payload.clone();
+            TestContext::sanitize_payload(&mut expected_payload);
+
+            // Should be serializable
+            let serialized = serde_json::to_string(&expected_payload)?;
+            let deserialized: Value = serde_json::from_str(&serialized)?;
+
+            // Attempt event creation; if it fails due to sanitization limits, that's acceptable.
+            match ctx
+                .create_test_event("json-test", "test.json", payload.clone())
+                .await
+            {
+                Ok(event) => {
+                    assert!(
+                        json_values_equivalent(&event.payload, &deserialized),
+                        "payload mismatch: left = {:?}, right = {:?}",
+                        event.payload,
+                        deserialized
+                    );
+                }
+                Err(err) => {
+                    // JSON payloads with reserved unicode escapes may still be rejected; ensure the
+                    // error is purely a sanitization guard so the property remains informative.
+                    let err_text = err.to_string().to_lowercase();
+                    assert!(
+                        err_text.contains("unsupported unicode escape"),
+                        "unexpected error inserting json payload: {err}"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_filesystem_event_strategy(ctx: TestContext) -> TestResult<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Test filesystem event generation
+        for _ in 0..10 {
+            let tree = SinexStrategies::filesystem_event()
+                .new_tree(&mut runner)
+                .map_err(|e| SinexError::unknown(format!("Strategy error: {e:?}")))?;
+            let (source, event_type, payload) = tree.current();
+
+            assert_eq!(source, "filesystem");
+            assert!(event_type.starts_with("file."));
+            assert!(payload["path"].is_string());
+            assert!(payload["size"].is_number());
+
+            // Should create valid events
+            let event = ctx.create_test_event(&source, &event_type, payload).await?;
+
+            assert_eq!(event.source.as_str(), "filesystem");
+        }
+
+        Ok(())
+    }
+
+    // Helper function for property test to avoid lifetime issues
+    async fn test_number_property(ctx: &TestContext, value: u32) -> color_eyre::eyre::Result<()> {
+        // Property: all numbers should be insertable in events
+        let event = ctx
+            .create_test_event("property", "test.number", json!({"value": value}))
+            .await?;
+
+        assert_eq!(event.payload["value"], json!(value));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_property_tester_basic(ctx: TestContext) -> TestResult<()> {
+        let mut tester = ctx.property_tester();
+
+        // Test basic property using a regular async function
+        // Use test_event_creation_property instead to avoid lifetime issues
+        tester.test_event_creation_property(10).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_event_creation_property(ctx: TestContext) -> TestResult<()> {
+        let mut tester = ctx.property_tester();
+
+        // Test that various event combinations can be created
+        tester.test_event_creation_property(20).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_event_querying_property(ctx: TestContext) -> TestResult<()> {
+        let mut tester = ctx.property_tester();
+
+        // Test that inserted events can be queried
+        tester.test_event_querying_property(10).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_malicious_input_rejection(ctx: TestContext) -> TestResult<()> {
+        let mut tester = ctx.property_tester();
+
+        // Test that malicious inputs are handled safely
+        tester.test_malicious_input_rejection(5).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_complex_property_with_context(ctx: TestContext) -> TestResult<()> {
+        let _runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Complex property: events with same source should be grouped correctly
+        let sources = vec!["test-a", "test-b", "test-c"];
+
+        // Insert events with different sources
+        for source in &sources {
+            for i in 0..5 {
+                ctx.create_test_event(source, "test.property", json!({"index": i}))
+                    .await?;
+            }
+        }
+
+        // Property: querying by source should return exactly those events
+        for source in &sources {
+            let source_ref = sinex_core::EventSource::from(*source);
+            let events = ctx
+                .pool
+                .events()
+                .get_by_source(
+                    &source_ref,
+                    sinex_core::types::Pagination::new(Some(10), None),
+                )
+                .await?;
+            assert_eq!(events.len(), 5);
+            for event in events {
+                assert_eq!(event.source.as_str(), *source);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_property_tester_error_handling(ctx: TestContext) -> TestResult<()> {
+        // Test that property testing infrastructure works
+        // This is a simplified test that doesn't use complex async closures
+        let mut tester = ctx.property_tester();
+
+        // Test basic event creation property
+        tester.test_event_creation_property(5).await?;
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_strategy_determinism() -> color_eyre::eyre::Result<()> {
+        let mut runner1 = proptest::test_runner::TestRunner::deterministic();
+        let mut runner2 = proptest::test_runner::TestRunner::deterministic();
+
+        // Same seed should produce same values
+        let tree1 = SinexStrategies::event_source()
+            .new_tree(&mut runner1)
+            .unwrap();
+        let tree2 = SinexStrategies::event_source()
+            .new_tree(&mut runner2)
+            .unwrap();
+
+        assert_eq!(tree1.current(), tree2.current());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_malicious_payload_generation() -> color_eyre::eyre::Result<()> {
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Should generate various malicious payloads
+        let mut has_sql = false;
+        let mut has_xss = false;
+        let mut has_path = false;
+
+        for _ in 0..10 {
+            if let Ok(tree) = SinexStrategies::malicious_payload().new_tree(&mut runner) {
+                let payload = tree.current();
+                let payload_str = payload.to_string();
+
+                if payload_str.contains("DROP TABLE") {
+                    has_sql = true;
+                }
+                if payload_str.contains("<script>") {
+                    has_xss = true;
+                }
+                if payload_str.contains("../") {
+                    has_path = true;
+                }
+            }
+        }
+
+        // Should generate at least some malicious patterns
+        assert!(has_sql || has_xss || has_path);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_property_based_edge_cases(ctx: TestContext) -> TestResult<()> {
+        let _runner = proptest::test_runner::TestRunner::deterministic();
+
+        // Test edge cases with property strategies
+        let long_source = "a".repeat(256);
+        let large_payload_content = "x".repeat(1000);
+        let edge_cases = vec![
+            ("", "empty.test", json!({})), // Empty source should fail
+            (long_source.as_str(), "test.long", json!({})), // Very long source
+            ("test", "", json!({})),       // Empty type should fail
+            ("test", "no_dot", json!({})), // Type without dot might fail
+            (
+                "test-123",
+                "test.123",
+                json!({"key": large_payload_content}),
+            ), // Large payload
+        ];
+
+        for (source, event_type, payload) in edge_cases {
+            let result = ctx.create_test_event(source, event_type, payload).await;
+
+            // Some should fail, some should succeed - just verify no panic
+            match result {
+                Ok(event) => {
+                    // If it succeeded, basic invariants should hold
+                    assert!(!event.source.is_empty());
+                    assert!(!event.event_type.is_empty());
+                }
+                Err(_) => {
+                    // Failure is fine for invalid inputs
+                }
+            }
+        }
 
         Ok(())
     }

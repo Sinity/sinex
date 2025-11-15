@@ -89,235 +89,257 @@ fn arb_edge_case_path() -> impl Strategy<Value = String> {
     ]
 }
 
-#[sinex_prop(cases = 1000)]
-fn test_validate_path_neutralizes_traversal(
-    #[strategy(arb_malicious_path())] malicious_path: String,
-) -> TestResult<()> {
-    match validate_path(&malicious_path) {
-        Ok(validated) => {
-            let validated_str = validated.as_str();
-            prop_assert!(
-                !path_escapes_root(&validated),
-                "Validated path should not escape root: {} -> {}",
-                malicious_path,
-                validated_str
-            );
-            prop_assert!(
-                !validated_str.contains('\0'),
-                "Validated path should not contain null bytes: {}",
-                validated_str
-            );
-        }
-        Err(_) => {
-            // Rejection is acceptable for malicious paths
+#[sinex_test(proptest)]
+fn test_validate_path_neutralizes_traversal() -> TestResult {
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1000))]
+
+        fn property_validate_path_neutralizes_traversal(
+            malicious_path in arb_malicious_path()
+        ) {
+            // Property: Malicious paths should either be rejected or neutralized
+            match validate_path(&malicious_path) {
+                Ok(validated) => {
+                    // If accepted, should not contain dangerous sequences
+                    let validated_str = validated.as_str();
+
+                    // Should not have effective parent directory traversal
+                    prop_assert!(
+                        !path_escapes_root(&validated),
+                        "Validated path should not escape root: {} -> {}",
+                        malicious_path, validated_str
+                    );
+
+                    // Should not contain null bytes
+                    prop_assert!(
+                        !validated_str.contains('\0'),
+                        "Validated path should not contain null bytes: {}",
+                        validated_str
+                    );
+                }
+                Err(_) => {
+                    // Rejection is acceptable for malicious paths
+                }
+            }
         }
     }
     Ok(())
 }
 
-#[sinex_prop]
-fn test_validate_path_preserves_legitimate_paths(
-    #[strategy(arb_file_path())] legitimate_path: String,
-) -> TestResult<()> {
-    if legitimate_path.contains("..") || legitimate_path.contains('\0') {
-        return Ok(());
+#[sinex_test(proptest)]
+fn test_validate_path_preserves_legitimate_paths() -> TestResult {
+    proptest! {
+        fn property_validate_path_preserves_legitimate_paths(
+            legitimate_path in arb_file_path()
+        ) {
+            // Property: Legitimate paths should remain functionally equivalent
+            if !legitimate_path.contains("..") && !legitimate_path.contains('\0') {
+                match validate_path(&legitimate_path) {
+                    Ok(validated) => {
+                        // Should preserve essential path structure
+                        if let Some(filename) = Path::new(&legitimate_path).file_name() {
+                            if let Some(validated_filename) = validated.file_name() {
+                                prop_assert_eq!(
+                                    filename.to_string_lossy(),
+                                    validated_filename,
+                                    "Filename should be preserved: {} -> {}",
+                                    legitimate_path, validated.as_str()
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Some complex legitimate paths might be rejected - that's acceptable
+                        // for security, but the error should be reasonable
+                        prop_assert!(
+                            matches!(e, ValidationError::Path(_)),
+                            "Should fail with path error for legitimate path: {} -> {:?}",
+                            legitimate_path, e
+                        );
+                    }
+                }
+            }
+        }
     }
+    Ok(())
+}
 
-    match validate_path(&legitimate_path) {
-        Ok(validated) => {
-            if let Some(filename) = Path::new(&legitimate_path).file_name() {
-                if let Some(validated_filename) = validated.file_name() {
-                    prop_assert_eq!(
-                        filename.to_string_lossy(),
-                        validated_filename,
-                        "Filename should be preserved: {} -> {}",
-                        legitimate_path,
-                        validated.as_str()
+#[sinex_test(proptest)]
+fn test_event_sanitization_is_idempotent() -> TestResult {
+    proptest! {
+        fn property_event_sanitization_is_idempotent(
+            path in prop_oneof![arb_file_path(), arb_malicious_path(), arb_edge_case_path()]
+        ) {
+            // Property: Sanitizing the same event twice should yield the same result
+            let mut event1 = Event::test_event(
+                EventSource::new(path.clone()),
+                EventType::new("test.event"),
+                json!({"test": "data"}),
+            );
+            event1.id = Some(Id::from_ulid(Ulid::new()));
+
+            let mut event2 = event1.clone();
+
+            let _was_modified1 = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
+            let _was_modified2 = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
+
+            // After first sanitization, second should not modify further
+            let mut event1_copy = event1.clone();
+            let was_modified_again = EventSanitizer::sanitize_event(&mut event1_copy).unwrap_or(false);
+
+            prop_assert!(!was_modified_again, "Second sanitization should not modify already-clean event: {}", path);
+            prop_assert_eq!(event1.source, event1_copy.source, "Source should be stable after sanitization: {}", path);
+        }
+    }
+    Ok(())
+}
+
+#[sinex_test(proptest)]
+fn test_path_sanitization_removes_dangerous_sequences() -> TestResult {
+    proptest! {
+        fn property_path_sanitization_removes_dangerous_sequences(
+            malicious_path in arb_malicious_path()
+        ) {
+            // Property: Sanitized paths should not contain known dangerous patterns
+            let mut event = Event::test_event(
+                EventSource::new(malicious_path.clone()),
+                EventType::new("security.test"),
+                json!({"path": malicious_path.clone()}),
+            );
+            event.id = Some(Id::from_ulid(Ulid::new()));
+
+            let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
+
+            // Should not contain effective ".." sequences in source
+            prop_assert!(
+                !event.source.contains(".."),
+                "Sanitized event source should not contain '..': {} -> {}",
+                malicious_path, event.source.as_str()
+            );
+
+            // Should not contain null bytes in source
+            prop_assert!(
+                !event.source.contains('\0'),
+                "Sanitized event source should not contain null bytes: {} -> {}",
+                malicious_path, event.source.as_str()
+            );
+
+            // Check payload for path field
+            if let Some(path_val) = event.payload.get("path").and_then(|v| v.as_str()) {
+                prop_assert!(
+                    !path_val.contains(".."),
+                    "Sanitized payload path should not contain '..': {} -> {}",
+                    malicious_path, path_val
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[sinex_test(proptest)]
+fn test_path_validation_handles_unicode_safely() -> TestResult {
+    proptest! {
+        fn property_path_validation_handles_unicode_safely(
+            unicode_path in "[\\u{0}-\\u{FFFF}]{1,50}"
+        ) {
+            // Property: Unicode paths should be handled without crashes
+            let result = validate_path(&unicode_path);
+
+            // Should not panic
+            match result {
+                Ok(validated) => {
+                    // Valid unicode should be preserved or safely normalized
+                    prop_assert!(validated.as_str().len() <= unicode_path.len() + 100); // Allow for normalization
+                }
+                Err(e) => {
+                    // Rejection is fine for problematic unicode but should be a path error
+                    prop_assert!(
+                        matches!(e, ValidationError::Path(_)),
+                        "Unicode path rejection should report a path error: {:?}",
+                        e
                     );
                 }
             }
         }
-        Err(e) => {
-            prop_assert!(
-                matches!(e, ValidationError::Path(_)),
-                "Should fail with path error for legitimate path: {} -> {:?}",
-                legitimate_path,
-                e
+    }
+    Ok(())
+}
+
+#[sinex_test(proptest)]
+fn test_safe_content_preservation_in_events() -> TestResult {
+    proptest! {
+        fn property_safe_content_preservation_in_events(
+            safe_string in "[a-zA-Z0-9_. /-]{1,100}"
+        ) {
+            // Property: Safe ASCII content should be mostly preserved in events
+            let mut event = Event::test_event(
+                EventSource::new(safe_string.clone()),
+                EventType::new("safe.test"),
+                json!({"content": safe_string.clone()}),
+            );
+            event.id = Some(Id::from_ulid(Ulid::new()));
+
+            let original_alphanum: String = safe_string.chars()
+                .filter(|c| c.is_ascii_alphanumeric()).collect();
+
+            let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
+
+            // Should preserve alphanumeric characters in source
+            let sanitized_source_alphanum: String = event.source.chars()
+                .filter(|c| c.is_ascii_alphanumeric()).collect();
+
+            prop_assert_eq!(
+                original_alphanum, sanitized_source_alphanum,
+                "Alphanumeric characters should be preserved in source: '{}' -> '{}'",
+                safe_string, event.source.as_str()
             );
         }
     }
     Ok(())
 }
 
-#[sinex_prop]
-fn test_event_sanitization_is_idempotent(
-    #[strategy(prop_oneof![
-        arb_file_path(),
-        arb_malicious_path(),
-        arb_edge_case_path()
-    ])]
-    path: String,
-) -> TestResult<()> {
-    let mut event1 = Event::test_event(
-        EventSource::new(path.clone()),
-        EventType::new("test.event"),
-        json!({"test": "data"}),
-    );
-    event1.id = Some(Id::from_ulid(Ulid::new()));
+#[sinex_test(proptest)]
+fn test_path_length_limits_enforced() -> TestResult {
+    proptest! {
+        fn property_path_length_limits_enforced(
+            path_length in 1usize..10000usize
+        ) {
+            // Property: Very long paths should be rejected
+            let long_path = "a".repeat(path_length);
+            let result = validate_path(&long_path);
 
-    let mut event2 = event1.clone();
-
-    let _ = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
-    let _ = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
-
-    let mut event1_copy = event1.clone();
-    let was_modified_again = EventSanitizer::sanitize_event(&mut event1_copy).unwrap_or(false);
-
-    prop_assert!(
-        !was_modified_again,
-        "Second sanitization should not modify already-clean event: {}",
-        path
-    );
-    prop_assert_eq!(
-        event1.source,
-        event1_copy.source,
-        "Source should be stable after sanitization: {}",
-        path
-    );
-    Ok(())
-}
-
-#[sinex_prop]
-fn test_path_sanitization_removes_dangerous_sequences(
-    #[strategy(arb_malicious_path())] malicious_path: String,
-) -> TestResult<()> {
-    let mut event = Event::test_event(
-        EventSource::new(malicious_path.clone()),
-        EventType::new("security.test"),
-        json!({"path": malicious_path.clone()}),
-    );
-    event.id = Some(Id::from_ulid(Ulid::new()));
-
-    let _ = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
-
-    prop_assert!(
-        !event.source.contains(".."),
-        "Sanitized event source should not contain '..': {} -> {}",
-        malicious_path,
-        event.source.as_str()
-    );
-    prop_assert!(
-        !event.source.contains('\0'),
-        "Sanitized event source should not contain null bytes: {} -> {}",
-        malicious_path,
-        event.source.as_str()
-    );
-
-    if let Some(path_val) = event.payload.get("path").and_then(|v| v.as_str()) {
-        prop_assert!(
-            !path_val.contains(".."),
-            "Sanitized payload path should not contain '..': {} -> {}",
-            malicious_path,
-            path_val
-        );
-    }
-    Ok(())
-}
-
-#[sinex_prop]
-fn test_path_validation_handles_unicode_safely(
-    #[strategy(proptest::string::string_regex("[\\u{0}-\\u{FFFF}]{1,50}").unwrap())]
-    unicode_path: String,
-) -> TestResult<()> {
-    let result = validate_path(&unicode_path);
-    match result {
-        Ok(validated) => {
-            prop_assert!(
-                validated.as_str().len() <= unicode_path.len() + 100,
-                "Unicode normalization should not explode size"
-            );
-        }
-        Err(e) => {
-            prop_assert!(
-                matches!(e, ValidationError::Path(_)),
-                "Unicode path rejection should report a path error: {:?}",
-                e
-            );
-        }
-    }
-    Ok(())
-}
-
-#[sinex_prop]
-fn test_safe_content_preservation_in_events(
-    #[strategy(proptest::string::string_regex("[a-zA-Z0-9_. /-]{1,100}").unwrap())]
-    safe_string: String,
-) -> TestResult<()> {
-    let mut event = Event::test_event(
-        EventSource::new(safe_string.clone()),
-        EventType::new("safe.test"),
-        json!({"content": safe_string.clone()}),
-    );
-    event.id = Some(Id::from_ulid(Ulid::new()));
-
-    let original_alphanum: String = safe_string
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
-
-    let _ = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
-
-    let sanitized_source_alphanum: String = event
-        .source
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
-
-    prop_assert_eq!(
-        original_alphanum,
-        sanitized_source_alphanum,
-        "Alphanumeric characters should be preserved in source: '{}' -> '{}'",
-        safe_string,
-        event.source.as_str()
-    );
-    Ok(())
-}
-
-#[sinex_prop]
-fn test_path_length_limits_enforced(
-    #[strategy(1usize..10000usize)] path_length: usize,
-) -> TestResult<()> {
-    let long_path = "a".repeat(path_length);
-    let result = validate_path(&long_path);
-
-    if path_length > 4096 {
-        prop_assert!(
-            result.is_err(),
-            "Path of length {} should be rejected",
-            path_length
-        );
-        if let Err(e) = result {
-            prop_assert!(
-                matches!(e, ValidationError::Path(_)),
-                "Should fail with path validation error for length {}",
-                path_length
-            );
-        }
-    } else {
-        match result {
-            Ok(validated) => {
+            if path_length > 4096 {
+                // Should be rejected for being too long
                 prop_assert!(
-                    validated.as_str().len() <= 4096,
-                    "Validated path should respect length limits"
+                    result.is_err(),
+                    "Path of length {} should be rejected", path_length
                 );
-            }
-            Err(e) => {
-                prop_assert!(
-                    matches!(e, ValidationError::Path(_)),
-                    "Unexpected error type for length {}: {:?}",
-                    path_length,
-                    e
-                );
+                if let Err(e) = result {
+                    prop_assert!(
+                        matches!(e, ValidationError::Path(_)),
+                        "Should fail with path validation error for length {}", path_length
+                    );
+                }
+            } else {
+                // Should be acceptable if within limits
+                match result {
+                    Ok(validated) => {
+                        prop_assert!(
+                            validated.as_str().len() <= 4096,
+                            "Validated path should respect length limits"
+                        );
+                    }
+                    Err(e) => {
+                        // May still fail for other reasons - ensure it's a path validation error
+                        prop_assert!(
+                            matches!(e, ValidationError::Path(_)),
+                            "Unexpected error type for length {}: {:?}",
+                            path_length,
+                            e
+                        );
+                    }
+                }
             }
         }
     }

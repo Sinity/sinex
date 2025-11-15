@@ -601,10 +601,9 @@ async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::
         .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
-    let (status, details, messages): VerificationTuple =
-        verification::verify_end_to_end_integration()
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Integration verification failed: {}", e))?;
+    let (status, details, messages): VerificationTuple = verification::verify_end_to_end_integration()
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("Integration verification failed: {}", e))?;
 
     // Should pass or warn
     assert!(matches!(
@@ -624,12 +623,11 @@ async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::
 async fn test_phase7_integration_db_failure() -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
-    let (status, _details, messages): VerificationTuple =
-        verification::verify_end_to_end_integration()
-            .await
-            .map_err(|e| {
-                color_eyre::eyre::eyre!("Integration test should handle DB failure: {}", e)
-            })?;
+    let (status, _details, messages): VerificationTuple = verification::verify_end_to_end_integration()
+        .await
+        .map_err(|e| {
+            color_eyre::eyre::eyre!("Integration test should handle DB failure: {}", e)
+        })?;
 
     assert_eq!(status, VerificationStatus::Fail);
     assert!(messages

@@ -73,7 +73,7 @@ const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
 /// utilities without wrapping production APIs. Tests should use the pool
 /// field directly to access repositories and production Event creation APIs.
 #[derive(Clone, Debug)]
-pub(crate) struct CreatedEventInfo {
+struct CreatedEventInfo {
     event_id: Ulid,
     material_id: Option<Ulid>,
 }
@@ -108,75 +108,10 @@ pub struct TestContext {
     env: SinexEnvironment,
 }
 
-#[derive(Clone)]
-pub(crate) struct ContextTelemetry {
-    test_name: String,
-    db_name: String,
-    baseline_events: i64,
-    pool: DbPool,
-    created_events: Arc<Mutex<Vec<CreatedEventInfo>>>,
-    captured_logs: Arc<Mutex<Vec<String>>>,
-    nats_enabled: bool,
-    nats_url: Option<String>,
-    environment: String,
-}
-
-impl ContextTelemetry {
-    pub fn test_name(&self) -> &str {
-        &self.test_name
-    }
-
-    pub fn db_name(&self) -> &str {
-        &self.db_name
-    }
-
-    pub fn baseline_events(&self) -> i64 {
-        self.baseline_events
-    }
-
-    pub fn created_event_count(&self) -> usize {
-        self.created_events.lock().len()
-    }
-
-    pub fn logs_snapshot(&self) -> Vec<String> {
-        self.captured_logs.lock().clone()
-    }
-
-    pub fn nats_enabled(&self) -> bool {
-        self.nats_enabled
-    }
-
-    pub fn nats_url(&self) -> Option<String> {
-        self.nats_url.clone()
-    }
-
-    pub fn environment(&self) -> &str {
-        &self.environment
-    }
-
-    pub async fn event_delta(&self) -> TestResult<i64> {
-        Ok(self.pool.events().count_all().await? - self.baseline_events)
-    }
-}
-
 impl TestContext {
     /// Backwards-compatible accessor for the shared database pool.
     pub fn pool(&self) -> &DbPool {
         &self.pool
-    }
-
-    pub(crate) fn telemetry_handle(&self) -> ContextTelemetry {
-        ContextTelemetry {
-            test_name: self.test_name.clone(),
-            db_name: self.db.name().to_string(),
-            baseline_events: self.baseline_events,
-            pool: self.pool.clone(),
-            created_events: self.created_events.clone(),
-            captured_logs: self.captured_logs.clone(),
-            nats_enabled: self.nats.is_some(),
-            nats_url: self.nats_url(),
-            environment: self.env.name().to_string(),
-        }
     }
 
     pub(crate) fn sanitize_payload(value: &mut JsonValue) {

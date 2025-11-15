@@ -2,7 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use sinex_test_utils::{prelude::*, sinex_prop};
+use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -340,35 +340,40 @@ async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
 }
 
 /// Property-based testing for boundary conditions
-#[sinex_prop]
-async fn test_property_based_boundaries(
-    ctx: &TestContext,
-    #[strategy(0..1000usize)] array_size: usize,
-    #[strategy(0..10000usize)] string_len: usize,
-    #[strategy(0..50usize)] nest_depth: usize,
-) -> Result<()> {
-    let array: Vec<i32> = (0..array_size as i32).collect();
-    let text = "x".repeat(string_len);
+#[sinex_test]
+async fn test_property_based_boundaries(ctx: TestContext) -> Result<()> {
+    proptest!(|(
+        array_size in 0..1000usize,
+        string_len in 0..10000usize,
+        nest_depth in 0..50usize
+    )| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let array: Vec<i32> = (0..array_size as i32).collect();
+            let text = "x".repeat(string_len);
 
-    let mut nested = serde_json::json!("leaf");
-    for _ in 0..nest_depth {
-        nested = serde_json::json!({ "child": nested });
-    }
+            let mut nested = serde_json::json!("leaf");
+            for _ in 0..nest_depth {
+                nested = serde_json::json!({"child": nested});
+            }
 
-    let event = ctx.create_test_event(
-        "property_test",
-        "boundary",
-        serde_json::json!({
-            "array": array,
-            "text": text,
-            "nested": nested,
-            "array_size": array_size,
-            "string_len": string_len,
-            "nest_depth": nest_depth
-        }),
-    );
+            let event = ctx.create_test_event(
+                "property_test",
+                "boundary",
+                serde_json::json!({
+                    "array": array,
+                    "text": text,
+                    "nested": nested,
+                    "array_size": array_size,
+                    "string_len": string_len,
+                    "nest_depth": nest_depth
+                }),
+            );
 
-    // We don't assert success, just that it doesn't panic
-    let _ = ctx.pool.events().insert(event).await;
+            // We don't assert success, just that it doesn't panic
+            let _ = ctx.pool.events().insert(event).await;
+        });
+    });
+
     Ok(())
 }

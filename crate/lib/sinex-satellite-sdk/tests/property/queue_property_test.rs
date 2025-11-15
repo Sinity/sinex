@@ -95,10 +95,9 @@ fn checkpoint_progress_is_monotonic() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-sinex_proptest! {
-    fn checkpoint_state_roundtrips(
-        payload in proptest::collection::vec("[a-z0-9]{1,8}", 0..5)
-    ) -> color_eyre::eyre::Result<()> {
+#[sinex_test]
+fn checkpoint_state_roundtrips() -> color_eyre::eyre::Result<()> {
+    proptest!(|(payload in proptest::collection::vec("[a-z0-9]{1,8}", 0..5))| {
         let json_payload = serde_json::json!({"tags": payload});
         let state = CheckpointState {
             checkpoint: Checkpoint::None,
@@ -111,40 +110,47 @@ sinex_proptest! {
         let encoded = serde_json::to_string(&state)?;
         let decoded: CheckpointState = serde_json::from_str(&encoded)?;
         prop_assert_eq!(decoded.data, Some(json_payload));
-        Ok(())
-    }
+    });
+    Ok(())
 }
 
-#[sinex_prop]
-async fn queue_event_insertion_preserves_order(
-    ctx: &TestContext,
-    #[strategy(1usize..5)] batch_count: usize,
-    #[strategy(1usize..20)] batch_size: usize,
-) -> TestResult<()> {
-    let baseline = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::from("queue.test"))
-        .await?;
+#[sinex_test]
+fn queue_event_insertion_preserves_order() -> color_eyre::eyre::Result<()> {
+    proptest!(|(batch_count in 1usize..5, batch_size in 1usize..20)| {
+        run_async(async move {
+            let ctx = TestContext::new()
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+            let baseline = ctx
+                .pool
+                .events()
+                .count_by_source(&EventSource::from("queue.test"))
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+            for batch in 0..batch_count {
+                for index in 0..batch_size {
+                    ctx.create_test_event(
+                        "queue.test",
+                        "batch.event",
+                        json!({ "batch": batch, "index": index }),
+                    )
+                    .await
+                    .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+                }
+            }
 
-    for batch in 0..batch_count {
-        for index in 0..batch_size {
-            ctx.create_test_event(
-                "queue.test",
-                "batch.event",
-                json!({ "batch": batch, "index": index }),
-            )
-            .await?;
-        }
-    }
+            let total_expected = (batch_count * batch_size) as i64;
+            let total = ctx
+                .pool
+                .events()
+                .count_by_source(&EventSource::from("queue.test"))
+                .await
+                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+            prop_assert_eq!(total - baseline, total_expected);
 
-    let total_expected = (batch_count * batch_size) as i64;
-    let total = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::from("queue.test"))
-        .await?;
-    prop_assert_eq!(total - baseline, total_expected);
+            Ok::<_, proptest::test_runner::TestCaseError>(())
+        })?;
+    });
     Ok(())
 }
 

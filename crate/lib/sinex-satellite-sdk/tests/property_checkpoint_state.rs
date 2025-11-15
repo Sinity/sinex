@@ -27,11 +27,12 @@ fn build_state(processed_count: u64) -> CheckpointState {
     }
 }
 
-sinex_proptest! {
-    fn property_ulid_inputs_create_internal_checkpoint(
+#[sinex_test]
+fn property_ulid_inputs_create_internal_checkpoint() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         processed in 0u64..10_000,
         ulid in arb_ulid()
-    ) -> TestResult<()> {
+    )| {
         let ulid_str = ulid.to_string();
         let mut state = build_state(processed);
 
@@ -47,13 +48,17 @@ sinex_proptest! {
 
         prop_assert_eq!(state.last_processed_id(), Some(ulid_str));
         prop_assert_eq!(state.processed_count, processed);
-        Ok(())
-    }
+    });
 
-    fn property_non_ulid_inputs_create_stream_checkpoint(
+    Ok(())
+}
+
+#[sinex_test]
+fn property_non_ulid_inputs_create_stream_checkpoint() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         processed in 0u64..10_000,
         message_id in arb_non_ulid_string()
-    ) -> TestResult<()> {
+    )| {
         let mut state = build_state(processed);
 
         state.set_last_processed_id(Some(message_id.clone()));
@@ -68,16 +73,23 @@ sinex_proptest! {
 
         prop_assert_eq!(state.last_processed_id(), Some(message_id));
         prop_assert_eq!(state.processed_count, processed);
-        Ok(())
-    }
+    });
 
-    fn property_none_resets_checkpoint(processed in 0u64..10_000) -> TestResult<()> {
+    Ok(())
+}
+
+#[sinex_test]
+fn property_none_resets_checkpoint() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
+        processed in 0u64..10_000
+    )| {
         let mut state = build_state(processed);
+
         state.set_last_processed_id(None);
 
         prop_assert!(matches!(state.checkpoint, Checkpoint::None));
         prop_assert_eq!(state.last_processed_id(), None);
         prop_assert_eq!(state.processed_count, processed);
-        Ok(())
-    }
+    });
+    Ok(())
 }
