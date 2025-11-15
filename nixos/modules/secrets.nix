@@ -10,6 +10,7 @@ let
   ageFiles = filterAttrs (name: kind: kind == "regular" && hasSuffix ".age" name) files;
   serviceUser = cfg.users.satellites;
   defaultOwner = serviceUser;
+  ageAvailable = options ? age;
 
   mkSpec = filename: {
     file = secretDir + "/" + filename;
@@ -57,10 +58,22 @@ in
     };
   };
 
-  config = mkIf (cfg.secrets.enableAgenix or false) {
-    age.identityPaths = mkDefault defaultIdentities;
-    age.secrets = specs;
-    sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
-    sinex.secrets.exportScript = mkDefault exportScript;
-  };
+  config =
+    let
+      enable = cfg.secrets.enableAgenix && ageAvailable;
+    in
+    {
+      warnings = lib.optional (cfg.secrets.enableAgenix && !ageAvailable) ''
+        services.sinex.secrets.enableAgenix is true, but the agenix/age module is not imported.
+        Secrets will not be provisioned; add the agenix module or disable enableAgenix.
+      '';
+    }
+    // (if enable then {
+      age = {
+        identityPaths = mkDefault defaultIdentities;
+        secrets = specs;
+      };
+      sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
+      sinex.secrets.exportScript = mkDefault exportScript;
+    } else {});
 }
