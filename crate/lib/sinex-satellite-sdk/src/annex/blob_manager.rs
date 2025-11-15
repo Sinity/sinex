@@ -590,9 +590,9 @@ impl BlobManager {
         );
 
         if let Some(sender) = &self.event_sender {
-            sender
-                .send(new_event)
-                .map_err(|_| eyre!("Failed to emit blob storage statistics: event channel closed"))?;
+            sender.send(new_event).map_err(|_| {
+                eyre!("Failed to emit blob storage statistics: event channel closed")
+            })?;
         } else {
             debug!("BlobManager event emission disabled; skipping storage.statistics event");
         }

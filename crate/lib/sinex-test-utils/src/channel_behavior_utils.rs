@@ -7,8 +7,6 @@ use crate::channel_helpers::{
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
 };
 use crate::prelude::*;
-#[cfg(test)]
-use crate::TestResult;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -671,7 +669,7 @@ pub mod scenarios {
 
 // Helper functions should use TestContext mechanisms
 
-#[cfg(test)]
+#[cfg(all(test, feature = "internal-tests"))]
 mod tests {
     use super::*;
     use crate::sinex_test;

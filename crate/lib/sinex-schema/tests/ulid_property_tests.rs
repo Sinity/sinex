@@ -23,6 +23,7 @@ fn spin_for(duration: Duration) {
 #[cfg(test)]
 mod ulid_property_tests {
     use super::*;
+    use sinex_test_utils::sinex_proptest;
 
     proptest! {
         #[test]

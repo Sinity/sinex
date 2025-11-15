@@ -10,11 +10,11 @@ use sinex_satellite_sdk::stream_processor::{
 };
 
 // System-specific event payloads
+use serde_json::json;
 use sinex_core::types::events::{
     JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
-use serde_json::json;
 use sinex_core::{
     db::models::{Event, EventId, Provenance},
     types::Ulid,
@@ -23,6 +23,7 @@ use sinex_core::{
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
 pub use crate::SystemConfig;
@@ -124,7 +125,11 @@ impl WatcherHandle {
         }
     }
 
-    fn running(name: &'static str, task: JoinHandle<()>, forwarder: Option<JoinHandle<()>>) -> Self {
+    fn running(
+        name: &'static str,
+        task: JoinHandle<()>,
+        forwarder: Option<JoinHandle<()>>,
+    ) -> Self {
         Self {
             name,
             state: WatcherState::Running { task, forwarder },
@@ -1168,7 +1173,10 @@ fn bootstrap_event_id() -> EventId {
     )
 }
 
-fn synthetic_system_event(event_type: &'static str, payload: serde_json::Value) -> Event<JsonValue> {
+fn synthetic_system_event(
+    event_type: &'static str,
+    payload: serde_json::Value,
+) -> Event<JsonValue> {
     Event::dynamic("system.watchers", event_type, payload)
         .from_parents(vec![bootstrap_event_id()])
         .build()

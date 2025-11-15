@@ -71,7 +71,9 @@ async fn blob_routes_should_enforce_auth_and_quota(
         "content": BASE64_STANDARD.encode(&oversized_blob),
     });
 
-    let err = handle_store_blob(&content_service, params).await.unwrap_err();
+    let err = handle_store_blob(&content_service, params)
+        .await
+        .unwrap_err();
 
     assert!(
         err.to_string()
@@ -83,7 +85,9 @@ async fn blob_routes_should_enforce_auth_and_quota(
 }
 
 #[sinex_test]
-async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn content_store_blob_does_not_insert_events(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     require_git_annex();
 
     let annex_dir = TempDir::new()?;
@@ -102,10 +106,9 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> color_ey
     let blob_manager = BlobManager::new(annex_config, ctx.pool.clone(), None)?;
     let content_service = ContentService::new(ctx.pool.clone(), Arc::new(blob_manager));
 
-    let before: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-            .fetch_one(&ctx.pool)
-            .await?;
+    let before: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+        .fetch_one(&ctx.pool)
+        .await?;
 
     let params = serde_json::json!({
         "filename": "note.txt",
@@ -115,10 +118,9 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> color_ey
 
     handle_store_blob(&content_service, params).await?;
 
-    let after: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-            .fetch_one(&ctx.pool)
-            .await?;
+    let after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+        .fetch_one(&ctx.pool)
+        .await?;
 
     assert_eq!(
         before, after,

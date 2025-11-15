@@ -62,10 +62,9 @@ impl ServiceContainer {
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, pool.clone(), None)
-                .map_err(|e| SinexError::service("Failed to create blob manager").with_source(e.to_string()))?,
-        );
+        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone(), None).map_err(
+            |e| SinexError::service("Failed to create blob manager").with_source(e.to_string()),
+        )?);
 
         // Initialize all services
         let replay = Arc::new(ReplayStateMachine::new(pool.clone()));

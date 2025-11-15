@@ -32,7 +32,6 @@ use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 
 // Standard library
-use sinex_core::environment::environment;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
@@ -187,7 +186,8 @@ impl GatewayAuth {
 
 fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
     if let Ok(path) = std::env::var("SINEX_RPC_TOKEN_FILE") {
-        let contents = std::fs::read_to_string(path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
+        let contents =
+            std::fs::read_to_string(path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
         return Ok(Some(contents.trim().to_string()));
     }
 
@@ -243,7 +243,9 @@ enum AuthError {
 impl AuthError {
     fn into_response(self) -> (StatusCode, Json<JsonRpcResponse>) {
         let message = match self {
-            AuthError::Missing => "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header.",
+            AuthError::Missing => {
+                "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header."
+            }
             AuthError::Invalid => "Authentication failed: invalid token.",
         };
 
@@ -282,6 +284,7 @@ impl JsonRpcResponse {
 #[derive(Clone)]
 struct AppState {
     services: ServiceContainer,
+    auth: GatewayAuth,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
@@ -385,20 +388,18 @@ async fn handle_rpc(
 
     // Telemetry disabled in this build; keep handler lightweight
 
-    match result {
-        Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
+    let response = match result {
+        Ok(value) => JsonRpcResponse::success(request.id, value),
         Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
-            Json(JsonRpcResponse::error(request.id, -32601, err.to_string()))
+            JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
         Err(err) => {
             error!("RPC method {} failed: {}", method, err);
-            Json(JsonRpcResponse::error(
-                request.id,
-                -32603,
-                format!("Internal error: {}", err),
-            ))
+            JsonRpcResponse::error(request.id, -32603, format!("Internal error: {}", err))
         }
-    }
+    };
+
+    (StatusCode::OK, Json(response))
 }
 
 /// Server bind address configuration
@@ -751,10 +752,7 @@ mod tests {
     async fn gateway_auth_accepts_custom_header() -> color_eyre::eyre::Result<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-sinex-rpc-token",
-            HeaderValue::from_static("secret"),
-        );
+        headers.insert("x-sinex-rpc-token", HeaderValue::from_static("secret"));
         assert!(auth.verify(&headers).is_ok());
         Ok(())
     }

@@ -109,12 +109,10 @@ impl DocumentProcessor {
         };
 
         let blob_manager = Arc::new(
-            BlobManager::new(
-                annex_config,
-                runtime.db_pool().clone(),
-                Some(blob_event_tx),
-            )
-            .map_err(|e| SatelliteError::General(eyre!("Failed to create blob manager: {}", e)))?,
+            BlobManager::new(annex_config, runtime.db_pool().clone(), Some(blob_event_tx))
+                .map_err(|e| {
+                    SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
+                })?,
         );
 
         let event_sender = runtime.event_sender();
