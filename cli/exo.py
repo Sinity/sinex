@@ -1924,19 +1924,19 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-            # Build dynamic query
-            query_parts = [
-                "SELECT dlq_id, automaton_name, source, event_type, failure_reason, "
-                "error_category, retry_count, failed_at, last_retry_at, next_retry_at, "
-                "resolved_at, resolved_by, "
-                "EXTRACT(EPOCH FROM (now() - failed_at)) AS age_seconds "
-                "FROM sinex_schemas.dlq_events"
-            ]
-            conditions = []
-            params = []
-            
-            if not include_resolved:
-                conditions.append("resolved_at IS NULL")
+                # Build dynamic query
+                query_parts = [
+                    "SELECT dlq_id, automaton_name, source, event_type, failure_reason, "
+                    "error_category, retry_count, failed_at, last_retry_at, next_retry_at, "
+                    "resolved_at, resolved_by, "
+                    "EXTRACT(EPOCH FROM (now() - failed_at)) AS age_seconds "
+                    "FROM sinex_schemas.dlq_events"
+                ]
+                conditions = []
+                params = []
+
+                if not include_resolved:
+                    conditions.append("resolved_at IS NULL")
             
             if agent:
                 conditions.append("automaton_name = %s")
