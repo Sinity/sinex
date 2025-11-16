@@ -1,4 +1,5 @@
 Sinex Documentation Index
+> **Purpose:** Map of canonical docs; update whenever ownership or authoritative references change.
 
 Use this index to locate the current sources of truth. Historical essays and
 exploratory brainstorming live in `docs/historical/` unless they are promoted

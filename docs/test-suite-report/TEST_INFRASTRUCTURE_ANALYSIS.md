@@ -182,7 +182,7 @@ tests/
 - **Pattern**: Provides TestContext, handles database cleanup, tracing setup
 
 **Property Testing:**
-- `proptest!` macro: 119 usages across codebase
+- `sinex_proptest!` / `#[sinex_prop]` macros wrap every property suite
 - Strategies for: problematic strings (empty, unicode, control chars), edge numbers, DST transitions
 - **Example**: event_model_fuzzing_test generates 1000+ cases per event type
 
@@ -265,16 +265,18 @@ async fn test_basic_event_insertion(ctx: TestContext) -> Result<()> {
 }
 ```
 
-### Pattern 2: Property Testing with Proptest
+### Pattern 2: Property Testing with `#[sinex_prop]`
 
 ```rust
-#[sinex_test]
-fn test_event_model_fuzzing(ctx: TestContext) -> Result<()> {
-    proptest!(|(source in event_sources(), payload in problematic_json())| {
-        let event = Event::<JsonValue>::test_event(source, "test.type", payload);
-        // Event should serialize/deserialize successfully
-        assert!(serde_json::to_string(&event).is_ok());
-    });
+#[sinex_prop]
+async fn test_event_model_fuzzing(
+    ctx: &TestContext,
+    #[strategy(event_sources())] source: EventSource,
+    #[strategy(problematic_json())] payload: JsonValue,
+) -> TestResult<()> {
+    let event = Event::<JsonValue>::test_event(source, "test.type", payload);
+    // Event should serialize/deserialize successfully
+    assert!(serde_json::to_string(&event).is_ok());
     Ok(())
 }
 ```
@@ -540,9 +542,9 @@ async fn test_event_serialization(ctx: TestContext) -> Result<()> {
 ### Strengths
 
 1. ✓ Sophisticated database pool with 64 concurrent isolations
-2. ✓ Modern test infrastructure (rstest, proptest, insta, tracing-test)
+2. ✓ Modern test infrastructure (rstest, sinex_proptest!/#[sinex_prop], insta, tracing-test)
 3. ✓ TestContext fixture with meaningful abstractions
-4. ✓ Comprehensive property testing (119 proptest! invocations)
+4. ✓ Comprehensive property testing (harmonized on sinex_proptest!/#[sinex_prop])
 5. ✓ Good adversarial/security testing (8 specialized test files)
 6. ✓ Direct production API usage (no test wrappers)
 7. ✓ Rich assertion builders (similar_asserts, custom ctx.assert)

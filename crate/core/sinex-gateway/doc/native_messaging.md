@@ -46,4 +46,7 @@ Response example:
 - Message size limits prevent DoS attacks.
 - All message fields are validated before dispatching.
 - Error messages are sanitized to avoid leaking sensitive details.
-- TODO: enforce extension origin validation.
+- Trusted extensions must be declared via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`.
+  - Format: comma-separated entries such as `chrome-extension://abc123#shared-secret`.
+  - Entries without `#secret` only check the extension ID; entries with secrets require matching `extension_secret` fields on every message.
+- Authentication decisions are logged as structured tracing events (`native_messaging.auth`) so operators can audit which extension IDs succeeded or failed, including reasons such as `missing_extension_id`, `not_trusted`, or `invalid_secret`.

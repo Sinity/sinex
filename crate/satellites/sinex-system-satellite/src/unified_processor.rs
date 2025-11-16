@@ -10,6 +10,7 @@ use sinex_satellite_sdk::stream_processor::{
 };
 
 // System-specific event payloads
+use serde_json::json;
 use sinex_core::types::events::{
     JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
@@ -17,9 +18,12 @@ use sinex_core::types::events::{
 use sinex_core::{
     db::models::{Event, EventId, Provenance},
     types::Ulid,
+    JsonValue,
 };
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
+use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::warn;
 
 // Import the existing SystemConfig from the parent module
 pub use crate::SystemConfig;
@@ -91,6 +95,79 @@ impl WatcherSnapshot {
     }
 }
 
+const SYSTEM_WATCHER_BOOTSTRAP_BYTES: [u8; 16] = [
+    0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+#[derive(Debug)]
+enum WatcherState {
+    Initialized,
+    Running {
+        task: JoinHandle<()>,
+        forwarder: Option<JoinHandle<()>>,
+    },
+    Simulated {
+        task: JoinHandle<()>,
+    },
+}
+
+#[derive(Debug)]
+struct WatcherHandle {
+    name: &'static str,
+    state: WatcherState,
+}
+
+impl WatcherHandle {
+    fn initialized(name: &'static str) -> Self {
+        Self {
+            name,
+            state: WatcherState::Initialized,
+        }
+    }
+
+    fn running(
+        name: &'static str,
+        task: JoinHandle<()>,
+        forwarder: Option<JoinHandle<()>>,
+    ) -> Self {
+        Self {
+            name,
+            state: WatcherState::Running { task, forwarder },
+        }
+    }
+
+    fn simulated(name: &'static str, task: JoinHandle<()>) -> Self {
+        Self {
+            name,
+            state: WatcherState::Simulated { task },
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        matches!(
+            self.state,
+            WatcherState::Running { .. } | WatcherState::Simulated { .. }
+        )
+    }
+}
+
+impl Drop for WatcherHandle {
+    fn drop(&mut self) {
+        match &self.state {
+            WatcherState::Running { task, forwarder } => {
+                task.abort();
+                if let Some(handle) = forwarder {
+                    handle.abort();
+                }
+            }
+            WatcherState::Simulated { task } => {
+                task.abort();
+            }
+            WatcherState::Initialized => {}
+        }
+    }
+}
+
 /// Unified system processor implementing StatefulStreamProcessor
 ///
 /// Supports snapshot, historical, and continuous scanning modes for system events.
@@ -101,10 +178,10 @@ pub struct SystemProcessor {
     config: SystemConfig,
 
     /// Individual watchers (initialized during operation)
-    dbus_watcher: Option<DbusWatcher>,
-    journal_watcher: Option<JournalWatcher>,
-    udev_watcher: Option<UdevWatcher>,
-    systemd_watcher: Option<SystemdWatcher>,
+    dbus_watcher: Option<WatcherHandle>,
+    journal_watcher: Option<WatcherHandle>,
+    udev_watcher: Option<WatcherHandle>,
+    systemd_watcher: Option<WatcherHandle>,
 
     /// Last captured system state for snapshots
     last_state: Option<SystemState>,
@@ -151,6 +228,10 @@ impl SystemProcessor {
 
     fn emitter(&self) -> SatelliteResult<&EventEmitter> {
         Ok(self.runtime()?.event_emitter())
+    }
+
+    fn emitter_clone(&self) -> SatelliteResult<EventEmitter> {
+        Ok(self.runtime()?.event_emitter().clone())
     }
 
     fn apply_config_overrides(config: &mut SystemConfig, runtime: &ProcessorRuntimeState) {
@@ -257,35 +338,45 @@ impl SystemProcessor {
         }
     }
 
-    /// Initialize watchers based on enabled sources
+    /// Initialize watcher metadata (actual streaming starts during continuous scans).
     async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
-        // For now, stub implementations - will be implemented properly later
-
-        // Initialize D-Bus watcher
         if self.config.dbus_enabled {
-            info!(
-                "Initializing D-Bus watcher for buses: {} (stub)",
-                self.config.dbus_buses
-            );
-            info!("✅ D-Bus watcher initialized (stub)");
+            if self.dbus_watcher.is_none() {
+                info!(
+                    "Preparing D-Bus watcher (buses: {})",
+                    self.config.dbus_buses
+                );
+                self.dbus_watcher = Some(WatcherHandle::initialized("dbus"));
+            }
+        } else {
+            self.dbus_watcher = None;
         }
 
-        // Initialize Journal watcher
         if self.config.journal_enabled {
-            info!("Initializing journal watcher (stub)");
-            info!("✅ Journal watcher initialized (stub)");
+            if self.journal_watcher.is_none() {
+                info!("Preparing journal watcher");
+                self.journal_watcher = Some(WatcherHandle::initialized("journal"));
+            }
+        } else {
+            self.journal_watcher = None;
         }
 
-        // Initialize udev watcher
         if self.config.udev_enabled {
-            info!("Initializing udev watcher (stub)");
-            info!("✅ udev watcher initialized (stub)");
+            if self.udev_watcher.is_none() {
+                info!("Preparing udev watcher");
+                self.udev_watcher = Some(WatcherHandle::initialized("udev"));
+            }
+        } else {
+            self.udev_watcher = None;
         }
 
-        // Initialize systemd watcher
         if self.config.systemd_enabled {
-            info!("Initializing systemd watcher (stub)");
-            info!("✅ systemd watcher initialized (stub)");
+            if self.systemd_watcher.is_none() {
+                info!("Preparing systemd watcher");
+                self.systemd_watcher = Some(WatcherHandle::initialized("systemd"));
+            }
+        } else {
+            self.systemd_watcher = None;
         }
 
         Ok(())
@@ -298,21 +389,21 @@ impl SystemProcessor {
     ) -> SatelliteResult<()> {
         info!("Starting continuous system monitoring");
 
-        // For now, stub implementation - will be implemented properly later
-        // This would start the actual watchers and forward events
+        self.start_dbus_stream().await?;
+        self.start_journal_stream().await?;
+        self.start_udev_stream().await?;
+        self.start_systemd_stream().await?;
+        self.emit_monitoring_started_event().await?;
 
+        Ok(())
+    }
+
+    async fn emit_monitoring_started_event(&self) -> SatelliteResult<()> {
         let emitter = self.emitter()?;
-
-        let system_bootstrap_id = EventId::from_ulid(
-            Ulid::from_bytes([
-                0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00,
-            ])
-            .expect("hardcoded ULID bytes should be valid"),
-        );
+        let system_bootstrap_id = bootstrap_event_id();
         let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
 
-        let sample_event = Event::new(
+        let event = Event::new(
             SystemMonitoringStartedPayload {
                 dbus_enabled: self.config.dbus_enabled,
                 journal_enabled: self.config.journal_enabled,
@@ -324,9 +415,232 @@ impl SystemProcessor {
         )
         .to_json_event()?;
 
-        emitter.emit(sample_event).await?;
+        emitter.emit(event).await?;
+        Ok(())
+    }
+
+    async fn start_dbus_stream(&mut self) -> SatelliteResult<()> {
+        if !self.config.dbus_enabled {
+            return Ok(());
+        }
+
+        if self
+            .dbus_watcher
+            .as_ref()
+            .map(|handle| handle.is_active())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        match self.spawn_dbus_task().await {
+            Ok(handle) => {
+                self.dbus_watcher = Some(handle);
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "D-Bus watcher failed to start, falling back to simulated events"
+                );
+                let payload = json!({
+                    "bus": self.config.dbus_buses,
+                    "signal": "WatcherInitialized",
+                    "sender": "org.sinex.system",
+                    "timestamp": Utc::now().to_rfc3339(),
+                });
+                let handle =
+                    self.spawn_simulated_watcher("dbus-sim", "system.dbus.signal", payload)?;
+                self.dbus_watcher = Some(handle);
+            }
+        }
 
         Ok(())
+    }
+
+    async fn start_journal_stream(&mut self) -> SatelliteResult<()> {
+        if !self.config.journal_enabled {
+            return Ok(());
+        }
+
+        if self
+            .journal_watcher
+            .as_ref()
+            .map(|handle| handle.is_active())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        match self.spawn_journal_task().await {
+            Ok(handle) => {
+                self.journal_watcher = Some(handle);
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "Journal watcher failed to start, falling back to simulated events"
+                );
+                let payload = json!({
+                    "message": "Simulated journal entry",
+                    "unit": "sinex-system.service",
+                    "timestamp": Utc::now().to_rfc3339(),
+                });
+                let handle =
+                    self.spawn_simulated_watcher("journal-sim", "system.journal.entry", payload)?;
+                self.journal_watcher = Some(handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn start_udev_stream(&mut self) -> SatelliteResult<()> {
+        if !self.config.udev_enabled {
+            return Ok(());
+        }
+
+        if self
+            .udev_watcher
+            .as_ref()
+            .map(|handle| handle.is_active())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        match self.spawn_udev_task().await {
+            Ok(handle) => {
+                self.udev_watcher = Some(handle);
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "udev watcher failed to start, falling back to simulated events"
+                );
+                let payload = json!({
+                    "action": "add",
+                    "device_path": "/dev/simulated",
+                    "device_type": "block",
+                    "timestamp": Utc::now().to_rfc3339(),
+                });
+                let handle =
+                    self.spawn_simulated_watcher("udev-sim", "system.udev.device", payload)?;
+                self.udev_watcher = Some(handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn start_systemd_stream(&mut self) -> SatelliteResult<()> {
+        if !self.config.systemd_enabled {
+            return Ok(());
+        }
+
+        if self
+            .systemd_watcher
+            .as_ref()
+            .map(|handle| handle.is_active())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        match self.spawn_systemd_task().await {
+            Ok(handle) => {
+                self.systemd_watcher = Some(handle);
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "systemd watcher failed to start, falling back to simulated events"
+                );
+                let payload = json!({
+                    "unit_name": "sinex-system.service",
+                    "state": "active",
+                    "timestamp": Utc::now().to_rfc3339(),
+                });
+                let handle = self.spawn_simulated_watcher(
+                    "systemd-sim",
+                    "system.systemd.unit_state",
+                    payload,
+                )?;
+                self.systemd_watcher = Some(handle);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn spawn_dbus_task(&self) -> SatelliteResult<WatcherHandle> {
+        let emitter = self.emitter_clone()?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder("system.dbus.signal", rx, emitter);
+        let mut watcher = DbusWatcher::new(self.config.dbus_config.clone()).await?;
+        let task = tokio::spawn(async move {
+            if let Err(err) = watcher.start_streaming(tx).await {
+                warn!(error = %err, "D-Bus watcher terminated");
+            }
+        });
+        Ok(WatcherHandle::running("dbus", task, Some(forwarder)))
+    }
+
+    async fn spawn_journal_task(&self) -> SatelliteResult<WatcherHandle> {
+        let emitter = self.emitter_clone()?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder("system.journal.entry", rx, emitter);
+        let mut watcher = JournalWatcher::new(self.config.journal_config.clone()).await?;
+        let task = tokio::spawn(async move {
+            if let Err(err) = watcher.start_streaming(tx).await {
+                warn!(error = %err, "Journal watcher terminated");
+            }
+        });
+        Ok(WatcherHandle::running("journal", task, Some(forwarder)))
+    }
+
+    async fn spawn_udev_task(&self) -> SatelliteResult<WatcherHandle> {
+        let emitter = self.emitter_clone()?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
+        let mut watcher = UdevWatcher::new(true).await?;
+        let task = tokio::spawn(async move {
+            if let Err(err) = watcher.start_streaming(tx).await {
+                warn!(error = %err, "udev watcher terminated");
+            }
+        });
+        Ok(WatcherHandle::running("udev", task, Some(forwarder)))
+    }
+
+    async fn spawn_systemd_task(&self) -> SatelliteResult<WatcherHandle> {
+        let emitter = self.emitter_clone()?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        let forwarder = spawn_forwarder("system.systemd.unit_state", rx, emitter);
+        let mut watcher = SystemdWatcher::new(self.config.systemd_config.clone()).await?;
+        let task = tokio::spawn(async move {
+            if let Err(err) = watcher.start_streaming(tx).await {
+                warn!(error = %err, "systemd watcher terminated");
+            }
+        });
+        Ok(WatcherHandle::running("systemd", task, Some(forwarder)))
+    }
+
+    fn spawn_simulated_watcher(
+        &self,
+        name: &'static str,
+        event_type: &'static str,
+        payload: serde_json::Value,
+    ) -> SatelliteResult<WatcherHandle> {
+        let emitter = self.emitter_clone()?;
+        let task = tokio::spawn(async move {
+            if emitter.dry_run() {
+                return;
+            }
+            let event = synthetic_system_event(event_type, payload);
+            if let Err(err) = emitter.emit(event).await {
+                warn!(watcher = name, error = %err, "Failed to emit simulated watcher event");
+            }
+        });
+        Ok(WatcherHandle::simulated(name, task))
     }
 
     /// Perform historical scan on system sources
@@ -850,6 +1164,40 @@ impl ExplorationProvider for SystemProcessor {
 
         Ok(())
     }
+}
+
+fn bootstrap_event_id() -> EventId {
+    EventId::from_ulid(
+        Ulid::from_bytes(SYSTEM_WATCHER_BOOTSTRAP_BYTES)
+            .expect("bootstrap ULID bytes should be valid"),
+    )
+}
+
+fn synthetic_system_event(
+    event_type: &'static str,
+    payload: serde_json::Value,
+) -> Event<JsonValue> {
+    Event::dynamic("system.watchers", event_type, payload)
+        .from_parents(vec![bootstrap_event_id()])
+        .build()
+}
+
+fn spawn_forwarder(
+    watcher: &'static str,
+    mut rx: mpsc::UnboundedReceiver<Event<JsonValue>>,
+    emitter: EventEmitter,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if emitter.dry_run() {
+                continue;
+            }
+            if let Err(err) = emitter.emit(event).await {
+                warn!(watcher = watcher, error = %err, "Failed to forward watcher event");
+                break;
+            }
+        }
+    })
 }
 
 #[cfg(test)]

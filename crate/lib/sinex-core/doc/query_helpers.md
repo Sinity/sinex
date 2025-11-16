@@ -27,17 +27,17 @@ let event = query_one(
 use sinex_core::db::query_helpers::{with_retry_transaction, with_transaction, db_error};
 
 # async fn example(pool: &sinex_core::DbPool) -> sinex_core::types::SinexResult<()> {
-let result = with_transaction(pool, |tx| async move {
+let result = with_transaction(pool, |tx| Box::pin(async move {
     sqlx::query("INSERT INTO table VALUES ($1)")
         .bind("value")
         .execute(&mut **tx)
         .await
         .map_err(|e| db_error(e, "insert operation"))?;
     Ok(())
-}).await?;
+})).await?;
 
 let retry_config = sinex_core::types::retry::RetryConfig::default();
-let result = with_retry_transaction(pool, retry_config, |tx| async move {
+let result = with_retry_transaction(pool, retry_config, |tx| Box::pin(async move {
     sqlx::query("UPDATE table SET value = $1 WHERE id = $2")
         .bind("new_value")
         .bind(123)
@@ -45,7 +45,7 @@ let result = with_retry_transaction(pool, retry_config, |tx| async move {
         .await
         .map_err(|e| db_error(e, "update operation"))?;
     Ok(())
-}).await?;
+})).await?;
 # Ok(())
 # }
 ```

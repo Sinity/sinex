@@ -12,6 +12,7 @@ use sinex_core::{
     JsonValue,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
+use std::sync::OnceLock;
 
 // Analytics handlers
 
@@ -179,9 +180,25 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
 
+    let limit = blob_size_limit_bytes();
+    let max_encoded = max_base64_length(limit);
+    if content_b64.len() > max_encoded {
+        return Err(eyre!(
+            "Blob content exceeds maximum allowed size of {} bytes",
+            limit
+        ));
+    }
+
     let content = BASE64_STANDARD
         .decode(content_b64)
         .wrap_err("Invalid base64 content")?;
+
+    if content.len() > limit {
+        return Err(eyre!(
+            "Blob content exceeds maximum allowed size of {} bytes",
+            limit
+        ));
+    }
 
     let filename = params
         .get("filename")
@@ -391,4 +408,18 @@ mod tests {
         assert!(parse_ulid_param(&invalid, "operation_id").is_err());
         Ok(())
     }
+}
+fn blob_size_limit_bytes() -> usize {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(5 * 1024 * 1024)
+    })
+}
+
+fn max_base64_length(limit_bytes: usize) -> usize {
+    // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
+    ((limit_bytes + 2) / 3) * 4
 }

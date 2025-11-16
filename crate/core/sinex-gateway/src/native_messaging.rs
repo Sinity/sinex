@@ -1,12 +1,12 @@
 #![doc = include_str!("../doc/native_messaging.md")]
 
 use async_trait::async_trait;
-use color_eyre::eyre::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
 use tokio::task;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::service_container::ServiceContainer;
 
@@ -16,7 +16,13 @@ const TRUSTED_EXTENSION_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS";
 /// Configuration knobs for the native messaging server.
 #[derive(Debug, Clone, Default)]
 pub struct NativeMessagingConfig {
-    trusted_extensions: Vec<String>,
+    trusted_extensions: Vec<TrustedExtension>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TrustedExtension {
+    id: String,
+    secret: Option<String>,
 }
 
 impl NativeMessagingConfig {
@@ -24,13 +30,7 @@ impl NativeMessagingConfig {
     pub fn from_env() -> Self {
         let trusted_extensions = std::env::var(TRUSTED_EXTENSION_ENV)
             .ok()
-            .map(|raw| {
-                raw.split(',')
-                    .map(|entry| entry.trim())
-                    .filter(|entry| !entry.is_empty())
-                    .map(|entry| entry.to_string())
-                    .collect::<Vec<_>>()
-            })
+            .map(parse_trusted_entries)
             .unwrap_or_default();
 
         Self { trusted_extensions }
@@ -44,7 +44,31 @@ impl NativeMessagingConfig {
         S: Into<String>,
     {
         Self {
-            trusted_extensions: ids.into_iter().map(Into::into).collect(),
+            trusted_extensions: ids
+                .into_iter()
+                .map(|id| TrustedExtension {
+                    id: id.into(),
+                    secret: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_trusted_entries<I, ID, SEC>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = (ID, Option<SEC>)>,
+        ID: Into<String>,
+        SEC: Into<String>,
+    {
+        Self {
+            trusted_extensions: entries
+                .into_iter()
+                .map(|(id, secret)| TrustedExtension {
+                    id: id.into(),
+                    secret: secret.map(Into::into),
+                })
+                .collect(),
         }
     }
 
@@ -53,10 +77,86 @@ impl NativeMessagingConfig {
             return Ok(());
         }
 
-        let _ = message;
-        // TODO: Require a successful handshake that validates extension ID / secret.
+        let incoming_id = match message.extension_id.as_deref() {
+            Some(id) => id,
+            None => {
+                warn!(
+                    event = "native_messaging.auth",
+                    reason = "missing_extension_id",
+                    "Rejected native messaging call: extension metadata missing"
+                );
+                return Err(eyre!("Missing extension_id"));
+            }
+        };
+
+        let trusted = self
+            .trusted_extensions
+            .iter()
+            .find(|ext| ext.id == incoming_id)
+            .ok_or_else(|| {
+                warn!(
+                    event = "native_messaging.auth",
+                    extension_id = incoming_id,
+                    reason = "not_trusted",
+                    "Extension is not in the trusted allow-list"
+                );
+                eyre!("Extension '{incoming_id}' is not in the trusted allow-list")
+            })?;
+
+        if let Some(expected_secret) = &trusted.secret {
+            let provided = match message.extension_secret.as_deref() {
+                Some(secret) => secret,
+                None => {
+                    warn!(
+                        event = "native_messaging.auth",
+                        extension_id = incoming_id,
+                        reason = "missing_secret",
+                        "Trusted extension omitted the required secret"
+                    );
+                    return Err(eyre!("Missing extension_secret"));
+                }
+            };
+            if provided != expected_secret {
+                warn!(
+                    event = "native_messaging.auth",
+                    extension_id = incoming_id,
+                    reason = "invalid_secret",
+                    "Extension provided an invalid secret"
+                );
+                bail!("Invalid secret for extension '{incoming_id}'");
+            }
+        }
+
+        debug!(
+            event = "native_messaging.auth",
+            extension_id = incoming_id,
+            has_secret = trusted.secret.is_some(),
+            "Native messaging request authorized"
+        );
         Ok(())
     }
+}
+
+fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
+    raw.split(',')
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                return None;
+            }
+            let (id, secret) = match entry.split_once('#') {
+                Some((id, secret)) => (id.trim(), Some(secret.trim().to_string())),
+                None => (entry, None),
+            };
+            if id.is_empty() {
+                return None;
+            }
+            Some(TrustedExtension {
+                id: id.to_string(),
+                secret: secret.filter(|s| !s.is_empty()),
+            })
+        })
+        .collect()
 }
 
 /// Transport abstraction so tests can drive the native messaging loop without stdin/stdout.
@@ -91,10 +191,8 @@ pub struct NativeMessage {
     params: Option<Value>,
     id: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     extension_id: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     extension_secret: Option<String>,
 }
 

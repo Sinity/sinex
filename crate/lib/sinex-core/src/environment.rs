@@ -8,6 +8,7 @@ use color_eyre::eyre::{eyre, Result};
 use std::env;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use url::{form_urlencoded, Url};
 
 /// Default environment when SINEX_ENVIRONMENT is not set
 const DEFAULT_ENVIRONMENT: &str = "dev";
@@ -95,33 +96,101 @@ impl SinexEnvironment {
     ///
     /// Modifies the database URL to use environment-specific database name
     pub fn database_url(&self, base_url: &str) -> Result<String> {
-        if base_url.is_empty() {
+        if base_url.trim().is_empty() {
             return Err(eyre!("Database URL cannot be empty"));
         }
 
-        // Separate query from main part first so we don't mis-detect slashes inside the query
-        let (main, query) = match base_url.split_once('?') {
-            Some((m, q)) => (m, format!("?{q}")),
-            None => (base_url, String::new()),
-        };
+        let mut url =
+            Url::parse(base_url).map_err(|e| eyre!("Invalid database URL format: {e}"))?;
+        let mut query_pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
 
-        // Find the database name as the segment after the last '/' in the main part
-        let last_slash = main
-            .rfind('/')
-            .ok_or_else(|| eyre!("Invalid database URL format: {}", base_url))?;
-        let (prefix, db_name) = main.split_at(last_slash + 1);
+        if let Some(idx) = query_pairs
+            .iter_mut()
+            .position(|(key, _)| Self::is_dbname_param(key))
+        {
+            let (_, value) = &mut query_pairs[idx];
+            if value.is_empty() {
+                return Err(eyre!(
+                    "dbname query parameter is empty in database URL: {base_url}"
+                ));
+            }
 
-        // Skip namespacing if already present
-        if db_name.strip_suffix(&format!("_{}", self.name)).is_some() {
+            if self.is_already_namespaced(value) {
+                debug!(
+                    "Database URL already namespaced for environment {} via dbname/database parameter",
+                    self.name
+                );
+                return Ok(base_url.to_string());
+            }
+
+            *value = self.database_name(value);
+            Self::rewrite_query(&mut url, &query_pairs);
+            return Ok(url.into());
+        }
+
+        let mut segments: Vec<String> = url
+            .path_segments()
+            .map(|segments| segments.map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+
+        if segments.is_empty() || segments.last().map_or(true, |s| s.is_empty()) {
+            return Err(eyre!(
+                "Database name missing from URL and no dbname query parameter provided: {}",
+                base_url
+            ));
+        }
+
+        if segments
+            .last()
+            .is_some_and(|segment| segment.ends_with(&format!("_{}", self.name)))
+        {
             debug!(
-                "Database URL already namespaced for environment {}",
+                "Database URL already namespaced for environment {} via path",
                 self.name
             );
             return Ok(base_url.to_string());
         }
 
-        let namespaced_db = self.database_name(db_name);
-        Ok(format!("{prefix}{namespaced_db}{query}"))
+        if let Some(last) = segments.last_mut() {
+            *last = self.database_name(last);
+        }
+
+        let mut new_path = String::new();
+        for segment in &segments {
+            new_path.push('/');
+            new_path.push_str(segment);
+        }
+        url.set_path(&new_path);
+
+        Ok(url.into())
+    }
+
+    fn is_dbname_param(key: &str) -> bool {
+        key.eq_ignore_ascii_case("dbname") || key.eq_ignore_ascii_case("database")
+    }
+
+    fn is_already_namespaced(&self, value: &str) -> bool {
+        value.ends_with(&format!("_{}", self.name))
+    }
+
+    fn rewrite_query(url: &mut Url, pairs: &[(String, String)]) {
+        if pairs.is_empty() {
+            url.set_query(None);
+            return;
+        }
+
+        let mut serializer = form_urlencoded::Serializer::new(String::new());
+        for (key, val) in pairs {
+            if val.is_empty() {
+                serializer.append_key_only(key);
+            } else {
+                serializer.append_pair(key, val);
+            }
+        }
+        url.set_query(Some(&serializer.finish()));
     }
 
     /// Get environment-namespaced NATS subject

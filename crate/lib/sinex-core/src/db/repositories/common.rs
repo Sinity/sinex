@@ -1,10 +1,10 @@
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{Pagination, TimeRange};
-use crate::Ulid;
+use crate::{DbTransaction, Ulid};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 /// Convert ULID to UUID for database storage
@@ -71,7 +71,7 @@ pub trait TransactionSupport {
     type Item;
 
     /// Execute the operation within a transaction
-    fn with_tx(self, tx: &mut Transaction<'_, Postgres>) -> Self::Item;
+    fn with_tx(self, tx: &mut DbTransaction<'_>) -> Self::Item;
 }
 
 // Re-export TableDef from schema crate
@@ -144,9 +144,7 @@ pub trait TransactionalRepository<'a>: Repository<'a> {
     /// Execute a closure within a transaction
     async fn with_transaction<F, R>(&self, f: F) -> DbResult<R>
     where
-        F: for<'t> FnOnce(
-                &'t mut Transaction<'_, Postgres>,
-            ) -> futures::future::BoxFuture<'t, DbResult<R>>
+        F: for<'t> FnOnce(&'t mut DbTransaction<'_>) -> futures::future::BoxFuture<'t, DbResult<R>>
             + Send,
         R: Send,
     {

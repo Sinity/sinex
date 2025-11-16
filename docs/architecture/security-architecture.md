@@ -1,4 +1,5 @@
 Status: canonical
+> **Purpose:** Canonical threat model + control-plane reference; pair with `docs/security.md` for current posture updates.
 # Security Architecture
 
 ## Overview
@@ -190,3 +191,4 @@ Note: Threat modeling is tracked in internal docs and tickets; consolidate into 
 - Original Vision Document security requirements
 
 For an up-to-date checklist of implemented controls and open gaps, see [Security & Privacy Posture](../security.md).
+- **Gateway RPC Authentication**: `sinex-gateway` refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. JSON-RPC clients must send `Authorization: Bearer <token>` (CLI adds this automatically when `--rpc-token`/`SINEX_RPC_TOKEN` is set). `SINEX_GATEWAY_ALLOW_INSECURE=1` remains a test-only escape hatch.

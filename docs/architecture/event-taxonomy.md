@@ -1,7 +1,6 @@
 Status: canonical
+> **Purpose:** Provide canonical event families, naming rules, and minimal payload keys so producers stay consistent (consolidated from the retired TARGET_final.md).
 # Event Taxonomy
-
-Purpose: provide canonical event families, naming, and minimal payload keys that all producers follow. This consolidates and stabilizes the taxonomy previously embedded in TARGET_final.md.
 
 Principles
 - Naming: `domain.category.action` (dot‑scoped). Keep domains stable and payloads minimal; add optional fields as needed.

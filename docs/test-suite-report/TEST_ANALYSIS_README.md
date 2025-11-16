@@ -114,7 +114,7 @@ Includes:
 - `#[sinex_test]` - Primary async test annotation with TestContext injection
 - `#[rstest]` - Parametrized tests (12 uses)
 - `#[traced_test]` - Log capture and validation
-- `proptest!` - Property-based testing (119 invocations)
+- `sinex_proptest!` / `#[sinex_prop]` - Property-based testing
 
 ### Assertion Patterns
 - `ctx.assert()` - Custom context-aware assertions

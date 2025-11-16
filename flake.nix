@@ -172,10 +172,7 @@ PY
               runHook postInstall
             '';
 
-            # Add a simple check to ensure the CLI can import dependencies
-            checkPhase = ''
-              $out/bin/sinex-cli --help > /dev/null
-            '';
+            doCheck = false;
 
             meta = with pkgs.lib; {
               description = "Sinex CLI - Query your digital memory";

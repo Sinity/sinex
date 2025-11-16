@@ -8,10 +8,9 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 
 **Decision:** Rust `derive(EventPayload)` definitions are the single source of truth. JSON files under `schemas/` exist as generated artifacts for GitOps distribution and downstream SDKs—never hand‑edit them.
 
-### Tasks
 - [x] Amend `schemas/README.md` with a “Source of Truth” section that states the rule above and explains how to regenerate artifacts.
 - [x] Create a CI job (or extend schema-validation) that runs `schema-dev.sh generate` and fails when committed JSON is stale (treat like `cargo fmt`).
-- [x] Teach contributors to commit regenerated JSON (README callouts + PR-template checkbox make this explicit; no merge bot planned).
+- [x] Teach contributors to commit regenerated JSON (README callouts + PR-template checkbox) and backstop with an automated `schema-auto-update` workflow that opens a PR when drift is detected on `main`.
 - [x] Keep `scripts/check-schema-compatibility.sh`, `schema-validation.yml`, and `gitops_schema_sources` pointing at the generated bundle. Document the flow from Rust → JSON → Postgres → downstream consumers.
 - [x] Document how non-Rust contributors propose schema changes (JSON PR as proposal, build fails until the matching Rust change lands).
 
@@ -64,12 +63,12 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Gateway RPC endpoints must require authentication when exposed beyond localhost; CLI already expects `SINEX_RPC_TOKEN`.
 
 ### Tasks
-- [ ] Implement token-based auth in `sinex-gateway` (Axum layer): reject unauthenticated JSON-RPC calls, allow binding to `127.0.0.1` without a token for dev shells.
-- [ ] Extend CLI (`cli/exo.py`) to send the token header automatically when `SINEX_RPC_TOKEN` or `--rpc-token` are set (already partially wired).
-- [ ] Add integration tests that exercise authenticated/unauthenticated flows.
-- [ ] Document the default security stance in `README.md` / gateway docs.
+- [x] Implement token-based auth in `sinex-gateway` (Axum layer): reject unauthenticated JSON-RPC calls, allow binding to `127.0.0.1` without a token for dev shells.
+- [x] Extend CLI (`cli/exo.py`) to send the token header automatically when `SINEX_RPC_TOKEN` or `--rpc-token` are set (already partially wired).
+- [x] Add integration tests that exercise authenticated/unauthenticated flows.
+- [x] Document the default security stance in `README.md` / gateway docs.
 
-**Exit criteria:** Gateway refuses unauthenticated requests unless explicitly configured; tests cover the path; docs state the requirement.
+**Exit criteria:** Gateway refuses unauthenticated requests unless explicitly configured; tests cover the path; docs state the requirement. ✅ Complete (defer follow-on work like rate-limit telemetry to the security hardening tracker).
 
 ---
 
@@ -105,17 +104,37 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Resolve the issues listed in `docs/ANALYSIS_INDEX.md` (sensd tense, broken links, missing status markers).
 
 ### Tasks
-- [ ] Fix tense/temporal markers in `project-target-state.md`.
-- [ ] Repair or remove references to deleted files (`docs/plan_v3.txt`, `docs/TARGET_final.md`, etc.).
-- [ ] Add current-phase indicators to `way.md` or replace with an explicit “Completed” note.
-- [ ] Add “Last Verified” stamps to canonical docs.
+- [x] Fix tense/temporal markers in `project-target-state.md`.
+- [x] Repair or remove references to deleted files (`docs/plan_v3.txt`, `docs/TARGET_final.md`, etc.).
+- [x] Add current-phase indicators to `way.md` or replace with an explicit “Completed” note.
+- [ ] Add “Last Verified” stamps to canonical docs (only after we have automated verification baked into the workflow).
 
 **Exit criteria:** `ANALYSIS_INDEX.md` items are checked off and the file reflects the updated status.
 
 ---
 
-## 9. ✅ Developer Environment & Tooling Baseline
+## TODO.md Alignment Snapshot (2025-11-13)
 
+Reference: `docs/TODO.md`
+
+- **System Satellite gaps (tasks 8, 42, 47):** Real D-Bus/journal/udev/systemd watchers must emit material-backed events with proper provenance and shut down cleanly. `system_processor_watchers.rs` currently fails because bootstrap ULIDs are still synthesized.
+- **Stage-as-You-Go cleanup (tasks 49, 51):** Satellite SDK still inserts directly into `raw.source_material_registry`/`raw.temporal_ledger`. Refactor `AcquisitionManager` to rely on JetStream-only flows so satellites can run without `DATABASE_URL`.
+- **Blob manager hardening (tasks 15, 16):** Re-enable annex corruption/path validation tests by restoring deterministic annex harness coverage.
+- **Replay planner (tasks 39, 40):** CLI helper must route through ingestd/JetStream instead of writing to `core.events` directly, and the NATS target remains unimplemented.
+- **Gateway blob endpoints (task 43):** RPC uploads still lack auth + quota enforcement; tests expect rejections once guards land.
+- **Terminal/Desktop watchers (tasks 44, 48):** Clipboard and terminal watchers continue to touch Postgres directly / tail files naively; both need to move to streaming ingestion helpers.
+
+Use this list when prioritizing the next batch of engineering work; update both `docs/TODO.md` and this section whenever the backlog changes materially.
+
+---
+
+## Change Control
+- Update this file whenever a section is completed or new work is added.
+- When a decision graduates from “plan” to “complete,” move details into the relevant canonical doc (e.g., `docs/way.md`, README, component guides) and trim this file accordingly.
+
+## Completed Initiatives (Reference)
+
+### Developer Environment & Tooling Baseline
 - `.env` is no longer tracked; developers copy from `.env.example`.
 - `.cargo/config.toml` now lets Cargo auto-detect parallelism and only adds the `--check-cfg` flag by default.
 - `.config/nextest.toml` uses `num-cpus` for the `ci-parallel` profile to avoid hardcoded thread counts.
@@ -124,22 +143,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 - Schema helper scripts now run directly in the current shell, skip global npm installs, add DB pre-flight checks, and the legacy `scripts/update_deps.sh` was removed.
 - The legacy `scripts/test-analytics.sh` helper was removed—run `cargo nextest` (and `cargo llvm-cov`) directly.
 
----
-
-## 10. Repository Hygiene & Narrative Alignment
-
-**Decision:** The repo must describe the current architecture (sinex-core owns DB, JetStream-only ingestion) and enforce that story across templates/docs.
-
-### Completed
+### Repository Hygiene & Narrative Alignment
 - `README.md` now documents the actual crate layout (core/lib/satellites) and calls out sinex-core as the home of database code.
 - `.github/pull_request_template.md` references the current abstractions (sinex-core repositories, `sqlx::query!`, shared validators) instead of legacy crates.
 - Remaining references to `crate/sinex-db` in docs/scripts were updated to point at `crate/lib/sinex-core` / `sinex-schema`.
 - Removed legacy scaffolding (abstractions workflow references, unused LLM/test analytics scripts) and refreshed `.github/workflows/README.md`.
-
-**Exit criteria:** New contributors see a single, accurate description of the stack; PR reviewers no longer rely on stale checklists; stray legacy files are either deleted or clearly labelled.
-
----
-
-## Change Control
-- Update this file whenever a section is completed or new work is added.
-- When a decision graduates from “plan” to “complete,” move details into the relevant canonical doc (e.g., `docs/way.md`, README, component guides) and trim this file accordingly.

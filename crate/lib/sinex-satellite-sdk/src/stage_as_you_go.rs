@@ -106,7 +106,7 @@ impl StageAsYouGoContext {
         match BlobManager::new(
             annex_config,
             db_pool.clone(),
-            (*event_emitter.sender()).clone(),
+            Some((*event_emitter.sender()).clone()),
         ) {
             Ok(manager) => {
                 info!("Stage-as-You-Go blob manager initialised");

@@ -32,14 +32,14 @@ pub use sinex_core::Blob as BlobMetadata;
 pub struct BlobManager {
     annex: GitAnnex,
     db_pool: DbPool,
-    event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
 }
 
 impl BlobManager {
     pub fn new(
         annex_config: AnnexConfig,
         db_pool: DbPool,
-        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+        event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     ) -> Result<Self> {
         let annex = GitAnnex::new(annex_config)?;
         Ok(BlobManager {
@@ -124,12 +124,19 @@ impl BlobManager {
         payload: T,
         blob: &Blob,
     ) -> Result<()> {
-        let material_id = self.ensure_material_for_blob(blob).await?;
-        let event = Self::create_blob_event(event_type, payload, material_id);
+        if let Some(sender) = &self.event_sender {
+            let material_id = self.ensure_material_for_blob(blob).await?;
+            let event = Self::create_blob_event(event_type, payload, material_id);
 
-        self.event_sender
-            .send(event)
-            .map_err(|_| eyre!("Failed to emit {event_type} event: event channel closed"))?;
+            sender
+                .send(event)
+                .map_err(|_| eyre!("Failed to emit {event_type} event: event channel closed"))?;
+        } else {
+            debug!(
+                "BlobManager event emission disabled; skipping {} notification",
+                event_type
+            );
+        }
         Ok(())
     }
 
@@ -582,9 +589,13 @@ impl BlobManager {
             material_id,
         );
 
-        self.event_sender
-            .send(new_event)
-            .map_err(|_| eyre!("Failed to emit blob storage statistics: event channel closed"))?;
+        if let Some(sender) = &self.event_sender {
+            sender.send(new_event).map_err(|_| {
+                eyre!("Failed to emit blob storage statistics: event channel closed")
+            })?;
+        } else {
+            debug!("BlobManager event emission disabled; skipping storage.statistics event");
+        }
 
         Ok(())
     }

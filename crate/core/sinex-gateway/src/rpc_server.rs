@@ -7,8 +7,12 @@ use crate::{
 
 // External crates
 use axum::{
-    error_handling::HandleErrorLayer, extract::State, http::StatusCode, response::IntoResponse,
-    routing::post, BoxError, Json, Router,
+    error_handling::HandleErrorLayer,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
+    BoxError, Json, Router,
 };
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{eyre, WrapErr};
@@ -28,11 +32,11 @@ use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 
 // Standard library
-use sinex_core::environment::environment;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use std::time::Duration;
+use std::{net::SocketAddr, str::FromStr};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/sinex-host.sock";
 
@@ -111,6 +115,147 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+#[derive(Clone)]
+struct GatewayAuth {
+    mode: GatewayAuthMode,
+}
+
+#[derive(Clone)]
+enum GatewayAuthMode {
+    Disabled,
+    StaticToken(String),
+}
+
+impl GatewayAuth {
+    fn from_env() -> color_eyre::eyre::Result<Self> {
+        match read_token_from_env()? {
+            Some(token) => {
+                if token.trim().is_empty() {
+                    Err(eyre!(
+                        "SINEX_RPC_TOKEN (or SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token"
+                    ))
+                } else {
+                    Ok(Self {
+                        mode: GatewayAuthMode::StaticToken(token),
+                    })
+                }
+            }
+            None => {
+                if insecure_auth_allowed() {
+                    warn!("SINEX_GATEWAY_ALLOW_INSECURE=1 detected - RPC authentication disabled (dev/test only).");
+                    Ok(Self {
+                        mode: GatewayAuthMode::Disabled,
+                    })
+                } else {
+                    Err(eyre!(
+                        "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
+                    ))
+                }
+            }
+        }
+    }
+
+    fn verify(&self, headers: &HeaderMap) -> Result<(), AuthError> {
+        match &self.mode {
+            GatewayAuthMode::Disabled => Ok(()),
+            GatewayAuthMode::StaticToken(expected) => {
+                let provided = extract_token(headers).ok_or(AuthError::Missing)?;
+                if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                    Ok(())
+                } else {
+                    Err(AuthError::Invalid)
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn disabled_for_tests() -> Self {
+        Self {
+            mode: GatewayAuthMode::Disabled,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_test_token(token: &str) -> Self {
+        Self {
+            mode: GatewayAuthMode::StaticToken(token.to_string()),
+        }
+    }
+}
+
+fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+    if let Ok(path) = std::env::var("SINEX_RPC_TOKEN_FILE") {
+        let contents =
+            std::fs::read_to_string(path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
+        return Ok(Some(contents.trim().to_string()));
+    }
+
+    if let Ok(token) = std::env::var("SINEX_RPC_TOKEN") {
+        return Ok(Some(token.trim().to_string()));
+    }
+
+    Ok(None)
+}
+
+fn insecure_auth_allowed() -> bool {
+    matches!(
+        std::env::var("SINEX_GATEWAY_ALLOW_INSECURE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    )
+}
+
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(as_str) = value.to_str() {
+            let trimmed = as_str.trim();
+            if let Some(rest) = trimmed.strip_prefix("Bearer ") {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+
+    headers
+        .get("x-sinex-rpc-token")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.trim().to_string())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+enum AuthError {
+    Missing,
+    Invalid,
+}
+
+impl AuthError {
+    fn into_response(self) -> (StatusCode, Json<JsonRpcResponse>) {
+        let message = match self {
+            AuthError::Missing => {
+                "Authentication required. Provide SINEX_RPC_TOKEN via Authorization header."
+            }
+            AuthError::Invalid => "Authentication failed: invalid token.",
+        };
+
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(JsonRpcResponse::error(None, -32002, message.to_string())),
+        )
+    }
+}
+
 impl JsonRpcResponse {
     fn success(id: Option<Value>, result: Value) -> Self {
         Self {
@@ -139,6 +284,7 @@ impl JsonRpcResponse {
 #[derive(Clone)]
 struct AppState {
     services: ServiceContainer,
+    auth: GatewayAuth,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
@@ -222,8 +368,13 @@ fn replay_control_client<'a>(
 /// Main RPC handler using dispatch table
 async fn handle_rpc(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
-) -> Json<JsonRpcResponse> {
+) -> impl IntoResponse {
+    if let Err(err) = state.auth.verify(&headers) {
+        return err.into_response();
+    }
+
     debug!(
         "Received RPC request: method={}, params={:?}",
         request.method, request.params
@@ -237,20 +388,18 @@ async fn handle_rpc(
 
     // Telemetry disabled in this build; keep handler lightweight
 
-    match result {
-        Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
+    let response = match result {
+        Ok(value) => JsonRpcResponse::success(request.id, value),
         Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
-            Json(JsonRpcResponse::error(request.id, -32601, err.to_string()))
+            JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
         Err(err) => {
             error!("RPC method {} failed: {}", method, err);
-            Json(JsonRpcResponse::error(
-                request.id,
-                -32603,
-                format!("Internal error: {}", err),
-            ))
+            JsonRpcResponse::error(request.id, -32603, format!("Internal error: {}", err))
         }
-    }
+    };
+
+    (StatusCode::OK, Json(response))
 }
 
 /// Server bind address configuration
@@ -262,26 +411,52 @@ enum BindAddress {
 
 impl BindAddress {
     /// Create bind address from environment variables or defaults
-    fn from_env_or_socket_path(socket_path: Utf8PathBuf) -> Self {
-        // Check for explicit TCP configuration
+    fn from_env_or_socket_path(
+        socket_path: Utf8PathBuf,
+        cli_tcp: Option<&str>,
+    ) -> color_eyre::eyre::Result<Self> {
+        if let Some(spec) = cli_tcp {
+            let (host, port) = parse_tcp_listen(spec)?;
+            return Ok(BindAddress::Tcp { host, port });
+        }
+
+        if let Ok(spec) = std::env::var("SINEX_GATEWAY_TCP_LISTEN") {
+            let (host, port) = parse_tcp_listen(&spec)?;
+            return Ok(BindAddress::Tcp { host, port });
+        }
+
         if let Ok(host) = std::env::var("SINEX_GATEWAY_HOST") {
             let port = std::env::var("SINEX_GATEWAY_PORT")
-                .and_then(|p| p.parse().map_err(|_| std::env::VarError::NotPresent))
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok())
                 .unwrap_or(9999);
-            return BindAddress::Tcp { host, port };
+            return Ok(BindAddress::Tcp { host, port });
         }
 
-        let env = environment();
-        if env.is_dev() && socket_path.as_str() == DEFAULT_SOCKET_PATH {
-            return BindAddress::Tcp {
-                host: "127.0.0.1".to_string(),
-                port: 9999,
-            };
-        }
-
-        // Default to Unix socket otherwise
-        BindAddress::UnixSocket { path: socket_path }
+        Ok(BindAddress::UnixSocket { path: socket_path })
     }
+}
+
+fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
+    if let Ok(addr) = SocketAddr::from_str(spec) {
+        return Ok((addr.ip().to_string(), addr.port()));
+    }
+
+    if let Some(idx) = spec.rfind(':') {
+        let (host_part, port_part) = spec.split_at(idx);
+        let port = port_part[1..]
+            .parse::<u16>()
+            .map_err(|_| eyre!("Invalid TCP port in {spec}"))?;
+        let host = host_part.trim_matches(|c| c == '[' || c == ']').trim();
+        if host.is_empty() {
+            return Err(eyre!("TCP host is empty in {spec}"));
+        }
+        return Ok((host.to_string(), port));
+    }
+
+    Err(eyre!(
+        "Invalid TCP listen specification '{spec}'. Expected host:port."
+    ))
 }
 
 fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
@@ -328,12 +503,25 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::post, Json, Router};
+    use axum::{
+        http::{HeaderMap, HeaderValue},
+        routing::post,
+        Json, Router,
+    };
     use reqwest::Client;
     use serde_json::json;
     use sinex_test_utils::sinex_test;
     use std::net::SocketAddr;
+    use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
+    static ENV_LOCK: once_cell::sync::Lazy<Mutex<()>> =
+        once_cell::sync::Lazy::new(|| Mutex::new(()));
+
+    fn clear_tcp_env() {
+        std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");
+        std::env::remove_var("SINEX_GATEWAY_HOST");
+        std::env::remove_var("SINEX_GATEWAY_PORT");
+    }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
         let base = Router::new().route(
@@ -469,10 +657,10 @@ mod tests {
 
     #[sinex_test]
     async fn tcp_binding_requires_opt_in() -> color_eyre::eyre::Result<()> {
-        std::env::remove_var("SINEX_GATEWAY_HOST");
-        std::env::remove_var("SINEX_GATEWAY_PORT");
-
-        let addr = BindAddress::from_env_or_socket_path(Utf8PathBuf::from(DEFAULT_SOCKET_PATH));
+        let _guard = ENV_LOCK.lock().await;
+        clear_tcp_env();
+        let addr =
+            BindAddress::from_env_or_socket_path(Utf8PathBuf::from(DEFAULT_SOCKET_PATH), None)?;
 
         assert!(
             matches!(addr, BindAddress::UnixSocket { .. }),
@@ -481,17 +669,106 @@ mod tests {
 
         Ok(())
     }
+
+    #[sinex_test]
+    async fn tcp_binding_env_opt_in_respected() -> color_eyre::eyre::Result<()> {
+        let _guard = ENV_LOCK.lock().await;
+        clear_tcp_env();
+        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+
+        let addr =
+            BindAddress::from_env_or_socket_path(Utf8PathBuf::from(DEFAULT_SOCKET_PATH), None)?;
+
+        match addr {
+            BindAddress::Tcp { host, port } => {
+                assert_eq!(&host, "127.0.0.1");
+                assert_eq!(port, 7777);
+            }
+            _ => panic!("expected TCP bind"),
+        }
+
+        clear_tcp_env();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn tcp_binding_cli_override_wins() -> color_eyre::eyre::Result<()> {
+        let _guard = ENV_LOCK.lock().await;
+        clear_tcp_env();
+        std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
+
+        let addr = BindAddress::from_env_or_socket_path(
+            Utf8PathBuf::from(DEFAULT_SOCKET_PATH),
+            Some("127.0.0.1:8888"),
+        )?;
+
+        match addr {
+            BindAddress::Tcp { host, port } => {
+                assert_eq!(&host, "127.0.0.1");
+                assert_eq!(port, 8888);
+            }
+            _ => panic!("expected TCP bind"),
+        }
+
+        clear_tcp_env();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn tcp_binding_invalid_cli_spec_rejected() -> color_eyre::eyre::Result<()> {
+        let _guard = ENV_LOCK.lock().await;
+        clear_tcp_env();
+
+        let result = BindAddress::from_env_or_socket_path(
+            Utf8PathBuf::from(DEFAULT_SOCKET_PATH),
+            Some("not-a-valid-spec"),
+        );
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn gateway_auth_blocks_missing_token() -> color_eyre::eyre::Result<()> {
+        let auth = GatewayAuth::with_test_token("secret");
+        let headers = HeaderMap::new();
+        assert!(matches!(auth.verify(&headers), Err(AuthError::Missing)));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn gateway_auth_accepts_bearer_header() -> color_eyre::eyre::Result<()> {
+        let auth = GatewayAuth::with_test_token("secret");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(auth.verify(&headers).is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn gateway_auth_accepts_custom_header() -> color_eyre::eyre::Result<()> {
+        let auth = GatewayAuth::with_test_token("secret");
+        let mut headers = HeaderMap::new();
+        headers.insert("x-sinex-rpc-token", HeaderValue::from_static("secret"));
+        assert!(auth.verify(&headers).is_ok());
+        Ok(())
+    }
 }
 
 /// Run the RPC server with configurable binding
 pub async fn run(
     socket_path: sinex_core::SanitizedPath,
+    tcp_listen: Option<&str>,
     services: ServiceContainer,
 ) -> color_eyre::eyre::Result<()> {
     let bind_address =
-        BindAddress::from_env_or_socket_path(Utf8PathBuf::from(socket_path.as_str()));
+        BindAddress::from_env_or_socket_path(Utf8PathBuf::from(socket_path.as_str()), tcp_listen)?;
 
-    let state = AppState { services };
+    let auth = GatewayAuth::from_env()?;
+    let state = AppState { services, auth };
 
     let limits = RpcServerLimits::from_env();
 

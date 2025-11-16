@@ -54,6 +54,10 @@ in
     ../../../../nixos  # Import Sinex NixOS module
   ];
 
+  # Secrets/agenix integration is not needed for VM smoke tests and can
+  # introduce evaluation errors when the age module is absent. Disable it here.
+  disabledModules = [ ../../../../nixos/modules/secrets.nix ];
+
   # Basic Sinex configuration
   services.sinex = sinexConfigBase
     // lib.optionalAttrs (sinexCliPackage != null) {

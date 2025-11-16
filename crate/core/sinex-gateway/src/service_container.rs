@@ -12,8 +12,7 @@ use sinex_core::{
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
-use tracing::{debug, warn};
-// (no mpsc channel needed here)
+use tracing::warn;
 
 /// Container holding all service instances
 #[derive(Clone)]
@@ -58,36 +57,22 @@ impl ServiceContainer {
                 .with_source(e.to_string())
         })?;
 
-        // Create event channel for BlobManager
-        let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(event) = event_receiver.recv().await {
-                // In lieu of a dedicated processing pipeline, drain events to avoid backpressure.
-                debug!(?event, "Blob manager emitted event");
-            }
-        });
-
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, pool.clone(), event_sender).map_err(|e| {
-                SinexError::service("Failed to create blob manager").with_source(e.to_string())
-            })?,
-        );
+        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone(), None).map_err(
+            |e| SinexError::service("Failed to create blob manager").with_source(e.to_string()),
+        )?);
 
         // Initialize all services
         let replay = Arc::new(ReplayStateMachine::new(pool.clone()));
 
-        let control_client = match spawn_replay_control(
-            replay.clone(),
-            &std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into()),
-        )
-        .await
-        {
+        let nats_url =
+            std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
+
+        let control_client = match spawn_replay_control(replay.clone(), &nats_url).await {
             Ok(client) => Some(client),
             Err(err) => {
                 warn!(error = %err, "Replay control bus disabled (NATS connection failed)");

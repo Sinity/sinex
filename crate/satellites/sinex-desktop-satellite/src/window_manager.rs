@@ -10,12 +10,18 @@ use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
+use tokio_retry::strategy::{jitter, ExponentialBackoff};
 
 /// Supported window manager types
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,
 }
+
+const HYPRLAND_INITIAL_BACKOFF_MS: u64 = 500;
+const HYPRLAND_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
 
 impl fmt::Display for WindowManagerType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -274,6 +280,27 @@ impl WindowManagerWatcher {
         })
     }
 
+    fn hyprland_backoff() -> BackoffStrategy {
+        #[cfg(test)]
+        {
+            Box::new(Self::base_backoff_strategy())
+        }
+        #[cfg(not(test))]
+        {
+            Box::new(Self::base_backoff_strategy().map(jitter))
+        }
+    }
+
+    fn base_backoff_strategy() -> ExponentialBackoff {
+        ExponentialBackoff::from_millis(HYPRLAND_INITIAL_BACKOFF_MS)
+            .factor(2)
+            .max_delay(HYPRLAND_MAX_BACKOFF)
+    }
+
+    fn next_backoff(backoff: &mut BackoffStrategy) -> Duration {
+        backoff.next().unwrap_or(HYPRLAND_MAX_BACKOFF)
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(&mut self, line: &str) -> SatelliteResult<()> {
         if line.is_empty() {
@@ -479,12 +506,14 @@ impl WindowManagerWatcher {
     /// Stream Hyprland events with exponential backoff reconnection
     async fn stream_hyprland_events(&mut self) -> SatelliteResult<()> {
         let mut consecutive_failures = 0;
+        let mut reconnect_backoff = Self::hyprland_backoff();
 
         loop {
             match self.connect_to_hyprland_events().await {
                 Ok(stream) => {
                     info!("Connected to Hyprland event stream");
                     consecutive_failures = 0; // Reset on successful connection
+                    reconnect_backoff = Self::hyprland_backoff();
 
                     let reader = BufReader::new(stream);
                     let mut lines = reader.lines();
@@ -526,17 +555,7 @@ impl WindowManagerWatcher {
                         consecutive_failures, e
                     );
 
-                    // Use exponential backoff with jitter, max 60 seconds
-                    let base_delay = Duration::from_secs(1);
-                    let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
-                    // Add simple jitter using timestamp-based pseudo-random
-                    let jitter = (std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                        % 1000) as u64;
-                    let jittered_delay = delay + Duration::from_millis(jitter);
-
+                    let jittered_delay = Self::next_backoff(&mut reconnect_backoff);
                     warn!("Reconnecting to Hyprland in {:?}...", jittered_delay);
                     sleep(jittered_delay).await;
                     continue;
@@ -545,17 +564,7 @@ impl WindowManagerWatcher {
 
             consecutive_failures += 1;
 
-            // Use exponential backoff for reconnection after connection loss
-            let base_delay = Duration::from_secs(1);
-            let delay = base_delay * 2u32.pow(consecutive_failures.min(6));
-            // Add simple jitter using timestamp-based pseudo-random
-            let jitter = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-                % 1000) as u64;
-            let jittered_delay = delay + Duration::from_millis(jitter);
-
+            let jittered_delay = Self::next_backoff(&mut reconnect_backoff);
             warn!(
                 "Hyprland connection lost, reconnecting in {:?}...",
                 jittered_delay
@@ -585,5 +594,54 @@ impl WindowManagerWatcher {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn hyprland_backoff_grows_until_cap() {
+        let mut backoff = WindowManagerWatcher::hyprland_backoff();
+        let mut last_delay = Duration::from_millis(0);
+
+        for _ in 0..10 {
+            let next = WindowManagerWatcher::next_backoff(&mut backoff);
+            assert!(
+                next >= last_delay,
+                "backoff sequence should be monotonically increasing"
+            );
+            last_delay = next;
+        }
+
+        assert_eq!(
+            last_delay, HYPRLAND_MAX_BACKOFF,
+            "backoff should saturate at the configured maximum"
+        );
+    }
+
+    #[test]
+    fn hyprland_backoff_resets_after_success() {
+        let mut backoff = WindowManagerWatcher::hyprland_backoff();
+        let first = WindowManagerWatcher::next_backoff(&mut backoff);
+        assert_eq!(
+            first,
+            Duration::from_millis(HYPRLAND_INITIAL_BACKOFF_MS),
+            "first delay should match the initial backoff"
+        );
+
+        for _ in 0..5 {
+            WindowManagerWatcher::next_backoff(&mut backoff);
+        }
+
+        let mut reset = WindowManagerWatcher::hyprland_backoff();
+        let reset_first = WindowManagerWatcher::next_backoff(&mut reset);
+        assert_eq!(
+            reset_first,
+            Duration::from_millis(HYPRLAND_INITIAL_BACKOFF_MS),
+            "resetting the backoff should restart the sequence"
+        );
     }
 }

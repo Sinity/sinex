@@ -362,8 +362,8 @@ ctx.create_test_event(source, event_type, json!(payload)).await?
 - **Concurrency**: Supports 64 parallel tests
 - **Performance**: <10ms overhead per test
 
-### Proptest Coverage
-- **119 proptest! invocations** across codebase
+### Property-Based Coverage
+- **All suites use `sinex_proptest!` or `#[sinex_prop]`**
 - **1000+ cases per property test**
 - Strategies cover: strings, numbers, paths, events, checkpoints
 - Regression tracking via proptest-regressions files

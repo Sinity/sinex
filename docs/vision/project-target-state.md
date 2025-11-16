@@ -1,6 +1,8 @@
 > **Status:** Target architecture specification (aligned with `docs/way.md`)
-> **Last Updated:** 2025-02-21
+> **Last Updated:** 2025-11-13
 > This document describes the end-state architecture after the JetStream migration (way.md Phases 1–5) completes.
+> **Purpose:** System-level target state reference (use it to evaluate future proposals; implementation details live in component docs).
+> **Historical context:** Older sections mention sensd/gRPC pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/way.md` for the live JetStream implementation.
 
 Invariants Quick Reference (one-page)
 
@@ -15,7 +17,7 @@ Invariants Quick Reference (one-page)
 - Rebuild via replay: derived structures (KG, tags, search indexes) are projections rebuildable by replay; events remain the source of truth.
 - Namespacing: `SINEX_ENVIRONMENT` scopes DB/schema names, JetStream streams, sockets, and paths.
 
-> **Cross-reference (2025-07-24)**
+> **Cross-reference (2025-11-13)**
 > Interface-level implementation notes for the gateway and CLI now live in `crate/core/sinex-gateway/doc/overview.md` and `docs/architecture/UserInteraction_And_Query_Architecture.md`. Treat this document as the system-level target state.
 
 Contents

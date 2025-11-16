@@ -8,6 +8,7 @@ default = []
 bench = ["dep:divan", "dep:hostname", "dep:num_cpus", "dep:sysinfo"]
 slow-tests = []
 rstest-preview = []
+internal-tests = []
 
 [dependencies]
 camino = { workspace = true }

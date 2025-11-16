@@ -1,4 +1,5 @@
 # Sinex Vision & Principles
+> **Purpose:** Capture the long-term philosophical north star and design principles; pair with `docs/way.md` for execution details.
 
 *Last updated: 2025-10-23*
 

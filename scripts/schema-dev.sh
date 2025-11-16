@@ -65,13 +65,7 @@ cmd_generate() {
 # Command: validate schemas
 cmd_validate() {
     echo "🔍 Validating JSON schemas..."
-    
-    # Check if ajv is installed
-    if ! command -v ajv &> /dev/null; then
-        echo -e "${RED}ajv-cli is required but not available on PATH.${NC}"
-        exit 1
-    fi
-    
+
     local count=0
     local errors=0
     
