@@ -6,7 +6,7 @@
 //! removed sensd pipeline.
 
 use async_trait::async_trait;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use mime_guess::MimeGuess;
@@ -24,9 +24,11 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
-use tokio::{fs, sync::mpsc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
+use tokio::{fs, io::AsyncReadExt, sync::mpsc};
 use tracing::{error, info, warn};
+
+const ENCODING_SNIFF_BYTES: usize = 4096;
 
 /// Configuration for the document ingestor.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,9 +109,10 @@ impl DocumentProcessor {
         };
 
         let blob_manager = Arc::new(
-            BlobManager::new(annex_config, runtime.db_pool().clone(), blob_event_tx).map_err(
-                |e| SatelliteError::General(eyre!("Failed to create blob manager: {}", e)),
-            )?,
+            BlobManager::new(annex_config, runtime.db_pool().clone(), Some(blob_event_tx))
+                .map_err(|e| {
+                    SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
+                })?,
         );
 
         let event_sender = runtime.event_sender();
@@ -132,9 +135,10 @@ impl DocumentProcessor {
             return Err(eyre!("Document path is not a file: {}", target));
         }
 
-        if metadata.len() > self.config.max_document_size {
+        let file_size = metadata.len();
+        if file_size > self.config.max_document_size {
             warn!(
-                size = metadata.len(),
+                size = file_size,
                 limit = self.config.max_document_size,
                 path = %utf8_path,
                 "Skipping document larger than configured limit"
@@ -171,9 +175,15 @@ impl DocumentProcessor {
             }
         }
 
-        let document_data = fs::read(Path::new(utf8_path.as_std_path())).await?;
         let material_id = Ulid::new();
-        self.process_complete_document(material_id, document_data, metadata_json)
+        let encoding = self
+            .detect_encoding(&utf8_path, &mime)
+            .await
+            .unwrap_or_else(|err| {
+                warn!(error = %err, path = %utf8_path, "Failed to detect encoding; defaulting to binary");
+                Some("binary".to_string())
+            });
+        self.process_complete_document(material_id, file_size, encoding, metadata_json)
             .await
     }
 
@@ -198,7 +208,8 @@ impl DocumentProcessor {
     async fn process_complete_document(
         &self,
         material_id: Ulid,
-        document_data: Vec<u8>,
+        size_bytes: u64,
+        encoding: Option<String>,
         metadata: serde_json::Value,
     ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
@@ -213,36 +224,13 @@ impl DocumentProcessor {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let encoding = if let Some(ref mime) = mime_type {
-            if mime.starts_with("text/") {
-                match std::str::from_utf8(&document_data) {
-                    Ok(_) => Some("utf-8".to_string()),
-                    Err(_) => Some("binary".to_string()),
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if document_data.len() as u64 > self.config.max_document_size {
-            warn!(
-                "Document exceeds size limit: {} bytes > {} bytes for file: {}",
-                document_data.len(),
-                self.config.max_document_size,
-                file_path
-            );
-            return Ok(events);
-        }
-
         let event = Event::<JsonValue>::dynamic(
             sinex_core::types::domain::EventSource::from("document_ingestor"),
             sinex_core::types::domain::EventType::from("document.ingested"),
             serde_json::json!({
                 "file_path": file_path,
                 "source_material_id": material_id.to_string(),
-                "size_bytes": document_data.len() as u64,
+                "size_bytes": size_bytes,
                 "mime_type": mime_type,
                 "encoding": encoding,
                 "metadata": metadata,
@@ -252,12 +240,42 @@ impl DocumentProcessor {
             sinex_core::types::Id::from(material_id),
             0,
             Some(0),
-            Some(document_data.len() as i64),
+            Some(size_bytes as i64),
         ))
         .build();
 
         events.push(event);
         Ok(events)
+    }
+
+    async fn detect_encoding(
+        &self,
+        path: &Utf8Path,
+        mime_type: &str,
+    ) -> std::result::Result<Option<String>, std::io::Error> {
+        if !mime_type.starts_with("text/") {
+            return Ok(None);
+        }
+
+        let mut file = fs::File::open(path).await?;
+        let file_size = file.metadata().await?.len() as usize;
+        let mut buf = vec![0u8; ENCODING_SNIFF_BYTES.min(file_size)];
+        let mut total = 0usize;
+
+        while total < buf.len() {
+            let read = file.read(&mut buf[total..]).await?;
+            if read == 0 {
+                break;
+            }
+            total += read;
+        }
+        buf.truncate(total);
+
+        if buf.is_empty() || std::str::from_utf8(&buf).is_ok() {
+            Ok(Some("utf-8".to_string()))
+        } else {
+            Ok(Some("binary".to_string()))
+        }
     }
 }
 

@@ -3,13 +3,23 @@
 //! Analytics service entry points for dashboards and reporting.
 
 use crate::error::Result as ServiceResult;
+use once_cell::sync::OnceCell;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-/// Unix epoch start time as a constant
-const EPOCH_START: DateTime<Utc> = DateTime::from_timestamp(0, 0).unwrap();
+/// Unix epoch start time cached at runtime
+static EPOCH_START: OnceCell<DateTime<Utc>> = OnceCell::new();
+
+fn epoch_start() -> DateTime<Utc> {
+    EPOCH_START
+        .get_or_init(|| {
+            DateTime::from_timestamp(0, 0)
+                .expect("Unix epoch (0) should be a valid DateTime for chrono::Utc")
+        })
+        .clone()
+}
 
 pub struct AnalyticsService {
     pool: DbPool,
@@ -44,7 +54,7 @@ impl AnalyticsService {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let start = start_time.unwrap_or(EPOCH_START);
+        let start = start_time.unwrap_or_else(epoch_start);
         let rows = self.pool.events().get_source_activity(start, None).await?;
 
         // Apply client-side end time filtering

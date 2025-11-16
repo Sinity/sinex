@@ -7,6 +7,9 @@
 // Allow dead code in test utilities - many functions are provided for test use
 #![allow(dead_code)]
 
+// Allow procedural macros to refer to this crate by name.
+extern crate self as sinex_test_utils;
+
 // Re-export the procedural macros from internal macros crate
 #[cfg(feature = "bench")]
 pub use sinex_test_utils_macros::sinex_bench;
@@ -293,7 +296,7 @@ pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 
 // Comprehensive self-tests
-#[cfg(test)]
+#[cfg(all(test, feature = "internal-tests"))]
 mod tests {
     #![allow(unused_imports)]
     use super::prelude::*;

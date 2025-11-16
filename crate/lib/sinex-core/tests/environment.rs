@@ -52,6 +52,58 @@ async fn database_urls_are_namespaced_once() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
+async fn database_urls_dbname_query_support() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+
+    let base_url = "postgresql:///?host=/run/postgresql&dbname=sinex";
+    let namespaced = env.database_url(base_url)?;
+    assert_eq!(
+        namespaced,
+        "postgresql:///?host=/run/postgresql&dbname=sinex_dev"
+    );
+
+    // Should not double-namespace
+    let unchanged = env.database_url(&namespaced)?;
+    assert_eq!(unchanged, namespaced);
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_urls_dbname_case_insensitive() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("staging").unwrap();
+    let base_url = "postgresql:///?DBNAME=sinex&host=/run/postgresql";
+    let namespaced = env.database_url(base_url)?;
+    assert_eq!(
+        namespaced,
+        "postgresql:///?DBNAME=sinex_staging&host=/run/postgresql"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_urls_database_param_supported() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("prod").unwrap();
+    let base_url = "postgresql:///?host=/run/postgresql&database=sinex";
+    let namespaced = env.database_url(base_url)?;
+    assert_eq!(
+        namespaced,
+        "postgresql:///?host=/run/postgresql&database=sinex_prod"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn database_urls_reject_empty_dbname() -> color_eyre::eyre::Result<()> {
+    let env = SinexEnvironment::new("dev").unwrap();
+    let result = env.database_url("postgresql:///?dbname=&host=/run/postgresql");
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("dbname query parameter is empty"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn nats_subjects_are_namespaced_once() -> color_eyre::eyre::Result<()> {
     let env = SinexEnvironment::new("dev").unwrap();
 

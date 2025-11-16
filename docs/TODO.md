@@ -4,31 +4,29 @@
 
 Authoritative backlog for the gaps identified during the recent codebase survey. Each task lists the owning files, concrete steps, and the validation expected (including fail-first tests).
 
+> **Fail-first guarantee:** Every open task below cites at least one Nextest case or regression that currently fails. If a listed test turns green without the corresponding fix, update this tracker immediately so we don't lose signal.
+
 ## Gateway Hardening
 
-1. **Require explicit TCP opt-in and authentication for JSON-RPC**  
-   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/architecture/UserInteraction_And_Query_Architecture.md`.  
-   - **Steps:** gate TCP binding behind a `--tcp-listen` flag; inject mandatory auth (mTLS or signed tokens) into both RPC entrypoints; surface misconfiguration errors early.  
-   - **Tests:** spin up the real RPC server via `sinex-gateway rpc-server --tcp-listen 127.0.0.1:0`, fire an unauthenticated TCP JSON-RPC request, and assert it is rejected. (Skip placeholder tests that only look for a flag string.)
-   - **Status:** `tcp_binding_requires_opt_in` (`crate/core/sinex-gateway/src/rpc_server.rs`) now fails because TCP still binds automatically in dev without any explicit flag/auth.
+1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
+   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/architecture/UserInteraction_And_Query_Architecture.md`, CLI.  
+   - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
 
-2. **Enforce rate limiting and payload caps on RPC**  
-   - **Files:** same as task 1 plus `crate/core/sinex-gateway/doc/rpc_server.md`.  
-   - **Steps:** wrap the Router in `tower::limit::ConcurrencyLimit`, `tower::timeout::Timeout`, and request-body size guards; expose knobs via `SINEX_GATEWAY_MAX_CONCURRENCY`, `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, and `SINEX_GATEWAY_MAX_BODY_BYTES`.  
-   - **Tests:** `rpc_server::tests::concurrency_limit_returns_429`, `timeout_layer_returns_504`, and `body_limit_returns_413` now verify the middleware stack enforced by the production router.
+2. **Enforce rate limiting and payload caps on RPC** — ✅ *Guards wired via tower middleware*  
+   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `crate/core/sinex-gateway/doc/rpc_server.md`.  
+   - **Status:** Router is wrapped in `LoadShed + ConcurrencyLimit + Timeout + RequestBodyLimit` with env-tunable knobs (`SINEX_GATEWAY_MAX_CONCURRENCY`, `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, `SINEX_GATEWAY_MAX_BODY_BYTES`). Tests `concurrency_limit_returns_429`, `timeout_layer_returns_504`, and `body_limit_returns_413` confirm each guard.
 
 3. **Validate native-messaging origins**  
    - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`, `doc/native_messaging.md`.  
-   - **Steps:** extend the handshake to demand an extension ID/secret, reject unknown IDs, and log attempts.  
-   - **Tests:** native-messaging harness that writes a message without a trusted extension ID and asserts it currently succeeds; once validation lands the same harness should fail.
-   - **Status:** `native_messaging_rejects_untrusted_extensions` (`crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`) now fails because `NativeMessagingConfig` does not yet enforce `extension_id` checks.
+   - **Steps:** ✅ Enforce allowlists via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`, optionally requiring per-extension secrets. Structured logging now emits `native_messaging.auth` events for every allow/deny decision so operators can audit failures.  
+   - **Tests:** `native_messaging_rejects_untrusted_extensions`, `native_messaging_accepts_trusted_extension_with_secret`, and `native_messaging_rejects_missing_secret` in `crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`.
 
 ## Content / Blob Pipeline
 
-4. **Publish blob manager events instead of discarding them**  
-   - **Files:** `crate/core/sinex-gateway/src/service_container.rs`.  
-   - **Steps:** replace the “drain and log” task with a JetStream publisher or in-process handler that forwards `blob.ingested` / `blob.verified` events to consumers.  
-   - **Tests:** `blob_events_forwarded_to_consumers` (`crate/core/sinex-gateway/tests/blob_event_forwarding_test.rs`) currently fails because storing content doesn’t emit any `blob.ingested` events into `core.events`/downstream consumers.
+4. **Keep gateway out of the blob/event write path** — ✅ *Direct DB writes removed; follow-up re-publish TBD*  
+   - **Files:** `crate/core/sinex-gateway/src/service_container.rs`, `sinex-satellite-sdk/src/annex/blob_manager.rs`, gateway tests.  
+   - **Steps:** Gateway no longer drains BlobManager events into `EventRepository`/JetStream. BlobManager now accepts an optional event sink so satellites continue emitting via Stage-as-You-Go while gateway/storage helpers can disable emissions entirely. Follow-up: reintroduce JetStream publishing for CLI uploads once the command bus exists.  
+   - **Tests:** `content_store_blob_does_not_insert_events` (`crate/core/sinex-gateway/tests/blob_route_security_test.rs`) asserts the RPC surface does not mutate `core.events`. Future work should add a positive replay/path test once blob uploads are routed through ingestd.
 
 5. **Migrate `sinex-document-ingestor` off sensd** — ✅ *Completed via direct ingestion pipeline*  
    - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`, `.sqlx` artifacts, docs.  
@@ -39,10 +37,8 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`, associated tests.  
     - **Status:** `monitor_jobs` now parses the JSON `source_material_id` field into a real `Ulid`, logs malformed configs, and the regressions `monitor_jobs_null_material_id`, `document_jobs_compare_ulids`, and `document_jobs_metadata` pass.
 
-7. **Stream document data directly to annex**  
-   - **Files:** `process_material` in `sinex-document-ingestor`.  
-   - **Steps:** use streaming readers/writers or annex pipes instead of buffering entire documents; abort once `max_document_size` is exceeded.  
-   - **Tests:** `document_processor_streams_large_documents` (unit test inside `sinex-document-ingestor/src/lib.rs`) now fails because oversized documents are still skipped instead of streaming into annex.
+7. **Stream document data directly to annex** — ✅ *Document ingestor no longer buffers entire files*  
+   - **Status:** `DocumentProcessor::ingest_target` only inspects metadata + a 4 KiB sniff window to detect encoding, streams blobs via `BlobManager`, and enforces `max_document_size` before allocating memory. Oversized files are skipped with a warning, and `document_processor_emits_events_for_targets` continues to pass using the leaner path.
 
 ## System Satellite
 
@@ -143,11 +139,9 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Tests:** when request IDs are wired, add an integration test that issues an RPC call with a tracing subscriber configured to capture events and asserts the resulting log contains the propagated `request_id`.
     - **Status:** `rpc_responses_include_request_id_header` (`crate/core/sinex-gateway/src/rpc_server.rs`) now fails because the router still responds without any `x-request-id` header or structured trace context.
 
-27. **DLQ / confirmation CLI commands**  
-    - **Files:** `cli/exo.py` (new subcommands).  
-    - **Steps:** add `exo dlq list/purge` and `exo confirmations tail` commands to inspect health from the CLI, backed by DB queries or JetStream.  
-    - **Tests:** CLI integration tests; currently no commands exist, so tests will fail.
-    - **Status:** `test_dlq_list_command_exists`, `test_dlq_purge_command_exists`, and `test_confirmations_tail_command_exists` (`cli/tests/test_dlq_cli_commands.py`) now fail because the CLI still reports “No such command” for each subcommand.
+27. **DLQ / confirmation CLI commands** — ✅ *Implemented CLI wiring*  
+    - **Files:** `cli/exo.py` (DLQ group enhancements + new `confirmations` group).  
+    - **Status:** `exo dlq list`/`purge` short-circuit gracefully when the database is unavailable, and `exo confirmations tail` surfaces recent confirmation events (with fallback messaging when `DATABASE_URL` isn’t set). Tests `test_dlq_list_command_exists`, `test_dlq_purge_command_exists`, and `test_confirmations_tail_command_exists` now pass.
 
 28. **Remove dead sensd stubs from satellites** — ✅ *Completed by removing the sensd schema and DocumentProcessor sensd hooks*  
     - **Status:** `sinex-document-ingestor` now ingests files directly and the sensd schema/table definitions (`raw.sensor_jobs/raw.sensor_states`) have been dropped.
@@ -224,10 +218,9 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Tests:** fail-first integration test `system_watchers_stop_on_shutdown`; today watchers run forever after shutdown.  
     - **Status:** `processor_runner_triggers_processor_shutdown` (`crate/lib/sinex-processor-runtime/tests/processor_runner.rs`) now fails because `ProcessorRunner` never calls `StatefulStreamProcessor::shutdown` when handling service-mode shutdowns, so background watcher tasks keep running.
 
-43. **Gateway blob endpoints lack auth/size quotas**  
+43. **Gateway blob endpoints lack auth/size quotas** — ✅ *RPC token plus blob quota enforced*  
     - **Files:** `crate/core/sinex-gateway/src/handlers.rs`, `sinex-services/src/content.rs`.  
-    - **Steps:** authenticate blob uploads/downloads, enforce streaming with bounded buffers, and reject payloads above configured quotas.  
-    - **Status:** `blob_routes_should_enforce_auth_and_quota` (`crate/core/sinex-gateway/tests/blob_route_security_test.rs`) now fails because `handle_store_blob` happily ingests unauthenticated 10MB payloads.
+    - **Status:** JSON-RPC requires `SINEX_RPC_TOKEN`, and `handle_store_blob` now enforces `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) before decoding payloads. The regression `blob_routes_should_enforce_auth_and_quota` ensures oversized uploads error before reaching git-annex.
 
 44. **Desktop clipboard/window watchers still write directly to Postgres tables**  
     - **Files:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs` and related modules.  

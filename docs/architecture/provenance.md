@@ -1,4 +1,5 @@
 # Ingestion & Provenance Patterns
+> **Purpose:** Working guide for provenance rules, satellite/ingestor boundaries, and Stage-as-You-Go patterns.
 
 This note distils the actionable architecture guidance from the historical
 Sinex essays into a concise reference for engineers working on satellites,

@@ -46,8 +46,12 @@ jobs:
       - name: Setup database
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
+          PGPASSWORD: postgres
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-contrib
+          sudo apt-get update && sudo apt-get install -y postgresql-client postgresql-contrib
+          psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
+          psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
+          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
           cd crate/lib/sinex-schema
           cargo run -- up
           

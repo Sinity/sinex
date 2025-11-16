@@ -36,7 +36,7 @@ use sinex_core::SanitizedPath;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let services = ServiceContainer::new(Some("postgres://user:pass@localhost/sinex_dev".into())).await?;
     let socket = SanitizedPath::from_str_validated("/tmp/sinex-host.sock")?;
-    rpc_server::run(socket, services).await?;
+    rpc_server::run(socket, None, services).await?;
     Ok(())
 }
 ```

@@ -1,4 +1,5 @@
 Status: canonical
+> **Purpose:** Canonical reference for the end-to-end system architecture and pointers to deeper component docs.
 # Core Architecture
 
 This is the consolidated architecture overview. It links to and summarizes the canonical documents.
@@ -25,7 +26,7 @@ Streaming & Ingestion
 - Messaging: NATS JetStream (subjects, durable consumers, explicit acks)
 - Backpressure: bounded batches, ack timeouts, lag monitoring
 - Ingestion: validation, persistence, idempotency, single writer
-- See also: `docs/plan_v3.txt` for ingestion plan details
+- See also: `docs/way.md` for the active JetStream ingestion playbook
 
 Security & Operations
 - Security model, threat mitigation: `docs/architecture/security-architecture.md`

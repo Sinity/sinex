@@ -6,8 +6,8 @@
 
 This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired in Phase 5 of `docs/way.md`; see the historical note below.)
 
-> **Accuracy Notice (2025-07-24)**  
-> References to `docs/TARGET_final.md` and other legacy plans point to files that were removed during documentation consolidation. Treat those links as historical context only. The authoritative ingestion/JetStream plan now lives in `docs/way.md`. Update any downstream documents or tooling that still expect the old path.
+> **Accuracy Notice (2025-07-24, refreshed 2025-02-24)**  
+> Legacy references to `docs/TARGET_final.md` were replaced with pointers to `docs/way.md`. If you still find links to removed files, treat them as historical context only and update them to match the JetStream plan.
 
 ## Goals
 - Natural backpressure without arbitrary channel sizes.
@@ -82,5 +82,6 @@ streams:
 - For incident response, prefer replay from DB queries and/or events stream.
 
 ## See Also
-- docs/TARGET_final.md (authoritative blueprint)
+- docs/way.md (authoritative JetStream blueprint)
+- docs/vision/project-target-state.md (historical snapshot; see banner)
 - docs/architecture/security-architecture.md (reliability/attack surface)

@@ -45,6 +45,7 @@ gethostname = "0.4"
 
 # Database integration (for blob storage)
 sqlx = { workspace = true }
+tokio-retry.workspace = true
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }

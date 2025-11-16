@@ -1,0 +1,38 @@
+name: Schema Auto Update
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Regenerate schemas
+        run: >
+          cargo run -p sinex-core --bin sinex-schema --features schema-manager --
+          generate --output schemas/v1
+
+      - name: Create schema update PR
+        uses: peter-evans/create-pull-request@v5
+        with:
+          commit-message: "chore: regenerate schemas"
+          title: "chore: regenerate schemas"
+          body: "Automated schema regeneration via GitHub Actions."
+          branch: chore/auto-update-schemas
+          labels: automated-update

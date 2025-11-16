@@ -44,6 +44,16 @@ async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 - **Tracing Integration**: Automatic log capture and verification
 - **Performance Testing**: Built-in benchmarking and performance measurement
 
+## Logging & Metrics
+
+- By default the harness only emits the compact `✅/❌` line per test.  
+  Set `SINEX_TEST_LOG_ALL=1` to print a structured JSON summary for **every** test (db name, event delta, logs, pool stats).  
+- Per-test metrics always land in `target/sinex-test-metrics.jsonl`
+  (override via `SINEX_TEST_METRICS_PATH`). Diff that JSONL across
+  revisions to spot runtime regressions.
+- Summaries are always written for failing tests, so CI artifacts capture the
+  full context even when the env vars are left unset.
+
 ## Architecture
 
 ### Database Pool Strategy

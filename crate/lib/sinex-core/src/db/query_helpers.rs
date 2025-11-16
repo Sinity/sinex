@@ -2,9 +2,9 @@
 
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{retry, timeouts};
-use crate::{DbPool, DbPoolRef};
-use sqlx::{Error as SqlxError, Postgres, QueryBuilder, Transaction};
-use std::future::Future;
+use crate::{DbPool, DbPoolRef, DbTransaction};
+use futures::future::BoxFuture;
+use sqlx::{Error as SqlxError, Postgres, QueryBuilder};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
@@ -51,39 +51,30 @@ impl Default for RetryConfig {
 }
 
 /// Execute a function within a transaction with automatic rollback on error
-pub async fn with_transaction<F, Fut, T>(pool: &DbPool, f: F) -> SinexResult<T>
+pub async fn with_transaction<F, T>(pool: &DbPool, f: F) -> SinexResult<T>
 where
-    F: FnOnce(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = SinexResult<T>>,
+    F: for<'borrow> FnOnce(&'borrow mut DbTransaction<'_>) -> BoxFuture<'borrow, SinexResult<T>>,
 {
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| db_error(e, "Failed to begin transaction"))?;
 
-    match f(&mut tx).await {
-        Ok(result) => {
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "Failed to commit transaction"))?;
-            Ok(result)
-        }
-        Err(e) => {
-            // Transaction will be automatically rolled back on drop
-            Err(e)
-        }
-    }
+    let result = f(&mut tx).await?;
+    tx.commit()
+        .await
+        .map_err(|e| db_error(e, "Failed to commit transaction"))?;
+    Ok(result)
 }
 
 /// Execute a function within a transaction with retry logic for deadlocks
-pub async fn with_retry_transaction<F, Fut, T>(
+pub async fn with_retry_transaction<F, T>(
     pool: &DbPool,
     config: RetryConfig,
-    f: F,
+    mut f: F,
 ) -> SinexResult<T>
 where
-    F: Fn(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = SinexResult<T>>,
+    F: for<'borrow> FnMut(&'borrow mut DbTransaction<'_>) -> BoxFuture<'borrow, SinexResult<T>>,
 {
     let mut attempts = 0;
     let mut delay = config.initial_delay;
@@ -96,7 +87,9 @@ where
             .await
             .map_err(|e| db_error(e, "Failed to begin transaction"))?;
 
-        match f(&mut tx).await {
+        let outcome = f(&mut tx).await;
+
+        match outcome {
             Ok(result) => {
                 tx.commit()
                     .await

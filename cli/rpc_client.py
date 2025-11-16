@@ -24,10 +24,16 @@ class SinexRPCError(Exception):
 class SinexRPCClient:
     """JSON-RPC 2.0 client for sinex-gateway service."""
     
-    def __init__(self, rpc_url: str = "http://127.0.0.1:9999", timeout: int = 30):
+    def __init__(
+        self,
+        rpc_url: str = "http://127.0.0.1:9999",
+        timeout: int = 30,
+        token: Optional[str] = None,
+    ):
         self.rpc_url = rpc_url
         self.timeout = timeout
         self._request_id = 0
+        self.token = token
     
     def _next_id(self) -> int:
         """Get next request ID."""
@@ -48,13 +54,18 @@ class SinexRPCClient:
             request_json = json.dumps(request_data).encode('utf-8')
             
             # Create HTTP request
+            headers = {
+                'Content-Type': 'application/json',
+                'Content-Length': str(len(request_json))
+            }
+            if self.token:
+                headers['Authorization'] = f"Bearer {self.token}"
+                headers['X-Sinex-Rpc-Token'] = self.token
+
             req = urllib.request.Request(
                 url=self.rpc_url,
                 data=request_json,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Content-Length': str(len(request_json))
-                },
+                headers=headers,
                 method='POST'
             )
             
@@ -82,6 +93,10 @@ class SinexRPCClient:
             raise SinexRPCError(-32700, f"Invalid JSON response: {e}") from e
         except Exception as e:
             raise SinexRPCError(-32603, f"Request failed: {e}") from e
+
+    def call(self, method: str, params: Dict[str, Any]) -> Any:
+        """Expose raw RPC calls for ad-hoc methods (e.g., telemetry)."""
+        return self._call_rpc(method, params)
 
     # Search Service Methods
     
@@ -398,17 +413,19 @@ class SinexRPCClient:
 
 # Convenience functions for backward compatibility
 
-def create_client(rpc_url: str = None) -> SinexRPCClient:
+def create_client(rpc_url: str = None, token: str = None) -> SinexRPCClient:
     """Create a configured RPC client."""
     if rpc_url is None:
         # Try common environment variables
         import os
         rpc_url = os.environ.get('SINEX_RPC_URL', 'http://127.0.0.1:9999')
+        if token is None:
+            token = os.environ.get('SINEX_RPC_TOKEN')
     
-    return SinexRPCClient(rpc_url)
+    return SinexRPCClient(rpc_url, token=token)
 
 
-def test_connection(rpc_url: str = None) -> bool:
+def test_connection(rpc_url: str = None, token: str = None) -> bool:
     """Test if RPC server is reachable."""
-    client = create_client(rpc_url)
+    client = create_client(rpc_url, token=token)
     return client.ping()

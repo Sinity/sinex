@@ -5,19 +5,14 @@
 ## Quick Reference: Issues by Severity
 
 ### CRITICAL (Fix Immediately - 30 min)
-1. **sensd temporal confusion** in `project-target-state.md`
-   - Header says "historical context" but body uses present tense
-   - Readers confused about whether sensd is current or being removed
-   - Solution: Add temporal markers to sections, refactor tense
+- ✅ **Resolved:** `project-target-state.md` now carries an explicit historical banner so sensd/gRPC references are clearly marked as archival context.
 
 ### HIGH PRIORITY (Fix Soon - 15 min)
-1. **`Core_Architecture.md` line 28** → References deleted `docs/plan_v3.txt`
-2. **`streaming-architecture.md` line 96** → References deleted `docs/TARGET_final.md` despite accuracy notice at top
+- ✅ **Resolved:** `docs/architecture/Core_Architecture.md` and `docs/vision/streaming-architecture.md` no longer reference deleted files; both now link to `docs/way.md`.
 
 ### MEDIUM PRIORITY (Fix This Sprint - 1-2 hours)
-1. **`way.md` missing progress status** - Checklist has no current phase indicated
-2. **Generic operational notes** - 7 vision docs have blanket disclaimers instead of specific section markers
-3. **Document scope mismatch** - `way.md` vs `project-target-state.md` purposes not explicitly stated
+1. **Generic operational notes** – 7 vision docs still have blanket disclaimers instead of scoped section markers.
+2. **Document scope mismatch** – `way.md` vs `project-target-state.md` purposes not explicitly stated beyond the new historical note.
 
 ## Key Statistics
 
@@ -36,10 +31,10 @@
 
 | # | Title | Severity | Document(s) | Line(s) |
 |---|-------|----------|-------------|---------|
-| 1 | sensd temporal confusion | CRITICAL | project-target-state.md | 2, 99-101, 225-247, 332-334 |
-| 2 | Deleted file reference | MEDIUM | Core_Architecture.md | 28 |
-| 3 | Internal reference conflict | HIGH | streaming-architecture.md | 9-10, 96 |
-| 4 | Phase status unknown | MEDIUM | way.md | 186-191 |
+| 1 | sensd temporal confusion | ✅ Resolved | project-target-state.md (historical banner refreshed 2025-11-13) | 2, 99-101, 225-247, 332-334 |
+| 2 | Deleted file reference | ✅ Resolved | Core_Architecture.md (links updated) | 28 |
+| 3 | Internal reference conflict | ✅ Resolved | streaming-architecture.md (See Also fixed) | 9-10, 96 |
+| 4 | Phase status unknown | ✅ Resolved | way.md (Implementation + Last Verified sections) | 186-191 |
 | 5 | Document scope mismatch | MEDIUM | way.md vs project-target-state.md | Various |
 | 6 | Generic operational notes | MEDIUM | 7 vision documents | Top |
 
@@ -47,25 +42,25 @@
 
 | Document | Line | References | Status |
 |----------|------|-----------|--------|
-| `Core_Architecture.md` | 28 | `docs/plan_v3.txt` | DELETED - Superseded by way.md |
-| `streaming-architecture.md` | 96 | `docs/TARGET_final.md` | DELETED - Consolidation |
-| `FUTURE_EVENT_PIPELINE_DESIGN.md` | (comment) | `docs/plan_v3.txt` | DELETED - Superseded |
+| `Core_Architecture.md` | 28 | `docs/plan_v3.txt` | ✅ FIXED – link now targets `docs/way.md`. |
+| `streaming-architecture.md` | 96 | `docs/TARGET_final.md` | ✅ FIXED – "See Also" references updated to `docs/way.md`. |
+| `FUTURE_EVENT_PIPELINE_DESIGN.md` | (comment) | `docs/plan_v3.txt` | ✅ FIXED – inline comment now points to `docs/way.md`. |
 
 ## Reconciliation Checklist
 
 ### Phase 1: Broken References (30 minutes)
-- [ ] Update `Core_Architecture.md` line 28
-- [ ] Fix `streaming-architecture.md` line 96
-- [ ] Update `FUTURE_EVENT_PIPELINE_DESIGN.md` comment
+- [x] Update `Core_Architecture.md` line 28
+- [x] Fix `streaming-architecture.md` line 96
+- [x] Update `FUTURE_EVENT_PIPELINE_DESIGN.md` comment
 
 ### Phase 2: Temporal Clarity (1-2 hours)
-- [ ] Add temporal markers to `project-target-state.md` sensd sections
+- [x] Add temporal markers to `project-target-state.md` sensd sections
 - [ ] Replace blanket operational notes with section annotations (7 docs)
-- [ ] Add progress status to `way.md`
+- [x] Add progress status to `way.md`
 - [ ] Add explicit purpose statements to vision documents
 
 ### Phase 3: Polish (2-3 hours, before release)
-- [ ] Add "Last Verified" dates to canonical docs
+- [ ] Add "Last Verified" stamps to canonical docs (only once we have reproducible verification steps to cite)
 - [ ] Update `docs/README.md` with document purposes and relationships
 - [ ] Consolidate `project-target-state.md` sections by temporal frame
 - [ ] Review and potentially archive exploratory documents
@@ -97,21 +92,21 @@ Exploratory brainstorming essays
 
 ## Architecture Insights from Analysis
 
-**Current State (Being Migrated):**
+**Historical State (Pre-Phase 5):**
 ```
 Satellites → sensd (gRPC) → ingestd → Postgres → NATS JetStream → Automata
 ```
 
-**Target State (JetStream-First):**
+**Current State (JetStream-First):**
 ```
 Satellites → NATS JetStream → ingestd → Postgres + NATS consumers
 ```
 
 **Migration Progress:**
-- 5 phases defined in `way.md`
-- Current phase: **UNKNOWN** (all checkboxes unchecked)
-- Timeline: **UNSPECIFIED**
-- Owner: **UNSPECIFIED**
+- 5 phases defined in `docs/way.md`
+- Current phase: ✅ Phases 1–5 complete; follow-up work tracks in `docs/way_2.md`.
+- Timeline: Documented per phase timelines in `docs/way.md`
+- Owner: sinex-core JetStream team (gateway + ingestd maintainers)
 
 ## How to Use This Analysis
 
@@ -133,6 +128,6 @@ Satellites → NATS JetStream → ingestd → Postgres + NATS consumers
 
 ---
 
-**Analysis Date:** 2025-10-25  
+**Analysis Date:** 2025-11-13  
 **Status:** Report completed, no changes made  
 **Next Step:** Address Priority 1 (critical) issues

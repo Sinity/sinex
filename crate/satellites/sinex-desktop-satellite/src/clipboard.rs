@@ -85,7 +85,7 @@ impl ClipboardWatcher {
             large_files: None,
         };
 
-        match BlobManager::new(annex_config, db_pool, blob_event_tx) {
+        match BlobManager::new(annex_config, db_pool, Some(blob_event_tx)) {
             Ok(manager) => Ok(Some(Arc::new(manager))),
             Err(e) => {
                 warn!(error = %e, "Failed to initialize clipboard blob manager");
