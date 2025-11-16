@@ -1938,10 +1938,10 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
                 if not include_resolved:
                     conditions.append("resolved_at IS NULL")
             
-            if agent:
+                if agent:
                 conditions.append("automaton_name = %s")
-                params.append(agent)
-            
+                    params.append(agent)
+                
             if source:
                 conditions.append("source = %s")
                 params.append(source)
@@ -2239,28 +2239,28 @@ def dlq_stats(agent: Optional[str], days: int):
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-            # Build base query conditions
-            where_clause = "WHERE failed_at > now() - interval '%s days'"
-            params = [days]
-            
-            if agent:
-                where_clause += " AND automaton_name = %s"
-                params.append(agent)
-            
-            # Total DLQ entries
-            cur.execute(f"""
-                SELECT 
-                    COUNT(*) as total_dlq,
-                    COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
-                    COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved,
-                    COUNT(*) FILTER (WHERE error_category = 'retryable') as retryable,
-                    COUNT(*) FILTER (WHERE error_category = 'permanent') as permanent,
-                    COUNT(*) FILTER (WHERE error_category = 'system') as system,
-                    COUNT(*) FILTER (WHERE error_category = 'user') as user
-                FROM sinex_schemas.dlq_events
-                {where_clause}
-            """, params)
-            totals = cur.fetchone()
+                # Build base query conditions
+                where_clause = "WHERE failed_at > now() - interval '%s days'"
+                params = [days]
+
+                if agent:
+                    where_clause += " AND automaton_name = %s"
+                    params.append(agent)
+
+                # Total DLQ entries
+                cur.execute(f"""
+                    SELECT 
+                        COUNT(*) as total_dlq,
+                        COUNT(*) FILTER (WHERE resolved_at IS NULL) as pending,
+                        COUNT(*) FILTER (WHERE resolved_at IS NOT NULL) as resolved,
+                        COUNT(*) FILTER (WHERE error_category = 'retryable') as retryable,
+                        COUNT(*) FILTER (WHERE error_category = 'permanent') as permanent,
+                        COUNT(*) FILTER (WHERE error_category = 'system') as system,
+                        COUNT(*) FILTER (WHERE error_category = 'user') as user
+                    FROM sinex_schemas.dlq_events
+                    {where_clause}
+                """, params)
+                totals = cur.fetchone()
             
             # DLQ by agent
             cur.execute(f"""
