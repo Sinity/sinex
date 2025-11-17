@@ -159,20 +159,14 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
 // Event Serialization Property Tests
 // =============================================================================
 
-#[sinex_test]
-fn test_event_serde_roundtrip() -> Result<()> {
-    proptest::proptest!(|(event in arb_event())| {
-        // Serialize to JSON
+sinex_proptest! {
+    fn test_event_serde_roundtrip(event: RawEvent in arb_event()) -> Result<()> {
         let json_str = serde_json::to_string(&event).unwrap();
-
-        // Deserialize back
         let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
 
-        // Should be identical
         prop_assert_eq!(event.id.as_ref(), deserialized.id.as_ref());
         prop_assert_eq!(event.source, deserialized.source);
         prop_assert_eq!(event.event_type, deserialized.event_type);
-        // Compare derived ingest times via ULID timestamps
         let a = event.id.as_ref().map(|id| id.as_ulid().timestamp());
         let b = deserialized.id.as_ref().map(|id| id.as_ulid().timestamp());
         prop_assert_eq!(a, b);
@@ -180,20 +174,17 @@ fn test_event_serde_roundtrip() -> Result<()> {
         prop_assert_eq!(event.host, deserialized.host);
         prop_assert_eq!(event.ingestor_version, deserialized.ingestor_version);
         prop_assert_eq!(event.payload_schema_id, deserialized.payload_schema_id);
-
-        // For payload, use a custom comparison that handles floating-point precision
         prop_assert!(json_values_equal(&event.payload, &deserialized.payload));
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-#[sinex_test]
-fn test_event_id_properties() -> Result<()> {
-    proptest::proptest!(|(
-        source in arb_source_name(),
-        event_type in arb_event_type_name(),
-        payload in arb_json_value()
-    )| {
+sinex_proptest! {
+    fn test_event_id_properties(
+        source: String in arb_source_name(),
+        event_type: String in arb_event_type_name(),
+        payload: Value in arb_json_value()
+    ) -> Result<()> {
         let mut event1 = RawEvent::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
@@ -201,7 +192,6 @@ fn test_event_id_properties() -> Result<()> {
         );
         event1.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Small delay to reduce the chance of identical ULID timestamps
         std::thread::yield_now();
 
         let mut event2 = RawEvent::test_event(
@@ -211,13 +201,11 @@ fn test_event_id_properties() -> Result<()> {
         );
         event2.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Events should be unique even if ULID timestamps collide
         prop_assert_ne!(
             event1.id.as_ref().unwrap(),
             event2.id.as_ref().unwrap()
         );
 
-        // ts_ingest should be recent
         let now = Utc::now();
         let t1 = event1.id.as_ref().unwrap().as_ulid().timestamp();
         let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
@@ -225,53 +213,37 @@ fn test_event_id_properties() -> Result<()> {
         prop_assert!(t2 <= now);
         prop_assert!(now - t1 < ChronoDuration::seconds(10));
         prop_assert!(now - t2 < ChronoDuration::seconds(10));
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_event_field_constraints() -> Result<()> {
-    proptest::proptest!(|(event in arb_event())| {
-        // Source should not be empty
+    fn test_event_field_constraints(event: RawEvent in arb_event()) -> Result<()> {
         prop_assert!(!event.source.is_empty());
-        prop_assert!(event.source.len() <= 255); // Reasonable database limit
-
-        // Event type should not be empty
+        prop_assert!(event.source.len() <= 255);
         prop_assert!(!event.event_type.is_empty());
         prop_assert!(event.event_type.len() <= 255);
-
-        // Host should not be empty
         prop_assert!(!event.host.is_empty());
 
-        // Derived ingest time should be recent (within last hour)
         let now = Utc::now();
         let t = event.id.as_ref().unwrap().as_ulid().timestamp();
         prop_assert!(t <= now);
         prop_assert!(now - t < ChronoDuration::hours(1));
 
-        // If ts_orig is present, it should be reasonable
         if let Some(ts_orig) = event.ts_orig {
-            // Original timestamp should not be in the far future
             prop_assert!(ts_orig <= now + ChronoDuration::hours(1));
-            // Original timestamp should not be too old (1 year)
             prop_assert!(ts_orig >= now - ChronoDuration::days(365));
         }
 
-        // Payload should be valid JSON
         prop_assert!(serde_json::to_string(&event.payload).is_ok());
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_event_builder_preserves_values() -> Result<()> {
-    proptest::proptest!(|(
-        source in arb_source_name(),
-        event_type in arb_event_type_name(),
-        payload in arb_json_value(),
-        ts_orig in arb_timestamp(),
-        host in arb_hostname()
-    )| {
+    fn test_event_builder_preserves_values(
+        source: String in arb_source_name(),
+        event_type: String in arb_event_type_name(),
+        payload: Value in arb_json_value(),
+        ts_orig: chrono::DateTime<Utc> in arb_timestamp(),
+        host: String in arb_hostname()
+    ) -> Result<()> {
         let mut event = RawEvent::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
@@ -286,17 +258,14 @@ fn test_event_builder_preserves_values() -> Result<()> {
         prop_assert_eq!(event.payload, payload);
         prop_assert_eq!(event.ts_orig, Some(ts_orig));
         prop_assert_eq!(event.host.as_str(), host);
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> Result<()> {
-    proptest::proptest!(|(
-        source in arb_source_name(),
-        event_type in arb_event_type_name(),
-        payloads in prop::collection::vec(arb_json_value(), 2..20)
-    )| {
+    fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps(
+        source: String in arb_source_name(),
+        event_type: String in arb_event_type_name(),
+        payloads: Vec<Value> in prop::collection::vec(arb_json_value(), 2..20)
+    ) -> Result<()> {
         let mut events = Vec::new();
 
         for payload in payloads {
@@ -307,27 +276,21 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
             events.push(event);
-
-            // Small delay to ensure timestamp ordering
             std::thread::yield_now();
         }
 
-        // Timestamps should be in ascending order
         for window in events.windows(2) {
             let a = window[0].id.as_ref().unwrap().as_ulid().timestamp();
             let b = window[1].id.as_ref().unwrap().as_ulid().timestamp();
             prop_assert!(a <= b);
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_event_edge_case_payloads() -> Result<()> {
-    proptest::proptest!(|(
-        source in arb_source_name(),
-        event_type in arb_event_type_name()
-    )| {
+    fn test_event_edge_case_payloads(
+        source: String in arb_source_name(),
+        event_type: String in arb_event_type_name()
+    ) -> Result<()> {
         let edge_cases = vec![
             json!(null),
             json!({}),
@@ -336,8 +299,8 @@ fn test_event_edge_case_payloads() -> Result<()> {
             json!(0),
             json!(false),
             json!({"nested": {"deep": {"very": {"deeply": {"nested": "value"}}}}}),
-            json!((0..100).collect::<Vec<i32>>()), // Large array
-            json!({"key": "x".repeat(1000)}), // Large string
+            json!((0..100).collect::<Vec<i32>>()),
+            json!({"key": "x".repeat(1000)}),
         ];
 
         for payload in edge_cases {
@@ -348,13 +311,12 @@ fn test_event_edge_case_payloads() -> Result<()> {
             );
             event.id = Some(Id::from_ulid(Ulid::new()));
 
-            // Should serialize and deserialize correctly
             let json_str = serde_json::to_string(&event).unwrap();
             let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
             prop_assert_eq!(event.payload, deserialized.payload);
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -403,15 +365,13 @@ fn arb_registry_source_name() -> impl Strategy<Value = String> {
     ]
 }
 
-#[sinex_test]
-fn test_event_type_validation_property() -> Result<()> {
-    proptest::proptest!(|(event_type_str in arb_event_type())| {
+sinex_proptest! {
+    fn test_event_type_validation_property(
+        event_type_str: String in arb_event_type()
+    ) -> Result<()> {
         let event_type = EventType::new(event_type_str.clone());
-
-        // Test validation rules
         match event_type.validate() {
             Ok(()) => {
-                // Valid event types should follow naming conventions
                 prop_assert!(!event_type_str.is_empty());
                 prop_assert!(!event_type_str.starts_with('.'));
                 prop_assert!(!event_type_str.ends_with('.'));
@@ -421,50 +381,48 @@ fn test_event_type_validation_property() -> Result<()> {
                 ));
             }
             Err(_) => {
-                // Invalid event types should violate at least one rule
-                let violates_rules = event_type_str.is_empty() ||
-                    event_type_str.starts_with('.') ||
-                    event_type_str.ends_with('.') ||
-                    event_type_str.contains("..") ||
-                    !event_type_str.chars().all(|c|
+                let violates_rules = event_type_str.is_empty()
+                    || event_type_str.starts_with('.')
+                    || event_type_str.ends_with('.')
+                    || event_type_str.contains("..")
+                    || !event_type_str.chars().all(|c|
                         c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
                     );
-                prop_assert!(violates_rules,
+                prop_assert!(
+                    violates_rules,
                     "Event type '{}' failed validation but doesn't violate known rules",
-                    event_type_str);
+                    event_type_str
+                );
             }
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_event_source_validation_property() -> Result<()> {
-    proptest::proptest!(|(source_str in arb_registry_source_name())| {
+    fn test_event_source_validation_property(
+        source_str: String in arb_registry_source_name()
+    ) -> Result<()> {
         let source = EventSource::new(source_str.clone());
-
-        // Test validation rules
         match source.validate() {
             Ok(()) => {
-                // Valid sources should follow naming conventions
                 prop_assert!(!source_str.is_empty());
                 prop_assert!(source_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '-' || c == '_'
                 ));
             }
             Err(_) => {
-                // Invalid sources should violate at least one rule
-                let violates_rules = source_str.is_empty() ||
-                    !source_str.chars().all(|c|
+                let violates_rules = source_str.is_empty()
+                    || !source_str.chars().all(|c|
                         c.is_ascii_lowercase() || c == '-' || c == '_'
                     );
-                prop_assert!(violates_rules,
+                prop_assert!(
+                    violates_rules,
                     "Event source '{}' failed validation but doesn't violate known rules",
-                    source_str);
+                    source_str
+                );
             }
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 // =============================================================================

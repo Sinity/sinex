@@ -89,7 +89,7 @@ impl PoolMetrics {
 }
 
 /// Pool statistics for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PoolStats {
     pub total_acquisitions: usize,
     pub average_wait_time_ms: u64,

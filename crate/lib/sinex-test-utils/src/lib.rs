@@ -13,7 +13,7 @@ extern crate self as sinex_test_utils;
 // Re-export the procedural macros from internal macros crate
 #[cfg(feature = "bench")]
 pub use sinex_test_utils_macros::sinex_bench;
-pub use sinex_test_utils_macros::sinex_test;
+pub use sinex_test_utils_macros::{sinex_prop, sinex_proptest, sinex_test};
 
 // Re-export anyhow for test ergonomics
 pub use color_eyre::eyre::{anyhow, bail, ensure, Context};
@@ -62,6 +62,7 @@ mod nats;
 mod path_validation;
 mod property_testing;
 pub mod resources;
+pub mod runlog;
 mod satellite_management_utils;
 pub mod satellite_runtime;
 pub mod snapshot_helper;
@@ -88,9 +89,9 @@ pub mod static_fixtures;
 // Create prelude module from common/mod.rs
 pub mod prelude {
     // Core test infrastructure
-    pub use crate::sinex_test;
     pub use crate::TestContext;
     pub use crate::TestResult;
+    pub use crate::{sinex_prop, sinex_proptest, sinex_test};
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated

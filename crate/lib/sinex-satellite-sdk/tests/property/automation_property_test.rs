@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
 use sinex_satellite_sdk::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, sinex_proptest};
 use std::collections::HashMap;
 
 /// Create property test strategies for events
@@ -80,13 +80,12 @@ fn create_test_event(
     )
 }
 
-/// Test checkpoint handling properties
-#[sinex_test]
-fn test_checkpoint_properties() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test checkpoint handling properties
+    fn test_checkpoint_properties(
         message_count in 0u64..10000u64,
         timestamp_offset in 0i64..86400i64,
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         // Test different checkpoint types
         let checkpoints = vec![
             Checkpoint::None,
@@ -114,19 +113,18 @@ fn test_checkpoint_properties() -> color_eyre::eyre::Result<()> {
             // Property: Checkpoint descriptions should be non-empty
             prop_assert!(!checkpoint.description().is_empty());
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-/// Test scan args validation properties
-#[sinex_test]
-fn test_scan_args_properties() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test scan args validation properties
+    fn test_scan_args_properties(
         max_events in 0u64..10000u64,
         dry_run in any::<bool>(),
         interactive in any::<bool>(),
         skip_duplicates in any::<bool>(),
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let args = ScanArgs {
             targets: vec!["test-target".to_string()],
             dry_run,
@@ -145,8 +143,8 @@ fn test_scan_args_properties() -> color_eyre::eyre::Result<()> {
             prop_assert!(deserialized.is_ok());
             // Note: We can't test equality because ScanArgs doesn't derive Eq/PartialEq
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 /// Test processor type consistency
@@ -168,12 +166,11 @@ fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-/// Test event processing determinism (without actual scan)
-#[sinex_test]
-fn test_event_creation_determinism() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test event processing determinism (without actual scan)
+    fn test_event_creation_determinism(
         events in proptest::collection::vec(arb_event_data(), 1..=20),
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         // Property: Same event data should produce equivalent events
         for (source, event_type, payload) in events.iter() {
             let event1 = create_test_event(source, event_type, payload.clone());
@@ -187,14 +184,13 @@ fn test_event_creation_determinism() -> color_eyre::eyre::Result<()> {
             // Properties that should be the same (schemaless events have None ID)
             prop_assert_eq!(event1.id, event2.id); // Both should be None
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-/// Test error handling with malformed data
-#[sinex_test]
-fn test_error_handling_robustness() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test error handling with malformed data
+    fn test_error_handling_robustness(
         malformed_payloads in proptest::collection::vec(
             prop_oneof![
                 Just(json!(null)),
@@ -206,7 +202,7 @@ fn test_error_handling_robustness() -> color_eyre::eyre::Result<()> {
             ],
             1..=5
         ),
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         // Property: Event creation should handle malformed payloads gracefully
         for payload in malformed_payloads.iter() {
             let event = create_test_event("test-source", "test.event", payload.clone());
@@ -220,16 +216,15 @@ fn test_error_handling_robustness() -> color_eyre::eyre::Result<()> {
             let serialized = serde_json::to_string(&event);
             prop_assert!(serialized.is_ok());
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-/// Test checkpoint description consistency
-#[sinex_test]
-fn test_checkpoint_description_properties() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test checkpoint description consistency
+    fn test_checkpoint_description_properties(
         message_count in 0u64..1000u64,
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let checkpoint1 = Checkpoint::Internal {
             event_id: sinex_core::types::ulid::Ulid::new(),
             message_count,
@@ -257,16 +252,15 @@ fn test_checkpoint_description_properties() -> color_eyre::eyre::Result<()> {
         let desc1 = checkpoint1.description().to_lowercase();
         let desc4 = checkpoint4.description().to_lowercase();
         prop_assert!(desc1.contains("internal") == desc4.contains("internal"));
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-/// Test time horizon property consistency
-#[sinex_test]
-fn test_time_horizon_behavior_properties() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test time horizon property consistency
+    fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let end_time = Utc::now() + chrono::Duration::hours(hours_forward as i64);
 
         let horizons = vec![
@@ -305,17 +299,16 @@ fn test_time_horizon_behavior_properties() -> color_eyre::eyre::Result<()> {
                 // Note: Can't test equality directly due to potential precision issues
             }
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
-/// Test automation-related data structure consistency
-#[sinex_test]
-fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> {
-    proptest!(|(
+sinex_proptest! {
+    /// Test automation-related data structure consistency
+    fn test_automation_data_structure_consistency(
         event_count in 1..100usize,
         batch_size in 1..50usize,
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         // Property: Event batches should be processable
         let mut events = Vec::new();
 
@@ -348,6 +341,6 @@ fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> 
             prop_assert_eq!(event.event_type.as_str(), "batch.test");
             prop_assert!(event.payload.is_object());
         }
-    });
-    Ok(())
+        Ok(())
+    }
 }
