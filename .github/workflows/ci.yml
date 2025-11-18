@@ -63,6 +63,34 @@ jobs:
     
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
+    
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+    
+    - name: Wait for Postgres
+      env:
+        PGPASSWORD: postgres
+      run: |
+        for i in $(seq 1 30); do
+          if pg_isready -h localhost -U postgres -q; then
+            echo "Postgres is ready"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Postgres did not become ready in time" >&2
+        exit 1
+        
+    - name: Setup test database
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
+        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
 
     - name: Regenerate schemas and ensure repository is clean
       # Treat schemas/ like a generated artifact (similar to cargo fmt).
@@ -93,20 +121,6 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        
-    - name: Install PostgreSQL client
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
-        
-    - name: Setup test database
-      env:
-        PGPASSWORD: postgres
-      run: |
-        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
-        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         
     - name: Run migrations
       env:
@@ -150,6 +164,34 @@ jobs:
     
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
+    
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+    
+    - name: Wait for Postgres
+      env:
+        PGPASSWORD: postgres
+      run: |
+        for i in $(seq 1 30); do
+          if pg_isready -h localhost -U postgres -q; then
+            echo "Postgres is ready"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Postgres did not become ready in time" >&2
+        exit 1
+        
+    - name: Setup test database
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
+        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
 
     - name: Regenerate schemas and ensure repository is clean
       # Treat schemas/ like a generated artifact (similar to cargo fmt).
@@ -173,20 +215,6 @@ jobs:
         
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
-      
-    - name: Install PostgreSQL client
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
-        
-    - name: Setup test database
-      env:
-        PGPASSWORD: postgres
-      run: |
-        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
-        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         
     - name: Run migrations
       env:
