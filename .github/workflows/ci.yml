@@ -91,18 +91,6 @@ jobs:
         psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
-
-    - name: Regenerate schemas and ensure repository is clean
-      # Treat schemas/ like a generated artifact (similar to cargo fmt).
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: |
-        ./scripts/schema-dev.sh generate
-        if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
-          git status schemas
-          exit 1
-        fi
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -128,6 +116,18 @@ jobs:
       run: |
         cd crate/lib/sinex-schema
         cargo run -- up
+
+    - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        ./scripts/schema-dev.sh generate
+        if ! git diff --quiet -- schemas; then
+          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
+          git status schemas
+          exit 1
+        fi
         
     - name: Run tests
       env:
@@ -192,18 +192,6 @@ jobs:
         psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
-
-    - name: Regenerate schemas and ensure repository is clean
-      # Treat schemas/ like a generated artifact (similar to cargo fmt).
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: |
-        ./scripts/schema-dev.sh generate
-        if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
-          git status schemas
-          exit 1
-        fi
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -222,6 +210,18 @@ jobs:
       run: |
         cd crate/lib/sinex-schema
         cargo run -- up
+
+    - name: Regenerate schemas and ensure repository is clean
+      # Treat schemas/ like a generated artifact (similar to cargo fmt).
+      env:
+        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+      run: |
+        ./scripts/schema-dev.sh generate
+        if ! git diff --quiet -- schemas; then
+          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
+          git status schemas
+          exit 1
+        fi
         
     - name: Generate code coverage
       env:
