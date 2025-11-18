@@ -43,12 +43,13 @@
 //! the generation infrastructure.
 
 use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
-use crate::{Result, TestResult};
+use crate::Result;
+#[cfg(test)]
+use crate::TestResult;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::DbPool;
-use sinex_core::types::error::SinexError;
 
 use camino::Utf8PathBuf;
 use std::collections::HashMap;

@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_core::types::Ulid;
-use sinex_test_utils::sinex_test;
+use sinex_test_utils::sinex_proptest;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -30,27 +30,20 @@ fn spin_for(duration: Duration) {
 // ULID Generation and Ordering Properties
 // =============================================================================
 
-/// Test that ULIDs generated from chronologically ordered timestamps maintain order
-#[sinex_test]
-fn test_ulid_chronological_ordering() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
+sinex_proptest! {
+    fn test_ulid_chronological_ordering(
         count in 2usize..10,
         delay_micros in 100u64..1000
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let mut ulids = Vec::new();
-
-        // Generate ULIDs with micro-delays to ensure monotonic ordering
         for i in 0..count {
             if i > 0 {
-                // Add tiny delay to ensure different timestamps for monotonic generation
                 for _ in 0..delay_micros {
                     std::thread::yield_now();
                 }
             }
             ulids.push(Ulid::new());
         }
-
-        // Verify ULIDs maintain chronological order
         for window in ulids.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
             prop_assert!(
@@ -62,27 +55,21 @@ fn test_ulid_chronological_ordering() -> color_eyre::eyre::Result<()> {
                 curr.timestamp()
             );
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_ulid_uniqueness_under_rapid_generation() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(count in 2usize..1000)| {
+    fn test_ulid_uniqueness_under_rapid_generation(
+        count in 2usize..1000
+    ) -> color_eyre::eyre::Result<()> {
         let base_time = Utc::now();
         let mut ulids = Vec::new();
-
-        // Generate ULIDs rapidly (simulating high-frequency events)
         for i in 0..count {
             let timestamp = base_time + ChronoDuration::milliseconds(i as i64);
             ulids.push(Ulid::from_datetime(timestamp));
         }
-
-        // Verify all ULIDs are unique
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
         sorted_ulids.dedup();
-
         prop_assert_eq!(
             ulids.len(),
             sorted_ulids.len(),
@@ -90,28 +77,25 @@ fn test_ulid_uniqueness_under_rapid_generation() -> color_eyre::eyre::Result<()>
             ulids.len(),
             sorted_ulids.len()
         );
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_ulid_timestamp_extraction() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(timestamp in 1577836800u64..1893456000u64)| { // 2020-2030 range
+    fn test_ulid_timestamp_extraction(
+        timestamp in 1577836800u64..1893456000u64
+    ) -> color_eyre::eyre::Result<()> {
         let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
         let ulid = Ulid::from_datetime(dt);
         let extracted_timestamp = ulid.timestamp();
-
-        // ULID timestamp should be within 1ms of original
         let time_diff = (timestamp * 1000) as i64 - extracted_timestamp.timestamp_millis();
         prop_assert!(
-            time_diff.abs() <= 1000, // 1 second tolerance for edge cases
+            time_diff.abs() <= 1000,
             "ULID timestamp extraction inaccurate: original={}, extracted={}, diff={}ms",
             timestamp * 1000,
             extracted_timestamp.timestamp_millis(),
             time_diff
         );
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 // Note: Event generator tests removed as generators are not available in current test utils
@@ -173,94 +157,75 @@ fn generate_ulids_concurrently(
     all_ulids
 }
 
-#[sinex_test]
-fn test_concurrent_ulid_uniqueness() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
-        (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
-    )| {
+sinex_proptest! {
+    fn test_concurrent_ulid_uniqueness(
+        params in arb_concurrent_params()
+    ) -> color_eyre::eyre::Result<()> {
+        let (num_threads, ulids_per_thread, max_delay_ms) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
 
-        // All ULIDs should be unique
         let mut seen = HashSet::new();
         for (_, ulid, _) in &ulids {
             prop_assert!(seen.insert(*ulid), "Found duplicate ULID: {}", ulid);
         }
 
-        // Should have generated expected total count
         prop_assert_eq!(ulids.len(), num_threads * ulids_per_thread);
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_concurrent_ulid_time_ordering() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
-        (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
-    )| {
+    fn test_concurrent_ulid_time_ordering(
+        params in arb_concurrent_params()
+    ) -> color_eyre::eyre::Result<()> {
+        let (num_threads, ulids_per_thread, max_delay_ms) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
 
-        // Group ULIDs by their millisecond timestamps
         let mut timestamp_groups: HashMap<i64, Vec<Ulid>> = HashMap::new();
         for (_, ulid, _) in &ulids {
             let ts_ms = ulid.timestamp().timestamp_millis();
             timestamp_groups.entry(ts_ms).or_default().push(*ulid);
         }
 
-        // Within each millisecond, ULIDs should be sortable by their full value
         for (ts_ms, mut group_ulids) in timestamp_groups {
             if group_ulids.len() > 1 {
-                let _original = group_ulids.clone();
                 group_ulids.sort();
-
-                // ULIDs in the same millisecond should have different random parts
-                // so sorting them should give a consistent order
                 for window in group_ulids.windows(2) {
                     prop_assert_ne!(window[0], window[1],
                         "ULIDs at timestamp {} should be unique", ts_ms);
                 }
             }
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_concurrent_ulid_timestamp_correlation() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
-        (num_threads, ulids_per_thread, _) in arb_concurrent_params()
-    )| {
-        // Use no delay for this test to minimize timing variance
+sinex_proptest! {
+    fn test_concurrent_ulid_timestamp_correlation(
+        params in arb_concurrent_params()
+    ) -> color_eyre::eyre::Result<()> {
+        let (num_threads, ulids_per_thread, _) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, 0);
 
         let test_start = Utc::now();
         let test_end = Utc::now();
 
-        // All ULID timestamps should be within the test timeframe
-        for (_, ulid, _generation_instant) in ulids {
+        for (_, ulid, _) in ulids {
             let ulid_timestamp = ulid.timestamp();
-
-            // ULID timestamp should be reasonable (within test window + some tolerance)
             prop_assert!(ulid_timestamp >= test_start - ChronoDuration::seconds(1));
             prop_assert!(ulid_timestamp <= test_end + ChronoDuration::seconds(1));
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_concurrent_ulid_thread_distribution() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
-        (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
-    )| {
+    fn test_concurrent_ulid_thread_distribution(
+        params in arb_concurrent_params()
+    ) -> color_eyre::eyre::Result<()> {
+        let (num_threads, ulids_per_thread, max_delay_ms) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
 
-        // Count ULIDs per thread
         let mut thread_counts: HashMap<usize, usize> = HashMap::new();
         for (thread_id, _, _) in &ulids {
             *thread_counts.entry(*thread_id).or_default() += 1;
         }
 
-        // Each thread should have generated exactly the expected count
         for thread_id in 0..num_threads {
             prop_assert_eq!(
                 thread_counts.get(&thread_id).copied().unwrap_or(0),
@@ -270,61 +235,47 @@ fn test_concurrent_ulid_thread_distribution() -> color_eyre::eyre::Result<()> {
                 ulids_per_thread
             );
         }
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_high_contention_ulid_generation() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
+    fn test_high_contention_ulid_generation(
         burst_size in 50usize..=200,
         num_bursts in 2usize..=5
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let mut all_ulids = Vec::new();
 
         for _burst in 0..num_bursts {
-            // Generate many ULIDs in rapid succession
             let barrier = Arc::new(Barrier::new(burst_size));
             let mut handles = Vec::new();
 
-            for _i in 0..burst_size {
+            for _ in 0..burst_size {
                 let barrier = Arc::clone(&barrier);
-                let handle = thread::spawn(move || {
+                handles.push(thread::spawn(move || {
                     barrier.wait();
-                    // Generate immediately after barrier
                     Ulid::new()
-                });
-                handles.push(handle);
+                }));
             }
 
-            // Collect burst results
             for handle in handles {
                 all_ulids.push(handle.join().unwrap());
             }
 
-            // Small delay between bursts
             spin_for(Duration::from_millis(10));
         }
 
-        // All ULIDs should be unique despite high contention
         let mut seen = HashSet::new();
         for ulid in &all_ulids {
             prop_assert!(seen.insert(*ulid), "High contention caused duplicate ULID: {}", ulid);
         }
 
         prop_assert_eq!(all_ulids.len(), burst_size * num_bursts);
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-#[sinex_test]
-fn test_ulid_ordering_with_timing_patterns() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
+    fn test_ulid_ordering_with_timing_patterns(
         pattern_delays in prop::collection::vec(0u64..=50, 5..=20)
-    )| {
+    ) -> color_eyre::eyre::Result<()> {
         let mut ulids_with_delays = Vec::new();
-
-        // Generate ULIDs with specific delay patterns
         for delay_ms in pattern_delays {
             let start_time = Instant::now();
             spin_for(Duration::from_millis(delay_ms));
@@ -332,26 +283,38 @@ fn test_ulid_ordering_with_timing_patterns() -> color_eyre::eyre::Result<()> {
             ulids_with_delays.push((ulid, start_time.elapsed()));
         }
 
-        // ULIDs should be ordered by generation time
         for window in ulids_with_delays.windows(2) {
             let (ulid1, delay1) = window[0];
             let (ulid2, delay2) = window[1];
-
-            // If second ULID was generated after first (accounting for delays),
-            // it should compare greater
             if delay2 > delay1 {
                 prop_assert!(ulid2 > ulid1,
                     "ULID ordering should respect generation delays: {} > {} (delays: {:?} vs {:?})",
                     ulid2, ulid1, delay2, delay1);
             }
-
-            // Timestamps should reflect the ordering
-            prop_assert!(ulid2.timestamp() >= ulid1.timestamp(),
-                "ULID timestamps should be monotonic: {} >= {}",
-                ulid2.timestamp(), ulid1.timestamp());
+            prop_assert!(ulid2.timestamp() >= ulid1.timestamp());
         }
-    });
-    Ok(())
+        Ok(())
+    }
+
+    fn test_ulid_ordering_property_in_memory(
+        ulids in arb_ulid_sequence(2, 20)
+    ) -> color_eyre::eyre::Result<()> {
+        let mut sorted_ulids = ulids.clone();
+        sorted_ulids.sort();
+        prop_assert_eq!(ulids.clone(), sorted_ulids,
+            "ULIDs with increasing timestamps should already be in sorted order");
+
+        for i in 1..ulids.len() {
+            prop_assert!(ulids[i] > ulids[i-1],
+                "ULID at index {} ({}) should be greater than previous ({})",
+                i, ulids[i], ulids[i-1]);
+        }
+
+        let unique_set: HashSet<_> = ulids.iter().collect();
+        prop_assert_eq!(unique_set.len(), ulids.len(),
+            "All ULIDs in sequence should be unique");
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -392,33 +355,25 @@ fn arb_ulid_from_time_range(
     })
 }
 
-#[sinex_test]
-fn test_ulid_ordering_property_in_memory() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
+    fn test_ulid_ordering_property_in_memory(
         ulids in arb_ulid_sequence(2, 20)
-    )| {
-        // Property: ULIDs generated with increasing timestamps should be ordered
+    ) -> color_eyre::eyre::Result<()> {
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
-
-        // The original sequence should already be sorted since we used increasing times
         prop_assert_eq!(ulids.clone(), sorted_ulids,
             "ULIDs with increasing timestamps should already be in sorted order");
 
-        // Property: Each ULID should be greater than the previous one
         for i in 1..ulids.len() {
             prop_assert!(ulids[i] > ulids[i-1],
-                "ULID at index {} ({}) should be greater than previous ({}) for monotonic sequence",
+                "ULID at index {} ({}) should be greater than previous ({})",
                 i, ulids[i], ulids[i-1]);
         }
 
-        // Property: All ULIDs should be unique
         let unique_set: HashSet<_> = ulids.iter().collect();
         prop_assert_eq!(unique_set.len(), ulids.len(),
             "All ULIDs in sequence should be unique");
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
 // Database test temporarily disabled due to direct sqlx usage
 // TODO: Reimplement using repository pattern
@@ -427,7 +382,7 @@ fn test_ulid_ordering_property_in_memory() -> color_eyre::eyre::Result<()> {
 // TODO: Reimplement using repository pattern
 /* #[sinex_test]
 async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult<()> {
-    proptest::proptest!(|(
+    sinex_proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,
         gap_minutes in 1..30i64,
@@ -540,7 +495,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 fn test_ulid_timestamp_extraction_property() {
-    proptest::proptest!(|(
+        sinex_proptest!(|(
         time_offset_hours in -24..24i64,
         time_offset_minutes in 0..60i64,
         time_offset_seconds in 0..60i64,
@@ -577,14 +532,12 @@ fn test_ulid_timestamp_extraction_property() {
     });
 } */
 
-#[cfg_attr(not(feature = "slow-tests"), ignore)]
-#[sinex_test]
-fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Result<()> {
-    proptest::proptest!(|(
+sinex_proptest! {
+    #[cfg_attr(not(feature = "slow-tests"), ignore)]
+    fn test_ulid_monotonic_property_with_rapid_generation(
         generation_count in 5..50usize,
-        delay_microseconds in 0..1000u64,
-    )| {
-        // Property: Rapidly generated ULIDs should maintain ordering even with small delays
+        delay_microseconds in 0..1000u64
+    ) -> color_eyre::eyre::Result<()> {
         let mut ulids = Vec::new();
         let mut timestamps = Vec::new();
 
@@ -601,7 +554,6 @@ fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Res
             ulids.push(ulid);
             timestamps.push(timestamp);
 
-            // Property: Each ULID should be unique
             for (previous_index, previous_ulid) in ulids.iter().take(i).enumerate() {
                 prop_assert!(
                     ulid != *previous_ulid,
@@ -612,30 +564,26 @@ fn test_ulid_monotonic_property_with_rapid_generation() -> color_eyre::eyre::Res
             }
         }
 
-        // Property: ULIDs should be in increasing order
         for i in 1..ulids.len() {
             prop_assert!(ulids[i] >= ulids[i-1],
-                "ULID at index {} should be >= previous ULID for monotonic sequence", i);
+                "ULID at index {} should be >= previous ULID", i);
         }
 
-        // Property: Timestamps should be non-decreasing (allowing equal for same millisecond)
         for i in 1..timestamps.len() {
             prop_assert!(timestamps[i] >= timestamps[i-1],
                 "Timestamp at index {} should be >= previous timestamp", i);
         }
 
-        // Property: All ULIDs should be unique
         let unique_ulids: HashSet<_> = ulids.iter().collect();
         prop_assert_eq!(unique_ulids.len(), ulids.len(),
             "All rapidly generated ULIDs should be unique");
 
-        // Property: Sorted order should match generation order
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
         prop_assert_eq!(ulids, sorted_ulids,
             "ULIDs should already be in sorted order due to monotonic generation");
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 // Foreign key test temporarily disabled due to direct sqlx usage

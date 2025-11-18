@@ -5,20 +5,17 @@
 use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::{sinex_proptest, sinex_test, TestResult};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-// Test that ULIDs maintain chronological ordering
-#[sinex_test]
-fn test_ulid_chronological_ordering() -> TestResult<()> {
-    proptest::proptest!(|(
-        count in 2usize..10,
-        delay_micros in 100u64..1000
-    )| {
+sinex_proptest! {
+    fn test_ulid_chronological_ordering(
+        count: usize in 2usize..10,
+        delay_micros: u64 in 100u64..1000
+    ) -> TestResult<()> {
         let mut ulids = Vec::new();
-
         for i in 0..count {
             if i > 0 {
                 for _ in 0..delay_micros {
@@ -27,16 +24,62 @@ fn test_ulid_chronological_ordering() -> TestResult<()> {
             }
             ulids.push(Ulid::new());
         }
-
-        // Verify ordering
         for window in ulids.windows(2) {
+            prop_assert!(window[0] <= window[1], "ULID ordering violated");
+        }
+        Ok(())
+    }
+
+    fn test_ulid_string_properties(_dummy: u8 in 0u8..1) -> TestResult<()> {
+        let ulid = Ulid::new();
+        let s = ulid.to_string();
+        prop_assert_eq!(s.len(), 26);
+        for c in s.chars() {
             prop_assert!(
-                window[0] <= window[1],
-                "ULID ordering violated"
+                "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c),
+                "Invalid character in ULID string: {}",
+                c
             );
         }
-    });
-    Ok(())
+        let parsed = s.parse::<Ulid>().unwrap();
+        prop_assert_eq!(ulid, parsed);
+        Ok(())
+    }
+
+    fn test_ulid_bytes_roundtrip(_dummy: u8 in 0u8..1) -> TestResult<()> {
+        let original = Ulid::new();
+        let bytes = original.to_bytes();
+        let restored = Ulid::from_bytes(bytes).unwrap();
+        prop_assert_eq!(original, restored);
+        Ok(())
+    }
+
+    fn test_ulid_string_ordering(
+        count: usize in 2usize..5,
+        delay_micros: u64 in 100u64..1000
+    ) -> TestResult<()> {
+        let mut ulids = Vec::new();
+        let mut strings = Vec::new();
+
+        for i in 0..count {
+            if i > 0 {
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
+            }
+            let ulid = Ulid::new();
+            ulids.push(ulid);
+            strings.push(ulid.to_string());
+        }
+
+        ulids.sort();
+        strings.sort();
+
+        for (ulid, string) in ulids.iter().zip(strings.iter()) {
+            prop_assert_eq!(ulid.to_string(), string.as_str());
+        }
+        Ok(())
+    }
 }
 
 // Test ULID uniqueness under concurrent generation
@@ -100,31 +143,6 @@ fn test_ulid_monotonic_within_ms() -> TestResult<()> {
     Ok(())
 }
 
-// Test ULID string representation properties
-#[sinex_test]
-fn test_ulid_string_properties() -> TestResult<()> {
-    proptest::proptest!(|(_dummy in 0u8..1)| {
-        let ulid = Ulid::new();
-        let s = ulid.to_string();
-
-        // String should be 26 characters
-        prop_assert_eq!(s.len(), 26);
-
-        // Should be valid Crockford Base32
-        for c in s.chars() {
-            prop_assert!(
-                "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c),
-                "Invalid character in ULID string: {}", c
-            );
-        }
-
-        // Should round-trip
-        let parsed = s.parse::<Ulid>().unwrap();
-        prop_assert_eq!(ulid, parsed);
-    });
-    Ok(())
-}
-
 // Test ULID timestamp extraction
 #[sinex_test]
 fn test_ulid_timestamp_extraction() -> TestResult<()> {
@@ -154,50 +172,5 @@ fn test_ulid_nil() -> TestResult<()> {
     // Nil should be less than any other ULID
     let regular = Ulid::new();
     assert!(nil < regular);
-    Ok(())
-}
-
-// Test ULID from_bytes and to_bytes
-#[sinex_test]
-fn test_ulid_bytes_roundtrip() -> TestResult<()> {
-    proptest::proptest!(|(_dummy in 0u8..1)| {
-        let original = Ulid::new();
-        let bytes = original.to_bytes();
-        let restored = Ulid::from_bytes(bytes).unwrap();
-        prop_assert_eq!(original, restored);
-    });
-    Ok(())
-}
-
-// Test ULID ordering matches string ordering
-#[sinex_test]
-fn test_ulid_string_ordering() -> TestResult<()> {
-    proptest::proptest!(|(
-        count in 2usize..5,
-        delay_micros in 100u64..1000
-    )| {
-        let mut ulids = Vec::new();
-        let mut strings = Vec::new();
-
-        for i in 0..count {
-            if i > 0 {
-                for _ in 0..delay_micros {
-                    std::thread::yield_now();
-                }
-            }
-            let ulid = Ulid::new();
-            ulids.push(ulid);
-            strings.push(ulid.to_string());
-        }
-
-        // Sort both
-        ulids.sort();
-        strings.sort();
-
-        // Verify they match
-        for (ulid, string) in ulids.iter().zip(strings.iter()) {
-            prop_assert_eq!(ulid.to_string(), string.as_str());
-        }
-    });
     Ok(())
 }

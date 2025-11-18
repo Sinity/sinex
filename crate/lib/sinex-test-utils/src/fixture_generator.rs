@@ -3,9 +3,7 @@
 //! Generates deterministic, reproducible datasets for benchmarks and tests.
 //! All datasets use fixed seeds to ensure reproducibility across runs.
 
-use crate::prelude::*;
 use crate::Result;
-use crate::TestResult;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,7 +12,7 @@ use sinex_core::events::{
     ClipboardCopiedPayload, DbusSignalPayload, FileCreatedPayload, HyprlandWindowFocusedPayload,
     KittyCommandExecutedPayload, SystemdUnitStartedPayload,
 };
-use sinex_core::{Event, JsonValue};
+use sinex_core::{Event, EventPayload, JsonValue, Ulid};
 
 use camino::Utf8Path;
 use sinex_core::types::error::SinexError;
@@ -207,7 +205,7 @@ impl FixtureGenerator {
         payload_size: usize,
         timestamp: DateTime<Utc>,
         index: usize,
-    ) -> TestResult<Event<JsonValue>> {
+    ) -> Result<Event<JsonValue>> {
         use sinex_core::types::*;
         let mut payload = HashMap::new();
 
@@ -265,7 +263,7 @@ impl FixtureGenerator {
     }
 
     /// Generate SQL for the dataset
-    pub fn generate_sql(&mut self, events: &[Event<JsonValue>]) -> TestResult<String> {
+    pub fn generate_sql(&mut self, events: &[Event<JsonValue>]) -> Result<String> {
         let mut sql = String::new();
 
         // Header
@@ -381,7 +379,7 @@ impl FixtureGenerator {
     }
 
     /// Save dataset to disk
-    pub async fn save_dataset(&mut self, output_dir: &Utf8Path) -> TestResult<DatasetMetadata> {
+    pub async fn save_dataset(&mut self, output_dir: &Utf8Path) -> Result<DatasetMetadata> {
         // Generate events
         let events = self.generate_events();
 
@@ -444,7 +442,7 @@ pub async fn load_dataset(pool: &DbPool, dataset_path: &Utf8Path) -> crate::Resu
 }
 
 /// Verify dataset integrity
-pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> TestResult<bool> {
+pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<bool> {
     let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
 
     // Check event count

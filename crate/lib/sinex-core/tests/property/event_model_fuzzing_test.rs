@@ -398,35 +398,24 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
 // ============================================================================
 
 /// Test that event creation and database insertion never panics with arbitrary fuzzed events
-#[sinex_test]
-fn test_event_creation_never_panics_with_fuzzed_data() -> TestResult<()> {
-    proptest::proptest!(|(event in fuzzed_events())| {
-        // The critical assertion: event creation and serialization should never panic, regardless of input
-        // It should either succeed or return an error gracefully
-
-        // Test JSON serialization (used throughout the system)
+sinex_proptest! {
+    fn test_event_creation_never_panics_with_fuzzed_data(
+        event in fuzzed_events()
+    ) -> TestResult<()> {
         let _ = serde_json::to_string(&event);
-
-        // Test pretty printing as well (used in stdout output)
         let _ = serde_json::to_string_pretty(&event);
-
-        // Test that we can access event fields without panicking
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = event.host.as_str();
         let _ = &event.payload;
-        // derive ingest from ULID if needed
         let _ = event.ts_orig;
         let _ = event.ingestor_version;
         let _ = event.payload_schema_id;
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
 /// Test filesystem events with extreme payloads
-#[sinex_test]
-fn test_filesystem_events_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+    fn test_filesystem_events_robustness(
         payload in fuzzed_filesystem_payloads(),
         source in problematic_strings(),
         event_type in prop_oneof![
@@ -437,7 +426,7 @@ fn test_filesystem_events_robustness() -> TestResult<()> {
             Just("dir.created"),
             Just("dir.deleted"),
         ],
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new(if source.is_empty() { "fs".to_string() } else { source }),
             EventType::new(event_type.to_string()),
@@ -445,21 +434,15 @@ fn test_filesystem_events_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-
-        // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
 /// Test terminal events with extreme payloads
-#[sinex_test]
-fn test_terminal_events_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+    fn test_terminal_events_robustness(
         payload in fuzzed_terminal_payloads(),
         source in prop_oneof![
             Just("shell.kitty"),
@@ -474,7 +457,7 @@ fn test_terminal_events_robustness() -> TestResult<()> {
             Just("session.started"),
             Just("session.ended"),
         ],
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
@@ -482,27 +465,21 @@ fn test_terminal_events_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-
-        // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
 /// Test clipboard events with extreme payloads
-#[sinex_test]
-fn test_clipboard_events_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+    fn test_clipboard_events_robustness(
         payload in fuzzed_clipboard_payloads(),
         event_type in prop_oneof![
             Just("copied"),
             Just("selected"),
         ],
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new("clipboard".to_string()),
             EventType::new(event_type.to_string()),
@@ -510,21 +487,18 @@ fn test_clipboard_events_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-
-        // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-    });
-    Ok(())
+        Ok(())
+    }
+
 }
 
 /// Test window manager events with extreme payloads
-#[sinex_test]
-fn test_window_manager_events_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+sinex_proptest! {
+    fn test_window_manager_events_robustness(
         payload in fuzzed_window_manager_payloads(),
         event_type in prop_oneof![
             Just("window.opened"),
@@ -536,7 +510,7 @@ fn test_window_manager_events_robustness() -> TestResult<()> {
             Just("workspace.created"),
             Just("workspace.destroyed"),
         ],
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new("wm.hyprland".to_string()),
             EventType::new(event_type.to_string()),
@@ -544,21 +518,16 @@ fn test_window_manager_events_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-
-        // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 /// Test system events with extreme payloads
-#[sinex_test]
-fn test_system_events_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+    fn test_system_events_robustness(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
             Just("dbus"),
@@ -570,7 +539,7 @@ fn test_system_events_robustness() -> TestResult<()> {
             Just("entry.written"),
             Just("state.changed"),
         ],
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
@@ -578,23 +547,17 @@ fn test_system_events_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-
-        // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
 /// Test JSON serialization robustness with extreme payloads
-#[sinex_test]
-fn test_json_serialization_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
-        payload in malformed_json_values(),
-    )| {
+    fn test_json_serialization_robustness(
+        payload in malformed_json_values()
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new("test".to_string()),
             EventType::new("test.event".to_string()),
@@ -602,29 +565,21 @@ fn test_json_serialization_robustness() -> TestResult<()> {
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
 
-        // Test that JSON serialization never panics
         let json_result = serde_json::to_string(&event);
         match json_result {
-            Ok(_) => {
-                // Success is fine
-            }
-            Err(_) => {
-                // Serialization errors are acceptable as long as no panic
-            }
+            Ok(_) => {}
+            Err(_) => {}
         }
 
-        // Test pretty printing as well (used in stdout output)
         let _ = serde_json::to_string_pretty(&event);
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-/// Test ULID robustness with extreme timestamps
-#[sinex_test]
-fn test_ulid_robustness_with_extreme_timestamps() -> TestResult<()> {
-    proptest::proptest!(|(
-        timestamp in problematic_timestamps(),
-    )| {
+sinex_proptest! {
+    /// Test ULID robustness with extreme timestamps
+    fn test_ulid_robustness_with_extreme_timestamps(
+        timestamp in problematic_timestamps()
+    ) -> TestResult<()> {
         // Test that ULID creation with extreme timestamps doesn't panic
         let ulid = Ulid::new();
 
@@ -645,18 +600,15 @@ fn test_ulid_robustness_with_extreme_timestamps() -> TestResult<()> {
 
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);
-    });
-    Ok(())
-}
+        Ok(())
+    }
 
-/// Test string handling robustness
-#[sinex_test]
-fn test_string_handling_robustness() -> TestResult<()> {
-    proptest::proptest!(|(
+    /// Test string handling robustness
+    fn test_string_handling_robustness(
         source in problematic_strings(),
         event_type in problematic_strings(),
         host in problematic_strings(),
-    )| {
+    ) -> TestResult<()> {
         let mut event = Event::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
@@ -671,8 +623,8 @@ fn test_string_handling_robustness() -> TestResult<()> {
         // Test that we can create the struct without panicking by checking key fields
         prop_assert_eq!(event.source.as_str(), source.as_str());
         prop_assert_eq!(event.host.as_str(), host.as_str());
-    });
-    Ok(())
+        Ok(())
+    }
 }
 
 // ============================================================================

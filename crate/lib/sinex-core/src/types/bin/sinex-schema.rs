@@ -17,7 +17,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::info;
-use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

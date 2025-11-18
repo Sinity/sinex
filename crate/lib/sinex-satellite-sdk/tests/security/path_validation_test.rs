@@ -119,7 +119,7 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre
         while event_rx.recv().await.is_some() {}
     });
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), event_tx)?;
+    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
 
     // Test with safe path - should work if file exists
     let safe_path = camino::Utf8PathBuf::try_from(temp_file)?;
@@ -163,7 +163,7 @@ async fn blob_manager_rejects_percent_encoded_traversal(
         large_files: None,
     };
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), event_tx)?;
+    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
 
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
 

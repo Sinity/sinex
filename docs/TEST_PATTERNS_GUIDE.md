@@ -124,10 +124,15 @@ result
 See: [Section 3: Property Test Patterns](#property-test-patterns)
 
 ```rust
-#[sinex_test]
-async fn test_inputs(ctx: TestContext) -> Result<()> {
-    let mut tester = ctx.property_tester();
-    tester.test_event_creation_property(20).await?;
+use sinex_test_utils::property_testing::SinexStrategies;
+
+#[sinex_prop(cases = 20)]
+async fn test_inputs(
+    ctx: &TestContext,
+    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+) -> TestResult<()> {
+    let (source, ty, payload) = event;
+    ctx.create_test_event(&source, &ty, payload).await?;
     Ok(())
 }
 ```
