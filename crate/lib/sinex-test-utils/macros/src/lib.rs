@@ -375,21 +375,25 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             };
             #runner_setup
             let strategy = #strategy_expr;
+            let __sinex_prop_handle = tokio::runtime::Handle::current();
             let result = runner.run(&strategy, |value| {
-                let fut = async {
-                    #tuple_unpack
-                    #ctx_binding
-                    #( #destructures )*
-                    #user_body
-                };
-                match futures::executor::block_on(tokio::time::timeout(
-                    std::time::Duration::from_secs(#timeout_secs),
-                    fut,
-                )) {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
-                    Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
-                }
+                let handle = __sinex_prop_handle.clone();
+                handle.block_on(async {
+                    let fut = async {
+                        #tuple_unpack
+                        #ctx_binding
+                        #( #destructures )*
+                        #user_body
+                    };
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(#timeout_secs),
+                        fut,
+                    ).await {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
+                        Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
+                    }
+                })
             });
             let elapsed = start.elapsed();
             match result {
