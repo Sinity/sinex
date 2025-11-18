@@ -494,6 +494,8 @@ sinex_proptest! {
         Ok(())
     }
 
+}
+
 /// Test window manager events with extreme payloads
 sinex_proptest! {
     fn test_window_manager_events_robustness(

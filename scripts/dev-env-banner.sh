@@ -52,24 +52,12 @@ fi
 
 toolchain="${SINEX_DEVENV_TOOLCHAIN:-fenix toolchain}"
 process_hint="${SINEX_DEVENV_PROCESS_HINT:-devenv up nats ingestd gateway}"
-log_mode="failures only"
-if [[ -n "${SINEX_TEST_LOG_ALL:-}" ]]; then
-  case "${SINEX_TEST_LOG_ALL,,}" in
-    ""|"0"|"false") ;;
-    *) log_mode="all runs" ;;
-  esac
-fi
-metrics_path="${SINEX_TEST_METRICS_PATH:-target/sinex-test-metrics.jsonl}"
-metrics_hint="writing ${metrics_path}"
-
 printf '%s\n' "${divider}"
 printf '%s\n' "${headline}"
 printf '%s\n\n' "${divider}"
 printf 'Database:    %b  %s\n' "${db_status_symbol}" "${db_status_message}"
 printf 'Toolchain:   %s\n' "${toolchain}"
 printf 'Processes:   start via '\''%s'\''\n' "${process_hint}"
-printf 'Test logging: %s\n' "${log_mode}"
-printf 'Perf metrics: %s\n' "${metrics_hint}"
 printf '%sQuick commands:%s\n' "${COLOR_DIM}" "${COLOR_RESET}"
 printf '  devenv tasks run --help    -> list available tasks\n'
 printf '  devenv tasks run dev:check -> cargo check --workspace\n'

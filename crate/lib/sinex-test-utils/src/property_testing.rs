@@ -3,16 +3,9 @@
 // Provides property-based testing capabilities that integrate seamlessly
 // with the unified test infrastructure and event builders.
 
-use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use proptest::test_runner::{FileFailurePersistence, RngAlgorithm, RngSeed, TestRunner};
 use serde_json::{json, Value};
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use tracing::warn;
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -195,95 +188,17 @@ impl SinexStrategies {
     }
 }
 
-/// Harness overrides provided by procedural macros.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RunnerOverrides {
-    pub cases: Option<u32>,
-    pub seed: Option<u64>,
-    pub max_shrink_time_ms: Option<u64>,
-}
-
-/// Build a [`TestRunner`] honoring env overrides plus harness settings.
-pub fn make_runner(overrides: RunnerOverrides) -> TestRunner {
-    static DEFAULT_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let workspace_root = manifest_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .map(PathBuf::from)
-            .unwrap_or(manifest_dir);
-
-        let target_dir = env::var("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| workspace_root.join("target"));
-
-        target_dir.join("proptest-regressions")
-    });
-
-    let mut config = proptest::test_runner::Config::default();
-    config.cases = overrides.cases.or_else(env_cases).unwrap_or(256).max(1);
-
-    if let Some(seed) = overrides.seed.or_else(env_seed) {
-        config.rng_algorithm = RngAlgorithm::ChaCha;
-        config.rng_seed = RngSeed::Fixed(seed);
-    }
-
-    if let Some(ms) = overrides.max_shrink_time_ms.or_else(env_max_shrink_time_ms) {
-        let clamped = ms.min(u64::from(u32::MAX)) as u32;
-        config.max_shrink_time = clamped.max(1);
-    }
-
-    static PERSISTENCE_COMPONENT: OnceLock<&'static str> = OnceLock::new();
-    let component = PERSISTENCE_COMPONENT.get_or_init(|| {
-        let dir = env::var("SINEX_PROPTEST_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| DEFAULT_DIR.clone());
-
-        if let Err(err) = fs::create_dir_all(&dir) {
-            warn!("Failed to create persistence directory {:?}: {}", dir, err);
-        }
-
-        Box::leak(dir.to_string_lossy().into_owned().into_boxed_str())
-    });
-
-    config.failure_persistence = Some(Box::new(FileFailurePersistence::SourceParallel(component)));
-
-    TestRunner::new(config)
-}
-
-fn env_cases() -> Option<u32> {
-    env::var("SINEX_PROPTEST_CASES")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
-}
-
-fn env_seed() -> Option<u64> {
-    env::var("SINEX_PROPTEST_SEED")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-}
-
-fn env_max_shrink_time_ms() -> Option<u64> {
-    env::var("SINEX_PROPTEST_MAX_SHRINK_MS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{sinex_prop, sinex_test, TestContext, TestResult};
+    use crate::{sinex_prop, TestContext, TestResult};
 
     #[sinex_prop(cases = 8)]
     async fn property_creates_filesystem_events(
         ctx: &TestContext,
-        #[strategy(SinexStrategies::filesystem_event())] (source, event_type, payload): (
-            String,
-            String,
-            Value,
-        ),
+        #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
     ) -> TestResult<()> {
+        let (source, event_type, payload) = event;
         let event = ctx.create_test_event(&source, &event_type, payload).await?;
         assert_eq!(event.source.as_str(), "filesystem");
         assert!(event.id.is_some());
@@ -317,16 +232,4 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn runner_honors_env_variables() -> TestResult<()> {
-        std::env::set_var("SINEX_PROPTEST_CASES", "13");
-        std::env::set_var("SINEX_PROPTEST_SEED", "1234");
-        std::env::remove_var("SINEX_PROPTEST_MAX_SHRINK_MS");
-
-        let runner = make_runner(RunnerOverrides::default());
-        assert_eq!(runner.config().cases, 13);
-        assert_eq!(runner.config().rng_seed, Some(1234));
-
-        Ok(())
-    }
 }

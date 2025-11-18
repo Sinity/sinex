@@ -62,7 +62,6 @@ mod nats;
 mod path_validation;
 mod property_testing;
 pub mod resources;
-pub mod runlog;
 mod satellite_management_utils;
 pub mod satellite_runtime;
 pub mod snapshot_helper;

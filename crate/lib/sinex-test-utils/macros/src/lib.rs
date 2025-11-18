@@ -9,15 +9,13 @@
 
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
+use syn::parse::Parser;
 use syn::{
-    braced, parenthesized,
-    parse::{Parse, ParseStream, Parser},
-    parse_macro_input, parse_quote,
+    parse_macro_input,
     punctuated::Punctuated,
     spanned::Spanned,
     token::Comma,
-    Attribute, Block, Expr, FnArg, Ident, ItemFn, Lit, Meta, Pat, PatIdent, ReturnType, Token,
-    Type, Visibility,
+    Error, Expr, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
 };
 
 /// Configuration parsed from sinex_test attributes
@@ -86,740 +84,551 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     config
 }
 
-#[derive(Clone, Default)]
-struct SinexPropConfig {
-    timeout: Option<u64>,
-    trace: bool,
-    cases: Option<u32>,
-    seed: Option<u64>,
-    max_shrink_time_ms: Option<u64>,
-}
-
-fn parse_sinex_prop_attrs(attr: TokenStream) -> syn::Result<SinexPropConfig> {
-    if attr.is_empty() {
-        return Ok(SinexPropConfig::default());
-    }
-
-    let metas = Punctuated::<Meta, Comma>::parse_terminated.parse(attr)?;
-    let mut config = SinexPropConfig::default();
-
-    for meta in metas {
-        match meta {
-            Meta::NameValue(nv) if nv.path.is_ident("timeout") => {
-                if let Expr::Lit(expr_lit) = nv.value {
-                    config.timeout = Some(parse_timeout_literal(&expr_lit.lit)?);
-                } else {
-                    return Err(syn::Error::new(
-                        nv.value.span(),
-                        "timeout expects an integer literal or \"30s\"",
-                    ));
-                }
-            }
-            Meta::NameValue(nv) if nv.path.is_ident("cases") => {
-                if let Expr::Lit(expr_lit) = nv.value {
-                    config.cases = Some(parse_u32_literal(&expr_lit.lit)?);
-                } else {
-                    return Err(syn::Error::new(
-                        nv.value.span(),
-                        "cases expects an integer literal",
-                    ));
-                }
-            }
-            Meta::NameValue(nv) if nv.path.is_ident("seed") => {
-                if let Expr::Lit(expr_lit) = nv.value {
-                    config.seed = Some(parse_u64_literal(&expr_lit.lit)?);
-                } else {
-                    return Err(syn::Error::new(
-                        nv.value.span(),
-                        "seed expects an integer literal",
-                    ));
-                }
-            }
-            Meta::NameValue(nv) if nv.path.is_ident("max_shrink_time_ms") => {
-                if let Expr::Lit(expr_lit) = nv.value {
-                    config.max_shrink_time_ms = Some(parse_u64_literal(&expr_lit.lit)?);
-                } else {
-                    return Err(syn::Error::new(
-                        nv.value.span(),
-                        "max_shrink_time_ms expects an integer literal",
-                    ));
-                }
-            }
-            Meta::Path(path) if path.is_ident("trace") => {
-                config.trace = true;
-            }
-            other => {
-                return Err(syn::Error::new(
-                    other.span(),
-                    "supported options: timeout=.., trace, cases=.., seed=.., max_shrink_time_ms=..",
-                ));
-            }
-        }
-    }
-
-    Ok(config)
-}
-
-fn merge_prop_configs(base: &SinexPropConfig, overrides: &SinexPropConfig) -> SinexPropConfig {
-    SinexPropConfig {
-        timeout: overrides.timeout.or(base.timeout),
-        trace: overrides.trace || base.trace,
-        cases: overrides.cases.or(base.cases),
-        seed: overrides.seed.or(base.seed),
-        max_shrink_time_ms: overrides.max_shrink_time_ms.or(base.max_shrink_time_ms),
-    }
-}
-
-fn config_to_attr_tokens(config: &SinexPropConfig) -> proc_macro2::TokenStream {
-    let mut entries = Vec::new();
-    if let Some(timeout) = config.timeout {
-        entries.push(quote! { timeout = #timeout });
-    }
-    if config.trace {
-        entries.push(quote! { trace });
-    }
-    if let Some(cases) = config.cases {
-        entries.push(quote! { cases = #cases });
-    }
-    if let Some(seed) = config.seed {
-        entries.push(quote! { seed = #seed });
-    }
-    if let Some(ms) = config.max_shrink_time_ms {
-        entries.push(quote! { max_shrink_time_ms = #ms });
-    }
-
-    if entries.is_empty() {
-        quote! {}
-    } else {
-        quote! { (#(#entries),*) }
-    }
-}
-
-fn parse_u32_literal(lit: &Lit) -> syn::Result<u32> {
-    match lit {
-        Lit::Int(int) => int
-            .base10_parse::<u32>()
-            .map_err(|e| syn::Error::new(int.span(), e)),
-        _ => Err(syn::Error::new(lit.span(), "expected integer literal")),
-    }
-}
-
-fn type_is_test_context(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        return type_path
-            .path
-            .segments
-            .last()
-            .map(|seg| seg.ident == "TestContext")
-            .unwrap_or(false);
-    }
-    false
-}
-
-fn is_test_context_reference(ty: &Type) -> bool {
-    if let Type::Reference(reference) = ty {
-        return type_is_test_context(&reference.elem);
-    }
-    false
-}
+// ---------------------------------------------------------------------------
+// sinex_prop attribute macro
+// ---------------------------------------------------------------------------
 
 #[proc_macro_attribute]
 pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match expand_sinex_prop(attr, item) {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
+    use proc_macro2::TokenStream as TS;
+    use quote::quote;
+
+    #[derive(Default)]
+    struct PropOpts {
+        cases: Option<u32>,
+        timeout_secs: Option<u64>,
+        trace: bool,
+        seed: Option<u64>,
+        max_shrink_time_ms: Option<u64>,
     }
-}
 
-struct PropParam {
-    ident: Ident,
-    strategy: proc_macro2::TokenStream,
-}
-
-fn expand_sinex_prop(
-    attr: TokenStream,
-    item: TokenStream,
-) -> syn::Result<proc_macro2::TokenStream> {
-    let input: ItemFn = syn::parse(item)?;
-    let config = parse_sinex_prop_attrs(attr)?;
-
-    let fn_name = input.sig.ident.clone();
-    let fn_vis = input.vis.clone();
-    let is_async = input.sig.asyncness.is_some();
-    let attrs = input.attrs.clone();
-
-    let has_result_return = match &input.sig.output {
-        ReturnType::Type(_, ty) => {
-            if let Type::Path(type_path) = ty.as_ref() {
-                type_path
-                    .path
-                    .segments
-                    .last()
-                    .map(|seg| {
-                        let ident = &seg.ident;
-                        ident == "Result" || ident == "TestResult"
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            }
+    fn parse_u32(lit: &Lit) -> Result<u32, Error> {
+        match lit {
+            Lit::Int(i) => i.base10_parse::<u32>().map_err(|e| Error::new(i.span(), e)),
+            _ => Err(Error::new(lit.span(), "expected integer")),
         }
-        ReturnType::Default => false,
-    };
-
-    if !has_result_return {
-        return Err(syn::Error::new_spanned(
-            &input.sig.output,
-            "sinex_prop functions must return Result<()> or Result<T>",
-        ));
     }
 
-    let mut ctx_param: Option<Ident> = None;
-    let mut prop_params = Vec::<PropParam>::new();
+    fn parse_u64(lit: &Lit) -> Result<u64, Error> {
+        match lit {
+            Lit::Int(i) => i.base10_parse::<u64>().map_err(|e| Error::new(i.span(), e)),
+            _ => Err(Error::new(lit.span(), "expected integer")),
+        }
+    }
 
-    let mut inner_inputs = input.sig.inputs.clone();
-    for arg in inner_inputs.iter_mut() {
-        match arg {
-            FnArg::Receiver(_) => {
-                return Err(syn::Error::new_spanned(
-                    arg,
-                    "sinex_prop does not support self receivers",
-                ));
-            }
-            FnArg::Typed(pat_ty) => {
-                if is_test_context_reference(&pat_ty.ty) {
-                    if ctx_param.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            &pat_ty.ty,
-                            "multiple TestContext parameters are not supported",
-                        ));
-                    }
-                    if let Pat::Ident(PatIdent { ident, .. }) = &*pat_ty.pat {
-                        ctx_param = Some(ident.clone());
-                    } else {
-                        return Err(syn::Error::new_spanned(
-                            &pat_ty.pat,
-                            "TestContext parameter must be an identifier",
-                        ));
-                    }
-                    continue;
-                }
-
-                let mut strategy = None;
-                let mut cleaned_attrs = Vec::new();
-                for attr in &pat_ty.attrs {
-                    if attr.path().is_ident("strategy") {
-                        strategy = Some(attr.parse_args::<proc_macro2::TokenStream>()?);
-                    } else {
-                        cleaned_attrs.push(attr.clone());
-                    }
-                }
-                if strategy.is_none() {
-                    return Err(syn::Error::new_spanned(
-                        &pat_ty.pat,
-                        "each parameter must have #[strategy(...)]",
-                    ));
-                }
-                if let Pat::Ident(PatIdent { ident, .. }) = &*pat_ty.pat {
-                    prop_params.push(PropParam {
-                        ident: ident.clone(),
-                        strategy: strategy.unwrap(),
-                    });
+    fn parse_timeout(lit: &Lit) -> Result<u64, Error> {
+        match lit {
+            Lit::Int(i) => i.base10_parse::<u64>().map_err(|e| Error::new(i.span(), e)),
+            Lit::Str(s) => {
+                let raw = s.value();
+                if let Some(num) = raw.trim().strip_suffix('s') {
+                    num.parse::<u64>().map_err(|e| Error::new(s.span(), e))
                 } else {
-                    return Err(syn::Error::new_spanned(
-                        &pat_ty.pat,
-                        "parameter pattern must be an identifier",
-                    ));
+                    raw.trim().parse::<u64>().map_err(|e| Error::new(s.span(), e))
                 }
-                pat_ty.attrs = cleaned_attrs;
             }
+            _ => Err(Error::new(lit.span(), r#"expected seconds or "30s""#)),
         }
     }
 
-    if prop_params.is_empty() {
-        return Err(syn::Error::new(
-            fn_name.span(),
-            "sinex_prop requires at least one #[strategy] parameter",
-        ));
-    }
-
-    let mut inner_fn = input.clone();
-    inner_fn.attrs.clear();
-    inner_fn.vis = syn::Visibility::Inherited;
-    let inner_ident = Ident::new(&format!("__sinex_prop_impl_{}", fn_name), fn_name.span());
-    inner_fn.sig.ident = inner_ident.clone();
-    inner_fn.sig.inputs = inner_inputs;
-
-    let timeout_secs = config.timeout.unwrap_or(30);
-    let cases_expr = config
-        .cases
-        .map(|v| quote! { Some(#v) })
-        .unwrap_or_else(|| quote! { None });
-    let seed_expr = config
-        .seed
-        .map(|v| quote! { Some(#v) })
-        .unwrap_or_else(|| quote! { None });
-    let shrink_expr = config
-        .max_shrink_time_ms
-        .map(|v| quote! { Some(#v) })
-        .unwrap_or_else(|| quote! { None });
-
-    let tracing_block = if config.trace {
-        quote! { sinex_test_utils::TestContext::init_tracing("debug"); }
-    } else {
-        quote! {}
-    };
-
-    let strategy_expr = if prop_params.len() == 1 {
-        let strat = &prop_params[0].strategy;
-        quote! { #strat }
-    } else {
-        let pieces = prop_params.iter().map(|p| &p.strategy);
-        quote! { ( #(#pieces),* ) }
-    };
-
-    let destructure = if prop_params.len() == 1 {
-        let ident = &prop_params[0].ident;
-        quote! { let #ident = value; }
-    } else {
-        let idents = prop_params.iter().map(|p| &p.ident);
-        quote! { let (#(#idents),*) = value; }
-    };
-
-    let has_ctx = ctx_param.is_some();
-
-    let mut call_args = Vec::new();
-    if ctx_param.is_some() {
-        call_args.push(quote! { ctx_ref.expect("TestContext available") });
-    }
-    for param in &prop_params {
-        let ident = &param.ident;
-        call_args.push(quote!(#ident));
-    }
-
-    let mut call_expr = quote! { #inner_ident( #(#call_args),* ) };
-    if is_async {
-        call_expr = quote! { #call_expr.await };
-    }
-
-    let ctx_ref_stmt = if has_ctx {
-        quote! { let ctx_ref = ctx_holder.as_ref(); }
-    } else {
-        quote! {}
-    };
-
-    let harness = quote! {
-        #(#attrs)*
-        #[tokio::test(flavor = "multi_thread")]
-        #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
-            #tracing_block
-            let test_name = stringify!(#fn_name);
-            let start = std::time::Instant::now();
-            eprintln!("🔄 {} [property, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
-
-            let timeout = std::time::Duration::from_secs(#timeout_secs);
-
-            let (run_result, telemetry) = tokio::time::timeout(
-                timeout,
-                async {
-                    let mut ctx_holder = if #has_ctx {
-                        Some(sinex_test_utils::TestContext::with_name(test_name).await?)
-                    } else {
-                        None
-                    };
-
-                    let telemetry = ctx_holder
-                        .as_ref()
-                        .map(|ctx| sinex_test_utils::runlog::TelemetryHandle::from(ctx.telemetry_handle()));
-                    #ctx_ref_stmt
-
-                    let overrides = sinex_test_utils::property_testing::RunnerOverrides {
-                        cases: #cases_expr,
-                        seed: #seed_expr,
-                        max_shrink_time_ms: #shrink_expr,
-                    };
-                    let mut runner = sinex_test_utils::property_testing::make_runner(overrides);
-                    let strategy = #strategy_expr;
-
-                    let run = runner.run(&strategy, |value| {
-                        #destructure
-                        let fut = async { #call_expr };
-                        futures::executor::block_on(fut)
-                            .map_err(|err| proptest::test_runner::TestCaseError::fail(format!("{err:?}")))
-                    });
-
-                    drop(ctx_holder);
-                    Ok::<_, color_eyre::eyre::Report>((run, telemetry))
-                },
-            )
-            .await
-            .map_err(|_| color_eyre::eyre::eyre!(format!("Test timed out after {} seconds", #timeout_secs)))??;
-
-            let result = run_result
-                .map_err(|err| color_eyre::eyre::eyre!(format!("Property failure: {err}")));
-
-            let elapsed = start.elapsed();
-            if result.is_ok() {
-                eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-            } else {
-                eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-            }
-
-            sinex_test_utils::runlog::record_async(
-                test_name,
-                elapsed,
-                telemetry.as_ref(),
-                &result,
-            )
-            .await;
-
-            result
-        }
-    };
-
-    Ok(quote! {
-        #inner_fn
-        #harness
-    })
-}
-
-fn parse_u64_literal(lit: &Lit) -> syn::Result<u64> {
-    match lit {
-        Lit::Int(int) => int
-            .base10_parse::<u64>()
-            .map_err(|e| syn::Error::new(int.span(), e)),
-        _ => Err(syn::Error::new(lit.span(), "expected integer literal")),
-    }
-}
-
-fn parse_timeout_literal(lit: &Lit) -> syn::Result<u64> {
-    match lit {
-        Lit::Int(int) => int
-            .base10_parse::<u64>()
-            .map_err(|e| syn::Error::new(int.span(), e)),
-        Lit::Str(s) => {
-            let value = s.value();
-            if let Some(stripped) = value.trim().strip_suffix('s') {
-                stripped
-                    .parse::<u64>()
-                    .map_err(|e| syn::Error::new(s.span(), e))
-            } else {
-                value
-                    .trim()
-                    .parse::<u64>()
-                    .map_err(|e| syn::Error::new(s.span(), e))
-            }
-        }
-        _ => Err(syn::Error::new(
-            lit.span(),
-            r#"expected integer seconds or string literal like "30s""#,
-        )),
-    }
-}
-
-struct ProptestBlock {
-    defaults: SinexPropConfig,
-    cases: Vec<ProptestCase>,
-}
-
-struct ProptestCase {
-    attrs: Vec<Attribute>,
-    overrides: SinexPropConfig,
-    vis: Visibility,
-    async_token: Option<Token![async]>,
-    name: Ident,
-    ctx_param: Option<BlockCtxParam>,
-    prop_params: Vec<BlockPropParamSpec>,
-    output: ReturnType,
-    body: Block,
-}
-
-struct BlockCtxParam {
-    ident: Ident,
-    ty: Type,
-}
-
-struct BlockPropParamSpec {
-    ident: Ident,
-    ty: Type,
-    strategy: Expr,
-}
-
-impl Parse for ProptestBlock {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let content;
-        braced!(content in input);
-
-        let mut defaults = SinexPropConfig::default();
-        let mut cases = Vec::new();
-
-        while !content.is_empty() {
-            if content.peek(Token![#]) && content.peek2(Token![!]) {
-                let attrs = content.call(Attribute::parse_inner)?;
-                for attr in attrs {
-                    if !apply_prop_control_attr(&attr, &mut defaults)? {
-                        return Err(syn::Error::new(
-                            attr.span(),
-                            "unsupported block attribute; allowed: cases, timeout, trace, seed, max_shrink_time_ms",
-                        ));
-                    }
-                }
-                continue;
-            }
-
-            cases.push(content.parse::<ProptestCase>()?);
-        }
-
-        Ok(Self { defaults, cases })
-    }
-}
-
-impl Parse for ProptestCase {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let attrs = input.call(Attribute::parse_outer)?;
-        let (overrides, passthrough) = split_control_attrs(attrs)?;
-
-        let vis: Visibility = input.parse()?;
-        let async_token = if input.peek(Token![async]) {
-            Some(input.parse()?)
+    fn lit_from_expr<'a>(expr: &'a Expr) -> Result<&'a Lit, Error> {
+        if let Expr::Lit(expr_lit) = expr {
+            Ok(&expr_lit.lit)
         } else {
-            None
+            Err(Error::new(expr.span(), "expected literal"))
+        }
+    }
+
+    fn is_test_context(ty: &Type) -> bool {
+        match ty {
+            Type::Reference(r) => is_test_context(&r.elem),
+            Type::Path(TypePath { path, .. }) => {
+                path.segments.last().map_or(false, |seg| seg.ident == "TestContext")
+            }
+            _ => false,
+        }
+    }
+
+    let attr_tokens = proc_macro2::TokenStream::from(attr);
+    let opts = (|| -> Result<PropOpts, Error> {
+        let mut o = PropOpts::default();
+        if attr_tokens.is_empty() {
+            return Ok(o);
+        }
+
+        let parsed = match Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens.clone()) {
+            Ok(list) => list,
+            Err(err) => return Err(err),
         };
 
-        let _fn_token: Token![fn] = input.parse()?;
-        let name: Ident = input.parse()?;
-
-        if input.peek(Token![<]) {
-            return Err(syn::Error::new(
-                input.span(),
-                "generics are not supported in sinex_proptest! declarations",
-            ));
+        for meta in parsed {
+            match meta {
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("cases") => {
+                    let lit = lit_from_expr(&value)?;
+                    o.cases = Some(parse_u32(lit)?);
+                }
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("timeout") => {
+                    let lit = lit_from_expr(&value)?;
+                    o.timeout_secs = Some(parse_timeout(lit)?);
+                }
+                Meta::Path(p) if p.is_ident("trace") => {
+                    o.trace = true;
+                }
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("seed") => {
+                    let lit = lit_from_expr(&value)?;
+                    o.seed = Some(parse_u64(lit)?);
+                }
+                Meta::NameValue(MetaNameValue { path, value, .. })
+                    if path.is_ident("max_shrink_time_ms") =>
+                {
+                    let lit = lit_from_expr(&value)?;
+                    o.max_shrink_time_ms = Some(parse_u64(lit)?);
+                }
+                other => return Err(Error::new(other.span(), "unknown sinex_prop option")),
+            }
         }
+        Ok(o)
+    })();
+    let opts = match opts {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
-        let content;
-        parenthesized!(content in input);
-        let (ctx_param, prop_params) = parse_block_params(&content)?;
+    let input = parse_macro_input!(item as ItemFn);
+    let fn_name = &input.sig.ident;
+    let fn_vis = &input.vis;
+    let user_body = &input.block;
+    let is_async = input.sig.asyncness.is_some();
 
-        if prop_params.is_empty() {
-            return Err(syn::Error::new(
-                name.span(),
-                "sinex_proptest! cases require at least one parameter with `in <strategy>`",
-            ));
-        }
+    // Collect parameters
+    struct Param {
+        pat: Pat,
+        ty: Option<Type>,
+        strat: TS,
+    }
 
-        if input.peek(Token![where]) {
-            return Err(syn::Error::new(
-                input.span(),
-                "where clauses are not supported in sinex_proptest! declarations",
-            ));
-        }
+    let mut ctx_param: Option<(Pat, Type)> = None;
+    let mut params: Vec<Param> = Vec::new();
 
-        let output = if input.peek(Token![->]) {
-            let arrow: Token![->] = input.parse()?;
-            let ty: Type = input.parse()?;
-            ReturnType::Type(arrow, Box::new(ty))
-        } else {
-            ReturnType::Default
+    for (idx, arg) in input.sig.inputs.iter().enumerate() {
+        let FnArg::Typed(PatType { pat, ty, attrs, .. }) = arg else {
+            return Error::new_spanned(arg, "methods are not supported in #[sinex_prop]")
+                .to_compile_error()
+                .into();
         };
 
-        let body: Block = input.parse()?;
-
-        Ok(Self {
-            attrs: passthrough,
-            overrides,
-            vis,
-            async_token,
-            name,
-            ctx_param,
-            prop_params,
-            output,
-            body,
-        })
-    }
-}
-
-fn parse_block_params(
-    input: ParseStream,
-) -> syn::Result<(Option<BlockCtxParam>, Vec<BlockPropParamSpec>)> {
-    let mut ctx_param = None;
-    let mut props = Vec::new();
-
-    while !input.is_empty() {
-        let ident: Ident = input.parse()?;
-
-        input.parse::<Token![:]>()?;
-        let ty: Type = input.parse()?;
-
-        if input.peek(Token![in]) {
-            input.parse::<Token![in]>()?;
-            let strategy: Expr = input.parse()?;
-            props.push(BlockPropParamSpec {
-                ident,
-                ty,
-                strategy,
-            });
-        } else {
+        if is_test_context(ty.as_ref()) {
+            if idx != 0 {
+                return Error::new_spanned(arg, "TestContext must appear first")
+                    .to_compile_error()
+                    .into();
+            }
             if ctx_param.is_some() {
-                return Err(syn::Error::new(
-                    ident.span(),
-                    "only one non-strategy parameter is allowed (use it for &TestContext)",
-                ));
+                return Error::new_spanned(arg, "duplicate TestContext parameter")
+                    .to_compile_error()
+                    .into();
             }
-            if !is_test_context_reference(&ty) {
-                return Err(syn::Error::new(
-                    ty.span(),
-                    "parameters must use `name: Type in <strategy>` unless they are &TestContext",
-                ));
+            if !matches!(ty.as_ref(), Type::Reference(_)) {
+                return Error::new_spanned(ty, "TestContext parameter must be a reference")
+                    .to_compile_error()
+                    .into();
             }
-            ctx_param = Some(BlockCtxParam { ident, ty });
+            ctx_param = Some(((**pat).clone(), ty.as_ref().clone()));
+            continue;
         }
 
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-            if input.is_empty() {
+        let mut strategy = None;
+        for a in attrs {
+            if a.path().is_ident("strategy") {
+                strategy = Some(match a.parse_args::<TS>() {
+                    Ok(ts) => ts,
+                    Err(e) => return e.to_compile_error().into(),
+                });
                 break;
             }
         }
+        let Some(strat) = strategy else {
+            return Error::new_spanned(pat, "each parameter needs #[strategy(...)]")
+                .to_compile_error()
+                .into();
+        };
+
+        params.push(Param {
+            pat: (**pat).clone(),
+            ty: Some(ty.as_ref().clone()),
+            strat,
+        });
     }
 
-    Ok((ctx_param, props))
-}
-
-fn split_control_attrs(attrs: Vec<Attribute>) -> syn::Result<(SinexPropConfig, Vec<Attribute>)> {
-    let mut overrides = SinexPropConfig::default();
-    let mut passthrough = Vec::new();
-
-    for attr in attrs {
-        if apply_prop_control_attr(&attr, &mut overrides)? {
-            continue;
-        }
-        passthrough.push(attr);
+    if params.is_empty() {
+        return Error::new_spanned(
+            &input.sig,
+            "#[sinex_prop] requires at least one #[strategy] parameter",
+        )
+        .to_compile_error()
+        .into();
     }
 
-    Ok((overrides, passthrough))
+    if ctx_param.is_some() && !is_async {
+        return Error::new_spanned(
+            &input.sig.fn_token,
+            "TestContext requires async #[sinex_prop] tests",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let timeout_secs = opts.timeout_secs.unwrap_or(if is_async { 30 } else { 10 });
+    let cases = opts.cases.unwrap_or(256);
+    let trace_stmt = if opts.trace {
+        quote!( sinex_test_utils::TestContext::init_tracing("debug"); )
+    } else {
+        quote!()
+    };
+
+    let seed_stmt = opts.seed.map(|seed| {
+        quote! {
+            cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
+            cfg.rng_seed = Some(#seed);
+        }
+    }).unwrap_or_else(|| {
+        quote! {
+            if let Ok(seed_env) = std::env::var("SINEX_PROPTEST_SEED").ok().and_then(|s| s.parse::<u64>().ok()) {
+                cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
+                cfg.rng_seed = Some(seed_env);
+            }
+        }
+    });
+
+    let shrink_stmt = opts.max_shrink_time_ms.map(|ms| {
+        quote! {
+            let shrink = (#ms).min(u32::MAX as u64) as u32;
+            cfg.max_shrink_time = shrink.max(1);
+        }
+    }).unwrap_or_else(|| quote!());
+
+    let strategy_expr = if params.len() == 1 {
+        params[0].strat.clone()
+    } else {
+        let parts = params.iter().map(|p| &p.strat);
+        quote!( ( #( #parts ),* ) )
+    };
+
+    let arg_idents: Vec<_> = (0..params.len())
+        .map(|idx| syn::Ident::new(&format!("__prop_arg{idx}"), proc_macro2::Span::call_site()))
+        .collect();
+
+    let destructures: Vec<TS> = params
+        .iter()
+        .enumerate()
+        .map(|(idx, param)| {
+            let ident = &arg_idents[idx];
+            let pat = &param.pat;
+            let ty = param.ty.as_ref().map(|ty| quote!( : #ty )).unwrap_or_default();
+            quote!( let #pat #ty = #ident; )
+        })
+        .collect();
+
+    let tuple_unpack = if params.len() == 1 {
+        let ident = &arg_idents[0];
+        quote!( let #ident = value; )
+    } else {
+        quote!( let ( #( #arg_idents ),* ) = value; )
+    };
+
+    let ctx_binding = ctx_param.as_ref().map(|(pat, ty)| {
+        quote! {
+            let ctx_ref: #ty = ctx_holder.as_ref().expect("TestContext available");
+            let #pat = ctx_ref;
+        }
+    }).unwrap_or_else(|| quote!());
+    let expects_ctx = ctx_param.is_some();
+
+    let runner_setup = quote! {
+        use ::proptest::prelude::*;
+        let mut cfg = ::proptest::test_runner::Config::default();
+        cfg.cases = #cases;
+        if let Ok(val) = std::env::var("SINEX_PROPTEST_CASES").ok().and_then(|s| s.parse::<u32>().ok()) {
+            cfg.cases = val;
+        }
+        cfg.failure_persistence = ::proptest::test_runner::FailurePersistence::File(
+            std::env::var("SINEX_PROPTEST_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("target/proptest-regressions"))
+        );
+        #seed_stmt
+        #shrink_stmt
+        let mut runner = ::proptest::test_runner::TestRunner::new(cfg);
+    };
+
+    let async_body = {
+        quote! {
+            color_eyre::install()?;
+            #trace_stmt
+            let test_name = stringify!(#fn_name);
+            let start = std::time::Instant::now();
+            eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
+            let ctx_holder = if #expects_ctx {
+                Some(sinex_test_utils::TestContext::with_name(test_name).await?)
+            } else {
+                None
+            };
+            #runner_setup
+            let strategy = #strategy_expr;
+            let result = runner.run(&strategy, |value| {
+                let fut = async {
+                    #tuple_unpack
+                    #ctx_binding
+                    #( #destructures )*
+                    #user_body
+                };
+                match futures::executor::block_on(tokio::time::timeout(
+                    std::time::Duration::from_secs(#timeout_secs),
+                    fut,
+                )) {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
+                    Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
+                }
+            });
+            let elapsed = start.elapsed();
+            match result {
+                Ok(_) => {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    Ok(())
+                }
+                Err(err) => {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    Err(color_eyre::eyre::eyre!("{err}"))
+                }
+            }
+        }
+    };
+
+    let sync_body = {
+        quote! {
+            color_eyre::install()?;
+            #trace_stmt
+            let test_name = stringify!(#fn_name);
+            let start = std::time::Instant::now();
+            eprintln!("🔄 {} [prop, cases: {}]", test_name.replace('_', " "), #cases);
+            #runner_setup
+            let strategy = #strategy_expr;
+            let result = runner.run(&strategy, |value| {
+                #tuple_unpack
+                #( #destructures )*
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #user_body }))
+                    .map_err(|_| ::proptest::test_runner::TestCaseError::fail("panic in property"))
+                    .and_then(|res| res.map_err(|err| ::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))))
+            });
+            let elapsed = start.elapsed();
+            match result {
+                Ok(_) => {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    Ok(())
+                }
+                Err(err) => {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    Err(color_eyre::eyre::eyre!("{err}"))
+                }
+            }
+        }
+    };
+
+    let expanded = if is_async {
+        quote! {
+            #fn_vis
+            #[tokio::test]
+            async fn #fn_name() -> color_eyre::eyre::Result<()> {
+                #async_body
+            }
+        }
+    } else {
+        quote! {
+            #fn_vis
+            #[test]
+            fn #fn_name() -> color_eyre::eyre::Result<()> {
+                #sync_body
+            }
+        }
+    };
+
+    expanded.into()
 }
 
-fn apply_prop_control_attr(attr: &Attribute, cfg: &mut SinexPropConfig) -> syn::Result<bool> {
-    match attr.meta.clone() {
-        Meta::NameValue(nv) if nv.path.is_ident("cases") => {
-            if let Expr::Lit(expr_lit) = nv.value {
-                cfg.cases = Some(parse_u32_literal(&expr_lit.lit)?);
-                return Ok(true);
-            }
-            return Err(syn::Error::new(
-                nv.value.span(),
-                "cases attribute expects an integer literal",
-            ));
-        }
-        Meta::NameValue(nv) if nv.path.is_ident("timeout") => {
-            if let Expr::Lit(expr_lit) = nv.value {
-                cfg.timeout = Some(parse_timeout_literal(&expr_lit.lit)?);
-                return Ok(true);
-            }
-            return Err(syn::Error::new(
-                nv.value.span(),
-                "timeout attribute expects an integer or \"30s\" literal",
-            ));
-        }
-        Meta::NameValue(nv) if nv.path.is_ident("seed") => {
-            if let Expr::Lit(expr_lit) = nv.value {
-                cfg.seed = Some(parse_u64_literal(&expr_lit.lit)?);
-                return Ok(true);
-            }
-            return Err(syn::Error::new(
-                nv.value.span(),
-                "seed attribute expects an integer literal",
-            ));
-        }
-        Meta::NameValue(nv) if nv.path.is_ident("max_shrink_time_ms") => {
-            if let Expr::Lit(expr_lit) = nv.value {
-                cfg.max_shrink_time_ms = Some(parse_u64_literal(&expr_lit.lit)?);
-                return Ok(true);
-            }
-            return Err(syn::Error::new(
-                nv.value.span(),
-                "max_shrink_time_ms expects an integer literal",
-            ));
-        }
-        Meta::Path(path) if path.is_ident("trace") => {
-            cfg.trace = true;
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
-}
+// ---------------------------------------------------------------------------
+// sinex_proptest block macro
+// ---------------------------------------------------------------------------
 
 #[proc_macro]
 pub fn sinex_proptest(input: TokenStream) -> TokenStream {
-    let block = parse_macro_input!(input as ProptestBlock);
-    match expand_sinex_proptest(block) {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
+    use proc_macro2::TokenStream as TS;
+    use quote::quote;
+    use syn::{
+        parse::{Parse, ParseStream},
+        Attribute, Expr, Ident, Pat, Result, Token, Type,
+    };
+
+    #[derive(Default)]
+    struct Defaults {
+        cases: Option<TS>,
+        timeout: Option<TS>,
+        trace: bool,
+        seed: Option<TS>,
     }
-}
 
-fn expand_sinex_proptest(block: ProptestBlock) -> syn::Result<proc_macro2::TokenStream> {
-    if block.cases.is_empty() {
-        return Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "sinex_proptest! requires at least one test case",
-        ));
+    struct TestCase {
+        attrs: Vec<Attribute>,
+        name: Ident,
+        ctx: Option<(Pat, Type)>,
+        params: Vec<(Pat, Option<Type>, Expr)>,
+        body: syn::Block,
     }
 
-    let mut expanded = Vec::new();
-    for case in block.cases {
-        let config = merge_prop_configs(&block.defaults, &case.overrides);
-        let attr_tokens = config_to_attr_tokens(&config);
-        let prop_attr = if attr_tokens.is_empty() {
-            quote! { #[sinex_test_utils::sinex_prop] }
+    struct BlockDecl {
+        defaults: Defaults,
+        tests: Vec<TestCase>,
+    }
+
+    impl Parse for BlockDecl {
+        fn parse(input: ParseStream<'_>) -> Result<Self> {
+            let mut defaults = Defaults::default();
+            for attr in input.call(Attribute::parse_inner)? {
+                let path = attr.path();
+                if path.is_ident("cases") {
+                    defaults.cases = Some(attr.parse_args()?);
+                } else if path.is_ident("timeout") {
+                    defaults.timeout = Some(attr.parse_args()?);
+                } else if path.is_ident("trace") {
+                    defaults.trace = true;
+                } else if path.is_ident("seed") {
+                    defaults.seed = Some(attr.parse_args()?);
+                } else {
+                    return Err(syn::Error::new_spanned(attr, "unknown block attribute"));
+                }
+            }
+
+            let mut tests = Vec::new();
+            while !input.is_empty() {
+                let attrs = input.call(Attribute::parse_outer)?;
+                input.parse::<Token![fn]>()?;
+                let name: Ident = input.parse()?;
+                let content;
+                syn::parenthesized!(content in input);
+                let mut ctx = None;
+                let mut params = Vec::new();
+                while !content.is_empty() {
+                    let pat: Pat = content.call(Pat::parse_single)?;
+                    let ty = if content.peek(Token![:]) {
+                        content.parse::<Token![:]>()?;
+                        Some(content.parse::<Type>()?)
+                    } else {
+                        None
+                    };
+                    if content.peek(Token![in]) {
+                        content.parse::<Token![in]>()?;
+                        let strat: Expr = content.parse()?;
+                        params.push((pat, ty, strat));
+                    } else {
+                        if ctx.is_some() {
+                            return Err(syn::Error::new_spanned(&pat, "only one context parameter supported"));
+                        }
+                        let Some(ty) = ty else {
+                            return Err(syn::Error::new_spanned(&pat, "context parameter needs a type"));
+                        };
+                        ctx = Some((pat, ty));
+                    }
+                    if content.peek(Token![,]) {
+                        content.parse::<Token![,]>()?;
+                    }
+                }
+
+                if input.peek(Token![->]) {
+                    input.parse::<Token![->]>()?;
+                    input.parse::<Type>()?;
+                }
+
+                let body: syn::Block = input.parse()?;
+                tests.push(TestCase { attrs, name, ctx, params, body });
+            }
+
+            Ok(BlockDecl { defaults, tests })
+        }
+    }
+
+    let block = match syn::parse::<BlockDecl>(input) {
+        Ok(b) => b,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    let mut out = Vec::<TS>::new();
+    for test in block.tests {
+        let TestCase { attrs, name, ctx, params, body } = test;
+
+        let mut meta_entries = Vec::<TS>::new();
+        if let Some(c) = &block.defaults.cases {
+            meta_entries.push(quote!(cases = #c));
+        }
+        if let Some(t) = &block.defaults.timeout {
+            meta_entries.push(quote!(timeout = #t));
+        }
+        if block.defaults.trace {
+            meta_entries.push(quote!(trace));
+        }
+        if let Some(s) = &block.defaults.seed {
+            meta_entries.push(quote!(seed = #s));
+        }
+
+        let mut passthrough_attrs = Vec::new();
+        for attr in &attrs {
+            if attr.path().is_ident("cases") {
+                let lit: TS = attr.parse_args().unwrap();
+                meta_entries.push(quote!(cases = #lit));
+            } else if attr.path().is_ident("timeout") {
+                let lit: TS = attr.parse_args().unwrap();
+                meta_entries.push(quote!(timeout = #lit));
+            } else if attr.path().is_ident("trace") {
+                meta_entries.push(quote!(trace));
+            } else if attr.path().is_ident("seed") {
+                let lit: TS = attr.parse_args().unwrap();
+                meta_entries.push(quote!(seed = #lit));
+            } else {
+                passthrough_attrs.push(attr.clone());
+            }
+        }
+
+        let meta_tokens = if meta_entries.is_empty() {
+            quote!()
         } else {
-            quote! { #[sinex_test_utils::sinex_prop #attr_tokens] }
+            quote!(( #(#meta_entries),* ))
         };
 
-        let async_token = case.async_token;
-        let name = case.name;
-        let vis = case.vis;
-        let attrs = case.attrs;
-        let body = case.body;
+        let mut param_defs = Vec::<TS>::new();
+        let mut destructures = Vec::<TS>::new();
+        for (idx, (pat, ty, strat)) in params.iter().enumerate() {
+            let ident = syn::Ident::new(&format!("__arg{idx}"), proc_macro2::Span::call_site());
+            let ty_tokens = ty.as_ref().map(|t| quote!(#t)).unwrap_or_else(|| quote!(_));
+            param_defs.push(quote!( #[strategy(#strat)] #ident: #ty_tokens ));
+            let ty_ann = ty.as_ref().map(|t| quote!( : #t )).unwrap_or_default();
+            destructures.push(quote!( let #pat #ty_ann = #ident; ));
+        }
 
-        let ctx_param = case.ctx_param.map(|param| {
-            let ident = param.ident;
-            let ty = param.ty;
-            quote! { #ident: #ty }
-        });
+        let ctx_tokens = ctx
+            .as_ref()
+            .map(|(pat, ty)| quote!( #pat: #ty, ))
+            .unwrap_or_else(|| quote!());
 
-        let prop_params: Vec<_> = case
-            .prop_params
-            .into_iter()
-            .map(|param| {
-                let ident = param.ident;
-                let ty = param.ty;
-                let strategy = param.strategy;
-                quote! { #[strategy(#strategy)] #ident: #ty }
-            })
-            .collect();
-
-        let output = match case.output {
-            ReturnType::Default => parse_quote!(-> sinex_test_utils::TestResult<()>),
-            other => other,
-        };
-
-        let params = if let Some(ctx) = ctx_param {
-            quote! { #ctx, #(#prop_params),* }
-        } else {
-            quote! { #(#prop_params),* }
-        };
-
-        expanded.push(quote! {
-            #prop_attr
-            #(#attrs)*
-            #vis #async_token fn #name(#params) #output {
+        out.push(quote! {
+            #(#passthrough_attrs)*
+            #[sinex_prop #meta_tokens]
+            fn #name( #ctx_tokens #( #param_defs ),* ) -> sinex_test_utils::TestResult<()> {
+                #( #destructures )*
                 #body
             }
         });
     }
 
-    Ok(quote! { #(#expanded)* })
+    quote!( #( #out )* ).into()
 }
 
 #[proc_macro_attribute]
@@ -975,15 +784,12 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             quote! {
                 #tracing_block
                 let ctx = TestContext::with_name(test_name).await?;
-                let telemetry = sinex_test_utils::runlog::TelemetryHandle::from(ctx.telemetry_handle());
-                let inner = async { #fn_body }.await;
-                (inner, Some(telemetry))
+                async { #fn_body }.await
             }
         } else {
             quote! {
                 #tracing_block
-                let inner = async { #fn_body }.await;
-                (inner, None::<sinex_test_utils::runlog::TelemetryHandle>)
+                async { #fn_body }.await
             }
         };
 
@@ -999,7 +805,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let start = Instant::now();
                 eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                let (result, telemetry) = tokio::time::timeout(
+                let result = tokio::time::timeout(
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #future_body }
                 ).await
@@ -1011,25 +817,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                 }
-
-                if let Some(handle) = telemetry.as_ref() {
-                    sinex_test_utils::runlog::record_async(
-                        test_name,
-                        elapsed,
-                        Some(handle.as_ref()),
-                        &result,
-                    )
-                    .await;
-                } else {
-                    sinex_test_utils::runlog::record_async(
-                        test_name,
-                        elapsed,
-                        None,
-                        &result,
-                    )
-                    .await;
-                }
-
                 result
             }
         }.into();
@@ -1091,13 +878,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     eprintln!("⚠️  {} exceeded timeout of {}s",
                              test_name.replace('_', " "), #timeout_secs);
                 }
-
-                sinex_test_utils::runlog::record_sync(
-                    test_name,
-                    elapsed,
-                    &result,
-                );
-
                 result
             }
         }
@@ -1113,7 +893,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
                     let ctx = TestContext::with_name(test_name).await?;
-                    let telemetry = ctx.telemetry_handle();
 
                     let result: color_eyre::eyre::Result<()> = if #timeout_secs > 10 {
                         let progress_task = tokio::spawn(async {
@@ -1146,15 +925,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     } else {
                         eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                     }
-
-                    sinex_test_utils::runlog::record_async(
-                        test_name,
-                        elapsed,
-                        Some(&telemetry),
-                        &result,
-                    )
-                    .await;
-
                     result
                 };
 
@@ -1188,15 +958,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                 }
-
-                sinex_test_utils::runlog::record_async(
-                    test_name,
-                    elapsed,
-                    None,
-                    &result,
-                )
-                .await;
-
                 result
             }
         }

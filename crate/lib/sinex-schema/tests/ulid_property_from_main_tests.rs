@@ -12,8 +12,8 @@ use std::thread;
 
 sinex_proptest! {
     fn test_ulid_chronological_ordering(
-        count in 2usize..10,
-        delay_micros in 100u64..1000
+        count: usize in 2usize..10,
+        delay_micros: u64 in 100u64..1000
     ) -> TestResult<()> {
         let mut ulids = Vec::new();
         for i in 0..count {
@@ -29,6 +29,58 @@ sinex_proptest! {
         }
         Ok(())
     }
+
+    fn test_ulid_string_properties(_dummy: u8 in 0u8..1) -> TestResult<()> {
+        let ulid = Ulid::new();
+        let s = ulid.to_string();
+        prop_assert_eq!(s.len(), 26);
+        for c in s.chars() {
+            prop_assert!(
+                "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c),
+                "Invalid character in ULID string: {}",
+                c
+            );
+        }
+        let parsed = s.parse::<Ulid>().unwrap();
+        prop_assert_eq!(ulid, parsed);
+        Ok(())
+    }
+
+    fn test_ulid_bytes_roundtrip(_dummy: u8 in 0u8..1) -> TestResult<()> {
+        let original = Ulid::new();
+        let bytes = original.to_bytes();
+        let restored = Ulid::from_bytes(bytes).unwrap();
+        prop_assert_eq!(original, restored);
+        Ok(())
+    }
+
+    fn test_ulid_string_ordering(
+        count: usize in 2usize..5,
+        delay_micros: u64 in 100u64..1000
+    ) -> TestResult<()> {
+        let mut ulids = Vec::new();
+        let mut strings = Vec::new();
+
+        for i in 0..count {
+            if i > 0 {
+                for _ in 0..delay_micros {
+                    std::thread::yield_now();
+                }
+            }
+            let ulid = Ulid::new();
+            ulids.push(ulid);
+            strings.push(ulid.to_string());
+        }
+
+        ulids.sort();
+        strings.sort();
+
+        for (ulid, string) in ulids.iter().zip(strings.iter()) {
+            prop_assert_eq!(ulid.to_string(), string.as_str());
+        }
+        Ok(())
+    }
+}
 
 // Test ULID uniqueness under concurrent generation
 #[sinex_test]
@@ -91,19 +143,6 @@ fn test_ulid_monotonic_within_ms() -> TestResult<()> {
     Ok(())
 }
 
-    fn test_ulid_string_properties(_dummy in 0u8..1) -> TestResult<()> {
-        let ulid = Ulid::new();
-        let s = ulid.to_string();
-        prop_assert_eq!(s.len(), 26);
-        for c in s.chars() {
-            prop_assert!("0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c),
-                "Invalid character in ULID string: {}", c);
-        }
-        let parsed = s.parse::<Ulid>().unwrap();
-        prop_assert_eq!(ulid, parsed);
-        Ok(())
-    }
-
 // Test ULID timestamp extraction
 #[sinex_test]
 fn test_ulid_timestamp_extraction() -> TestResult<()> {
@@ -134,40 +173,4 @@ fn test_ulid_nil() -> TestResult<()> {
     let regular = Ulid::new();
     assert!(nil < regular);
     Ok(())
-}
-
-    fn test_ulid_bytes_roundtrip(_dummy in 0u8..1) -> TestResult<()> {
-        let original = Ulid::new();
-        let bytes = original.to_bytes();
-        let restored = Ulid::from_bytes(bytes).unwrap();
-        prop_assert_eq!(original, restored);
-        Ok(())
-    }
-
-    fn test_ulid_string_ordering(
-        count in 2usize..5,
-        delay_micros in 100u64..1000
-    ) -> TestResult<()> {
-        let mut ulids = Vec::new();
-        let mut strings = Vec::new();
-
-        for i in 0..count {
-            if i > 0 {
-                for _ in 0..delay_micros {
-                    std::thread::yield_now();
-                }
-            }
-            let ulid = Ulid::new();
-            ulids.push(ulid);
-            strings.push(ulid.to_string());
-        }
-
-        ulids.sort();
-        strings.sort();
-
-        for (ulid, string) in ulids.iter().zip(strings.iter()) {
-            prop_assert_eq!(ulid.to_string(), string.as_str());
-        }
-        Ok(())
-    }
 }

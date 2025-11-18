@@ -29,8 +29,8 @@ fn build_state(processed_count: u64) -> CheckpointState {
 
 sinex_proptest! {
     fn property_ulid_inputs_create_internal_checkpoint(
-        processed in 0u64..10_000,
-        ulid in arb_ulid()
+        processed: u64 in 0u64..10_000,
+        ulid: Ulid in arb_ulid()
     ) -> TestResult<()> {
         let ulid_str = ulid.to_string();
         let mut state = build_state(processed);
@@ -51,8 +51,8 @@ sinex_proptest! {
     }
 
     fn property_non_ulid_inputs_create_stream_checkpoint(
-        processed in 0u64..10_000,
-        message_id in arb_non_ulid_string()
+        processed: u64 in 0u64..10_000,
+        message_id: String in arb_non_ulid_string()
     ) -> TestResult<()> {
         let mut state = build_state(processed);
 
@@ -71,7 +71,7 @@ sinex_proptest! {
         Ok(())
     }
 
-    fn property_none_resets_checkpoint(processed in 0u64..10_000) -> TestResult<()> {
+    fn property_none_resets_checkpoint(processed: u64 in 0u64..10_000) -> TestResult<()> {
         let mut state = build_state(processed);
         state.set_last_processed_id(None);
 
