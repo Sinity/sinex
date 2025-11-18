@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use proptest::prelude::*;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::{sinex_prop, TestResult};
 
 /// Generate arbitrary time ranges within a useful bound.
 fn arb_time_range() -> impl Strategy<Value = (DateTime<Utc>, DateTime<Utc>)> {
@@ -57,48 +57,54 @@ fn partition_range(
     parts
 }
 
-#[sinex_test(proptest)]
-fn time_range_ordering_invariant() -> TestResult {
-    proptest!(|(range in arb_time_range())| {
-        let (start, end) = range;
+#[sinex_prop]
+fn time_range_ordering_invariant(
+    #[strategy(arb_time_range())] range: (DateTime<Utc>, DateTime<Utc>),
+) -> TestResult<()> {
+    let (start, end) = range;
+    prop_assert!(start <= end);
+    prop_assert!((end - start) >= chrono::Duration::zero());
+    Ok(())
+}
+
+#[sinex_prop]
+fn time_range_overlap_symmetry(
+    #[strategy(proptest::collection::vec(arb_time_range(), 2..=2))] ranges: Vec<(
+        DateTime<Utc>,
+        DateTime<Utc>,
+    )>,
+) -> TestResult<()> {
+    let a = ranges[0];
+    let b = ranges[1];
+    prop_assert_eq!(ranges_overlap(a, b), ranges_overlap(b, a));
+    if let Some((start, end)) = intersect_ranges(a, b) {
+        prop_assert!(ranges_overlap(a, b));
         prop_assert!(start <= end);
-        prop_assert!((end - start) >= chrono::Duration::zero());
-    });
+    }
     Ok(())
 }
 
-#[sinex_test(proptest)]
-fn time_range_overlap_symmetry() -> TestResult {
-    proptest!(|(ranges in proptest::collection::vec(arb_time_range(), 2..=2))| {
-        let a = ranges[0];
-        let b = ranges[1];
-        prop_assert_eq!(ranges_overlap(a, b), ranges_overlap(b, a));
-        if let Some((start, end)) = intersect_ranges(a, b) {
-            prop_assert!(ranges_overlap(a, b));
-            prop_assert!(start <= end);
-        }
-    });
-    Ok(())
-}
+#[sinex_prop]
+fn time_range_partition_covers_interval(
+    #[strategy(
+        arb_time_range().prop_flat_map(|r| (Just(r), 1usize..=16))
+    )]
+    range_and_count: ((DateTime<Utc>, DateTime<Utc>), usize),
+) -> TestResult<()> {
+    let (range, count) = range_and_count;
+    let parts = partition_range(range, count);
+    prop_assert_eq!(parts.len(), count);
+    if let Some(first) = parts.first() {
+        prop_assert_eq!(first.0, range.0);
+    }
+    if let Some(last) = parts.last() {
+        prop_assert_eq!(last.1, range.1);
+    }
 
-#[sinex_test(proptest)]
-fn time_range_partition_covers_interval() -> TestResult {
-    proptest!(|((range, count) in arb_time_range().prop_flat_map(|r| (Just(r), 1usize..=16)))| {
-        let parts = partition_range(range, count);
-        prop_assert_eq!(parts.len(), count);
-        if let Some(first) = parts.first() {
-            prop_assert_eq!(first.0, range.0);
-        }
-        if let Some(last) = parts.last() {
-            prop_assert_eq!(last.1, range.1);
-        }
-
-        // partitions are ordered and non-overlapping
-        for window in parts.windows(2) {
-            let a = window[0];
-            let b = window[1];
-            prop_assert!(a.1 <= b.0);
-        }
-    });
+    for window in parts.windows(2) {
+        let a = window[0];
+        let b = window[1];
+        prop_assert!(a.1 <= b.0);
+    }
     Ok(())
 }

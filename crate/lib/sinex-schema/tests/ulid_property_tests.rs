@@ -25,8 +25,7 @@ mod ulid_property_tests {
     use super::*;
     use sinex_test_utils::sinex_proptest;
 
-    proptest! {
-        #[test]
+    sinex_proptest! {
         fn prop_ulid_string_representation_always_26_chars(ulid in ulid_strategy()) {
             let s = ulid.to_string();
             prop_assert_eq!(s.len(), 26);
@@ -39,28 +38,24 @@ mod ulid_property_tests {
             }
         }
 
-        #[test]
         fn prop_ulid_parsing_roundtrip(ulid in ulid_strategy()) {
             let s = ulid.to_string();
             let parsed = s.parse::<Ulid>().unwrap();
             prop_assert_eq!(ulid, parsed);
         }
 
-        #[test]
         fn prop_ulid_bytes_roundtrip(ulid in ulid_strategy()) {
             let bytes = ulid.to_bytes();
             let restored = Ulid::from_bytes(bytes).unwrap();
             prop_assert_eq!(ulid, restored);
         }
 
-        #[test]
         fn prop_ulid_uuid_roundtrip(ulid in ulid_strategy()) {
             let uuid = ulid.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             prop_assert_eq!(ulid, restored);
         }
 
-        #[test]
         fn prop_ulid_ordering_is_consistent(ulid1 in ulid_strategy(), ulid2 in ulid_strategy()) {
             let ord1 = ulid1.cmp(&ulid2);
             let ord2 = ulid1.to_string().cmp(&ulid2.to_string());
@@ -70,7 +65,6 @@ mod ulid_property_tests {
             prop_assert_eq!(ord1, ord3);
         }
 
-        #[test]
         fn prop_timestamp_extraction_is_reasonable(ulid in ulid_strategy()) {
             let timestamp = ulid.timestamp();
 
@@ -83,7 +77,6 @@ mod ulid_property_tests {
             prop_assert!(timestamp <= max_time);
         }
 
-        #[test]
         fn prop_nil_ulid_behavior(
             bytes_prefix in proptest::collection::vec(any::<u8>(), 0..16)
         ) {
@@ -106,7 +99,6 @@ mod ulid_property_tests {
             }
         }
 
-        #[test]
         fn prop_concurrent_generation_produces_unique_ulids(
             num_threads in 1usize..=8,
             ulids_per_thread in 1usize..=100
@@ -130,7 +122,6 @@ mod ulid_property_tests {
             prop_assert_eq!(unique_ulids.len(), all_ulids.len());
         }
 
-        #[test]
         fn prop_rapid_generation_maintains_monotonicity(count in 1usize..=1000) {
             let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
@@ -141,7 +132,6 @@ mod ulid_property_tests {
             // Note: We don't assert strict monotonicity across large bursts; generation may span clock jitter
         }
 
-        #[test]
         fn prop_ulid_with_specific_timestamp_behavior(
             timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
         ) {
@@ -155,7 +145,6 @@ mod ulid_property_tests {
             prop_assert!(diff <= 1000); // Within 1 second
         }
 
-        #[test]
         fn prop_ulid_hash_stability(ulid in ulid_strategy()) {
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
@@ -188,7 +177,7 @@ mod ulid_property_tests {
 mod stress_tests {
     use super::*;
 
-    proptest! {
+    sinex_proptest! {
         #[test]
         fn prop_high_frequency_generation_stress_test(
             burst_size in 100usize..=1000,
@@ -273,7 +262,7 @@ mod stress_tests {
 mod edge_case_properties {
     use super::*;
 
-    proptest! {
+    sinex_proptest! {
         #[test]
         fn prop_ulid_comparison_transitivity(
             ulid1 in ulid_strategy(),
@@ -377,7 +366,7 @@ mod concurrent_property_tests {
     use super::*;
     use std::sync::{Arc, Barrier, Mutex};
 
-    proptest! {
+    sinex_proptest! {
         #[test]
         fn prop_concurrent_ulid_generation_ordering(
             num_threads in 2usize..=8,

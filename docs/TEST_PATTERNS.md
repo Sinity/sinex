@@ -385,75 +385,46 @@ impl SinexStrategies {
 
 ---
 
-### 3.2 Property Test Runner Integration
+### 3.2 Macro Harness (`#[sinex_prop]` / `sinex_proptest!`)
 
-**Pattern**: PropertyTester struct bridges TestContext with proptest.
+**Pattern**: Let the macros drive proptest with deterministic runners, optional
+`TestContext`, and progress output. They support cases/timeout/seed overrides
+and automatically persist failing seeds to `target/proptest-regressions/`.
 
 ```rust
-pub struct PropertyTester<'ctx> {
-    ctx: &'ctx TestContext,
-    runner: proptest::test_runner::TestRunner,
+#[sinex_prop(cases = 64, timeout = "45s", seed = 1337)]
+async fn filesystem_property(
+    ctx: &TestContext,
+    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+) -> TestResult<()> {
+    let (source, ty, payload) = event;
+    let inserted = ctx.create_test_event(&source, &ty, payload).await?;
+    assert_eq!(inserted.source.as_str(), source);
+    Ok(())
 }
 
-impl<'ctx> PropertyTester<'ctx> {
-    pub fn new(ctx: &'ctx TestContext) -> Self {
-        Self {
-            ctx,
-            runner: proptest::test_runner::TestRunner::deterministic(),
-        }
-    }
-
-    /// Run property test with custom strategy
-    pub async fn test_property<S, T, F, Fut>(
-        &mut self,
-        strategy: S,
-        test_cases: u32,
-        property: F,
-    ) -> Result<()>
-    where
-        S: Strategy<Value = T>,
-        F: Fn(&TestContext, T) -> Fut,
-        Fut: std::future::Future<Output = Result<()>> + 'ctx,
-        T: 'ctx,
-    {
-        for case_num in 0..test_cases {
-            let tree = strategy.new_tree(&mut self.runner)
-                .map_err(|e| SinexError::unknown(format!("Tree generation failed: {e:?}")))?;
-            let value = tree.current();
-
-            property(self.ctx, value).await
-                .map_err(|e| SinexError::validation(format!("Case {case_num} failed: {e}")))?;
-        }
+sinex_proptest! {
+    fn ulid_roundtrip(value in SinexStrategies::json_payload()) -> TestResult<()> {
+        let text = value.to_string();
+        let decoded: Value = serde_json::from_str(&text)?;
+        prop_assert_eq!(decoded, value);
         Ok(())
     }
-
-    /// Predefined property tests
-    pub async fn test_event_creation_property(&mut self, test_cases: u32) -> Result<()> {
-        // Property: All valid events should be creatable
-        // ...
-    }
-
-    pub async fn test_event_querying_property(&mut self, test_cases: u32) -> Result<()> {
-        // Property: Inserted events should be retrievable
-        // ...
-    }
-
-    pub async fn test_malicious_input_rejection(&mut self, test_cases: u32) -> Result<()> {
-        // Property: Malicious payloads should be rejected or sanitized
-        // ...
-    }
-}
-
-// Usage in tests
-#[sinex_test]
-async fn test_with_properties(ctx: TestContext) -> Result<()> {
-    let mut tester = ctx.property_tester();
-    tester.test_event_creation_property(20).await?;
-    Ok(())
 }
 ```
 
-**Predefined Properties**:
+**When to use**:
+- Tests that need `TestContext` + database access
+- Want cases/seed/timeout overrides with no harness boilerplate
+- Need snapshots/log capture if a case fails
+
+**Environment overrides**:
+- `SINEX_PROPTEST_CASES` – force a runner case count (CI can raise to 1024+)
+- `SINEX_PROPTEST_SEED` – replay a recorded failure deterministically
+- `SINEX_PROPTEST_DIR` – override the default `target/proptest-regressions` path
+- `SINEX_TEST_FAIL_DIR` – path for JSON failure artifacts (default `target/test-artifacts/`)
+
+**Predefined Properties**
 - Event creation works for all valid inputs
 - Inserted events are retrievable by ID, source, type
 - Malicious inputs are safely handled
@@ -933,11 +904,27 @@ result
     .assert_fails()?;
 ```
 
-### 7.5 DO: Use Property Testing for Edge Cases
+### 7.5 DO: Use `#[sinex_prop]` / `sinex_proptest!` For Edge Cases
 
 ```rust
-let mut tester = ctx.property_tester();
-tester.test_event_creation_property(20).await?;
+#[sinex_prop(cases = 64)]
+async fn fuzz_create(
+    ctx: &TestContext,
+    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+) -> TestResult<()> {
+    let (source, ty, payload) = event;
+    ctx.create_test_event(&source, &ty, payload).await?;
+    Ok(())
+}
+
+sinex_proptest! {
+    fn ulid_roundtrip(value in ulid_strategy()) -> TestResult<()> {
+        let encoded = value.to_string();
+        let decoded = Ulid::from_string(&encoded)?;
+        prop_assert_eq!(decoded, value);
+        Ok(())
+    }
+}
 ```
 
 ### 7.6 DON'T: Hardcode Sleeps
@@ -984,7 +971,7 @@ ctx.timing().wait_for_event_count(1).await?;
 | Database Isolation | database_pool.rs | TestDatabase | `acquire_test_database().await?` |
 | Test Context | test_context.rs | TestContext | `#[sinex_test] async fn test(ctx: TestContext)` |
 | Assertions | test_context.rs | ContextualAssert | `ctx.assert("msg").eq(&a, &b)?` |
-| Properties | property_testing.rs | PropertyTester | `ctx.property_tester().test_*()` |
+| Properties | property_testing.rs | SinexStrategies | `#[sinex_prop]` / `sinex_proptest!` |
 | Fixtures | fixtures.rs | UserSessionFixture | `#[fixture] pub fn fixture()` |
 | Builders | builders.rs | TestCheckpointBuilder | `TestCheckpointBuilder::new()` |
 | Error Testing | error_testing.rs | ErrorAssertions | `result.assert_fails()?` |
@@ -1060,17 +1047,35 @@ async fn test_integration_example(ctx: TestContext) -> Result<()> {
 
 ### Complete Property Test
 ```rust
-#[sinex_test]
-async fn test_property_example(ctx: TestContext) -> Result<()> {
-    let mut tester = ctx.property_tester();
+use sinex_test_utils::property_testing::SinexStrategies;
 
-    // Property: All valid events should be creatable
-    tester.test_event_creation_property(50).await?;
+#[sinex_prop(cases = 128, timeout = "60s")]
+async fn property_events_roundtrip(
+    ctx: &TestContext,
+    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+) -> TestResult<()> {
+    let (source, ty, payload) = event;
+    let inserted = ctx.create_test_event(&source, &ty, payload.clone()).await?;
+    let fetched = ctx
+        .pool
+        .events()
+        .get_by_source(&EventSource::from(source.clone()), Some(10), None)
+        .await?;
 
-    // Property: All created events should be queryable
-    tester.test_event_querying_property(50).await?;
-
+    prop_assert!(!fetched.is_empty());
+    prop_assert_eq!(inserted.payload, payload);
     Ok(())
+}
+
+sinex_proptest! {
+    #![cases = 64]
+    #[timeout = "45s"]
+    fn property_ulids_roundtrip(value in SinexStrategies::json_payload()) -> TestResult<()> {
+        let body = value.to_string();
+        let decoded: Value = serde_json::from_str(&body)?;
+        prop_assert_eq!(decoded, value);
+        Ok(())
+    }
 }
 ```
 

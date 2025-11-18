@@ -342,31 +342,31 @@ mod conversion_tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
+    use sinex_test_utils::sinex_proptest;
 
-    proptest! {
-        #[test]
-        fn test_ulid_string_roundtrip(ulid in ulid_strategy()) {
+    sinex_proptest! {
+        fn test_ulid_string_roundtrip(ulid: Ulid in ulid_strategy()) {
             let ulid_str = ulid.to_string();
             let parsed = ulid_str.parse::<Ulid>().unwrap();
             prop_assert_eq!(ulid, parsed);
         }
 
-        #[test]
-        fn test_ulid_bytes_roundtrip(ulid in ulid_strategy()) {
+        fn test_ulid_bytes_roundtrip(ulid: Ulid in ulid_strategy()) {
             let bytes = ulid.to_bytes();
             let restored = Ulid::from_bytes(bytes).unwrap();
             prop_assert_eq!(ulid, restored);
         }
 
-        #[test]
-        fn test_ulid_uuid_roundtrip(ulid in ulid_strategy()) {
+        fn test_ulid_uuid_roundtrip(ulid: Ulid in ulid_strategy()) {
             let uuid = ulid.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             prop_assert_eq!(ulid, restored);
         }
 
-        #[test]
-        fn test_ulid_ordering_consistency(ulid1 in ulid_strategy(), ulid2 in ulid_strategy()) {
+        fn test_ulid_ordering_consistency(
+            ulid1: Ulid in ulid_strategy(),
+            ulid2: Ulid in ulid_strategy()
+        ) {
             // Compare ULIDs
             let ulid_cmp = ulid1.cmp(&ulid2);
 
@@ -380,8 +380,7 @@ mod property_tests {
             prop_assert_eq!(ulid_cmp, uuid_cmp);
         }
 
-        #[test]
-        fn test_timestamp_extraction_reasonable(ulid in ulid_strategy()) {
+        fn test_timestamp_extraction_reasonable(ulid: Ulid in ulid_strategy()) {
             let timestamp = ulid.timestamp();
 
             // Should be within reasonable range (1970 to far future)

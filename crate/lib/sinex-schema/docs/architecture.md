@@ -249,8 +249,7 @@ let pool = ctx.db().pool();          // Isolated connection pool
 Critical for ULID generation under stress:
 
 ```rust
-proptest! {
-    #[test]
+sinex_proptest! {
     fn concurrent_ulids_are_unique_and_ordered(
         num_threads in 2usize..=8,
         ulids_per_thread in 10usize..=100

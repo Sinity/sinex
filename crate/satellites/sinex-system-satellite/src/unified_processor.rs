@@ -113,14 +113,14 @@ enum WatcherState {
 
 #[derive(Debug)]
 struct WatcherHandle {
-    name: &'static str,
+    _name: &'static str,
     state: WatcherState,
 }
 
 impl WatcherHandle {
     fn initialized(name: &'static str) -> Self {
         Self {
-            name,
+            _name: name,
             state: WatcherState::Initialized,
         }
     }
@@ -131,14 +131,14 @@ impl WatcherHandle {
         forwarder: Option<JoinHandle<()>>,
     ) -> Self {
         Self {
-            name,
+            _name: name,
             state: WatcherState::Running { task, forwarder },
         }
     }
 
     fn simulated(name: &'static str, task: JoinHandle<()>) -> Self {
         Self {
-            name,
+            _name: name,
             state: WatcherState::Simulated { task },
         }
     }

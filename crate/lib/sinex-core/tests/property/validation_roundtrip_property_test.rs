@@ -1,30 +1,10 @@
 //! Property tests ensuring sanitized events survive database roundtrips.
 
-use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, Provenance};
 use sinex_test_utils::prelude::*;
-use std::future::Future;
-use std::sync::Mutex;
-
-static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
-    Mutex::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build tokio runtime for validation property tests"),
-    )
-});
-
-fn run_async<F, T>(future: F) -> T
-where
-    F: Future<Output = T>,
-{
-    let runtime = TEST_RUNTIME.lock().expect("tokio runtime mutex poisoned");
-    runtime.block_on(future)
-}
 
 fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![
@@ -37,40 +17,26 @@ fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     ]
 }
 
-#[sinex_test]
-fn sanitized_events_roundtrip_through_db() -> color_eyre::eyre::Result<()> {
-    proptest!(|(payload in arb_event_payload())| {
-        run_async(async move {
-            let ctx = TestContext::new()
-                .await
-                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+#[sinex_prop]
+async fn sanitized_events_roundtrip_through_db(
+    ctx: &TestContext,
+    #[strategy(arb_event_payload())] payload: serde_json::Value,
+) -> TestResult<()> {
+    let mut event = Event::test_event(
+        EventSource::new("validation.cross"),
+        EventType::new("sanitization.check"),
+        payload,
+    );
 
-            let mut event = Event::test_event(
-                EventSource::new("validation.cross"),
-                EventType::new("sanitization.check"),
-                payload,
-            );
+    EventSanitizer::sanitize_event(&mut event)?;
+    if let Provenance::Material { id, .. } = &event.provenance {
+        ctx.ensure_source_material(*id, None).await?;
+    }
 
-            EventSanitizer::sanitize_event(&mut event)
-                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
-            if let Provenance::Material { id, .. } = &event.provenance {
-                ctx.ensure_source_material(*id, None)
-                    .await
-                    .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
-            }
-            let stored = ctx
-                .pool
-                .events()
-                .insert(event.clone())
-                .await
-                .map_err(|e| proptest::test_runner::TestCaseError::fail(e.to_string()))?;
+    let stored = ctx.pool.events().insert(event.clone()).await?;
 
-            prop_assert_eq!(stored.source, event.source);
-            prop_assert_eq!(stored.event_type, event.event_type);
-            prop_assert_eq!(stored.payload, event.payload);
-
-            Ok::<_, proptest::test_runner::TestCaseError>(())
-        })?;
-    });
+    prop_assert_eq!(stored.source, event.source);
+    prop_assert_eq!(stored.event_type, event.event_type);
+    prop_assert_eq!(stored.payload, event.payload);
     Ok(())
 }

@@ -73,7 +73,7 @@ const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
 /// utilities without wrapping production APIs. Tests should use the pool
 /// field directly to access repositories and production Event creation APIs.
 #[derive(Clone, Debug)]
-struct CreatedEventInfo {
+pub(crate) struct CreatedEventInfo {
     event_id: Ulid,
     material_id: Option<Ulid>,
 }
