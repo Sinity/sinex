@@ -11,11 +11,8 @@ use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input,
-    punctuated::Punctuated,
-    spanned::Spanned,
-    token::Comma,
-    Error, Expr, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, Expr, FnArg,
+    ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
 };
 
 /// Configuration parsed from sinex_test attributes
@@ -124,7 +121,9 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 if let Some(num) = raw.trim().strip_suffix('s') {
                     num.parse::<u64>().map_err(|e| Error::new(s.span(), e))
                 } else {
-                    raw.trim().parse::<u64>().map_err(|e| Error::new(s.span(), e))
+                    raw.trim()
+                        .parse::<u64>()
+                        .map_err(|e| Error::new(s.span(), e))
                 }
             }
             _ => Err(Error::new(lit.span(), r#"expected seconds or "30s""#)),
@@ -142,9 +141,10 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
     fn is_test_context(ty: &Type) -> bool {
         match ty {
             Type::Reference(r) => is_test_context(&r.elem),
-            Type::Path(TypePath { path, .. }) => {
-                path.segments.last().map_or(false, |seg| seg.ident == "TestContext")
-            }
+            Type::Path(TypePath { path, .. }) => path
+                .segments
+                .last()
+                .map_or(false, |seg| seg.ident == "TestContext"),
             _ => false,
         }
     }
@@ -300,12 +300,15 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
-    let shrink_stmt = opts.max_shrink_time_ms.map(|ms| {
-        quote! {
-            let shrink = (#ms).min(u32::MAX as u64) as u32;
-            cfg.max_shrink_time = shrink.max(1);
-        }
-    }).unwrap_or_else(|| quote!());
+    let shrink_stmt = opts
+        .max_shrink_time_ms
+        .map(|ms| {
+            quote! {
+                let shrink = (#ms).min(u32::MAX as u64) as u32;
+                cfg.max_shrink_time = shrink.max(1);
+            }
+        })
+        .unwrap_or_else(|| quote!());
 
     let strategy_expr = if params.len() == 1 {
         params[0].strat.clone()
@@ -324,7 +327,11 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|(idx, param)| {
             let ident = &arg_idents[idx];
             let pat = &param.pat;
-            let ty = param.ty.as_ref().map(|ty| quote!( : #ty )).unwrap_or_default();
+            let ty = param
+                .ty
+                .as_ref()
+                .map(|ty| quote!( : #ty ))
+                .unwrap_or_default();
             quote!( let #pat #ty = #ident; )
         })
         .collect();
@@ -336,12 +343,15 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!( let ( #( #arg_idents ),* ) = value; )
     };
 
-    let ctx_binding = ctx_param.as_ref().map(|(pat, ty)| {
-        quote! {
-            let ctx_ref: #ty = ctx_holder.as_ref().expect("TestContext available");
-            let #pat = ctx_ref;
-        }
-    }).unwrap_or_else(|| quote!());
+    let ctx_binding = ctx_param
+        .as_ref()
+        .map(|(pat, ty)| {
+            quote! {
+                let ctx_ref: #ty = ctx_holder.as_ref().expect("TestContext available");
+                let #pat = ctx_ref;
+            }
+        })
+        .unwrap_or_else(|| quote!());
     let expects_ctx = ctx_param.is_some();
 
     let runner_setup = quote! {
@@ -395,6 +405,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 })
             });
+            let ctx_snapshot_ref = ctx_holder.as_ref();
             let elapsed = start.elapsed();
             match result {
                 Ok(_) => {
@@ -403,6 +414,11 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 Err(err) => {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    sinex_test_utils::snapshot_helper::persist_failure(
+                        test_name,
+                        format!("{err:?}"),
+                        ctx_snapshot_ref,
+                    );
                     Err(color_eyre::eyre::eyre!("{err}"))
                 }
             }
@@ -433,6 +449,11 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 Err(err) => {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    sinex_test_utils::snapshot_helper::persist_failure(
+                        test_name,
+                        format!("{err:?}"),
+                        None,
+                    );
                     Err(color_eyre::eyre::eyre!("{err}"))
                 }
             }
@@ -535,10 +556,16 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
                         params.push((pat, ty, strat));
                     } else {
                         if ctx.is_some() {
-                            return Err(syn::Error::new_spanned(&pat, "only one context parameter supported"));
+                            return Err(syn::Error::new_spanned(
+                                &pat,
+                                "only one context parameter supported",
+                            ));
                         }
                         let Some(ty) = ty else {
-                            return Err(syn::Error::new_spanned(&pat, "context parameter needs a type"));
+                            return Err(syn::Error::new_spanned(
+                                &pat,
+                                "context parameter needs a type",
+                            ));
                         };
                         ctx = Some((pat, ty));
                     }
@@ -553,7 +580,13 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
                 }
 
                 let body: syn::Block = input.parse()?;
-                tests.push(TestCase { attrs, name, ctx, params, body });
+                tests.push(TestCase {
+                    attrs,
+                    name,
+                    ctx,
+                    params,
+                    body,
+                });
             }
 
             Ok(BlockDecl { defaults, tests })
@@ -567,7 +600,13 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
     let mut out = Vec::<TS>::new();
     for test in block.tests {
-        let TestCase { attrs, name, ctx, params, body } = test;
+        let TestCase {
+            attrs,
+            name,
+            ctx,
+            params,
+            body,
+        } = test;
 
         let mut meta_entries = Vec::<TS>::new();
         if let Some(c) = &block.defaults.cases {
@@ -816,10 +855,18 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
                 let elapsed = start.elapsed();
-                if result.is_ok() {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                } else {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        sinex_test_utils::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            None,
+                        );
+                    }
                 }
                 result
             }
@@ -871,10 +918,18 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 let elapsed = start.elapsed();
-                if result.is_ok() {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                } else {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        sinex_test_utils::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            None,
+                        );
+                    }
                 }
 
                 // Check if we exceeded timeout (soft warning only)
@@ -924,10 +979,18 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     };
 
                     let elapsed = start.elapsed();
-                    if result.is_ok() {
-                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    } else {
-                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    match &result {
+                        Ok(_) => {
+                            eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        }
+                        Err(err) => {
+                            eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                            sinex_test_utils::snapshot_helper::persist_failure(
+                                test_name,
+                                format!("{err:?}"),
+                                Some(&ctx),
+                            );
+                        }
                     }
                     result
                 };
@@ -957,10 +1020,18 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
                 let elapsed = start.elapsed();
-                if result.is_ok() {
-                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                } else {
-                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                match &result {
+                    Ok(_) => {
+                        eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    }
+                    Err(err) => {
+                        eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                        sinex_test_utils::snapshot_helper::persist_failure(
+                            test_name,
+                            format!("{err:?}"),
+                            None,
+                        );
+                    }
                 }
                 result
             }

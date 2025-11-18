@@ -422,6 +422,7 @@ sinex_proptest! {
 - `SINEX_PROPTEST_CASES` – force a runner case count (CI can raise to 1024+)
 - `SINEX_PROPTEST_SEED` – replay a recorded failure deterministically
 - `SINEX_PROPTEST_DIR` – override the default `target/proptest-regressions` path
+- `SINEX_TEST_FAIL_DIR` – path for JSON failure artifacts (default `target/test-artifacts/`)
 
 **Predefined Properties**
 - Event creation works for all valid inputs

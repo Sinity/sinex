@@ -48,8 +48,10 @@ async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
 The harness prints a compact progress line (`🔄` while running, then `✅/❌`
 with elapsed time) for every test. Use `ctx.captured_logs()` inside a test if
-you need to assert on emitted tracing lines; otherwise no extra telemetry or
-metrics files are generated.
+you need to assert on emitted tracing lines. When a test fails the harness
+records a JSON artifact under `target/test-artifacts/` (override via
+`SINEX_TEST_FAIL_DIR`) that includes the error, current pool statistics, and
+captured logs when a `TestContext` is present.
 
 ## Architecture
 
