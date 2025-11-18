@@ -13,6 +13,8 @@ jobs:
   check:
     name: Nix Flake Check
     runs-on: ubuntu-latest
+    # Skip for PRs since we don't have Cachix authentication
+    if: github.event_name != 'pull_request'
     steps:
     - uses: actions/checkout@v4
     
@@ -27,7 +29,7 @@ jobs:
       uses: cachix/cachix-action@v14
       with:
         name: sinex
-        skipPush: ${{ github.event_name == 'pull_request' }}
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
         
     - name: Nix Flake Check
       run: nix flake check --accept-flake-config
@@ -54,10 +56,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install ripgrep
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ripgrep
+        sudo apt-get install -y ripgrep mold
     
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
@@ -141,10 +143,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install ripgrep
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ripgrep
+        sudo apt-get install -y ripgrep mold
     
     - name: Enforce forbidden pattern guards
       run: bash scripts/check_forbidden_patterns.sh
