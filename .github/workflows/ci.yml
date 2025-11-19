@@ -40,7 +40,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
+        image: timescale/timescaledb-ha:pg16  # Use timescaledb-ha which includes pgvector
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -91,6 +91,9 @@ jobs:
         psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -141,7 +144,7 @@ jobs:
     
     services:
       postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
+        image: timescale/timescaledb-ha:pg16  # Use timescaledb-ha which includes pgvector
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -192,6 +195,9 @@ jobs:
         psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema"
+        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
