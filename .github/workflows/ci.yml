@@ -92,8 +92,11 @@ jobs:
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
+        # pg_jsonschema is optional - only install if available
+        psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema')" | grep -q 't' && \
+          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema" || \
+          echo "Skipping pg_jsonschema extension (not available in this PostgreSQL image)"
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -196,8 +199,11 @@ jobs:
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
+        # pg_jsonschema is optional - only install if available
+        psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema')" | grep -q 't' && \
+          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema" || \
+          echo "Skipping pg_jsonschema extension (not available in this PostgreSQL image)"
     
     - name: Install Rust
       uses: actions-rs/toolchain@v1
