@@ -90,11 +90,14 @@ jobs:
           ensure_extension sinex_dev timescaledb
           ensure_extension sinex_dev vector
 
-          export DATABASE_URL="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
-
+          export DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
+          export DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
           pushd crate/lib/sinex-schema >/dev/null
-          cargo run -- up
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
           popd
+
+          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "REASSIGN OWNED BY CURRENT_USER TO sinity;"
+          export DATABASE_URL="$DATABASE_URL_APP"
 
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
