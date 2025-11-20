@@ -49,32 +49,35 @@ jobs:
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
           mkdir -p "$PGDATA"
+          export PGHOST=127.0.0.1
+          export PGPORT=55432
           initdb --auth=trust --no-locale --encoding=UTF8
           echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
-          echo "listen_addresses = ''" >> "$PGDATA/postgresql.conf"
+          echo "listen_addresses = '127.0.0.1'" >> "$PGDATA/postgresql.conf"
+          echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
           echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
-          pg_ctl start -l postgres.log -o "-k $PWD"
+          pg_ctl start -l postgres.log -o "-k $PWD -p $PGPORT"
           trap 'pg_ctl stop' EXIT
 
           SUPERUSER=$(id -un)
-          if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
-            PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
+          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
           fi
-          if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
-            PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
+          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
           fi
 
           ensure_extension() {
             local db="$1"
             shift
             for candidate in "$@"; do
-              if PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
-                PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+              if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
+                PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
                 return 0
               fi
             done
             echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
-            PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
             exit 1
           }
 
@@ -83,17 +86,15 @@ jobs:
           ensure_extension sinex_dev timescaledb
           ensure_extension sinex_dev vector
 
-          SOCKET_URI=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$PWD")
-          export PGHOST="$PWD"
-          export DATABASE_URL="postgresql://${SUPERUSER}@${SOCKET_URI}/sinex_dev"
+          export DATABASE_URL="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
 
           pushd crate/lib/sinex-schema >/dev/null
           cargo run -- up
           popd
 
-          psql -h "$PGHOST" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
-          psql -h "$PGHOST" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
-          psql -h "$PGHOST" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
 
           TMP_DIR=$(mktemp -d)
           cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
