@@ -56,7 +56,7 @@ jobs:
           echo "listen_addresses = '127.0.0.1'" >> "$PGDATA/postgresql.conf"
           echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
           echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
-          pg_ctl start -l postgres.log -o "-k $PWD -p $PGPORT"
+          pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT"
           trap 'pg_ctl stop' EXIT
 
           SUPERUSER=$(id -un)
