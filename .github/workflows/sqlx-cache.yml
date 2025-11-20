@@ -49,75 +49,23 @@ jobs:
           set -euo pipefail
           DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
           set -euo pipefail
-          export PGDATA="$PWD/postgres_data"
-          rm -rf "$PGDATA"
-          mkdir -p "$PGDATA"
-          export PGHOST=127.0.0.1
-          export PGPORT=55432
-          initdb --auth=trust --no-locale --encoding=UTF8
-          echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
-          echo "listen_addresses = '127.0.0.1'" >> "$PGDATA/postgresql.conf"
-          echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
-          echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
-          pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT"
-          trap 'pg_ctl stop' EXIT
-
-          SUPERUSER=$(id -un)
-          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
-          fi
-          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
-          fi
-
-          ensure_extension() {
-            local db="$1"
-            shift
-            for candidate in "$@"; do
-              if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
-                PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
-                return 0
-              fi
-            done
-            echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
-            exit 1
-          }
-
-          ensure_extension sinex_dev pgx_ulid ulid
-          ensure_extension sinex_dev pg_jsonschema
-          ensure_extension sinex_dev timescaledb
-          ensure_extension sinex_dev vector
-          grant_schema_access() {
-            local schema="$1"
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA ${schema} TO sinity;"
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO sinity;"
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO sinity;"
-            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO sinity;"
-          }
-
-          export DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
-          export DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+          scripts/ci-postgres.sh <<'INNER'
           pushd crate/lib/sinex-schema >/dev/null
           DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
           popd
-
-          for schema in core raw audit sinex_schemas metrics; do
-            grant_schema_access "$schema"
-          done
-          export DATABASE_URL="$DATABASE_URL_APP"
 
           export CARGO_TARGET_DIR="$PWD/target-sqlx-cache"
           cargo sqlx prepare --workspace -- --all-targets --all-features
           rm -rf "$CARGO_TARGET_DIR"
           if git diff --quiet .sqlx; then
-            rm -rf target target-sqlx-cache
+            rm -rf target
             exit 0
           fi
 
           echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace -- --all-targets --all-features' locally and commit the changes."
           git status -sb .sqlx
           git diff .sqlx || true
-          rm -rf target target-sqlx-cache
+          rm -rf target
           exit 1
+          INNER
           SCRIPT
