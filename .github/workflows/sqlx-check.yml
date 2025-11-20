@@ -83,6 +83,13 @@ jobs:
           ensure_extension sinex_dev pg_jsonschema
           ensure_extension sinex_dev timescaledb
           ensure_extension sinex_dev vector
+          grant_schema_access() {
+            local schema="$1"
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA ${schema} TO sinity;"
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO sinity;"
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO sinity;"
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO sinity;"
+          }
 
           export DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
           export DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
@@ -90,7 +97,9 @@ jobs:
           DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
           popd
 
-          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "REASSIGN OWNED BY CURRENT_USER TO sinity;"
+          for schema in core raw audit sinex_schemas metrics; do
+            grant_schema_access "$schema"
+          done
           export DATABASE_URL="$DATABASE_URL_APP"
 
           cargo sqlx prepare --workspace --check -- --all-targets --all-features
