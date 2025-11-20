@@ -116,7 +116,7 @@ jobs:
       PROD_DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
       DEVENV_ROOT: ${{ github.workspace }}
       DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.PROD_DATABASE_URL != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     concurrency:
       group: schema-management-deploy
       cancel-in-progress: true
@@ -131,7 +131,21 @@ jobs:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
+      - name: Check production database secret
+        id: prod-secret
+        shell: bash
+        env:
+          PROD_DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
+        run: |
+          if [ -z "$PROD_DATABASE_URL" ]; then
+            echo "SINEX_PROD_DATABASE_URL is not configured; skipping deploy."
+            echo "has_secret=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secret=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy schemas
+        if: steps.prod-secret.outputs.has_secret == 'true'
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
         shell: devenv shell bash -- -e {0}
