@@ -77,7 +77,7 @@ jobs:
           ensure_extension sinex_dev timescaledb
           ensure_extension sinex_dev vector
 
-          SOCKET_URI=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$PWD")
+          SOCKET_URI=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$PWD")
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql://${SUPERUSER}@${SOCKET_URI}/sinex_dev"
 
