@@ -21,12 +21,38 @@ let
     };
     propagatedBuildInputs = with pkgs.python3Packages; [ tiktoken ];
   };
+  pgJsonschemaPkg = pkgs.stdenv.mkDerivation rec {
+    pname = "pg_jsonschema";
+    version = "0.3.3";
+
+    src = pkgs.fetchurl {
+      url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
+      hash = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+    };
+
+    nativeBuildInputs = [ pkgs.dpkg ];
+
+    dontBuild = true;
+    dontStrip = true;
+    dontFixup = true;
+
+    unpackPhase = ''
+      dpkg-deb -x $src .
+    '';
+
+    installPhase = ''
+      mkdir -p $out/lib $out/share/postgresql/extension
+      find . -name "*.so" -type f -exec cp {} $out/lib/ \;
+      find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
+      find . -name "*.control" -type f -exec cp {} $out/share/postgresql/extension/ \;
+    '';
+  };
   postgresqlWithExtensions =
     pkgs.postgresql_16.withPackages (ps:
       lib.filter (pkg: pkg != null) [
         (if ps ? timescaledb then ps.timescaledb else null)
         (if ps ? pgvector then ps.pgvector else null)
-        (if ps ? pg_jsonschema then ps.pg_jsonschema else null)
+        pgJsonschemaPkg
         (if ps ? pgx_ulid then ps.pgx_ulid else null)
       ]
     );
