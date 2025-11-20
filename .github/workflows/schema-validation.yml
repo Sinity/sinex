@@ -41,11 +41,13 @@ jobs:
         run: nix profile install nixpkgs#devenv
 
       - name: Validate schemas inside Nix
-        shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+        shell: bash
         env:
           DEVENV_ROOT: ${{ github.workspace }}
           DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
+          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
+          set -euo pipefail
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
           mkdir -p "$PGDATA"
@@ -98,6 +100,7 @@ jobs:
 
           TMP_DIR=$(mktemp -d)
           cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
+          SCRIPT
 
   deploy-staging:
     runs-on: ubuntu-latest

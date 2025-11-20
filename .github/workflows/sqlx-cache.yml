@@ -35,11 +35,13 @@ jobs:
         run: nix profile install nixpkgs#devenv
 
       - name: Validate SQLx cache inside Nix
-        shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+        shell: bash
         env:
           DEVENV_ROOT: ${{ github.workspace }}
           DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
+          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
+          set -euo pipefail
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
           mkdir -p "$PGDATA"
@@ -96,3 +98,4 @@ jobs:
             git diff .sqlx
           fi
           exit 1
+          SCRIPT

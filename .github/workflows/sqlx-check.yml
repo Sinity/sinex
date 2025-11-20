@@ -35,11 +35,13 @@ jobs:
         run: nix profile install nixpkgs#devenv
 
       - name: Run SQLx checks inside Nix
-        shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+        shell: bash
         env:
           DEVENV_ROOT: ${{ github.workspace }}
           DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
+          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
+          set -euo pipefail
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
           mkdir -p "$PGDATA"
@@ -65,15 +67,15 @@ jobs:
             local db="$1"
             shift
             for candidate in "$@"; do
-            if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
-              PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
-              return 0
-            fi
-          done
-          echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
-          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
-          exit 1
-        }
+              if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
+                PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+                return 0
+              fi
+            done
+            echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
+            exit 1
+          }
 
           ensure_extension sinex_dev pgx_ulid ulid
           ensure_extension sinex_dev pg_jsonschema
@@ -89,3 +91,4 @@ jobs:
           cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
           SQLX_OFFLINE=1 cargo check --all-features
+          SCRIPT
