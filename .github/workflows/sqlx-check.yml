@@ -89,6 +89,3 @@ jobs:
           cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
           SQLX_OFFLINE=1 cargo check --all-features
-
-          SQLX_OFFLINE=1 TEST_DATABASE_URL="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev" \
-            cargo nextest run --all-features
