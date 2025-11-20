@@ -21,6 +21,15 @@ let
     };
     propagatedBuildInputs = with pkgs.python3Packages; [ tiktoken ];
   };
+  postgresqlWithExtensions =
+    pkgs.postgresql_16.withPackages (ps:
+      lib.filter (pkg: pkg != null) [
+        (if ps ? timescaledb then ps.timescaledb else null)
+        (if ps ? pgvector then ps.pgvector else null)
+        (if ps ? pg_jsonschema then ps.pg_jsonschema else null)
+        (if ps ? pgx_ulid then ps.pgx_ulid else null)
+      ]
+    );
   basePackages = with pkgs; [
     fenixPkgs.toolchain
     fenixPkgs.rust-analyzer
@@ -42,7 +51,7 @@ let
     mold
     python3
     nats-server
-    postgresql_16
+    postgresqlWithExtensions
     mprocs
     btop
     jq
