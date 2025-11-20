@@ -1,7 +1,10 @@
-{ inputs, pkgs, lib, config, ... }:
+{ inputs ? {}, pkgs, lib, config, ... }:
 let
   system = pkgs.stdenv.hostPlatform.system;
-  fenixPkgs = inputs.fenix.packages.${system}.complete;
+  fenixInput =
+    if inputs ? fenix then inputs.fenix
+    else builtins.getFlake "github:nix-community/fenix?rev=d4e14d370b4763c67ea02a39f01f5366297d61cb&narHash=sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
+  fenixPkgs = fenixInput.packages.${system}.complete;
   pythonDeps = with pkgs.python3Packages; [
     click
     psycopg2
@@ -18,6 +21,41 @@ let
     };
     propagatedBuildInputs = with pkgs.python3Packages; [ tiktoken ];
   };
+  pgJsonschemaPkg = pkgs.stdenv.mkDerivation rec {
+    pname = "pg_jsonschema";
+    version = "0.3.3";
+
+    src = pkgs.fetchurl {
+      url = "https://github.com/supabase/pg_jsonschema/releases/download/v${version}/pg_jsonschema-v${version}-pg16-amd64-linux-gnu.deb";
+      hash = "sha256-6VSbAZrrItYgnpKMhVqffC4fGp9zzPYaMB6/Bf+Ha/g=";
+    };
+
+    nativeBuildInputs = [ pkgs.dpkg ];
+
+    dontBuild = true;
+    dontStrip = true;
+    dontFixup = true;
+
+    unpackPhase = ''
+      dpkg-deb -x $src .
+    '';
+
+    installPhase = ''
+      mkdir -p $out/lib $out/share/postgresql/extension
+      find . -name "*.so" -type f -exec cp {} $out/lib/ \;
+      find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
+      find . -name "*.control" -type f -exec cp {} $out/share/postgresql/extension/ \;
+    '';
+  };
+  postgresqlWithExtensions =
+    pkgs.postgresql_16.withPackages (ps:
+      lib.filter (pkg: pkg != null) [
+        (if ps ? timescaledb then ps.timescaledb else null)
+        (if ps ? pgvector then ps.pgvector else null)
+        pgJsonschemaPkg
+        (if ps ? pgx_ulid then ps.pgx_ulid else null)
+      ]
+    );
   basePackages = with pkgs; [
     fenixPkgs.toolchain
     fenixPkgs.rust-analyzer
@@ -39,7 +77,7 @@ let
     mold
     python3
     nats-server
-    postgresql_16
+    postgresqlWithExtensions
     mprocs
     btop
     jq
@@ -58,6 +96,14 @@ let
   ] ++ pythonDeps ++ [ ttok ];
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
 in {
+  devenv = {
+    root =
+      let
+        rootEnv = builtins.getEnv "DEVENV_ROOT";
+      in
+      if rootEnv != "" then rootEnv else toString ./.;
+  };
+
   packages = basePackages;
 
   env = {

@@ -21,6 +21,7 @@
 //! - Focus on the modern RawEvent::schemaless() API and database insertion paths
 
 use sinex_test_utils::prelude::*;
+use color_eyre::eyre::Report;
 
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::strategy::ValueTree;
@@ -411,7 +412,7 @@ sinex_proptest! {
         let _ = event.ts_orig;
         let _ = event.ingestor_version;
         let _ = event.payload_schema_id;
-        Ok(())
+        Ok::<(), Report>(())
     }
 
 /// Test filesystem events with extreme payloads
@@ -438,7 +439,7 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok(())
+        Ok::<(), Report>(())
     }
 
 /// Test terminal events with extreme payloads
@@ -469,7 +470,7 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok(())
+        Ok::<(), Report>(())
     }
 
 /// Test clipboard events with extreme payloads
@@ -491,7 +492,7 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok(())
+        Ok::<(), Report>(())
     }
 
 }
@@ -522,11 +523,12 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok(())
+        Ok::<(), Report>(())
     }
 }
 
-/// Test system events with extreme payloads
+sinex_proptest! {
+    /// Test system events with extreme payloads
     fn test_system_events_robustness(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
@@ -551,10 +553,10 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok(())
+        Ok::<(), Report>(())
     }
 
-/// Test JSON serialization robustness with extreme payloads
+    /// Test JSON serialization robustness with extreme payloads
     fn test_json_serialization_robustness(
         payload in malformed_json_values()
     ) -> TestResult<()> {
@@ -572,8 +574,9 @@ sinex_proptest! {
         }
 
         let _ = serde_json::to_string_pretty(&event);
-        Ok(())
+        Ok::<(), Report>(())
     }
+}
 
 sinex_proptest! {
     /// Test ULID robustness with extreme timestamps
@@ -600,7 +603,7 @@ sinex_proptest! {
 
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     /// Test string handling robustness
@@ -623,7 +626,7 @@ sinex_proptest! {
         // Test that we can create the struct without panicking by checking key fields
         prop_assert_eq!(event.source.as_str(), source.as_str());
         prop_assert_eq!(event.host.as_str(), host.as_str());
-        Ok(())
+        Ok::<(), Report>(())
     }
 }
 
@@ -660,7 +663,7 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> 
             }
         }
     }
-    Ok(())
+    Ok::<(), Report>(())
 }
 
 /// Test event creation with extreme payloads in database context
@@ -731,7 +734,7 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<
             }
         }
     }
-    Ok(())
+    Ok::<(), Report>(())
 }
 
 // ============================================================================
@@ -757,7 +760,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     #[sinex_test]
@@ -782,7 +785,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     #[sinex_test]
@@ -806,7 +809,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     #[sinex_test]
@@ -838,6 +841,6 @@ mod additional_tests {
 
         // This should not panic
         assert!(result.is_ok());
-        Ok(())
+        Ok::<(), Report>(())
     }
 }

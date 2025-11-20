@@ -10,196 +10,83 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Nix Flake Check
+  test:
+    name: Devenv Integration Test
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Nix
-      uses: cachix/install-nix-action@v24
+    - uses: actions/checkout@v5
+
+    - uses: cachix/install-nix-action@v31
       with:
         nix_path: nixpkgs=channel:nixos-unstable
-        extra_nix_config: |
-          experimental-features = nix-command flakes
-          
-    - name: Setup Cachix
-      uses: cachix/cachix-action@v14
+
+    - uses: cachix/cachix-action@v16
       with:
-        name: sinex
-        skipPush: ${{ github.event_name == 'pull_request' }}
-        
-    - name: Nix Flake Check
-      run: nix flake check --accept-flake-config
+        name: sinity
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+        skipPush: true
 
-  test:
-    name: Cargo Test
-    runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    - name: Install devenv.sh
+      shell: bash
+      run: nix profile install nixpkgs#devenv
 
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install ripgrep
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ripgrep
-    
-    - name: Enforce forbidden pattern guards
-      run: bash scripts/check_forbidden_patterns.sh
-
-    - name: Regenerate schemas and ensure repository is clean
-      # Treat schemas/ like a generated artifact (similar to cargo fmt).
+    - name: Run migrations and tests
+      shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
       env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
+        DEVENV_ROOT: ${{ github.workspace }}
+        DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
       run: |
+        devenv test
+
+        export PGDATA="$PWD/postgres_data"
+        rm -rf "$PGDATA"
+        mkdir -p "$PGDATA"
+        export PGHOST=127.0.0.1
+        export PGPORT=55432
+        initdb --auth=trust --no-locale --encoding=UTF8
+        echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
+        echo "listen_addresses = '127.0.0.1'" >> "$PGDATA/postgresql.conf"
+        echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+        echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+        pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT"
+        trap 'pg_ctl stop' EXIT
+        SUPERUSER=$(id -un)
+        if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
+          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
+        fi
+        if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
+          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
+        fi
+
+        ensure_extension() {
+          local db="$1"
+          shift
+          for candidate in "$@"; do
+            if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
+              PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+              return 0
+            fi
+          done
+          echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
+          PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
+          exit 1
+        }
+
+        ensure_extension sinex_dev pgx_ulid ulid
+        ensure_extension sinex_dev pg_jsonschema
+        ensure_extension sinex_dev timescaledb
+        ensure_extension sinex_dev vector
+        psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -c 'SELECT 1' >/dev/null
+        export DATABASE_URL="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+        pushd crate/lib/sinex-schema >/dev/null
+        cargo run -- up
+        popd
+        bash scripts/check_forbidden_patterns.sh
         ./scripts/schema-dev.sh generate
         if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
+          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' locally."
           git status schemas
           exit 1
         fi
-    
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
-        
-    - name: Cache Cargo
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        
-    - name: Install PostgreSQL client
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
-        
-    - name: Setup test database
-      env:
-        PGPASSWORD: postgres
-      run: |
-        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
-        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
-        
-    - name: Run migrations
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: |
-        cd crate/lib/sinex-schema
-        cargo run -- up
-        
-    - name: Run tests
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-        RUST_LOG: debug
-      run: cargo nextest run --all-features --workspace --profile reliable
-
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Pin exact Timescale/Postgres versions for deterministic CI
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install ripgrep
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ripgrep
-    
-    - name: Enforce forbidden pattern guards
-      run: bash scripts/check_forbidden_patterns.sh
-
-    - name: Regenerate schemas and ensure repository is clean
-      # Treat schemas/ like a generated artifact (similar to cargo fmt).
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: |
-        ./scripts/schema-dev.sh generate
-        if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' and commit the results."
-          git status schemas
-          exit 1
-        fi
-    
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
-        components: llvm-tools-preview
-        
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
-      
-    - name: Install PostgreSQL client
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
-        
-    - name: Setup test database
-      env:
-        PGPASSWORD: postgres
-      run: |
-        psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
-        psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
-        
-    - name: Run migrations
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: |
-        cd crate/lib/sinex-schema
-        cargo run -- up
-        
-    - name: Generate code coverage
-      env:
-        DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
-      run: cargo llvm-cov --all-features --workspace --profile reliable --lcov --output-path lcov.info
-      
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        files: lcov.info
-        fail_ci_if_error: false
+        devenv tasks run dev:test

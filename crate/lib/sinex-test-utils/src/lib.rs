@@ -24,8 +24,18 @@ pub use sinex_core::types::error::SinexError;
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
+pub use test_context::TestContextFailureSnapshot;
 pub struct ProptestCasesGuard {
     previous: Option<String>,
+}
+
+/// Internal helper used by the sinex_prop macro to build a configured TestRunner.
+pub fn sinex_prop_runner_config(
+    default_cases: u32,
+    module_path: &'static str,
+    test_name: &str,
+) -> proptest::test_runner::Config {
+    property_testing::build_runner_config(default_cases, module_path, test_name)
 }
 
 impl ProptestCasesGuard {
