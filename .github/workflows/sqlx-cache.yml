@@ -35,11 +35,8 @@ jobs:
         run: nix profile install nixpkgs#devenv
 
       - name: Validate SQLx cache inside Nix
-        shell: bash
+        shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
         run: |
-          nix develop --no-pure-eval --command bash <<'SCRIPT'
-          set -euo pipefail
-
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
           mkdir -p "$PGDATA"
@@ -48,20 +45,8 @@ jobs:
           pg_ctl start -l postgres.log -o "-k $PWD"
           trap 'pg_ctl stop' EXIT
 
-          psql -h "$PWD" -d postgres <<'SQL'
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN
-    CREATE ROLE sinity LOGIN CREATEDB;
-  END IF;
-END$$;
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN
-    CREATE DATABASE sinex_dev OWNER sinity;
-  END IF;
-END$$;
-SQL
+          psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN CREATE ROLE sinity LOGIN CREATEDB; END IF; END \$\$;"
+          psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN CREATE DATABASE sinex_dev OWNER sinity; END IF; END \$\$;"
 
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
@@ -78,4 +63,3 @@ SQL
             git diff .sqlx
           fi
           exit 1
-          SCRIPT
