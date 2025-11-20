@@ -3,33 +3,42 @@ name: Database Checks
 on:
   push:
     paths:
-      - 'schemas/**'
-      - 'crate/lib/sinex-core/src/types/events/**'
-      - 'crate/lib/sinex-schema/**'
-      - 'crate/**/*.rs'
-      - '**/*.sql'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - '.sqlx/**'
-      - 'scripts/schema-dev.sh'
-      - '.github/workflows/db-checks.yml'
+      - '**'
   pull_request:
     paths:
-      - 'schemas/**'
-      - 'crate/lib/sinex-core/src/types/events/**'
-      - 'crate/lib/sinex-schema/**'
-      - 'crate/**/*.rs'
-      - '**/*.sql'
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - '.sqlx/**'
-      - 'scripts/schema-dev.sh'
-      - '.github/workflows/db-checks.yml'
+      - '**'
+  workflow_dispatch:
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      schema: ${{ steps.filter.outputs.schema }}
+      sqlx: ${{ steps.filter.outputs.sqlx }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            schema:
+              - 'schemas/**'
+              - 'crate/lib/sinex-core/src/types/events/**'
+              - 'crate/lib/sinex-schema/**'
+              - 'scripts/schema-dev.sh'
+            sqlx:
+              - '.sqlx/**'
+              - 'crate/**/migrations/**'
+              - 'crate/lib/sinex-schema/**'
+              - 'crate/**/*.rs'
+              - '**/*.sql'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+
   checks:
     name: ${{ matrix.display_name }}
     runs-on: ubuntu-latest
+    needs: changes
     concurrency:
       group: db-checks-${{ matrix.task }}-${{ github.ref }}
       cancel-in-progress: true
@@ -46,6 +55,15 @@ jobs:
             display_name: SQLx Query Cache Validation
           - task: sqlx_check
             display_name: SQLX Cache Check
+
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        matrix.task == 'schema_validation' && needs.changes.outputs.schema == 'true'
+      ) ||
+      (
+        matrix.task != 'schema_validation' && needs.changes.outputs.sqlx == 'true'
+      )
 
     steps:
       - uses: actions/checkout@v5
