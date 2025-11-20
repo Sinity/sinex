@@ -54,8 +54,9 @@ jobs:
           pg_ctl start -l postgres.log -o "-k $PWD"
           trap 'pg_ctl stop' EXIT
 
-          PGUSER=postgres psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN CREATE ROLE sinity LOGIN CREATEDB; END IF; END \$\$;"
-          PGUSER=postgres psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN CREATE DATABASE sinex_dev OWNER sinity; END IF; END \$\$;"
+          SUPERUSER=$(id -un)
+          PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN CREATE ROLE sinity LOGIN CREATEDB; END IF; END \$\$;"
+          PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN CREATE DATABASE sinex_dev OWNER sinity; END IF; END \$\$;"
 
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
