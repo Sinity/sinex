@@ -38,8 +38,7 @@ jobs:
         DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
       run: |
         set -euo pipefail
-        LOG_FILE="$PWD/ci-main.log"
-        DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT' 2>&1 | tee "$LOG_FILE"
+        DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
         set -euo pipefail
         devenv test
 
@@ -106,4 +105,5 @@ jobs:
           exit 1
         fi
         devenv tasks run dev:test
+        rm -rf target
         SCRIPT

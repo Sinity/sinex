@@ -47,8 +47,7 @@ jobs:
           DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
           set -euo pipefail
-          LOG_FILE="$PWD/schema-validation.log"
-          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT' 2>&1 | tee "$LOG_FILE"
+          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
           set -euo pipefail
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
@@ -114,6 +113,7 @@ jobs:
 
           TMP_DIR=$(mktemp -d)
           cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
+          rm -rf target
           SCRIPT
 
   deploy-staging:
