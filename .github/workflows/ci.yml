@@ -92,8 +92,10 @@ jobs:
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
-        # pg_jsonschema is optional - only install if available
+        # ulid and pg_jsonschema are optional - only install if available
+        psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'ulid')" | grep -q 't' && \
+          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid" || \
+          echo "Skipping ulid extension (not available in this PostgreSQL image)"
         psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema')" | grep -q 't' && \
           psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema" || \
           echo "Skipping pg_jsonschema extension (not available in this PostgreSQL image)"
@@ -199,8 +201,10 @@ jobs:
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
         psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS vector"
-        psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid"
-        # pg_jsonschema is optional - only install if available
+        # ulid and pg_jsonschema are optional - only install if available
+        psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'ulid')" | grep -q 't' && \
+          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS ulid" || \
+          echo "Skipping ulid extension (not available in this PostgreSQL image)"
         psql -h localhost -U postgres -d sinex_test -c "SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_jsonschema')" | grep -q 't' && \
           psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema" || \
           echo "Skipping pg_jsonschema extension (not available in this PostgreSQL image)"
