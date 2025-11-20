@@ -34,7 +34,7 @@ jobs:
     - name: Run migrations and tests
       shell: bash
       run: |
-        nix develop --command bash <<'SCRIPT'
+        nix develop --no-pure-eval --command bash <<'SCRIPT'
         set -euo pipefail
         devenv test
 
