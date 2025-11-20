@@ -30,6 +30,9 @@ jobs:
   checks:
     name: ${{ matrix.display_name }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: db-checks-${{ matrix.task }}-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
