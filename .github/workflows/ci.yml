@@ -82,7 +82,7 @@ jobs:
         ensure_extension sinex_dev timescaledb
         ensure_extension sinex_dev vector
         psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -c 'SELECT 1' >/dev/null
-        export DATABASE_URL="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+        export DATABASE_URL="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
         pushd crate/lib/sinex-schema >/dev/null
         cargo run -- up
         popd
