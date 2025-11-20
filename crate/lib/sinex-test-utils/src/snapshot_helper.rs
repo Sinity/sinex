@@ -1,7 +1,7 @@
 //! Snapshot testing helpers using insta
 
 use crate::database_pool::get_pool_stats;
-use crate::TestContext;
+use crate::{TestContext, TestContextFailureSnapshot};
 use chrono::Utc;
 use serde::Serialize;
 use std::env;
@@ -51,26 +51,32 @@ impl Default for SnapshotTestHelper {
 }
 
 #[derive(Serialize)]
-struct FailureSnapshot<'a> {
-    test: &'a str,
+struct FailureSnapshot {
+    test: String,
     error: String,
     timestamp: String,
     pool: crate::database_pool::PoolStats,
-    context: Option<TestContextSnapshot<'a>>,
+    context: Option<ContextSnapshot>,
     logs: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
-struct TestContextSnapshot<'a> {
-    name: &'a str,
+struct ContextSnapshot {
+    name: String,
     baseline_events: i64,
     elapsed_ms: u128,
+}
+
+pub enum FailureContext<'a> {
+    None,
+    Borrowed(&'a TestContext),
+    Snapshot(TestContextFailureSnapshot),
 }
 
 /// Persist contextual information about a failing test. Artifacts are written to
 /// `target/test-artifacts/` by default and can be overridden via the
 /// `SINEX_TEST_FAIL_DIR` environment variable.
-pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: Option<&TestContext>) {
+pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureContext<'_>) {
     let snapshot_dir = env::var("SINEX_TEST_FAIL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("target/test-artifacts"));
@@ -83,15 +89,28 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: Option<&T
         return;
     }
 
-    let ctx_snapshot = ctx.map(|c| TestContextSnapshot {
-        name: c.test_name(),
-        baseline_events: c.baseline_event_count(),
-        elapsed_ms: c.elapsed().as_millis(),
-    });
-    let logs = ctx.map(|c| c.captured_logs());
+    let (ctx_snapshot, logs) = match ctx {
+        FailureContext::None => (None, None),
+        FailureContext::Borrowed(ctx) => (
+            Some(ContextSnapshot {
+                name: ctx.test_name().to_string(),
+                baseline_events: ctx.baseline_event_count(),
+                elapsed_ms: ctx.elapsed().as_millis(),
+            }),
+            Some(ctx.captured_logs()),
+        ),
+        FailureContext::Snapshot(snapshot) => (
+            Some(ContextSnapshot {
+                name: snapshot.test_name().to_string(),
+                baseline_events: snapshot.baseline_events(),
+                elapsed_ms: snapshot.elapsed_ms(),
+            }),
+            Some(snapshot.captured_logs()),
+        ),
+    };
 
     let snapshot = FailureSnapshot {
-        test: test_name,
+        test: test_name.to_string(),
         error: error.into(),
         timestamp: Utc::now().to_rfc3339(),
         pool: get_pool_stats(),

@@ -22,83 +22,82 @@ env:
 jobs:
   validate-schemas:
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Keep validation jobs in lock-step with the pinned CI version
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: sinex_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v12
-      
-      - name: Setup Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@v7
-      
-      - name: Install PostgreSQL extensions
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          
-          # Wait for PostgreSQL to be ready
-          until pg_isready -h localhost -p 5432 -U postgres; do
-            echo "Waiting for PostgreSQL..."
-            sleep 2
-          done
-          
-          # Install required extensions
-          PGPASSWORD=postgres psql -h localhost -U postgres -d sinex_test -c "
-            CREATE EXTENSION IF NOT EXISTS pgx_ulid CASCADE;
-            CREATE EXTENSION IF NOT EXISTS pg_jsonschema CASCADE;
-            CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-            CREATE EXTENSION IF NOT EXISTS pgvector CASCADE;
-          " || echo "Extensions installation completed with warnings"
-      
-      - name: Run database migrations
-        run: |
-          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
-          cd crate/lib/sinex-schema
-          nix develop -c cargo run -- up
-      
-      - name: Test schema registry functionality
-        run: |
-          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
-          
-          # Test that schema registry table exists and works
-          PGPASSWORD=postgres psql -h localhost -U postgres -d sinex_test -c "
-            -- Test schema insertion
-            INSERT INTO sinex_schemas.event_payload_schemas 
-            (source, event_type, schema_version, schema_content, content_hash)
-            VALUES 
-            ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text));
-            
-            -- Test schema activation
-            UPDATE sinex_schemas.event_payload_schemas 
-            SET is_active = true 
-            WHERE source = 'test.source' AND event_type = 'test.event';
-            
-            -- Verify schema exists
-            SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas 
-            WHERE source = 'test.source';
-          "
 
-      - name: Smoke-test schema CLI
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: sinity
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: true
+
+      - name: Install devenv.sh
+        shell: bash
+        run: nix profile install nixpkgs#devenv
+
+      - name: Validate schemas inside Nix
+        shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+        env:
+          DEVENV_ROOT: ${{ github.workspace }}
+          DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
-          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/sinex_test"
+          export PGDATA="$PWD/postgres_data"
+          rm -rf "$PGDATA"
+          mkdir -p "$PGDATA"
+          export PGHOST=127.0.0.1
+          export PGPORT=55432
+          initdb --auth=trust --no-locale --encoding=UTF8
+          echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
+          echo "listen_addresses = '127.0.0.1'" >> "$PGDATA/postgresql.conf"
+          echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+          echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
+          pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT"
+          trap 'pg_ctl stop' EXIT
+
+          SUPERUSER=$(id -un)
+          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
+          fi
+          if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
+          fi
+
+          ensure_extension() {
+            local db="$1"
+            shift
+            for candidate in "$@"; do
+              if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
+                PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+                return 0
+              fi
+            done
+            echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
+            PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
+            exit 1
+          }
+
+          ensure_extension sinex_dev pgx_ulid ulid
+          ensure_extension sinex_dev pg_jsonschema
+          ensure_extension sinex_dev timescaledb
+          ensure_extension sinex_dev vector
+
+          export DATABASE_URL="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+
+          pushd crate/lib/sinex-schema >/dev/null
+          cargo run -- up
+          popd
+
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
+
           TMP_DIR=$(mktemp -d)
-          nix develop -c cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
+          cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
 
   deploy-staging:
     runs-on: ubuntu-latest

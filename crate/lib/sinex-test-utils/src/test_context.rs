@@ -108,6 +108,32 @@ pub struct TestContext {
     env: SinexEnvironment,
 }
 
+#[derive(Clone)]
+pub struct TestContextFailureSnapshot {
+    test_name: String,
+    baseline_events: i64,
+    start_time: Instant,
+    captured_logs: Arc<Mutex<Vec<String>>>,
+}
+
+impl TestContextFailureSnapshot {
+    pub fn test_name(&self) -> &str {
+        &self.test_name
+    }
+
+    pub fn baseline_events(&self) -> i64 {
+        self.baseline_events
+    }
+
+    pub fn elapsed_ms(&self) -> u128 {
+        self.start_time.elapsed().as_millis()
+    }
+
+    pub fn captured_logs(&self) -> Vec<String> {
+        self.captured_logs.lock().clone()
+    }
+}
+
 impl TestContext {
     /// Backwards-compatible accessor for the shared database pool.
     pub fn pool(&self) -> &DbPool {
@@ -309,6 +335,16 @@ impl TestContext {
     /// Number of events present when the context was created
     pub fn baseline_event_count(&self) -> i64 {
         self.baseline_events
+    }
+
+    /// Capture snapshot metadata that survives if the context is moved.
+    pub fn failure_snapshot(&self) -> TestContextFailureSnapshot {
+        TestContextFailureSnapshot {
+            test_name: self.test_name.clone(),
+            baseline_events: self.baseline_events,
+            start_time: self.start_time,
+            captured_logs: Arc::clone(&self.captured_logs),
+        }
     }
 
     /// Current total number of events

@@ -8,9 +8,7 @@ use sinex_test_utils::{sinex_test, TestContext};
 async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result<()> {
     let repo = ctx.pool.schemas();
 
-    sqlx::query!("CREATE EXTENSION IF NOT EXISTS ulid")
-        .execute(&ctx.pool)
-        .await?;
+    ensure_ulid_extension(&ctx.pool).await?;
 
     repo.register_schema(NewEventSchema {
         source: "semver-source".to_string(),
@@ -52,6 +50,25 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
             other
         )),
     }
+}
+
+async fn ensure_ulid_extension(pool: &sinex_core::DbPool) -> color_eyre::Result<()> {
+    let available = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM pg_available_extensions WHERE name IN ('ulid', 'pgx_ulid') LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(extension) = available else {
+        return Err(color_eyre::eyre::eyre!(
+            "Neither 'ulid' nor 'pgx_ulid' extensions are available in this PostgreSQL instance"
+        ));
+    };
+
+    let stmt = format!(r#"CREATE EXTENSION IF NOT EXISTS "{extension}""#);
+    sqlx::query(&stmt).execute(pool).await?;
+
+    Ok(())
 }
 
 #[sinex_test]

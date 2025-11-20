@@ -1,0 +1,4 @@
+ignore = [
+    "crate/lib/sinex-core/tests/property/event_model_fuzzing_test.rs",
+    "crate/lib/sinex-core/tests/property/ulid_property_test.rs",
+]

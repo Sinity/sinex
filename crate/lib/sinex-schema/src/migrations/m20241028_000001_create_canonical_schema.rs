@@ -568,6 +568,7 @@ impl MigrationTrait for Migration {
 
 async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Result<(), DbErr> {
     for extension in REQUIRED_EXTENSIONS {
+        let mut target = *extension;
         let check_sql = format!(
             "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{ext}') AS available",
             ext = extension.replace('\'', "''"),
@@ -578,7 +579,28 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
             .and_then(|row| row.try_get_by_index::<bool>(0).ok())
             .unwrap_or(false);
 
-        if !available {
+        let mut resolved_available = available;
+
+        if !resolved_available && *extension == "ulid" {
+            let fallback = "pgx_ulid";
+            let fallback_check = format!(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{ext}') AS available",
+                ext = fallback
+            );
+            resolved_available = conn
+                .query_one(Statement::from_string(
+                    DatabaseBackend::Postgres,
+                    fallback_check,
+                ))
+                .await?
+                .and_then(|row| row.try_get_by_index::<bool>(0).ok())
+                .unwrap_or(false);
+            if resolved_available {
+                target = fallback;
+            }
+        }
+
+        if !resolved_available {
             warn!(
                 extension = %extension,
                 "Skipping unavailable PostgreSQL extension; install it manually if needed"
@@ -586,10 +608,7 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
             continue;
         }
 
-        let statement = format!(
-            r#"CREATE EXTENSION IF NOT EXISTS "{ext}";"#,
-            ext = extension
-        );
+        let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{ext}";"#, ext = target);
         conn.execute_unprepared(&statement).await?;
     }
 
