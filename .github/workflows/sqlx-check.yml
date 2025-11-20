@@ -78,7 +78,7 @@ jobs:
           ensure_extension sinex_dev vector
 
           export PGHOST="$PWD"
-          export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
+          export DATABASE_URL="postgresql://${SUPERUSER}@/sinex_dev?host=$PWD"
 
           pushd crate/lib/sinex-schema >/dev/null
           cargo run -- up
