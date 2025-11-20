@@ -56,9 +56,25 @@ jobs:
           if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
             PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
           fi
-          for ext in pgx_ulid pg_jsonschema timescaledb pgvector; do
-            PGUSER="$SUPERUSER" psql -h "$PWD" -d sinex_dev -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${ext};"
-          done
+
+          ensure_extension() {
+            local db="$1"
+            shift
+            for candidate in "$@"; do
+              if PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
+                PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+                return 0
+              fi
+            done
+            echo "::error::None of the requested extensions ($*) are available in this PostgreSQL build."
+            PGUSER="$SUPERUSER" psql -h "$PWD" -d "$db" -tAc "SELECT name FROM pg_available_extensions ORDER BY name;"
+            exit 1
+          }
+
+          ensure_extension sinex_dev pgx_ulid ulid
+          ensure_extension sinex_dev pg_jsonschema
+          ensure_extension sinex_dev timescaledb
+          ensure_extension sinex_dev vector
 
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
