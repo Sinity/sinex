@@ -3,11 +3,7 @@ let
   system = pkgs.stdenv.hostPlatform.system;
   fenixInput =
     if inputs ? fenix then inputs.fenix
-    else builtins.getFlake {
-      url = "github:nix-community/fenix";
-      rev = "d4e14d370b4763c67ea02a39f01f5366297d61cb";
-      narHash = "sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
-    };
+    else builtins.getFlake "github:nix-community/fenix?rev=d4e14d370b4763c67ea02a39f01f5366297d61cb&narHash=sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
   fenixPkgs = fenixInput.packages.${system}.complete;
   pythonDeps = with pkgs.python3Packages; [
     click
