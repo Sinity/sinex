@@ -47,8 +47,12 @@ jobs:
         pg_ctl start -l postgres.log -o "-k $PWD"
         trap 'pg_ctl stop' EXIT
         SUPERUSER=$(id -un)
-        PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN CREATE ROLE sinity LOGIN CREATEDB; END IF; END \$\$;"
-        PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN CREATE DATABASE sinex_dev OWNER sinity; END IF; END \$\$;"
+        if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
+          PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
+        fi
+        if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
+          PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
+        fi
         psql -h "$PWD" -U sinity -d sinex_dev -c 'SELECT 1' >/dev/null
         export PGHOST="$PWD"
         export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
