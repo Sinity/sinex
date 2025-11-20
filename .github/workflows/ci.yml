@@ -56,7 +56,9 @@ jobs:
         psql -h "$PWD" -U sinity -d sinex_dev -c 'SELECT 1' >/dev/null
         export PGHOST="$PWD"
         export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
-        devenv tasks run db:migrate
+        pushd crate/lib/sinex-schema >/dev/null
+        cargo run -- up
+        popd
         bash scripts/check_forbidden_patterns.sh
         ./scripts/schema-dev.sh generate
         if ! git diff --quiet -- schemas; then

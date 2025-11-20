@@ -59,7 +59,9 @@ jobs:
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
 
-          devenv tasks run db:migrate
+          pushd crate/lib/sinex-schema >/dev/null
+          cargo run -- up
+          popd
 
           cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
