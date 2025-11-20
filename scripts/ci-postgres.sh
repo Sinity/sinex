@@ -2,8 +2,9 @@
 set -euo pipefail
 
 PGDATA="${PGDATA:-$PWD/postgres_data}"
-PGHOST="${PGHOST:-127.0.0.1}"
-PGPORT="${PGPORT:-55432}"
+PGHOST="${CI_PGHOST:-127.0.0.1}"
+PGPORT="${CI_PGPORT:-55432}"
+export PGDATA PGHOST PGPORT
 
 rm -rf "$PGDATA"
 mkdir -p "$PGDATA"
@@ -49,6 +50,7 @@ ensure_extension() {
 
 grant_schema_access() {
   local schema="$1"
+  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${schema};"
   PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA ${schema} TO sinity;"
   PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO sinity;"
   PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO sinity;"
