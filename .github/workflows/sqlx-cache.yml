@@ -40,7 +40,9 @@ jobs:
           DEVENV_ROOT: ${{ github.workspace }}
           DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
-          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT'
+          set -euo pipefail
+          LOG_FILE="$PWD/sqlx-cache.log"
+          DEVENV_ROOT="$DEVENV_ROOT" DEVENV_DOTFILE="$DEVENV_DOTFILE" nix develop --no-pure-eval --command bash <<'SCRIPT' 2>&1 | tee "$LOG_FILE"
           set -euo pipefail
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
