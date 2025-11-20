@@ -75,14 +75,14 @@ struct DiscoveredSchema {
     content: Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct RegistryFile {
     version: String,
     generated_at: String,
     entries: Vec<RegistryEntry>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct RegistryEntry {
     source: String,
     event_type: String,
@@ -181,12 +181,40 @@ async fn generate_schemas(pool: Option<&PgPool>, output_dir: &str, sync: bool) -
         });
     }
 
+    registry_entries.sort_by(|a, b| {
+        (
+            a.source.as_str(),
+            a.event_type.as_str(),
+            a.version.as_str(),
+        )
+            .cmp(&(
+                b.source.as_str(),
+                b.event_type.as_str(),
+                b.version.as_str(),
+            ))
+    });
+
+    let registry_path = Path::new(output_dir).join("registry.json");
+    let generated_at = match tokio::fs::read_to_string(&registry_path).await {
+        Ok(contents) => {
+            if let Ok(existing) = serde_json::from_str::<RegistryFile>(&contents) {
+                if existing.entries == registry_entries {
+                    existing.generated_at
+                } else {
+                    chrono::Utc::now().to_rfc3339()
+                }
+            } else {
+                chrono::Utc::now().to_rfc3339()
+            }
+        }
+        Err(_) => chrono::Utc::now().to_rfc3339(),
+    };
+
     let registry = RegistryFile {
         version: "v1".to_string(),
-        generated_at: chrono::Utc::now().to_rfc3339(),
+        generated_at,
         entries: registry_entries,
     };
-    let registry_path = Path::new(output_dir).join("registry.json");
     tokio::fs::write(registry_path, serde_json::to_string_pretty(&registry)?).await?;
 
     info!(count = registry.entries.len(), "Generated schemas");

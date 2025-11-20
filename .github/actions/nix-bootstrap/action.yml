@@ -1,0 +1,54 @@
+name: Setup Nix Environment
+description: Free disk space, install Nix, configure Cachix, and optionally install devenv
+inputs:
+  cache-name:
+    description: Cachix cache name to use
+    required: true
+  cachix-auth-token:
+    description: Cachix authentication token (optional)
+    required: false
+    default: ""
+  nix-path:
+    description: Nix path channel
+    required: false
+    default: nixpkgs=channel:nixos-unstable
+  extra-nix-config:
+    description: Extra nix configuration
+    required: false
+    default: ""
+  install-devenv:
+    description: Install devenv after Nix bootstrap
+    required: false
+    default: "true"
+  clean-disk:
+    description: Remove large preinstalled toolchains to free disk
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - if: inputs.clean-disk == 'true'
+      name: Free disk space
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache
+        sudo rm -rf /usr/local/lib/android
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        nix_path: ${{ inputs.nix-path }}
+        extra_nix_config: ${{ inputs.extra-nix-config }}
+
+    - name: Configure Cachix
+      uses: cachix/cachix-action@v16
+      with:
+        name: ${{ inputs.cache-name }}
+        authToken: ${{ inputs.cachix-auth-token }}
+
+    - if: inputs.install-devenv == 'true'
+      name: Install devenv
+      shell: bash
+      run: nix profile install nixpkgs#devenv
