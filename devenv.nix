@@ -61,6 +61,14 @@ let
   ] ++ pythonDeps ++ [ ttok ];
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
 in {
+  devenv = {
+    root =
+      let
+        rootEnv = builtins.getEnv "DEVENV_ROOT";
+      in
+      if rootEnv != "" then rootEnv else toString ./.;
+  };
+
   packages = basePackages;
 
   env = {
