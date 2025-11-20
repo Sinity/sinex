@@ -32,7 +32,6 @@ jobs:
       with:
         name: sinity
         authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-        skipPush: true
 
     - name: Install devenv.sh
       shell: bash
