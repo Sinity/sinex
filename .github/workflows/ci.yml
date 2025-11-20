@@ -13,9 +13,6 @@ jobs:
   test:
     name: Devenv Integration Test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: devenv shell bash -- -e {0}
 
     steps:
     - uses: actions/checkout@v5
@@ -34,18 +31,19 @@ jobs:
       shell: bash
       run: nix profile install nixpkgs#devenv
 
-    - name: Build devenv shell and run hooks
-      run: devenv test
-
     - name: Run migrations and tests
+      shell: bash
       run: |
+        nix develop --command bash <<'SCRIPT'
         set -euo pipefail
+        devenv test
+
         export PGDATA="$PWD/postgres_data"
         rm -rf "$PGDATA"
         mkdir -p "$PGDATA"
         initdb --auth=trust --no-locale --encoding=UTF8
-        echo "unix_socket_directories = ''$PWD''" >> "$PGDATA/postgresql.conf"
-        pg_ctl start -l postgres.log -o "-k ''$PWD''"
+        echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
+        pg_ctl start -l postgres.log -o "-k '$PWD'"
         trap 'pg_ctl stop' EXIT
         createuser -h "$PWD" sinity 2>/dev/null || true
         createdb -h "$PWD" -O sinity sinex_dev 2>/dev/null || true
@@ -60,3 +58,4 @@ jobs:
           exit 1
         fi
         devenv tasks run dev:test
+        SCRIPT
