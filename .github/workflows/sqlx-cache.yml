@@ -101,15 +101,17 @@ jobs:
           done
           export DATABASE_URL="$DATABASE_URL_APP"
 
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-cache"
           cargo sqlx prepare --workspace -- --all-targets --all-features
+          rm -rf "$CARGO_TARGET_DIR"
           if git diff --quiet .sqlx; then
-            rm -rf target
+            rm -rf target target-sqlx-cache
             exit 0
           fi
 
           echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace -- --all-targets --all-features' locally and commit the changes."
           git status -sb .sqlx
           git diff .sqlx || true
-          rm -rf target
+          rm -rf target target-sqlx-cache
           exit 1
           SCRIPT

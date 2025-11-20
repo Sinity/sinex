@@ -101,8 +101,11 @@ jobs:
           done
           export DATABASE_URL="$DATABASE_URL_APP"
 
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-check"
           cargo sqlx prepare --workspace --check -- --all-targets --all-features
+          rm -rf "$CARGO_TARGET_DIR"
 
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
           SQLX_OFFLINE=1 cargo check --all-features
-          rm -rf target
+          rm -rf "$CARGO_TARGET_DIR" target
           SCRIPT
