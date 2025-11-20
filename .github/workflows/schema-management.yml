@@ -78,8 +78,9 @@ jobs:
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
       - name: Generate schemas via CLI
-        shell: devenv shell bash -- -e {0}
-        run: ./scripts/schema-dev.sh generate
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/schema-dev.sh generate'
           
       - name: Check for schema changes
         id: check-changes
@@ -148,5 +149,6 @@ jobs:
         if: steps.prod-secret.outputs.has_secret == 'true'
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
-        shell: devenv shell bash -- -e {0}
-        run: ./scripts/deploy-schemas.sh
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/deploy-schemas.sh'

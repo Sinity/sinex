@@ -29,11 +29,13 @@ jobs:
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
     - name: Run migrations and tests
-      shell: devenv shell bash -- -e {0}
+      shell: bash
       run: |
+        scripts/ci-devenv.sh bash <<'DEVENV'
+        set -euo pipefail
         export CARGO_TARGET_DIR="$PWD/target-ci"
         devenv test
-        scripts/ci-postgres.sh <<'INNER'
+        scripts/ci-postgres.sh <<'POSTGRES'
         pushd crate/lib/sinex-schema >/dev/null
         DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
         popd
@@ -45,5 +47,6 @@ jobs:
           exit 1
         fi
         devenv tasks run dev:test
-        INNER
+        POSTGRES
         rm -rf "$CARGO_TARGET_DIR"
+        DEVENV
