@@ -23,6 +23,9 @@ jobs:
     concurrency:
       group: schema-management-validate-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +64,9 @@ jobs:
     concurrency:
       group: schema-management-generate-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,11 +76,10 @@ jobs:
         with:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-          install-devenv: "false"
-          
+
       - name: Generate schemas via CLI
-        run: |
-          nix develop --command ./scripts/schema-dev.sh generate
+        shell: devenv shell bash -- -e {0}
+        run: ./scripts/schema-dev.sh generate
           
       - name: Check for schema changes
         id: check-changes
@@ -109,21 +114,25 @@ jobs:
     needs: [validate-schemas, generate-schemas]
     env:
       PROD_DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.PROD_DATABASE_URL != ''
     concurrency:
       group: schema-management-deploy
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+        env:
+          DEVENV_ROOT: ${{ github.workspace }}
+          DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
 
       - uses: ./.github/actions/nix-bootstrap
         with:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-          install-devenv: "false"
-            
+
       - name: Deploy schemas
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
-        run: |
-          nix develop --command ./scripts/deploy-schemas.sh
+        shell: devenv shell bash -- -e {0}
+        run: ./scripts/deploy-schemas.sh
