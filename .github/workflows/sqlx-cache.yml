@@ -45,6 +45,7 @@ jobs:
           mkdir -p "$PGDATA"
           initdb --auth=trust --no-locale --encoding=UTF8
           echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
+          echo "listen_addresses = ''" >> "$PGDATA/postgresql.conf"
           pg_ctl start -l postgres.log -o "-k $PWD"
           trap 'pg_ctl stop' EXIT
 
@@ -55,6 +56,9 @@ jobs:
           if ! PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
             PGUSER="$SUPERUSER" psql -h "$PWD" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
           fi
+          for ext in pgx_ulid pg_jsonschema timescaledb pgvector; do
+            PGUSER="$SUPERUSER" psql -h "$PWD" -d sinex_dev -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${ext};"
+          done
 
           export PGHOST="$PWD"
           export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
