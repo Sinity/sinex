@@ -79,6 +79,8 @@ jobs:
 
       - name: Generate schemas via CLI
         shell: bash
+        env:
+          SQLX_OFFLINE: '1'
         run: |
           scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/schema-dev.sh generate'
           
