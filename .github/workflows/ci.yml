@@ -43,10 +43,11 @@ jobs:
         mkdir -p "$PGDATA"
         initdb --auth=trust --no-locale --encoding=UTF8
         echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
-        pg_ctl start -l postgres.log -o "-k '$PWD'"
+        pg_ctl start -l postgres.log -o "-k $PWD"
         trap 'pg_ctl stop' EXIT
         createuser -h "$PWD" sinity 2>/dev/null || true
         createdb -h "$PWD" -O sinity sinex_dev 2>/dev/null || true
+        psql -h "$PWD" -U sinity -d sinex_dev -c 'SELECT 1' >/dev/null
         export PGHOST="$PWD"
         export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
         devenv tasks run db:migrate
