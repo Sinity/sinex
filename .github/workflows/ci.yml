@@ -45,6 +45,7 @@ jobs:
         initdb --auth=trust --no-locale --encoding=UTF8
         echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
         echo "listen_addresses = ''" >> "$PGDATA/postgresql.conf"
+        echo "shared_preload_libraries = 'timescaledb'" >> "$PGDATA/postgresql.conf"
         pg_ctl start -l postgres.log -o "-k $PWD"
         trap 'pg_ctl stop' EXIT
         SUPERUSER=$(id -un)
