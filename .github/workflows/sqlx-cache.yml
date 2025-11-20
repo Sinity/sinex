@@ -16,56 +16,66 @@ jobs:
   validate-cache:
     name: Validate SQLx Query Cache
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: timescale/timescaledb:2.15.2-pg16  # Keep in sync with main CI runs
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: sinex_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
         with:
-          toolchain: stable
-          override: true
-          
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features --features postgres
-        
-      - name: Setup database
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
-          PGPASSWORD: postgres
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: sinity
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          skipPush: true
+
+      - name: Install devenv.sh
+        shell: bash
+        run: nix profile install nixpkgs#devenv
+
+      - name: Validate SQLx cache inside Nix
+        shell: bash
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client postgresql-contrib
-          psql -h localhost -U postgres -c "CREATE USER sinex_test WITH PASSWORD 'test_password' CREATEDB"
-          psql -h localhost -U postgres -c "CREATE DATABASE sinex_test OWNER sinex_test"
-          psql -h localhost -U postgres -d sinex_test -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
-          cd crate/lib/sinex-schema
-          cargo run -- up
-          
-      - name: Check query cache is current
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
-        run: |
-          cargo sqlx prepare --check --workspace
-          
-      - name: Update cache if outdated
-        if: failure()
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sinex_test
-        run: |
+          nix develop --no-pure-eval --command bash <<'SCRIPT'
+          set -euo pipefail
+
+          export PGDATA="$PWD/postgres_data"
+          rm -rf "$PGDATA"
+          mkdir -p "$PGDATA"
+          initdb --auth=trust --no-locale --encoding=UTF8
+          echo "unix_socket_directories = '$PWD'" >> "$PGDATA/postgresql.conf"
+          pg_ctl start -l postgres.log -o "-k $PWD"
+          trap 'pg_ctl stop' EXIT
+
+          psql -h "$PWD" -d postgres <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'sinity') THEN
+    CREATE ROLE sinity LOGIN CREATEDB;
+  END IF;
+END$$;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev') THEN
+    CREATE DATABASE sinex_dev OWNER sinity;
+  END IF;
+END$$;
+SQL
+
+          export PGHOST="$PWD"
+          export DATABASE_URL="postgresql:///sinex_dev?host=$PWD"
+
+          devenv tasks run db:migrate
+
+          if cargo sqlx prepare --workspace --check -- --all-targets --all-features; then
+            exit 0
+          fi
+
           echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace' locally and commit the changes."
-          cargo sqlx prepare --workspace
-          git diff --exit-code .sqlx || (echo "::error::Cache would be updated with these changes:" && git diff .sqlx && exit 1)
+          cargo sqlx prepare --workspace -- --all-targets --all-features
+          if ! git diff --quiet .sqlx; then
+            git diff .sqlx
+          fi
+          exit 1
+          SCRIPT
