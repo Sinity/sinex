@@ -286,19 +286,25 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!()
     };
 
-    let seed_stmt = opts.seed.map(|seed| {
-        quote! {
-            cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
-            cfg.rng_seed = Some(#seed);
-        }
-    }).unwrap_or_else(|| {
-        quote! {
-            if let Ok(seed_env) = std::env::var("SINEX_PROPTEST_SEED").ok().and_then(|s| s.parse::<u64>().ok()) {
+    let seed_stmt = opts
+        .seed
+        .map(|seed| {
+            quote! {
                 cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
-                cfg.rng_seed = Some(seed_env);
+                cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(#seed);
             }
-        }
-    });
+        })
+        .unwrap_or_else(|| {
+            quote! {
+                if let Some(seed_env) = std::env::var("SINEX_PROPTEST_SEED")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
+                    cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(seed_env);
+                }
+            }
+        });
 
     let shrink_stmt = opts
         .max_shrink_time_ms
@@ -356,16 +362,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let runner_setup = quote! {
         use ::proptest::prelude::*;
-        let mut cfg = ::proptest::test_runner::Config::default();
-        cfg.cases = #cases;
-        if let Ok(val) = std::env::var("SINEX_PROPTEST_CASES").ok().and_then(|s| s.parse::<u32>().ok()) {
-            cfg.cases = val;
-        }
-        cfg.failure_persistence = ::proptest::test_runner::FailurePersistence::File(
-            std::env::var("SINEX_PROPTEST_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| std::path::PathBuf::from("target/proptest-regressions"))
-        );
+        let mut cfg = sinex_test_utils::sinex_prop_runner_config(#cases, module_path!(), test_name);
         #seed_stmt
         #shrink_stmt
         let mut runner = ::proptest::test_runner::TestRunner::new(cfg);
@@ -414,10 +411,13 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 Err(err) => {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                    let failure_ctx = ctx_snapshot_ref
+                        .map(|ctx| sinex_test_utils::snapshot_helper::FailureContext::Borrowed(ctx))
+                        .unwrap_or(sinex_test_utils::snapshot_helper::FailureContext::None);
                     sinex_test_utils::snapshot_helper::persist_failure(
                         test_name,
                         format!("{err:?}"),
-                        ctx_snapshot_ref,
+                        failure_ctx,
                     );
                     Err(color_eyre::eyre::eyre!("{err}"))
                 }
@@ -438,8 +438,10 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #tuple_unpack
                 #( #destructures )*
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { #user_body }))
-                    .map_err(|_| ::proptest::test_runner::TestCaseError::fail("panic in property"))
-                    .and_then(|res| res.map_err(|err| ::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))))
+                .map_err(|_| ::proptest::test_runner::TestCaseError::fail("panic in property"))
+                .and_then(|res| {
+                    res.map_err(|err| ::proptest::test_runner::TestCaseError::fail(format!("{err:?}")))
+                })
             });
             let elapsed = start.elapsed();
             match result {
@@ -452,7 +454,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     sinex_test_utils::snapshot_helper::persist_failure(
                         test_name,
                         format!("{err:?}"),
-                        None,
+                        sinex_test_utils::snapshot_helper::FailureContext::None,
                     );
                     Err(color_eyre::eyre::eyre!("{err}"))
                 }
@@ -663,7 +665,7 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
         out.push(quote! {
             #(#passthrough_attrs)*
-            #[sinex_prop #meta_tokens]
+            #[sinex_test_utils::sinex_prop #meta_tokens]
             fn #name( #ctx_tokens #( #param_defs ),* ) -> sinex_test_utils::TestResult<()> {
                 #( #destructures )*
                 #body
@@ -864,7 +866,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         sinex_test_utils::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            None,
+                            sinex_test_utils::snapshot_helper::FailureContext::None,
                         );
                     }
                 }
@@ -927,7 +929,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         sinex_test_utils::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            None,
+                            sinex_test_utils::snapshot_helper::FailureContext::None,
                         );
                     }
                 }
@@ -952,6 +954,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
                     let ctx = TestContext::with_name(test_name).await?;
+                    let ctx_failure_snapshot = ctx.failure_snapshot();
 
                     let result: color_eyre::eyre::Result<()> = if #timeout_secs > 10 {
                         let progress_task = tokio::spawn(async {
@@ -988,7 +991,9 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                             sinex_test_utils::snapshot_helper::persist_failure(
                                 test_name,
                                 format!("{err:?}"),
-                                Some(&ctx),
+                                sinex_test_utils::snapshot_helper::FailureContext::Snapshot(
+                                    ctx_failure_snapshot.clone(),
+                                ),
                             );
                         }
                     }
@@ -1029,7 +1034,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         sinex_test_utils::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            None,
+                            sinex_test_utils::snapshot_helper::FailureContext::None,
                         );
                     }
                 }

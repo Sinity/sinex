@@ -3,9 +3,12 @@
 // Provides property-based testing capabilities that integrate seamlessly
 // with the unified test infrastructure and event builders.
 
+use once_cell::sync::Lazy;
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
+use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use serde_json::{json, Value};
+use std::{collections::HashMap, env, fs, path::PathBuf, sync::Mutex};
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -188,10 +191,92 @@ impl SinexStrategies {
     }
 }
 
+static PERSISTENCE_CACHE: Lazy<Mutex<HashMap<String, &'static str>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub(crate) fn build_runner_config(
+    default_cases: u32,
+    module_path: &'static str,
+    test_name: &str,
+) -> ProptestConfig {
+    let mut cfg = ProptestConfig::default();
+    cfg.cases = default_cases;
+    if let Some(override_cases) = env_proptest_case_override() {
+        cfg.cases = override_cases;
+    }
+    if let Some(path) = regression_file_path(module_path, test_name) {
+        cfg.failure_persistence = Some(Box::new(FileFailurePersistence::Direct(path)));
+    }
+    cfg
+}
+
+fn env_proptest_case_override() -> Option<u32> {
+    env::var("SINEX_PROPTEST_CASES")
+        .ok()
+        .and_then(|raw| raw.parse::<u32>().ok())
+}
+
+fn regression_file_path(module_path: &str, test_name: &str) -> Option<&'static str> {
+    let mut path = env::var("SINEX_PROPTEST_DIR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target/proptest-regressions"));
+
+    for segment in module_path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+    {
+        path.push(sanitize_component(segment));
+    }
+
+    let file_name = format!("{}.proptest-regressions", sanitize_component(test_name));
+    path.push(file_name);
+
+    if let Some(parent) = path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "sinex_test_utils: failed to create proptest directory {}: {err}",
+                parent.display()
+            );
+            return None;
+        }
+    }
+
+    Some(cache_leaked_path(path))
+}
+
+fn sanitize_component(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn cache_leaked_path(path: PathBuf) -> &'static str {
+    let path_string = path.to_string_lossy().into_owned();
+    let mut cache = PERSISTENCE_CACHE
+        .lock()
+        .expect("sinex proptest persistence cache poisoned");
+    if let Some(existing) = cache.get(&path_string) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(path_string.clone().into_boxed_str());
+    cache.insert(path_string, leaked);
+    leaked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{sinex_prop, TestContext, TestResult};
+    use color_eyre::eyre::Report;
 
     #[sinex_prop(cases = 8)]
     async fn property_creates_filesystem_events(
@@ -202,7 +287,7 @@ mod tests {
         let event = ctx.create_test_event(&source, &event_type, payload).await?;
         assert_eq!(event.source.as_str(), "filesystem");
         assert!(event.id.is_some());
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     #[sinex_prop(cases = 8, seed = 42)]
@@ -216,7 +301,7 @@ mod tests {
         let mut expected = payload.clone();
         TestContext::sanitize_payload(&mut expected);
         assert_eq!(inserted.payload, expected);
-        Ok(())
+        Ok::<(), Report>(())
     }
 
     #[sinex_prop(cases = 16)]
@@ -229,6 +314,6 @@ mod tests {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_'),
             "source not normalized: {source}",
         );
-        Ok(())
+        Ok::<(), Report>(())
     }
 }

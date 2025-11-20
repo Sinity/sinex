@@ -196,6 +196,7 @@ sinex_proptest! {
         }
         Ok(())
     }
+}
 
 sinex_proptest! {
     fn test_concurrent_ulid_timestamp_correlation(
@@ -355,6 +356,7 @@ fn arb_ulid_from_time_range(
     })
 }
 
+sinex_proptest! {
     fn test_ulid_ordering_property_in_memory(
         ulids in arb_ulid_sequence(2, 20)
     ) -> color_eyre::eyre::Result<()> {
@@ -374,6 +376,7 @@ fn arb_ulid_from_time_range(
             "All ULIDs in sequence should be unique");
         Ok(())
     }
+}
 
 // Database test temporarily disabled due to direct sqlx usage
 // TODO: Reimplement using repository pattern
