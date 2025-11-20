@@ -33,6 +33,9 @@ jobs:
 
     - name: Run migrations and tests
       shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+      env:
+        DEVENV_ROOT: ${{ github.workspace }}
+        DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
       run: |
         devenv test
 

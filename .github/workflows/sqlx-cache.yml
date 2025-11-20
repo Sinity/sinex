@@ -36,6 +36,9 @@ jobs:
 
       - name: Validate SQLx cache inside Nix
         shell: 'nix develop --no-pure-eval --command bash --noprofile --norc -euo pipefail {0}'
+        env:
+          DEVENV_ROOT: ${{ github.workspace }}
+          DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
         run: |
           export PGDATA="$PWD/postgres_data"
           rm -rf "$PGDATA"
