@@ -1,0 +1,190 @@
+name: Database Checks
+
+on:
+  push:
+    paths:
+      - '**'
+  pull_request:
+    paths:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      schema: ${{ steps.filter.outputs.schema }}
+      sqlx: ${{ steps.filter.outputs.sqlx }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            schema:
+              - 'schemas/**'
+              - 'crate/lib/sinex-core/src/types/events/**'
+              - 'crate/lib/sinex-schema/**'
+              - 'scripts/schema-dev.sh'
+            sqlx:
+              - '.sqlx/**'
+              - 'crate/**/migrations/**'
+              - 'crate/lib/sinex-schema/**'
+              - 'crate/**/*.rs'
+              - '**/*.sql'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+
+  schema_validation:
+    name: Schema Validation Pipeline
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.schema == 'true'
+    concurrency:
+      group: db-checks-schema-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/nix-bootstrap
+        with:
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm-global
+          key: npm-global-${{ runner.os }}-${{ hashFiles('schemas/**/*.json') }}
+          restore-keys: npm-global-${{ runner.os }}-
+
+      - name: Configure npm prefix
+        shell: bash
+        run: |
+          npm config set prefix ~/.npm-global
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install ajv-cli
+        env:
+          NPM_CONFIG_PREFIX: ~/.npm-global
+        run: npm install -g ajv-cli ajv-formats
+
+      - name: Validate JSON schemas
+        shell: bash
+        run: |
+          echo "Validating JSON schemas..."
+          find schemas -name "*.json" -type f | sort | while read -r schema; do
+            echo "Validating: $schema"
+            ajv compile -s "$schema" --spec=draft7 --strict=false
+          done
+
+      - name: Run schema sync
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash <<'DEVENV_SCHEMA'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES_SCHEMA'
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
+          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
+
+          TMP_DIR=$(mktemp -d)
+          cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
+          POSTGRES_SCHEMA
+          DEVENV_SCHEMA
+
+  sqlx_cache:
+    name: SQLx Query Cache Validation
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.sqlx == 'true'
+    concurrency:
+      group: db-checks-sqlx-cache-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/nix-bootstrap
+        with:
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Verify SQLx cache freshness
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_CACHE'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES_SQLX_CACHE'
+          pushd crate/lib/sinex-schema >/dev/null
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
+          popd
+
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-cache"
+          cargo sqlx prepare --workspace -- --all-targets --all-features
+          rm -rf "$CARGO_TARGET_DIR"
+          if git diff --quiet .sqlx; then
+            rm -rf target
+            exit 0
+          fi
+
+          echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace -- --all-targets --all-features' locally and commit the changes."
+          git status -sb .sqlx
+          git diff .sqlx || true
+          rm -rf target
+          exit 1
+          POSTGRES_SQLX_CACHE
+          DEVENV_SQLX_CACHE
+
+  sqlx_check:
+    name: SQLX Cache Check
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.sqlx == 'true'
+    concurrency:
+      group: db-checks-sqlx-check-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/nix-bootstrap
+        with:
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Run SQLX offline checks
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_CHECK'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES_SQLX_CHECK'
+          pushd crate/lib/sinex-schema >/dev/null
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
+          popd
+
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-check"
+          cargo sqlx prepare --workspace --check -- --all-targets --all-features
+          rm -rf "$CARGO_TARGET_DIR"
+
+          export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
+          SQLX_OFFLINE=1 cargo check --all-features
+          rm -rf "$CARGO_TARGET_DIR" target
+          POSTGRES_SQLX_CHECK
+          DEVENV_SQLX_CHECK

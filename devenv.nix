@@ -97,11 +97,12 @@ let
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
 in {
   devenv = {
-    root =
+    root = lib.mkDefault (
       let
         rootEnv = builtins.getEnv "DEVENV_ROOT";
       in
-      if rootEnv != "" then rootEnv else toString ./.;
+      if rootEnv != "" then rootEnv else toString ./.
+    );
   };
 
   packages = basePackages;
