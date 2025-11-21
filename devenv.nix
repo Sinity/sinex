@@ -188,11 +188,10 @@ in {
 
     "sqlx:prepare".exec = ''
       devenv tasks run db:migrate
-      cargo sqlx prepare --workspace -- --all-targets
-      echo "✅ SQLX cache updated - commit .sqlx/"
+      ./scripts/sqlx-prepare.sh
     '';
 
-    "sqlx:check".exec = "cargo sqlx prepare --workspace --check -- --all-targets";
+    "sqlx:check".exec = "cargo sqlx prepare --workspace --check -- --all-targets --all-features";
 
     "cli:query".exec = ''
       LIMIT="''${LIMIT:-10}" ./cli/exo.py query --limit "$LIMIT"
