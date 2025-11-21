@@ -13,20 +13,26 @@ jobs:
   regenerate:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - uses: ./.github/actions/nix-bootstrap
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
       - name: Regenerate schemas
-        run: >
-          cargo run -p sinex-core --bin sinex-schema --features schema-manager --
-          generate --output schemas/v1
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash <<'DEVENV'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES'
+          ./scripts/schema-dev.sh generate
+          POSTGRES
+          DEVENV
 
       - name: Create schema update PR
         uses: peter-evans/create-pull-request@v5
@@ -36,3 +42,4 @@ jobs:
           body: "Automated schema regeneration via GitHub Actions."
           branch: chore/auto-update-schemas
           labels: automated-update
+          delete-branch: true

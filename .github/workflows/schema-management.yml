@@ -79,10 +79,13 @@ jobs:
 
       - name: Generate schemas via CLI
         shell: bash
-        env:
-          SQLX_OFFLINE: '1'
         run: |
-          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/schema-dev.sh generate'
+          scripts/ci-devenv.sh bash <<'DEVENV'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES'
+          ./scripts/schema-dev.sh generate
+          POSTGRES
+          DEVENV
           
       - name: Check for schema changes
         id: check-changes
