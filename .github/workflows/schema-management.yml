@@ -151,6 +151,7 @@ jobs:
         if: steps.prod-secret.outputs.has_secret == 'true'
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
+          SQLX_OFFLINE: '1'
         shell: bash
         run: |
           scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/deploy-schemas.sh'

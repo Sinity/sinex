@@ -50,6 +50,7 @@ jobs:
     env:
       DEVENV_ROOT: ${{ github.workspace }}
       DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
+      SQLX_OFFLINE: '1'
     steps:
       - uses: actions/checkout@v5
 

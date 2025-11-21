@@ -29,6 +29,8 @@ jobs:
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
     - name: Run migrations and tests
+      env:
+        SQLX_OFFLINE: '1'
       shell: bash
       run: |
         scripts/ci-devenv.sh bash <<'DEVENV'

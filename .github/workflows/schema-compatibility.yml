@@ -25,6 +25,8 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@v2
 
       - name: Run schema compatibility check
+        env:
+          SQLX_OFFLINE: '1'
         run: |
           chmod +x scripts/check-schema-compatibility.sh
           CI_BASE_BRANCH=${{ github.base_ref }} ./scripts/check-schema-compatibility.sh
