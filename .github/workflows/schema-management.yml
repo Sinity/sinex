@@ -1,5 +1,9 @@
 name: Schema Management
 
+permissions:
+  contents: write
+  pull-requests: write
+
 on:
   push:
     branches: [ master, 'claude/**' ]
@@ -7,6 +11,7 @@ on:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
       - 'scripts/schema-dev.sh'
+      - 'scripts/deploy-schemas.sh'
       - '.github/workflows/schema-management.yml'
   pull_request:
     branches: [ master ]
@@ -14,6 +19,7 @@ on:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
       - 'scripts/schema-dev.sh'
+      - 'scripts/deploy-schemas.sh'
       - '.github/workflows/schema-management.yml'
 
 jobs:
