@@ -1,8 +1,9 @@
-name: Schema Auto Update
+name: Schema and SQLx Auto Update
 
 on:
   schedule:
     - cron: "0 6 * * *"
+    - cron: "30 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -10,7 +11,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  regenerate:
+  regenerate_schemas:
     runs-on: ubuntu-latest
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     env:
@@ -45,5 +46,39 @@ jobs:
           title: "chore: regenerate schemas"
           body: "Automated schema regeneration via GitHub Actions."
           branch: chore/auto-update-schemas
+          labels: automated-update
+          delete-branch: true
+
+  refresh_sqlx_cache:
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/nix-bootstrap
+        with:
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Regenerate SQLx cache
+        shell: bash
+        run: |
+          scripts/ci-devenv.sh bash <<'DEVENV'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES'
+          ./scripts/sqlx-prepare.sh
+          POSTGRES
+          DEVENV
+
+      - name: Create SQLx cache PR
+        uses: peter-evans/create-pull-request@v5
+        with:
+          commit-message: "chore: refresh SQLx cache"
+          title: "chore: refresh SQLx cache"
+          body: "Automated SQLx cache regeneration via GitHub Actions."
+          branch: chore/auto-update-sqlx-cache
           labels: automated-update
           delete-branch: true

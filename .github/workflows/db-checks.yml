@@ -38,6 +38,7 @@ jobs:
               - '**/*.sql'
               - '**/Cargo.toml'
               - '**/Cargo.lock'
+              - 'scripts/sqlx-prepare.sh'
 
   schema_validation:
     name: Schema Validation Pipeline
@@ -50,46 +51,34 @@ jobs:
     env:
       DEVENV_ROOT: ${{ github.workspace }}
       DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
-      SQLX_OFFLINE: '1'
     steps:
       - uses: actions/checkout@v5
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Cache cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-git-${{ runner.os }}-
 
       - uses: ./.github/actions/nix-bootstrap
         with:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Cache npm dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm-global
-          key: npm-global-${{ runner.os }}-${{ hashFiles('schemas/**/*.json') }}
-          restore-keys: npm-global-${{ runner.os }}-
-
-      - name: Configure npm prefix
-        shell: bash
-        run: |
-          npm config set prefix ~/.npm-global
-          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install ajv-cli
-        env:
-          NPM_CONFIG_PREFIX: ~/.npm-global
-        run: npm install -g ajv-cli ajv-formats
-
-      - name: Validate JSON schemas
-        shell: bash
-        run: |
-          echo "Validating JSON schemas..."
-          find schemas -name "*.json" -type f | sort | while read -r schema; do
-            echo "Validating: $schema"
-            ajv compile -s "$schema" --spec=draft7 --strict=false
-          done
 
       - name: Run schema sync
         shell: bash
@@ -110,13 +99,13 @@ jobs:
           POSTGRES_SCHEMA
           DEVENV_SCHEMA
 
-  sqlx_cache:
-    name: SQLx Query Cache Validation
+  sqlx_validation:
+    name: SQLx Validation
     runs-on: ubuntu-latest
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.sqlx == 'true'
     concurrency:
-      group: db-checks-sqlx-cache-${{ github.ref }}
+      group: db-checks-sqlx-${{ github.ref }}
       cancel-in-progress: true
     env:
       DEVENV_ROOT: ${{ github.workspace }}
@@ -124,72 +113,52 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: sccache-${{ runner.os }}-
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Cache cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-git-${{ runner.os }}-
+
       - uses: ./.github/actions/nix-bootstrap
         with:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Verify SQLx cache freshness
+      - name: Verify SQLx metadata and offline checks
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_CACHE'
+          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_VALIDATION'
           set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES_SQLX_CACHE'
-          pushd crate/lib/sinex-schema >/dev/null
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-          popd
+          scripts/ci-postgres.sh <<'POSTGRES_SQLX'
+          set -euo pipefail
+          ./scripts/sqlx-prepare.sh
+          POSTGRES_SQLX
 
-          export CARGO_TARGET_DIR="$PWD/target-sqlx-cache"
-          cargo sqlx prepare --workspace -- --all-targets --all-features
-          rm -rf "$CARGO_TARGET_DIR"
           if git diff --quiet .sqlx; then
-            rm -rf target
-            exit 0
+            echo "✅ SQLx metadata matches repository"
+          else
+            echo "::error::SQLx metadata is out of date. Run './scripts/sqlx-prepare.sh' locally and commit the results."
+            git status -sb .sqlx
+            git diff .sqlx || true
+            exit 1
           fi
 
-          echo "::error::SQLx query cache is outdated. Run 'cargo sqlx prepare --workspace -- --all-targets --all-features' locally and commit the changes."
-          git status -sb .sqlx
-          git diff .sqlx || true
-          rm -rf target
-          exit 1
-          POSTGRES_SQLX_CACHE
-          DEVENV_SQLX_CACHE
-
-  sqlx_check:
-    name: SQLX Cache Check
-    runs-on: ubuntu-latest
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.sqlx == 'true'
-    concurrency:
-      group: db-checks-sqlx-check-${{ github.ref }}
-      cancel-in-progress: true
-    env:
-      DEVENV_ROOT: ${{ github.workspace }}
-      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: ./.github/actions/nix-bootstrap
-        with:
-          cache-name: sinity
-          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Run SQLX offline checks
-        shell: bash
-        run: |
-          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_CHECK'
-          set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES_SQLX_CHECK'
-          pushd crate/lib/sinex-schema >/dev/null
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-          popd
-
-          export CARGO_TARGET_DIR="$PWD/target-sqlx-check"
-          cargo sqlx prepare --workspace --check -- --all-targets --all-features
-          rm -rf "$CARGO_TARGET_DIR"
-
           export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
-          SQLX_OFFLINE=1 cargo check --all-features
-          rm -rf "$CARGO_TARGET_DIR" target
-          POSTGRES_SQLX_CHECK
-          DEVENV_SQLX_CHECK
+          SQLX_OFFLINE=1 cargo check --workspace --all-features
+          rm -rf "$CARGO_TARGET_DIR"
+          DEVENV_SQLX_VALIDATION

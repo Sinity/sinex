@@ -93,6 +93,7 @@ let
     fzf
     bat
     ripgrep
+    sccache
   ] ++ pythonDeps ++ [ ttok ];
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
 in {
@@ -120,6 +121,10 @@ in {
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
+    SINEX_SCCACHE = "${pkgs.sccache}/bin/sccache";
+    SCCACHE_DIR = "$HOME/.cache/sccache";
+    SCCACHE_CACHE_SIZE = "2G";
+    CARGO_INCREMENTAL = "0";
   };
 
   enterShell = ''
