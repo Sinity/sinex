@@ -7,6 +7,9 @@ cd "$PROJECT_ROOT"
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_ROOT/target/sqlx-prepare}"
 
+rm -rf .sqlx
+mkdir -p .sqlx
+
 echo "Preparing SQLx metadata using workspace-wide build..."
 
 scripts/ci-postgres.sh <<'SQLX'
@@ -14,7 +17,17 @@ pushd crate/lib/sinex-schema >/dev/null
 DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
 popd
 cargo sqlx prepare --workspace -- --all-targets --all-features
-for crate in crate/lib/sinex-test-utils crate/lib/sinex-satellite-sdk crate/lib/sinex-core crate/lib/sinex-schema crate/core/sinex-gateway; do
+extra_crates=(
+  crate/lib/sinex-test-utils
+  crate/lib/sinex-satellite-sdk
+  crate/lib/sinex-core
+  crate/lib/sinex-schema
+  crate/lib/sinex-services
+  crate/core/sinex-gateway
+  crate/core/sinex-ingestd
+)
+
+for crate in "${extra_crates[@]}"; do
   pushd "$crate" >/dev/null
   case "$crate" in
     *sinex-test-utils)
@@ -34,9 +47,11 @@ for crate in crate/lib/sinex-test-utils crate/lib/sinex-satellite-sdk crate/lib/
       ;;
   esac
   popd
-  if [ -d "$crate/.sqlx" ]; then
-    rsync -a "$crate/.sqlx/" .sqlx/
-    rm -rf "$crate/.sqlx"
+done
+
+find crate -type d -name '.sqlx' | while read -r sqlx_dir; do
+  if [ -d "$sqlx_dir" ] && [ "$sqlx_dir" != "./.sqlx" ]; then
+    rsync -a "$sqlx_dir/" .sqlx/
   fi
 done
 SQLX
