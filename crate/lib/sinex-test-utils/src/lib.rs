@@ -24,7 +24,12 @@ pub use sinex_core::types::error::SinexError;
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
+pub use chaos::ChaosInjestor;
+pub use jetstream::ensure_material_streams;
+pub use satellite_publisher::TestSatellitePublisher;
+pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
+
 pub struct ProptestCasesGuard {
     previous: Option<String>,
 }
@@ -61,6 +66,7 @@ mod builders;
 mod channel_behavior_utils;
 mod channel_enhancements;
 mod channel_helpers;
+mod chaos;
 pub mod constants;
 mod database_pool;
 mod deployment_scenario_utils;
@@ -73,7 +79,9 @@ mod path_validation;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
+mod satellite_publisher;
 pub mod satellite_runtime;
+mod snapshot;
 pub mod snapshot_helper;
 mod test_context;
 #[macro_use]
@@ -101,6 +109,7 @@ pub mod prelude {
     pub use crate::TestContext;
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_test};
+    pub use crate::{ChaosInjestor, TestSatellitePublisher, TestSnapshot};
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
@@ -296,7 +305,6 @@ pub use deployment_scenario_utils::{
     ExternalDependency, PerformanceExpectations, PerformanceMetrics, ResourceConstraints,
     ValidationExpectation, ValidationStep, ValidationType,
 };
-pub use jetstream::ensure_material_streams;
 pub use nats::EphemeralNats;
 pub use satellite_management_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
