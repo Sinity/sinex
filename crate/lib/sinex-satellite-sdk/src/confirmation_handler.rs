@@ -137,7 +137,6 @@ impl ConfirmationBuffer {
 mod tests {
     use super::*;
     use sinex_test_utils::sinex_test;
-    use sinex_test_utils::TestResult;
 
     #[allow(dead_code)]
     #[sinex_test]

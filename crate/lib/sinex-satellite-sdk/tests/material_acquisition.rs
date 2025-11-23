@@ -87,6 +87,9 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
+    // Ensure JetStream streams exist before manually publishing messages
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
     let env = sinex_core::environment();

@@ -242,7 +242,7 @@ impl WindowManagerWatcher {
             data_bytes.len() as i64, // $4 - offset_end
             "byte",                  // $5 - offset_kind
             now,                     // $6 - ts_capture
-            "millisecond",           // $7 - precision
+            "exact",                 // $7 - precision
             "wall",                  // $8 - clock
             "realtime_capture",      // $9 - source_type
         )

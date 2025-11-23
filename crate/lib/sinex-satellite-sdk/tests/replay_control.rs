@@ -1,5 +1,5 @@
 use sinex_satellite_sdk::replay::ReplayController;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 async fn pause_and_resume_toggle_state() -> color_eyre::Result<()> {

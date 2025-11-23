@@ -289,6 +289,14 @@ impl CheckpointManager {
             .checkpoints()
             .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
             .await?;
+        let checkpoint_result = if checkpoint_result.is_some() {
+            checkpoint_result
+        } else {
+            self.pool
+                .checkpoints()
+                .get_latest_for_processor_group(&processor_name, &consumer_group)
+                .await?
+        };
 
         let checkpoint = if let Some(row) = checkpoint_result {
             let processed_count = u64::try_from(row.processed_count).map_err(|_| {

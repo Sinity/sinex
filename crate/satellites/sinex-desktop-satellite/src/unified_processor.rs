@@ -256,8 +256,9 @@ impl DesktopProcessor {
             );
             #[cfg(test)]
             {
-                self.window_manager_watcher =
-                    Some(WindowManagerWatcher::stub(self.config.window_manager_type.clone()));
+                self.window_manager_watcher = Some(WindowManagerWatcher::stub(
+                    self.config.window_manager_type.clone(),
+                ));
                 info!("✅ Window manager watcher initialized (test stub)");
             }
             #[cfg(not(test))]
@@ -457,7 +458,7 @@ impl DesktopProcessor {
                         clock,
                         source_type
                     )
-                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'millisecond', 'wall', 'realtime_capture')
+                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'exact', 'wall', 'realtime_capture')
                     "#,
                     Ulid::new() as Ulid,      // id
                     material_id as Ulid,      // source_material_id
