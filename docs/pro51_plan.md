@@ -167,6 +167,8 @@ impl TestSnapshot {
 
 * In CI, container-based jobs see those tests skipped (expected); VM jobs run them.
 
+**Status:** ✅ `tests/e2e/nixos-vm/common/test-base.nix` now exports both `SINEX_NATIVE_SYSTEM_TESTS` and `SINEX_NATIVE_DESKTOP_TESTS` via `environment.variables`/`sessionVariables`, so every VM scenario runs with those gates enabled.
+
 ---
 
 ## Phase 1 – Event Backbone / P0 JetStream Correctness
