@@ -93,6 +93,7 @@ let
     fzf
     bat
     ripgrep
+    sccache
   ] ++ pythonDeps ++ [ ttok ];
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
 in {
@@ -120,6 +121,10 @@ in {
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
+    SINEX_SCCACHE = "${pkgs.sccache}/bin/sccache";
+    SCCACHE_DIR = "$HOME/.cache/sccache";
+    SCCACHE_CACHE_SIZE = "2G";
+    CARGO_INCREMENTAL = "0";
   };
 
   enterShell = ''
@@ -141,9 +146,7 @@ in {
     "dev:check".exec = "cargo check --workspace --all-features";
     "dev:build".exec = "cargo build --workspace";
 
-    "dev:test".exec = ''
-      SINEX_ALLOW_NATIVE_TESTS=1 PROPTEST_CASES=''${PROPTEST_CASES:-64} cargo nextest run --workspace --profile reliable
-    '';
+    "dev:test".exec = "scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
 
     "test:all".exec = ''
       devenv tasks run db:setup
@@ -186,13 +189,9 @@ in {
 
     "db:psql".exec = "psql \"$DATABASE_URL\"";
 
-    "sqlx:prepare".exec = ''
-      devenv tasks run db:migrate
-      cargo sqlx prepare --workspace -- --all-targets
-      echo "✅ SQLX cache updated - commit .sqlx/"
-    '';
+    "sqlx:prepare".exec = "./scripts/sqlx-prepare.sh";
 
-    "sqlx:check".exec = "cargo sqlx prepare --workspace --check -- --all-targets";
+    "sqlx:check".exec = "cargo sqlx prepare --workspace --check -- --all-targets --all-features";
 
     "cli:query".exec = ''
       LIMIT="''${LIMIT:-10}" ./cli/exo.py query --limit "$LIMIT"

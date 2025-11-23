@@ -1,5 +1,5 @@
 use sinex_system_satellite::systemd_integration::{SystemdMonitor, SystemdUnitType};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn unit_type_detection_matches_suffix() -> TestResult<()> {

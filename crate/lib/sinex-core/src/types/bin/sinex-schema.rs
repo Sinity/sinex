@@ -182,16 +182,11 @@ async fn generate_schemas(pool: Option<&PgPool>, output_dir: &str, sync: bool) -
     }
 
     registry_entries.sort_by(|a, b| {
-        (
-            a.source.as_str(),
-            a.event_type.as_str(),
-            a.version.as_str(),
-        )
-            .cmp(&(
-                b.source.as_str(),
-                b.event_type.as_str(),
-                b.version.as_str(),
-            ))
+        (a.source.as_str(), a.event_type.as_str(), a.version.as_str()).cmp(&(
+            b.source.as_str(),
+            b.event_type.as_str(),
+            b.version.as_str(),
+        ))
     });
 
     let registry_path = Path::new(output_dir).join("registry.json");

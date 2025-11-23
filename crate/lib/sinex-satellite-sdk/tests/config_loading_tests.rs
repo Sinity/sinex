@@ -10,10 +10,11 @@ fn satellite_config_loads_from_custom_file() -> color_eyre::eyre::Result<()> {
     fs::write(
         &config_path,
         r#"
-            log_level = "debug"
-            nats_url = "nats://custom:4222"
-            database_pool_size = 32
-            dry_run = true
+[default]
+log_level = "debug"
+nats_url = "nats://custom:4222"
+database_pool_size = 32
+dry_run = true
         "#,
     )?;
 
@@ -45,11 +46,12 @@ fn automaton_config_loads_and_overrides() -> color_eyre::eyre::Result<()> {
     fs::write(
         &config_path,
         r#"
-            consumer_group = "canon-group"
-            consumer_name = "canon-instance"
-            topics = ["sinex:events:terminal"]
-            processing_batch_size = 25
-            checkpoint_interval_secs = 9
+[default]
+consumer_group = "canon-group"
+consumer_name = "canon-instance"
+topics = ["sinex:events:terminal"]
+processing_batch_size = 25
+checkpoint_interval_secs = 9
         "#,
     )?;
 

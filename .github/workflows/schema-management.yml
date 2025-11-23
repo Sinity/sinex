@@ -1,5 +1,9 @@
 name: Schema Management
 
+permissions:
+  contents: write
+  pull-requests: write
+
 on:
   push:
     branches: [ master, 'claude/**' ]
@@ -7,6 +11,7 @@ on:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
       - 'scripts/schema-dev.sh'
+      - 'scripts/deploy-schemas.sh'
       - '.github/workflows/schema-management.yml'
   pull_request:
     branches: [ master ]
@@ -14,6 +19,7 @@ on:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
       - 'scripts/schema-dev.sh'
+      - 'scripts/deploy-schemas.sh'
       - '.github/workflows/schema-management.yml'
 
 jobs:
@@ -80,7 +86,16 @@ jobs:
       - name: Generate schemas via CLI
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/schema-dev.sh generate'
+          scripts/ci-devenv.sh bash <<'DEVENV'
+          set -euo pipefail
+          scripts/ci-postgres.sh <<'POSTGRES'
+          set -euo pipefail
+          pushd crate/lib/sinex-schema >/dev/null
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
+          popd
+          ./scripts/schema-dev.sh generate
+          POSTGRES
+          DEVENV
           
       - name: Check for schema changes
         id: check-changes
@@ -149,6 +164,7 @@ jobs:
         if: steps.prod-secret.outputs.has_secret == 'true'
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
+          SQLX_OFFLINE: '1'
         shell: bash
         run: |
           scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/deploy-schemas.sh'

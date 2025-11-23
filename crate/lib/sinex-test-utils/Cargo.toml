@@ -62,6 +62,7 @@ jsonschema = "0.17"
 tokio-stream = { version = "0.1", features = ["net"] }
 sha2 = "0.10"
 which = { workspace = true }
+blake3 = { workspace = true }
 
 # Benchmarking dependencies (optional)
 divan = { version = "0.1", optional = true }

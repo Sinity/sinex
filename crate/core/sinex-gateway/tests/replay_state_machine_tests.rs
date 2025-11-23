@@ -1,8 +1,7 @@
 use chrono::{TimeZone, Utc};
-use color_eyre::Result;
 use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 async fn state_transitions_follow_rules() -> Result<()> {

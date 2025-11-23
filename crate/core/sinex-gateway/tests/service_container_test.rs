@@ -6,7 +6,6 @@
 use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
 use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;

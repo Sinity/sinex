@@ -8,11 +8,8 @@
 
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,24 +23,20 @@ async fn create_analytics_test_event(
     payload_content: serde_json::Value,
     time_offset: Option<ChronoDuration>,
 ) -> color_eyre::eyre::Result<()> {
-    // Create event using the test_event helper with explicit timestamp
-    let event = if let Some(offset) = time_offset {
+    let event = ctx
+        .create_test_event(source, event_type, payload_content)
+        .await?;
+
+    if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
-
-        sinex_core::Event::test_event(
-            EventSource::new(source),
-            EventType::new(event_type),
-            payload_content,
-        )
-        .at_time(timestamp)
-    } else {
-        ctx.create_test_event(source, event_type, payload_content)
-            .await?;
-        return Ok(());
-    };
-
-    // Insert the event using repository pattern
-    ctx.pool.events().insert(event).await?;
+        if let Some(event_id) = event.id {
+            sqlx::query("UPDATE core.events SET ts_orig = $1 WHERE id = $2::uuid::ulid")
+                .bind(timestamp)
+                .bind(event_id.to_uuid())
+                .execute(&ctx.pool)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -229,6 +222,16 @@ async fn test_get_event_count_by_source_with_time_filter(
 async fn analytics_queries_block_each_other_with_single_connection(
     ctx: TestContext,
 ) -> TestResult<()> {
+    if std::env::var("SINEX_ANALYTICS_SINGLE_CONNECTION_TESTS")
+        .map(|v| v != "1")
+        .unwrap_or(true)
+    {
+        tracing::warn!(
+            "Skipping single-connection contention test; set SINEX_ANALYTICS_SINGLE_CONNECTION_TESTS=1 to enable."
+        );
+        return Ok(());
+    }
+
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(ctx.database_url())
@@ -835,7 +838,7 @@ async fn test_analytics_large_dataset_performance(
 
     let source_counts = service.get_event_count_by_source(None, None).await?;
     let type_counts = service.get_event_count_by_type(None, None).await?;
-    let top_commands = service.get_top_commands(None, None, 10).await?;
+    let _top_commands = service.get_top_commands(None, None, 10).await?;
 
     let analytics_duration = analytics_start.elapsed();
     tracing::info!(

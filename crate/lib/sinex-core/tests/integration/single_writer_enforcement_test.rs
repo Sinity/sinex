@@ -5,10 +5,6 @@
 //! - Satellites must go through ingestd for all event writes
 //! - Events only appear in DB after commit (post-commit publish property)
 
-use sinex_core::{
-    types::domain::{EventSource, EventType},
-    Event, JsonValue,
-};
 use sinex_test_utils::prelude::*;
 use sqlx::Row;
 

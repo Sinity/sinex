@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 export DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}"
+# Schema generation must talk to a live database so make sure SQLX_OFFLINE is unset
+unset SQLX_OFFLINE
 
 # Colors for output
 RED='\033[0;31m'

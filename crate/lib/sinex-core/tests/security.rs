@@ -1,5 +1,5 @@
 use sinex_core::db::security::SecurityValidator;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 async fn path_sanitization_rejects_traversal() -> color_eyre::eyre::Result<()> {

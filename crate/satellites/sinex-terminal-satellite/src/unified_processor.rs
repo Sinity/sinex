@@ -298,6 +298,10 @@ async fn process_command(
         return Ok(());
     }
 
+    if let Some(commands) = &ctx.processed_commands {
+        commands.lock().await.push(command.to_string());
+    }
+
     let mut handle = ctx
         .acquisition
         .begin_material(ctx.path.as_str())
@@ -349,11 +353,6 @@ async fn process_command(
         .map_err(|e| {
             SatelliteError::General(eyre::eyre!("Failed to emit terminal event: {}", e))
         })?;
-
-    #[cfg(test)]
-    if let Some(commands) = &ctx.processed_commands {
-        commands.lock().await.push(command.to_string());
-    }
 
     Ok(())
 }
@@ -788,10 +787,10 @@ mod tests {
             .expect("source material persisted");
         assert_eq!(record.status.as_str(), "completed");
 
-        let total_bytes: Option<i64> = sqlx::query_scalar!(
+        let total_bytes: Option<i64> = sqlx::query_scalar(
             "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-            ulid_to_uuid(material_ulid)
         )
+        .bind(ulid_to_uuid(material_ulid))
         .fetch_optional(&ctx.pool)
         .await?;
 

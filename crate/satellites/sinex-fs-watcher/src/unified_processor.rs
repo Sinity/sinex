@@ -897,10 +897,10 @@ mod tests {
             .expect("source material persisted");
         assert_eq!(record.status.as_str(), "completed");
 
-        let total_bytes: Option<i64> = sqlx::query_scalar!(
+        let total_bytes: Option<i64> = sqlx::query_scalar(
             "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-            ulid_to_uuid(material_ulid)
         )
+        .bind(ulid_to_uuid(material_ulid))
         .fetch_optional(&ctx.pool)
         .await?;
 

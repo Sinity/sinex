@@ -9,7 +9,7 @@ use crate::{
 use axum::{
     error_handling::HandleErrorLayer,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderName, StatusCode},
     response::IntoResponse,
     routing::post,
     BoxError, Json, Router,
@@ -30,6 +30,7 @@ use tower::{
 };
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 
 // Standard library
 use thiserror::Error;
@@ -166,13 +167,6 @@ impl GatewayAuth {
                     Err(AuthError::Invalid)
                 }
             }
-        }
-    }
-
-    #[cfg(test)]
-    fn disabled_for_tests() -> Self {
-        Self {
-            mode: GatewayAuthMode::Disabled,
         }
     }
 
@@ -463,16 +457,24 @@ fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    router.layer(
-        ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(handle_layer_error))
-            .layer(LoadShedLayer::new())
-            .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
-            .layer(TimeoutLayer::new(limits.request_timeout))
-            .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
-            .layer(CorsLayer::permissive())
-            .into_inner(),
-    )
+    let request_id_header = HeaderName::from_static("x-request-id");
+
+    router
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_layer_error))
+                .layer(LoadShedLayer::new())
+                .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
+                .layer(TimeoutLayer::new(limits.request_timeout))
+                .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
+                .layer(CorsLayer::permissive())
+                .into_inner(),
+        )
+        .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
+        .layer(SetRequestIdLayer::new(
+            request_id_header,
+            MakeRequestUuid::default(),
+        ))
 }
 
 async fn handle_layer_error(err: BoxError) -> impl IntoResponse {

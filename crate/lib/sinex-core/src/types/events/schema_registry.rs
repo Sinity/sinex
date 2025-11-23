@@ -178,7 +178,7 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
     let schemas = sqlx::query!(
         r#"
         SELECT 
-            id as "id: Ulid", 
+            id::uuid as "id!: Ulid", 
             source,
             event_type,
             schema_version

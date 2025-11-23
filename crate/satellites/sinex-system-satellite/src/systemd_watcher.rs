@@ -161,8 +161,8 @@ impl SystemdWatcher {
         }
 
         // Look for unit status lines that start with ●
-        if line.starts_with("● ") {
-            let parts: Vec<&str> = line[2..].splitn(2, " - ").collect();
+        if let Some(rest) = line.strip_prefix("● ") {
+            let parts: Vec<&str> = rest.splitn(2, " - ").collect();
             if parts.len() >= 2 {
                 let unit_name = parts[0].trim();
                 let description = parts[1].trim();

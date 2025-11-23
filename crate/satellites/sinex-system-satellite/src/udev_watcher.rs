@@ -179,8 +179,6 @@ impl UdevWatcher {
         info!("udev polling monitoring started");
 
         loop {
-            poll_interval.tick().await;
-
             let mut current_devices = std::collections::HashSet::new();
 
             // Scan /sys/class for device changes
@@ -266,6 +264,7 @@ impl UdevWatcher {
             }
 
             last_seen_devices = current_devices;
+            poll_interval.tick().await;
         }
     }
 

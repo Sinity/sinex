@@ -250,7 +250,24 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
             .execute(conn.as_mut())
             .await
         {
-            tracing::warn!("Failed to delete from raw.source_material_registry: {}", e);
+            tracing::warn!(
+                "Failed to delete from raw.source_material_registry: {}. Retrying after removing dependent events.",
+                e
+            );
+            // Ensure no events remain that reference lingering source materials before retrying.
+            if let Err(ev_err) =
+                sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+                    .execute(conn.as_mut())
+                    .await
+            {
+                tracing::warn!(
+                    "Fallback removal of events referencing source materials failed: {}",
+                    ev_err
+                );
+            }
+            sqlx::query("DELETE FROM raw.source_material_registry")
+                .execute(conn.as_mut())
+                .await?;
         }
     }
     operation_guard.restore(&mut conn).await?;
@@ -279,6 +296,7 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .await?;
     operation_guard2.restore(&mut conn).await?;
 
+    // Restore canonical test material record relied upon by Event::test_event.
     sqlx::query(
         r#"
         INSERT INTO raw.source_material_registry (
@@ -307,27 +325,10 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .execute(conn.as_mut())
     .await?;
 
-    // This DELETE also needs operation_id for RLS policy
-    let operation_guard3 = OperationIdGuard::apply(&mut conn, "bootstrap-cleanup-final").await?;
-    sqlx::query(
-        r#"
-        DELETE FROM raw.source_material_registry
-        WHERE id = $1::uuid::ulid
-           OR source_identifier = $2
-           OR source_identifier LIKE 'test-material-%'
-        "#,
-    )
-    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-    .bind("test-material-bootstrap")
-    .execute(conn.as_mut())
-    .await?;
-    operation_guard3.restore(&mut conn).await?;
-
     sqlx::query("RESET sinex.operation_id")
         .execute(conn.as_mut())
         .await?;
 
-    // Restore canonical test material record for fixtures that rely on Event::test_event
     Ok(())
 }
 

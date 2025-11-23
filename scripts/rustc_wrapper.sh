@@ -9,4 +9,9 @@ fi
 real_rustc="$1"
 shift
 
-exec "$real_rustc" "$@"
+sccache_bin="${SINEX_SCCACHE:-}"
+if [[ -n "$sccache_bin" && -x "$sccache_bin" ]]; then
+  exec "$sccache_bin" "$real_rustc" "$@"
+else
+  exec "$real_rustc" "$@"
+fi

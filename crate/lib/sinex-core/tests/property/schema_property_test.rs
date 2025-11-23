@@ -5,15 +5,18 @@
 //! - Additional schema-related property tests for validation chains
 //! - Schema compatibility and evolution properties
 
-use color_eyre::eyre::Report;
-use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use proptest::{prelude::*, test_runner::TestCaseResult};
 use serde_json::{json, Value};
 use sinex_core::{
-    db::repositories::schema_management::NewEventSchema, types::validation::validate_json,
+    db::{
+        repositories::schema_management::NewEventSchema,
+        validation::{EventValidator, SchemaValidationOutcome},
+    },
+    types::validation::validate_json,
     DbPoolExt,
 };
-use sinex_test_utils::{prelude::*, TestResult};
+use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
 // =============================================================================
@@ -159,7 +162,7 @@ fn test_json_validation_normal_payloads(
     let json_str = payload.to_string();
     let result = validate_json(&json_str);
     drop(result);
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 #[sinex_prop]
@@ -169,7 +172,7 @@ fn test_json_validation_security_payloads(
     let json_str = payload.to_string();
     let result = validate_json(&json_str);
     drop(result);
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 #[sinex_prop]
@@ -189,7 +192,7 @@ fn test_json_validation_consistency(
             prop_assert!(false, "Validation was not consistent");
         }
     }
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 // =============================================================================
@@ -245,7 +248,7 @@ fn test_schema_evolution_properties(
             // Mixed outcomes are acceptable; evolution may introduce new constraints.
         }
     }
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 // =============================================================================
@@ -283,7 +286,7 @@ fn test_validation_chain_properties(
             );
         }
     }
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 /// Test validation chain with numeric values  
@@ -310,7 +313,7 @@ fn test_validation_chain_numeric_properties(
             prop_assert!(test_number <= 1000, "Valid range numbers should be <= 1000");
         }
     }
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 // =============================================================================
@@ -339,15 +342,19 @@ async fn schema_registry_should_drive_json_validation(ctx: TestContext) -> TestR
         "missing_required": true
     });
 
-    let json_str = invalid_payload.to_string();
-    let result = validate_json(&json_str);
+    let validator = EventValidator::load_from_db(&ctx.pool).await?;
+    let result =
+        validator.validate_payload_for("property-schema", "schema.enforced", &invalid_payload);
 
-    assert!(
-        result.is_err(),
-        "JSON validation should enforce registered schemas once property tests are restored (TODO #17)"
-    );
+    match result {
+        SchemaValidationOutcome::Invalid { .. } => {}
+        other => panic!(
+            "Event validator should reject payloads that violate the registered schema, got {:?}",
+            other
+        ),
+    }
 
-    Ok::<(), Report>(())
+    Ok(())
 }
 
 // =============================================================================
@@ -381,7 +388,7 @@ fn test_json_validation_edge_cases() -> TestResult {
         let json_str = payload.to_string();
         let _ = validate_json(&json_str);
     }
-    Ok::<(), Report>(())
+    Ok(())
 }
 
 // =============================================================================
@@ -461,7 +468,7 @@ fn test_validation_performance_properties(
             );
         }
     }
-    Ok::<(), Report>(())
+    TestCaseResult::Ok(())
 }
 
 // =============================================================================
@@ -503,7 +510,7 @@ mod unit_tests {
         match invalid_result {
             Ok(_) | Err(_) => {} // Any result is acceptable for testing
         }
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -526,7 +533,7 @@ mod unit_tests {
             .unwrap()
             .current();
         assert!(problematic.is_object()); // All problematic payloads are objects
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -541,7 +548,7 @@ mod unit_tests {
         assert!(!event_type.is_empty());
         assert!(source.len() >= 3); // 1 + 2 minimum
         assert!(event_type.len() >= 3); // 1 + 2 minimum
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -562,7 +569,7 @@ mod unit_tests {
 
         assert!(invalid_name.is_empty()); // Should fail length check
         assert!(invalid_age < 18); // Should fail age check
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -574,6 +581,6 @@ mod unit_tests {
         // Test that we can detect validation issues
         assert!(empty_value.is_empty()); // Should fail validation
         assert!(!valid_value.is_empty()); // Should pass validation
-        Ok::<(), Report>(())
+        Ok(())
     }
 }

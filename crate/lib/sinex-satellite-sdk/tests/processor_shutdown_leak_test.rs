@@ -64,6 +64,11 @@ impl StatefulStreamProcessor for HangingProcessor {
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         Ok(Checkpoint::stream("hanging", None))
     }
+
+    async fn shutdown(&mut self) -> SatelliteResult<()> {
+        self.running.store(false, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 #[sinex_test]

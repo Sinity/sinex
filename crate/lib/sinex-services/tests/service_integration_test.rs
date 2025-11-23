@@ -3,7 +3,7 @@
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::domain::EventSource;
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::TestResult;
@@ -36,7 +36,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service data flow integration");
 
     // 1. Create events through TestContext (simulating ingest service)
-    let events = vec![
+    let _events = vec![
         ctx.create_test_event(
             "fs-watcher",
             "file.created",
@@ -132,7 +132,7 @@ async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service error handling patterns");
 
     // Create test event with potentially problematic data
-    let event = ctx
+    let _event = ctx
         .create_test_event(
             "error-test",
             "problematic.event",
@@ -316,7 +316,7 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     let now = Utc::now();
 
     // Create events with specific timestamps using modern pattern
-    let recent_event = create_test_event_with_timestamp(
+    let _recent_event = create_test_event_with_timestamp(
         &ctx,
         "time-test",
         "recent.event",
@@ -325,7 +325,7 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     )
     .await?;
 
-    let old_event = create_test_event_with_timestamp(
+    let _old_event = create_test_event_with_timestamp(
         &ctx,
         "time-test",
         "old.event",
@@ -380,7 +380,7 @@ async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
     let analytics = AnalyticsService::new(pool.clone());
 
     // Create test event
-    let event = ctx
+    let _event = ctx
         .create_test_event(
             "config-test",
             "config.event",
@@ -415,7 +415,7 @@ async fn test_cross_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service error handling");
 
     // Create event that might cause issues
-    let problematic_event = ctx
+    let _problematic_event = ctx
         .create_test_event(
             "error-propagation",
             "error.event",
