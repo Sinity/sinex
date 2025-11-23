@@ -1,5 +1,5 @@
 use sinex_gateway::replay_control::{ReplayControlRequest, ReplayControlResponse, ReplayScope};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn replay_control_request_round_trip() -> TestResult<()> {

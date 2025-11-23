@@ -30,6 +30,7 @@ pub enum Events {
     Host,
     Payload,
     TsOrig,
+    TsOrigSubnano,
     TsIngest,
 
     // External Provenance
@@ -78,6 +79,7 @@ pub struct EventRecord {
     pub host: String,
     pub payload: JsonValue,
     pub ts_orig: DateTime<Utc>,
+    pub ts_orig_subnano: Option<i16>,
     pub ts_ingest: DateTime<Utc>,
 
     // Provenance fields
@@ -117,6 +119,7 @@ impl Events {
             .col(ColumnDef::new(Events::Host).text().not_null())
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())
+            .col(ColumnDef::new(Events::TsOrigSubnano).small_integer())
             .col(ColumnDef::new(Events::TsIngest).timestamp_with_time_zone().not_null().extra("GENERATED ALWAYS AS (id::timestamp) STORED"))
             .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("ULID")))
             .col(ColumnDef::new(Events::AnchorByte).big_integer())
@@ -239,15 +242,27 @@ impl ArchivedEvents {
         format!(
             r#"CREATE TABLE IF NOT EXISTS audit.archived_events (
                 LIKE core.events INCLUDING ALL,
-                {} TIMESTAMPTZ NOT NULL DEFAULT now(),
-                {} TEXT,
-                {} TEXT,
-                {} ULID NULL
-            );"#,
-            ArchivedEvents::ArchivedAt.to_string(),
-            ArchivedEvents::ArchivedBy.to_string(),
-            ArchivedEvents::ArchiveReason.to_string(),
-            ArchivedEvents::SupersededByEventId.to_string()
+                {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
+                {archived_by} TEXT,
+                {archive_reason} TEXT,
+                {superseded_by} ULID NULL
+            );
+            DO $$
+            BEGIN
+                BEGIN
+                    ALTER TABLE audit.archived_events
+                        ALTER COLUMN ts_ingest DROP EXPRESSION;
+                EXCEPTION
+                    WHEN others THEN
+                        -- Expression already removed or column missing; ignore.
+                        NULL;
+                END;
+            END $$;
+            "#,
+            archived_at = ArchivedEvents::ArchivedAt.to_string(),
+            archived_by = ArchivedEvents::ArchivedBy.to_string(),
+            archive_reason = ArchivedEvents::ArchiveReason.to_string(),
+            superseded_by = ArchivedEvents::SupersededByEventId.to_string()
         )
     }
 

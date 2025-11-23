@@ -4,6 +4,7 @@ use std::time::Instant;
 use async_nats::jetstream;
 use color_eyre::eyre::{eyre, Result};
 use serde_json::json;
+use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::types::Ulid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
@@ -38,7 +39,7 @@ async fn spawn_consumer(
     let validator = EventValidator::new(false);
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env().clone();
-    let stream_name = env.nats_stream_name(&format!("SINEX_RAW_EVENTS_{durable}"));
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     let topology = JetStreamTopology::new(&env, stream_name, format!("ingestd-{durable}"));
 
     let consumer = JetStreamConsumer::new(
@@ -172,11 +173,12 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     for id in ids {
-        let occurrences: Option<i64> =
-            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-                .bind(id.to_string())
-                .fetch_one(&ctx.pool)
-                .await?;
+        let occurrences: Option<i64> = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid",
+        )
+        .bind(ulid_to_uuid(id))
+        .fetch_one(&ctx.pool)
+        .await?;
         assert_eq!(
             occurrences.unwrap_or(0),
             1,

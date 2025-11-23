@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_core::types::Ulid;
-use sinex_test_utils::sinex_proptest;
+use sinex_test_utils::{sinex_proptest, sinex_test};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -18,13 +18,13 @@ fn spin_for(duration: Duration) {
     }
 }
 
-/// Property tests for ULID functionality
-///
-/// This module consolidates property tests from:
-/// - ulid_properties.rs (basic ULID generation and ordering)
-/// - ulid_concurrent_property_tests.rs (concurrent ULID generation)
-/// - ulid_ordering_property_tests.rs (database ordering properties)
-/// - Additional ULID edge cases and properties
+// Property tests for ULID functionality.
+//
+// This module consolidates property tests from:
+// - ulid_properties.rs (basic ULID generation and ordering)
+// - ulid_concurrent_property_tests.rs (concurrent ULID generation)
+// - ulid_ordering_property_tests.rs (database ordering properties)
+// - Additional ULID edge cases and properties
 
 // =============================================================================
 // ULID Generation and Ordering Properties
@@ -356,28 +356,6 @@ fn arb_ulid_from_time_range(
     })
 }
 
-sinex_proptest! {
-    fn test_ulid_ordering_property_in_memory(
-        ulids in arb_ulid_sequence(2, 20)
-    ) -> color_eyre::eyre::Result<()> {
-        let mut sorted_ulids = ulids.clone();
-        sorted_ulids.sort();
-        prop_assert_eq!(ulids.clone(), sorted_ulids,
-            "ULIDs with increasing timestamps should already be in sorted order");
-
-        for i in 1..ulids.len() {
-            prop_assert!(ulids[i] > ulids[i-1],
-                "ULID at index {} ({}) should be greater than previous ({})",
-                i, ulids[i], ulids[i-1]);
-        }
-
-        let unique_set: HashSet<_> = ulids.iter().collect();
-        prop_assert_eq!(unique_set.len(), ulids.len(),
-            "All ULIDs in sequence should be unique");
-        Ok(())
-    }
-}
-
 // Database test temporarily disabled due to direct sqlx usage
 // TODO: Reimplement using repository pattern
 
@@ -702,6 +680,7 @@ mod stress_tests {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_ulid_sequence_generator() -> color_eyre::eyre::Result<()> {

@@ -263,6 +263,12 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                         }
                     }
 
+                    // Allow processor to perform shutdown housekeeping
+                    let mut processor = self.processor.lock().await;
+                    if let Err(e) = processor.shutdown().await {
+                        warn!("Processor shutdown hook failed: {}", e);
+                    }
+
                     return Ok(());
                 }
             }

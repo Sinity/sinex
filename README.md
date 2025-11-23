@@ -270,6 +270,22 @@ devenv tasks run test:vm        # VM smoke tests
 > will re-evaluate the environment each time. That’s expected; run the underlying `cargo …` or
 > `scripts/…` command directly if you need maximum turnaround speed.
 
+### CI expectations
+
+GitHub Actions exercises the exact same scripts you run locally. Before pushing, make sure:
+
+| When you touch… | Run locally | Why |
+| --- | --- | --- |
+| Any Rust code | `SQLX_OFFLINE=1 cargo check --workspace --all-features` | Mirrors the offline check inside `db-checks.yml` / `ci.yml`. |
+| Event payloads or schema helpers | `./scripts/schema-dev.sh generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
+| SQL queries, migrations, or SeaORM files | `./scripts/sqlx-prepare.sh` | Rebuilds `.sqlx/` metadata for every crate; `db-checks.yml` enforces a clean diff. |
+| Nothing but want a fast sanity sweep | `devenv tasks run dev:test` | Matches the single Nextest run in CI. |
+
+Additional notes:
+
+- The dev shell automatically wires `scripts/rustc_wrapper.sh` through `sccache`. CI caches both `~/.cache/sccache` and Cargo registries, so you get the same benefit locally if you keep the cache warm.
+- A single “Auto Update” workflow (cron + manual) now opens PRs for both schema bundles and `.sqlx` metadata by running the scripts above on `master`. You should rarely need to push straight to `master`; let the workflow generate refresh PRs whenever possible.
+
 ## 📚 Documentation
 
 ### Core

@@ -7,6 +7,11 @@ use sinex_system_satellite::{SystemConfig, SystemProcessor};
 use sinex_test_utils::{satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tracing::warn;
+
+fn native_system_tests_enabled() -> bool {
+    matches!(std::env::var("SINEX_NATIVE_SYSTEM_TESTS"), Ok(ref v) if v == "1")
+}
 
 #[sinex_test]
 async fn system_processor_still_lacks_watchers(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -90,6 +95,12 @@ async fn expect_event_type(
 async fn system_processor_still_uses_synthetic_provenance(
     ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
+    if !native_system_tests_enabled() {
+        warn!(
+            "Skipping system processor provenance test; set SINEX_NATIVE_SYSTEM_TESTS=1 to enable."
+        );
+        return Ok(());
+    }
     let mut runtime = TestRuntimeBuilder::new(&ctx, "system-satellite-provenance")
         .with_dry_run(false)
         .build()
@@ -129,6 +140,10 @@ async fn system_processor_still_uses_synthetic_provenance(
 
 #[sinex_test]
 async fn dbus_watcher_should_emit_signal_events(ctx: TestContext) -> color_eyre::Result<()> {
+    if !native_system_tests_enabled() {
+        warn!("Skipping DBus watcher test; set SINEX_NATIVE_SYSTEM_TESTS=1 to enable.");
+        return Ok(());
+    }
     let mut runtime = TestRuntimeBuilder::new(&ctx, "system-dbus-watchers")
         .with_dry_run(false)
         .build()
@@ -157,6 +172,10 @@ async fn dbus_watcher_should_emit_signal_events(ctx: TestContext) -> color_eyre:
 
 #[sinex_test]
 async fn journal_watcher_should_emit_entry_events(ctx: TestContext) -> color_eyre::Result<()> {
+    if !native_system_tests_enabled() {
+        warn!("Skipping journal watcher test; set SINEX_NATIVE_SYSTEM_TESTS=1 to enable.");
+        return Ok(());
+    }
     let mut runtime = TestRuntimeBuilder::new(&ctx, "system-journal-watchers")
         .with_dry_run(false)
         .build()
@@ -186,6 +205,10 @@ async fn journal_watcher_should_emit_entry_events(ctx: TestContext) -> color_eyr
 
 #[sinex_test]
 async fn udev_watcher_should_emit_device_events(ctx: TestContext) -> color_eyre::Result<()> {
+    if !native_system_tests_enabled() {
+        warn!("Skipping udev watcher test; set SINEX_NATIVE_SYSTEM_TESTS=1 to enable.");
+        return Ok(());
+    }
     let mut runtime = TestRuntimeBuilder::new(&ctx, "system-udev-watchers")
         .with_dry_run(false)
         .build()
@@ -214,6 +237,10 @@ async fn udev_watcher_should_emit_device_events(ctx: TestContext) -> color_eyre:
 
 #[sinex_test]
 async fn systemd_watcher_should_emit_unit_events(ctx: TestContext) -> color_eyre::Result<()> {
+    if !native_system_tests_enabled() {
+        warn!("Skipping systemd watcher test; set SINEX_NATIVE_SYSTEM_TESTS=1 to enable.");
+        return Ok(());
+    }
     let mut runtime = TestRuntimeBuilder::new(&ctx, "system-systemd-watchers")
         .with_dry_run(false)
         .build()

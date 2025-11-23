@@ -14,12 +14,14 @@ use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::{ulid::Ulid, Id};
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt, JsonValue};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tokio::time::timeout;
+use tracing::{debug, error, info, warn};
 
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
@@ -28,6 +30,8 @@ pub struct StageAsYouGoContext {
     db_pool: PgPool,
     event_emitter: EventEmitter,
     blob_manager: Option<Arc<BlobManager>>,
+    allow_offline_registration: bool,
+    record_temporal_ledger: bool,
     material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
 }
 
@@ -36,9 +40,25 @@ struct StageMaterialInfo {
     material_type: String,
     source_uri: Option<String>,
     started_at: DateTime<Utc>,
+    backend: MaterialBackend,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MaterialBackend {
+    Database,
+    Offline,
 }
 
 impl StageAsYouGoContext {
+    fn ledger_source_type(source_type: &str) -> &'static str {
+        match source_type {
+            "intrinsic_content" => "intrinsic_content",
+            "inferred_mtime" => "inferred_mtime",
+            "inferred_user" => "inferred_user",
+            _ => "realtime_capture",
+        }
+    }
+
     /// Create a Stage-as-You-Go context from processor runtime handles
     pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
         Self::from_emitter(runtime.db_pool().clone(), runtime.event_emitter().clone())
@@ -52,11 +72,16 @@ impl StageAsYouGoContext {
     /// Create a Stage-as-You-Go context from explicit components
     pub fn from_emitter(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
         let blob_manager = Self::init_blob_manager(&db_pool, &event_emitter);
+        let allow_offline_registration =
+            event_emitter.dry_run() || Self::offline_registration_env_enabled();
+        let record_temporal_ledger = Self::ledger_recording_enabled();
 
         Self {
             db_pool,
             event_emitter,
             blob_manager,
+            allow_offline_registration,
+            record_temporal_ledger,
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -76,10 +101,15 @@ impl StageAsYouGoContext {
         event_emitter: EventEmitter,
         blob_manager: Arc<BlobManager>,
     ) -> Self {
+        let allow_offline_registration =
+            event_emitter.dry_run() || Self::offline_registration_env_enabled();
+
         Self {
             db_pool,
             event_emitter,
             blob_manager: Some(blob_manager),
+            allow_offline_registration,
+            record_temporal_ledger: Self::ledger_recording_enabled(),
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -130,18 +160,52 @@ impl StageAsYouGoContext {
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
         let source_material_repo = self.db_pool.source_materials();
-        let result = source_material_repo
-            .register_in_flight(material_type, source_uri, initial_metadata)
-            .await
-            .map_err(|e| {
-                SatelliteError::General(eyre!(
+        let register_future = source_material_repo.register_in_flight(
+            material_type,
+            source_uri,
+            initial_metadata,
+        );
+        let result = match timeout(Self::db_registration_timeout(), register_future).await {
+            Ok(res) => res.map_err(|err| err.to_string()),
+            Err(_) => Err("register_in_flight timed out while waiting for database".to_string()),
+        };
+
+        let env_offline_enabled = Self::offline_registration_env_enabled();
+        let offline_allowed = self.allow_offline_registration || env_offline_enabled;
+
+        let (material_id, backend) = match result {
+            Ok(record) => (record.id, MaterialBackend::Database),
+            Err(err) if offline_allowed => {
+                let fallback = Ulid::new();
+                warn!(
+                    material_type = material_type,
+                    source_uri = ?source_uri,
+                    "Stage-as-You-Go running without Postgres connectivity (reason: {err}); generating offline material id {fallback}"
+                );
+                (fallback, MaterialBackend::Offline)
+            }
+            Err(err) => {
+                error!(
+                    allow_offline = self.allow_offline_registration,
+                    env_offline_enabled,
+                    "Stage-as-You-Go failed to register in-flight material: {}",
+                    err
+                );
+                eprintln!(
+                    "Stage-as-You-Go offline registration disabled (allow_offline={}, env_offline={}): {}",
+                    self.allow_offline_registration,
+                    env_offline_enabled,
+                    err
+                );
+                return Err(SatelliteError::General(eyre!(
                     "Failed to register in-flight source material: {}",
-                    e
-                ))
-            })?;
+                    err
+                )))
+            }
+        };
 
         info!(
-            blob_id = %result.id,
+            blob_id = %material_id,
             material_type = material_type,
             "Registered in-flight source material"
         );
@@ -150,11 +214,30 @@ impl StageAsYouGoContext {
             material_type: material_type.to_string(),
             source_uri: source_uri.map(|s| s.to_string()),
             started_at: Utc::now(),
+            backend,
         };
 
-        self.material_registry.lock().await.insert(result.id, info);
+        self.material_registry
+            .lock()
+            .await
+            .insert(material_id, info);
 
-        Ok(result.id)
+        Ok(material_id)
+    }
+
+    fn offline_registration_env_enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            let mut value = std::env::var("SINEX_STAGE_ALLOW_OFFLINE")
+                .or_else(|_| std::env::var("SQLX_OFFLINE"))
+                .unwrap_or_default();
+            value.make_ascii_lowercase();
+            matches!(value.trim(), "1" | "true" | "yes")
+        })
+    }
+
+    fn db_registration_timeout() -> Duration {
+        Duration::from_secs(2)
     }
 
     /// Create and send an event with attached source material reference
@@ -227,6 +310,19 @@ impl StageAsYouGoContext {
             registry.remove(&id)
         };
 
+        let backend = material_info
+            .as_ref()
+            .map(|info| info.backend)
+            .unwrap_or(MaterialBackend::Database);
+
+        if backend == MaterialBackend::Offline {
+            info!(
+                material_id = %id,
+                "Finalize skipped database updates because Stage-as-You-Go is running without Postgres connectivity"
+            );
+            return Ok(());
+        }
+
         let source_material_repo = self.db_pool.source_materials();
 
         let mut blob_id = None;
@@ -269,14 +365,21 @@ impl StageAsYouGoContext {
                 SatelliteError::General(eyre!("Failed to finalize source material {}: {}", id, e))
             })?;
 
-        if let Err(e) = self
-            .record_ledger_entry(id, material_info.as_ref(), total_bytes)
-            .await
-        {
-            warn!(
+        if self.record_temporal_ledger {
+            if let Err(e) = self
+                .record_ledger_entry(id, material_info.as_ref(), total_bytes)
+                .await
+            {
+                warn!(
+                    material_id = %id,
+                    "Failed to append temporal ledger entry: {}",
+                    e
+                );
+            }
+        } else {
+            debug!(
                 material_id = %id,
-                "Failed to append temporal ledger entry: {}",
-                e
+                "Temporal ledger recording disabled for Stage-as-You-Go context"
             );
         }
 
@@ -287,6 +390,20 @@ impl StageAsYouGoContext {
         );
 
         Ok(())
+    }
+
+    fn ledger_recording_enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            std::env::var("SINEX_STAGE_LEDGER_WRITES")
+                .map(|value| {
+                    matches!(
+                        value.trim(),
+                        "1" | "true" | "TRUE" | "True" | "yes" | "YES" | "Yes"
+                    )
+                })
+                .unwrap_or(false)
+        })
     }
 }
 
@@ -394,6 +511,7 @@ impl StageAsYouGoContext {
         let (source_type, started_at) = info
             .map(|info| (info.material_type.as_str(), info.started_at))
             .unwrap_or(("stage-as-you-go", Utc::now()));
+        let ledger_source_type = Self::ledger_source_type(source_type);
 
         sqlx::query!(
             r#"
@@ -407,9 +525,9 @@ impl StageAsYouGoContext {
             total_bytes,
             "byte",
             started_at,
-            "millisecond",
-            "system",
-            source_type
+            "exact",
+            "wall",
+            ledger_source_type
         )
         .execute(&self.db_pool)
         .await
@@ -484,7 +602,12 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             );
 
             // Convert to JsonValue event for emission
-            let event = typed_event.to_json_event()?;
+            let mut event = typed_event.to_json_event()?;
+            event.id = Some(Id::from_ulid(Ulid::new()));
+            let now = Utc::now();
+            if event.ts_orig.is_none() {
+                event.ts_orig = Some(now);
+            }
 
             // Emit with provenance
             let event_id = self

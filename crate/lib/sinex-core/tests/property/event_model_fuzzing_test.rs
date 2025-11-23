@@ -21,10 +21,9 @@
 //! - Focus on the modern RawEvent::schemaless() API and database insertion paths
 
 use sinex_test_utils::prelude::*;
-use color_eyre::eyre::Report;
 
 use chrono::{DateTime, TimeZone, Utc};
-use proptest::strategy::ValueTree;
+use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
@@ -398,7 +397,7 @@ fn fuzzed_system_payloads() -> impl Strategy<Value = JsonValue> {
 // Property-Based Tests
 // ============================================================================
 
-/// Test that event creation and database insertion never panics with arbitrary fuzzed events
+// Test that event creation and database insertion never panics with arbitrary fuzzed events.
 sinex_proptest! {
     fn test_event_creation_never_panics_with_fuzzed_data(
         event in fuzzed_events()
@@ -412,10 +411,9 @@ sinex_proptest! {
         let _ = event.ts_orig;
         let _ = event.ingestor_version;
         let _ = event.payload_schema_id;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
-
-/// Test filesystem events with extreme payloads
+// Test filesystem events hold up when payloads become especially large or malformed.
     fn test_filesystem_events_robustness(
         payload in fuzzed_filesystem_payloads(),
         source in problematic_strings(),
@@ -439,10 +437,10 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 
-/// Test terminal events with extreme payloads
+// Test terminal events with extreme payloads.
     fn test_terminal_events_robustness(
         payload in fuzzed_terminal_payloads(),
         source in prop_oneof![
@@ -470,10 +468,10 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 
-/// Test clipboard events with extreme payloads
+// Test clipboard events with extreme payloads.
     fn test_clipboard_events_robustness(
         payload in fuzzed_clipboard_payloads(),
         event_type in prop_oneof![
@@ -492,12 +490,12 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 
 }
 
-/// Test window manager events with extreme payloads
+// Test window manager events with extreme payloads.
 sinex_proptest! {
     fn test_window_manager_events_robustness(
         payload in fuzzed_window_manager_payloads(),
@@ -523,12 +521,12 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 }
 
 sinex_proptest! {
-    /// Test system events with extreme payloads
+    // Test system events with extreme payloads.
     fn test_system_events_robustness(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
@@ -553,10 +551,10 @@ sinex_proptest! {
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 
-    /// Test JSON serialization robustness with extreme payloads
+    // Test JSON serialization robustness with extreme payloads.
     fn test_json_serialization_robustness(
         payload in malformed_json_values()
     ) -> TestResult<()> {
@@ -574,12 +572,12 @@ sinex_proptest! {
         }
 
         let _ = serde_json::to_string_pretty(&event);
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 }
 
 sinex_proptest! {
-    /// Test ULID robustness with extreme timestamps
+    // Test ULID robustness with extreme timestamps.
     fn test_ulid_robustness_with_extreme_timestamps(
         timestamp in problematic_timestamps()
     ) -> TestResult<()> {
@@ -603,10 +601,10 @@ sinex_proptest! {
 
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 
-    /// Test string handling robustness
+    // Test string handling robustness.
     fn test_string_handling_robustness(
         source in problematic_strings(),
         event_type in problematic_strings(),
@@ -626,7 +624,7 @@ sinex_proptest! {
         // Test that we can create the struct without panicking by checking key fields
         prop_assert_eq!(event.source.as_str(), source.as_str());
         prop_assert_eq!(event.host.as_str(), host.as_str());
-        Ok::<(), Report>(())
+        TestCaseResult::Ok(())
     }
 }
 
@@ -634,7 +632,7 @@ sinex_proptest! {
 // Database Integration Fuzzing Tests
 // ============================================================================
 
-/// Test database insertion with fuzzed events using modern infrastructure
+// Test database insertion with fuzzed events using the modern infrastructure.
 #[sinex_test]
 async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> {
     use proptest::test_runner::TestRunner;
@@ -663,10 +661,10 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> 
             }
         }
     }
-    Ok::<(), Report>(())
+    Ok(())
 }
 
-/// Test event creation with extreme payloads in database context
+// Test event creation with extreme payloads in the database context.
 #[sinex_test]
 async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<()> {
     // Test various extreme payload scenarios
@@ -734,7 +732,7 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<
             }
         }
     }
-    Ok::<(), Report>(())
+    Ok(())
 }
 
 // ============================================================================
@@ -760,7 +758,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -785,7 +783,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -809,7 +807,7 @@ mod additional_tests {
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
 
-        Ok::<(), Report>(())
+        Ok(())
     }
 
     #[sinex_test]
@@ -841,6 +839,6 @@ mod additional_tests {
 
         // This should not panic
         assert!(result.is_ok());
-        Ok::<(), Report>(())
+        Ok(())
     }
 }

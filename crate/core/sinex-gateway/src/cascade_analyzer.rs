@@ -680,7 +680,7 @@ impl StreamingCascadeAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn session_id_validation_enforces_length() -> TestResult<()> {

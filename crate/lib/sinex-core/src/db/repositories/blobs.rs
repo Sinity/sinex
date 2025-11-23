@@ -4,9 +4,10 @@
 //! stored in git-annex with metadata in PostgreSQL.
 
 use chrono::Utc;
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{eyre, Context, Result};
 use num_traits::ToPrimitive;
-use sqlx::PgPool;
+use sqlx::{Error as SqlxError, PgPool};
+use tokio::time::{sleep, Duration};
 use tracing::instrument;
 
 use crate::models::Blob;
@@ -28,9 +29,12 @@ impl BlobRepository {
     /// Insert a new blob
     #[instrument(skip(self, blob))]
     pub async fn insert(&self, blob: Blob) -> Result<Blob> {
+        let natural_backend = blob.annex_backend.clone();
+        let natural_hash = blob.content_hash.clone();
+        let natural_size = blob.size_bytes;
         let record: BlobRecord = blob.into();
 
-        let result = sqlx::query_as!(
+        let insert_result = sqlx::query_as!(
             BlobRecord,
             r#"
             INSERT INTO core.blobs (
@@ -41,7 +45,7 @@ impl BlobRepository {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                id as "id: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -65,10 +69,61 @@ impl BlobRepository {
             record.verification_status
         )
         .fetch_one(&self.pool)
-        .await
-        .wrap_err("Failed to insert blob")?;
+        .await;
 
-        Ok(result.into())
+        match insert_result {
+            Ok(record) => Ok(record.into()),
+            Err(SqlxError::Database(db_err)) if db_err.is_unique_violation() => {
+                tracing::debug!(
+                    annex_backend = %natural_backend,
+                    content_hash = %natural_hash,
+                    "Blob insert hit unique constraint; fetching existing record"
+                );
+                eprintln!(
+                    "Blob insert unique violation detected (backend={}, hash={}, size={})",
+                    natural_backend, natural_hash, natural_size
+                );
+
+                const MAX_FETCH_RETRIES: usize = 5;
+                const RETRY_DELAY_MS: u64 = 50;
+
+                for attempt in 0..MAX_FETCH_RETRIES {
+                    if let Some(existing) =
+                        self.get_by_content(&natural_backend, &natural_hash, natural_size).await?
+                    {
+                        return Ok(existing);
+                    }
+                    tracing::trace!(
+                        attempt = attempt + 1,
+                        "Existing blob not visible yet; retrying fetch"
+                    );
+                    sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+                }
+
+                eprintln!(
+                    "Blob insert dedup lookup failed after {} retries (backend={}, hash={}, size={})",
+                    MAX_FETCH_RETRIES,
+                    natural_backend,
+                    natural_hash,
+                    natural_size
+                );
+                Err(eyre!(
+                    "Blob exists but could not be retrieved after {} retries (backend={}, hash={}, size={})",
+                    MAX_FETCH_RETRIES,
+                    natural_backend,
+                    natural_hash,
+                    natural_size
+                ))
+            }
+            Err(err) => {
+                return Err(eyre!(
+                    "Failed to insert blob (backend={}, hash={}): {}",
+                    natural_backend,
+                    natural_hash,
+                    err
+                ));
+            }
+        }
     }
 
     /// Get a blob by ID
@@ -79,7 +134,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -114,7 +169,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,
@@ -146,7 +201,7 @@ impl BlobRepository {
             BlobRecord,
             r#"
             SELECT 
-                id as "id: sinex_schema::ulid::Ulid",
+                id::uuid as "id!: sinex_schema::ulid::Ulid",
                 annex_backend,
                 content_hash,
                 original_filename,

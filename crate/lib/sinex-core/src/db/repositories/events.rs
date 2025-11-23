@@ -20,6 +20,7 @@ macro_rules! event_select_columns {
          host, \
          payload, \
          ts_orig, \
+         ts_orig_subnano, \
          ts_ingest, \
          source_material_id::uuid as source_material_id, \
          anchor_byte, \
@@ -32,8 +33,8 @@ macro_rules! event_select_columns {
          ingestor_version"
     };
 }
-use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, Transaction};
+use chrono::{DateTime, Timelike, Utc};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use tracing::instrument;
 
 /// Event repository for database operations
@@ -155,13 +156,22 @@ impl EventRecordExt for EventRecord {
             }
         };
 
+        let mut ts_orig = self.ts_orig;
+        if let Some(subnano) = self.ts_orig_subnano {
+            if let Some(adjusted) =
+                ts_orig.checked_add_signed(chrono::Duration::nanoseconds(subnano as i64))
+            {
+                ts_orig = adjusted;
+            }
+        }
+
         Ok(Event::<JsonValue> {
             id: Some(EventId::from_ulid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
             payload: self.payload,
-            ts_orig: Some(self.ts_orig),
+            ts_orig: Some(ts_orig),
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id,
             provenance,
@@ -441,6 +451,9 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        let ts_orig = event.ts_orig;
+        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i16);
+
         #[cfg(any(test, feature = "testing"))]
         if let Some(material_ulid) = source_material_id {
             let _ = sqlx::query(
@@ -473,14 +486,14 @@ impl<'a> EventRepository<'a> {
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end,
                 anchor_byte, associated_blob_ids
             ) VALUES (
                 $1::uuid::ulid, $2, $3, $4, $5,
-                $6, $7, $8::uuid::ulid, $9::uuid[]::ulid[],
-                $10::uuid::ulid, $11, $12,
-                $13, $14::uuid[]::ulid[]
+                $6, $7, $8, $9::uuid::ulid, $10::uuid[]::ulid[],
+                $11::uuid::ulid, $12, $13,
+                $14, $15::uuid[]::ulid[]
             )
             RETURNING 
                 id::uuid as "id!: sinex_schema::ulid::Ulid",
@@ -488,6 +501,7 @@ impl<'a> EventRepository<'a> {
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
                 ts_orig,
+                ts_orig_subnano,
                 host as "host!",
                 ingestor_version,
                 payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
@@ -505,7 +519,8 @@ impl<'a> EventRepository<'a> {
             event.event_type.as_str(),
             event.host.as_str(),
             event.payload,
-            event.ts_orig,
+            ts_orig,
+            ts_orig_subnano,
             event.ingestor_version,
             event.payload_schema_id.map(|id| id.as_uuid()),
             source_event_uuids.as_deref(),
@@ -793,11 +808,11 @@ impl<'a> EventRepository<'a> {
 
         if let Some(range) = time_range {
             if let Some(start) = range.start() {
-                query.push(" AND ts_ingest >= ");
+                query.push(" AND ts_orig >= ");
                 query.push_bind(start);
             }
             if let Some(end) = range.end() {
-                query.push(" AND ts_ingest <= ");
+                query.push(" AND ts_orig <= ");
                 query.push_bind(end);
             }
         }
@@ -878,19 +893,22 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        let ts_orig = event.ts_orig;
+        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i16);
+
         let record = sqlx::query_as!(
             EventRecord,
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
-                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                ts_orig, ts_orig_subnano, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, offset_start, offset_end,
                 anchor_byte, associated_blob_ids
             ) VALUES (
                 $1::uuid::ulid, $2, $3, $4, $5,
-                $6, $7, $8::uuid::ulid, $9::uuid[]::ulid[],
-                $10::uuid::ulid, $11, $12,
-                $13, $14::uuid[]::ulid[]
+                $6, $7, $8, $9::uuid::ulid, $10::uuid[]::ulid[],
+                $11::uuid::ulid, $12, $13,
+                $14, $15::uuid[]::ulid[]
             )
             RETURNING 
                 id::uuid as "id!: sinex_schema::ulid::Ulid",
@@ -898,6 +916,7 @@ impl<'a> EventRepository<'a> {
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
                 ts_orig,
+                ts_orig_subnano,
                 host as "host!",
                 ingestor_version,
                 payload_schema_id::uuid as "payload_schema_id: sinex_schema::ulid::Ulid",
@@ -915,7 +934,8 @@ impl<'a> EventRepository<'a> {
             event.event_type.as_str(),
             event.host.as_str(),
             event.payload,
-            event.ts_orig,
+            ts_orig,
+            ts_orig_subnano,
             event.ingestor_version,
             event.payload_schema_id.map(|id| id.as_uuid()),
             source_event_uuids.as_deref(),
@@ -1589,19 +1609,19 @@ impl<'a> EventRepository<'a> {
             .map_err(|e| db_error(e, "begin cleanup transaction"))?;
 
         // Set session variables for audit trail
-        sqlx::query("SET LOCAL sinex.operation_id = $1")
+        sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
             .bind(&operation_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| db_error(e, "set operation_id"))?;
 
-        sqlx::query("SET LOCAL sinex.archived_by = $1")
+        sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
             .bind(deleted_by)
             .execute(&mut *tx)
             .await
             .map_err(|e| db_error(e, "set archived_by"))?;
 
-        sqlx::query("SET LOCAL sinex.archive_reason = $1")
+        sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
             .bind(deletion_reason)
             .execute(&mut *tx)
             .await
@@ -1622,7 +1642,13 @@ impl<'a> EventRepository<'a> {
         }
 
         // Add safety constraint to only delete test events
-        query_parts.push(" AND (source LIKE '%test%' OR event_type LIKE '%test%' OR payload @> '{\"test\": true}' OR host LIKE '%test%')".to_string());
+        query_parts.push(
+            " AND (source ILIKE '%test%' \
+                  OR event_type ILIKE '%test%' \
+                  OR payload @> '{\"test\": true}' \
+                  OR host ~* '\\\\mtest\\\\M')"
+                .to_string(),
+        );
 
         let query_sql = query_parts.join("");
 
@@ -1669,13 +1695,13 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
         limit: i64,
     ) -> DbResult<Vec<CommandCount>> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT
                 payload->>'command' as command,
                 COUNT(*) as count
             FROM core.events
-            WHERE event_type = 'terminal.command'
+            WHERE event_type IN ('command.executed','terminal.command','command.imported')
               AND ts_orig >= $1
               AND ts_orig < $2
               AND payload->>'command' IS NOT NULL
@@ -1683,48 +1709,62 @@ impl<'a> EventRepository<'a> {
             ORDER BY count DESC
             LIMIT $3
             "#,
-            start,
-            end,
-            limit
         )
+        .bind(start)
+        .bind(end)
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "top commands"))?;
 
         Ok(rows
             .into_iter()
-            .map(|r| CommandCount {
-                command: r.command.unwrap_or_default(),
-                count: r.count.unwrap_or(0),
+            .map(|r| {
+                let command = r
+                    .try_get::<Option<String>, _>("command")
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+                let count = r
+                    .try_get::<Option<i64>, _>("count")
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
+                CommandCount { command, count }
             })
             .collect())
     }
 
     /// Get top commands all time
     pub async fn top_commands_all_time(&self, limit: i64) -> DbResult<Vec<CommandCount>> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT
                 payload->>'command' as command,
                 COUNT(*) as count
             FROM core.events
-            WHERE event_type = 'terminal.command'
+            WHERE event_type IN ('command.executed','terminal.command','command.imported')
               AND payload->>'command' IS NOT NULL
             GROUP BY payload->>'command'
             ORDER BY count DESC
             LIMIT $1
             "#,
-            limit
         )
+        .bind(limit)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "top commands all time"))?;
 
         Ok(rows
             .into_iter()
-            .map(|r| CommandCount {
-                command: r.command.unwrap_or_default(),
-                count: r.count.unwrap_or(0),
+            .map(|r| {
+                let command = r
+                    .try_get::<Option<String>, _>("command")
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+                let count = r
+                    .try_get::<Option<i64>, _>("count")
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
+                CommandCount { command, count }
             })
             .collect())
     }
@@ -2129,18 +2169,21 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::{Timelike, Utc};
     use serde_json::json;
     use sinex_test_utils::sinex_test;
 
     fn base_record() -> EventRecord {
+        let ts = Utc::now();
+        let subnano = (ts.nanosecond() % 1_000) as i16;
         EventRecord {
             id: sinex_schema::ulid::Ulid::new(),
             source: "test.source".to_string(),
             event_type: "test.event".to_string(),
             host: "localhost".to_string(),
             payload: json!({"ok": true}),
-            ts_orig: Utc::now(),
+            ts_orig: ts,
+            ts_orig_subnano: Some(subnano),
             ts_ingest: Utc::now(),
             source_material_id: None,
             anchor_byte: None,

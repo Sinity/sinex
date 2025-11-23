@@ -1,13 +1,10 @@
 //! JetStream consumer integration tests
 
 use async_nats::jetstream;
-use async_nats::jetstream::consumer::pull::Config as PullConfig;
-use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::types::Ulid;
-use sinex_core::DbPoolExt;
+use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::{sinex_test, TestContext};
@@ -233,14 +230,26 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
 
     wait_for_stream(&js, &events_stream, Duration::from_secs(5)).await?;
 
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight("terminal-history", Some("/tmp/history"), json!({"test": true}))
+        .await?;
+
     let event_id = Ulid::new();
+    let material_id = material_record.id;
     let payload = json!({
         "id": event_id.to_string(),
         "source": "offset-test",
         "event_type": "offset.check",
         "ts_orig": "2024-01-01T00:00:00Z",
         "host": "offset-host",
-        "payload": {"data": "value"}
+        "payload": {"data": "value"},
+        "source_material_id": material_id.to_string(),
+        "anchor_byte": 0,
+        "offset_start": 0,
+        "offset_end": 5,
+        "offset_kind": "byte"
     });
 
     let subject = ctx.env().nats_subject("events.raw.offset_test");
@@ -265,7 +274,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
             WHERE id = $1::uuid::ulid
         "#,
     )
-    .bind(event_id.to_string())
+    .bind(ulid_to_uuid(event_id))
     .fetch_one(&ctx.pool)
     .await?;
 
@@ -417,7 +426,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> color_eyre::Result
 
     let duplicate_count: Option<i64> =
         sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
-            .bind(event_id.to_string())
+            .bind(ulid_to_uuid(event_id))
             .fetch_one(&ctx.pool)
             .await?;
 

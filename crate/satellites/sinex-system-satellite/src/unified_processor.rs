@@ -1204,7 +1204,6 @@ fn spawn_forwarder(
 mod tests {
     use super::*;
     use sinex_test_utils::sinex_test;
-    use sinex_test_utils::TestResult;
 
     fn enabled_config() -> SystemConfig {
         SystemConfig {

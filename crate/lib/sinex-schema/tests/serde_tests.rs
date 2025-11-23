@@ -6,24 +6,25 @@
 #[cfg(feature = "serde")]
 #[cfg(test)]
 mod serde_tests {
-    use chrono::Utc;
+    use chrono::{Timelike, Utc};
     use serde_json;
     use sinex_schema::schema::records::*;
     use sinex_schema::ulid::Ulid;
-    use sinex_test_utils::TestResult;
 
     #[allow(dead_code)]
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_event_record_serialization() -> TestResult<()> {
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
             event_type: "test-event".to_string(),
             host: "test-host".to_string(),
             payload: serde_json::json!({"test": "data"}),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: Some(42),
@@ -161,13 +162,15 @@ mod serde_tests {
     #[sinex_test]
     fn test_optional_fields_serialization() -> TestResult<()> {
         // Test that optional fields serialize correctly as null
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: None,
             anchor_byte: None,
@@ -193,13 +196,15 @@ mod serde_tests {
     #[sinex_test]
     fn test_ulid_serialization_in_records() -> TestResult<()> {
         // Test that ULIDs serialize as strings in records
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: None,
@@ -231,13 +236,15 @@ mod serde_tests {
 
     #[sinex_test]
     fn test_datetime_serialization_in_records() -> TestResult<()> {
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: serde_json::json!({}),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: None,
             anchor_byte: None,
@@ -277,13 +284,15 @@ mod serde_tests {
             "special_chars": "\"quoted\" and \\backslash\\"
         });
 
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
             event_type: "test".to_string(),
             host: "test".to_string(),
             payload: complex_payload.clone(),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: None,
             anchor_byte: None,
@@ -307,13 +316,15 @@ mod serde_tests {
 
     #[sinex_test]
     fn test_pretty_print_formatting() -> TestResult<()> {
+        let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
             event_type: "test-event".to_string(),
             host: "test-host".to_string(),
             payload: serde_json::json!({"simple": "payload"}),
-            ts_orig: Utc::now(),
+            ts_orig,
+            ts_orig_subnano: Some((ts_orig.nanosecond() % 1_000) as i16),
             ts_ingest: Utc::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: Some(42),

@@ -143,32 +143,7 @@ impl TestContext {
     pub(crate) fn sanitize_payload(value: &mut JsonValue) {
         match value {
             JsonValue::String(s) => {
-                let mut clean = s.replace("../", "");
-                clean = clean.replace("DROP TABLE", "");
-                clean = clean.replace("<script>", "");
-                clean = clean.replace("</script>", "");
-                clean = clean.replace("$(rm -rf /)", "");
-                clean = clean.replace("\\u{", "u{");
-                clean = clean.replace("\\U{", "U{");
-                while clean.contains("\\u") {
-                    clean = clean.replace("\\u", "u");
-                }
-                while clean.contains("\\U") {
-                    clean = clean.replace("\\U", "U");
-                }
-                if clean.contains('\\') {
-                    clean = clean.replace('\\', "_");
-                }
-                if clean
-                    .chars()
-                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-                {
-                    clean = clean
-                        .chars()
-                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
-                        .collect();
-                }
-                *s = clean;
+                *s = Self::sanitize_string(s);
             }
             JsonValue::Array(arr) => {
                 for v in arr {
@@ -176,12 +151,58 @@ impl TestContext {
                 }
             }
             JsonValue::Object(map) => {
+                // Sanitize nested values first
                 for v in map.values_mut() {
                     Self::sanitize_payload(v);
+                }
+
+                // Sanitize keys by renaming entries where needed
+                let mut renames = Vec::new();
+                for key in map.keys() {
+                    let sanitized = Self::sanitize_string(key);
+                    if sanitized != *key {
+                        renames.push((key.clone(), sanitized));
+                    }
+                }
+                for (old, new) in renames {
+                    if let Some(mut value) = map.remove(&old) {
+                        // Value already sanitized, but ensure nested structures stay clean.
+                        Self::sanitize_payload(&mut value);
+                        map.insert(new, value);
+                    }
                 }
             }
             _ => {}
         }
+    }
+
+    fn sanitize_string(raw: &str) -> String {
+        let mut clean = raw.replace("../", "");
+        clean = clean.replace("DROP TABLE", "");
+        clean = clean.replace("<script>", "");
+        clean = clean.replace("</script>", "");
+        clean = clean.replace("$(rm -rf /)", "");
+        clean = clean.replace("\\u{", "u{");
+        clean = clean.replace("\\U{", "U{");
+        while clean.contains("\\u") {
+            clean = clean.replace("\\u", "u");
+        }
+        while clean.contains("\\U") {
+            clean = clean.replace("\\U", "U");
+        }
+        if clean.contains('\\') {
+            clean = clean.replace('\\', "_");
+        }
+        if clean
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            clean = clean
+                .chars()
+                .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+                .collect();
+        }
+        clean
     }
 
     /// Create new test context
@@ -450,6 +471,7 @@ impl TestContext {
         let mut event =
             Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
 
+        event.ingestor_version = Some("test-ingestor".to_string());
         // Replace the default bootstrap material with a unique identifier per event
         let material_id = Id::<SourceMaterial>::new();
         event.provenance = Provenance::from_material(material_id, 0, None, None);

@@ -1,6 +1,6 @@
 // Preflight Unit Tests - Comprehensive verification phase testing
 
-use color_eyre::eyre::{self, Result as EyreResult};
+use color_eyre::eyre::Result as EyreResult;
 use serde_json::Value as JsonValue;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -111,7 +111,7 @@ mod resources {
 mod configuration {
     use super::VerificationResult;
     use super::VerificationStatus;
-    use color_eyre::eyre;
+
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
 

@@ -17,12 +17,23 @@ async fn create_query_test_event(
     payload_content: serde_json::Value,
     _time_offset: Option<Duration>,
 ) -> color_eyre::eyre::Result<Ulid> {
-    // Note: time_offset is ignored for now as create_test_event doesn't support it
-    // This is acceptable for most tests
     let event = ctx
         .create_test_event(source, event_type, payload_content)
         .await?;
-    Ok(event.id.unwrap().into())
+    let event_id = event
+        .id
+        .expect("create_test_event should always return an event id");
+
+    if let Some(offset) = _time_offset {
+        let timestamp = Utc::now() - offset;
+        sqlx::query("UPDATE core.events SET ts_orig = $1 WHERE id = $2::uuid::ulid")
+            .bind(timestamp)
+            .bind(event_id.to_uuid())
+            .execute(&ctx.pool)
+            .await?;
+    }
+
+    Ok(event_id.into())
 }
 
 /// Set up diverse test data for query testing
@@ -390,7 +401,7 @@ async fn test_query_empty_results(ctx: TestContext) -> color_eyre::Result<()> {
 #[sinex_test]
 async fn test_query_limit_bounds(ctx: TestContext) -> color_eyre::Result<()> {
     let service = SearchService::new(ctx.pool.clone());
-    setup_query_test_data(&ctx).await?;
+    let inserted_ids = setup_query_test_data(&ctx).await?;
 
     // Test with limit 0
     let query = SearchQuery {
@@ -404,7 +415,11 @@ async fn test_query_limit_bounds(ctx: TestContext) -> color_eyre::Result<()> {
     };
 
     let results = service.search_events(query).await?;
-    assert_eq!(results.len(), 0);
+    assert_eq!(
+        results.len(),
+        inserted_ids.len(),
+        "limit=0 should fall back to the default pagination limit and return all available rows"
+    );
 
     // Test with reasonable limit
     let query = SearchQuery {

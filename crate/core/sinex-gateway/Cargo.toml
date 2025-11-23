@@ -29,7 +29,7 @@ tokio = { workspace = true, features = ["full"] }
 # Web framework for RPC server
 axum = { workspace = true }
 tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }
-tower-http = { version = "0.6", features = ["cors", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
 hyper = { version = "1.0", features = ["server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server", "service"] }
 tokio-stream = { workspace = true, features = ["net"] }

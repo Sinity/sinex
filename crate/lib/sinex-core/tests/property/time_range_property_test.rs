@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use proptest::prelude::*;
-use sinex_test_utils::{sinex_prop, TestResult};
+use sinex_test_utils::sinex_prop;
 
 /// Generate arbitrary time ranges within a useful bound.
 fn arb_time_range() -> impl Strategy<Value = (DateTime<Utc>, DateTime<Utc>)> {

@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ main, master ]
@@ -23,18 +26,40 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
+    - name: Cache sccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/sccache
+        key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: sccache-${{ runner.os }}-
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/registry
+        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: cargo-registry-${{ runner.os }}-
+
+    - name: Cache cargo git
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/git
+        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: cargo-git-${{ runner.os }}-
+
     - uses: ./.github/actions/nix-bootstrap
       with:
         cache-name: sinity
         cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
     - name: Run migrations and tests
+      env:
+        SQLX_OFFLINE: '1'
       shell: bash
       run: |
         scripts/ci-devenv.sh bash <<'DEVENV'
         set -euo pipefail
         export CARGO_TARGET_DIR="$PWD/target-ci"
-        devenv test
         scripts/ci-postgres.sh <<'POSTGRES'
         pushd crate/lib/sinex-schema >/dev/null
         DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up

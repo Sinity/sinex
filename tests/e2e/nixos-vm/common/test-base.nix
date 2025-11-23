@@ -182,6 +182,16 @@ in
 
   # Faster boot
   boot.loader.timeout = lib.mkDefault 0;
+
+  # Enable native test suites inside the VM so cargo tests don't skip them.
+  environment.variables = (config.environment.variables or {}) // {
+    SINEX_NATIVE_SYSTEM_TESTS = "1";
+    SINEX_NATIVE_DESKTOP_TESTS = "1";
+  };
+  environment.sessionVariables = (config.environment.sessionVariables or {}) // {
+    SINEX_NATIVE_SYSTEM_TESTS = "1";
+    SINEX_NATIVE_DESKTOP_TESTS = "1";
+  };
   
   # Disable unnecessary services for tests
   services.udisks2.enable = lib.mkDefault false;

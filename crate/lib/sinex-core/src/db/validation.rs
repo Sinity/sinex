@@ -220,6 +220,7 @@ impl EventValidator {
         self.validate_envelope(event.source.as_ref(), event.event_type.as_ref())?;
         self.check_payload_size(&event.payload)?;
         self.ensure_object_payload(&event.payload)?;
+        self.validate_domain_specific_rules(event)?;
         self.validate_ulid_timestamp(event)?;
         self.validate_provenance(&event.provenance)?;
         if !self.validation_enabled {
@@ -327,16 +328,119 @@ impl EventValidator {
     }
     fn validate_envelope(&self, source: &str, event_type: &str) -> ValidationResult {
         if source.trim().is_empty() {
-            return Err(ValidationError::MissingField {
+            return Err(ValidationError::InvalidValue {
                 field: "source".to_string(),
+                reason: "source cannot be empty".to_string(),
+            });
+        }
+        if source.contains('\0') {
+            return Err(ValidationError::InvalidValue {
+                field: "source".to_string(),
+                reason: "source cannot contain null bytes".to_string(),
             });
         }
         if event_type.trim().is_empty() {
-            return Err(ValidationError::MissingField {
+            return Err(ValidationError::InvalidValue {
                 field: "event_type".to_string(),
+                reason: "event type cannot be empty".to_string(),
+            });
+        }
+        if event_type.contains('\0') {
+            return Err(ValidationError::InvalidValue {
+                field: "event_type".to_string(),
+                reason: "event type cannot contain null bytes".to_string(),
             });
         }
         Ok(())
+    }
+    fn validate_domain_specific_rules(&self, event: &Event<JsonValue>) -> ValidationResult {
+        match (event.source.as_ref(), event.event_type.as_ref()) {
+            ("fs-watcher", et)
+                if matches!(et, "file.created" | "file.modified" | "file.deleted") =>
+            {
+                Self::validate_filesystem_payload(et, &event.payload)
+            }
+            (source, "command.executed") if source == "terminal" || source == "terminal.kitty" => {
+                Self::validate_terminal_payload(&event.payload)
+            }
+            _ => Ok(()),
+        }
+    }
+    fn validate_filesystem_payload(event_type: &str, payload: &JsonValue) -> ValidationResult {
+        let Some(obj) = payload.as_object() else {
+            return Err(ValidationError::InvalidType {
+                field: "payload".to_string(),
+                expected: "object".to_string(),
+                actual: json_type_name(payload).to_string(),
+            });
+        };
+        Self::require_string_field(obj, "path")?;
+        if event_type != "file.deleted" {
+            Self::require_number_field(obj, "size")?;
+        }
+        if let Some(perms) = obj.get("permissions") {
+            if !perms.is_number() {
+                return Err(ValidationError::InvalidType {
+                    field: "permissions".to_string(),
+                    expected: "number".to_string(),
+                    actual: json_type_name(perms).to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+    fn validate_terminal_payload(payload: &JsonValue) -> ValidationResult {
+        let Some(obj) = payload.as_object() else {
+            return Err(ValidationError::InvalidType {
+                field: "payload".to_string(),
+                expected: "object".to_string(),
+                actual: json_type_name(payload).to_string(),
+            });
+        };
+        Self::require_string_field(obj, "command")?;
+        Self::require_number_field(obj, "exit_code")?;
+        if let Some(ts) = obj.get("timestamp") {
+            if !ts.is_string() {
+                return Err(ValidationError::InvalidType {
+                    field: "timestamp".to_string(),
+                    expected: "string".to_string(),
+                    actual: json_type_name(ts).to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+    fn require_string_field(
+        obj: &serde_json::Map<String, JsonValue>,
+        field: &str,
+    ) -> ValidationResult {
+        match obj.get(field) {
+            Some(JsonValue::String(value)) if !value.trim().is_empty() => Ok(()),
+            Some(other) => Err(ValidationError::InvalidType {
+                field: field.to_string(),
+                expected: "string".to_string(),
+                actual: json_type_name(other).to_string(),
+            }),
+            None => Err(ValidationError::MissingField {
+                field: field.to_string(),
+            }),
+        }
+    }
+    fn require_number_field(
+        obj: &serde_json::Map<String, JsonValue>,
+        field: &str,
+    ) -> ValidationResult {
+        match obj.get(field) {
+            Some(value) if value.is_number() => Ok(()),
+            Some(other) => Err(ValidationError::InvalidType {
+                field: field.to_string(),
+                expected: "number".to_string(),
+                actual: json_type_name(other).to_string(),
+            }),
+            None => Err(ValidationError::MissingField {
+                field: field.to_string(),
+            }),
+        }
     }
     fn check_payload_size(&self, payload: &JsonValue) -> ValidationResult {
         let payload_bytes = serde_json::to_vec(payload)
@@ -374,7 +478,7 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>>
         SchemaRecord,
         r#"
         SELECT DISTINCT ON (source, event_type)
-            id as "id: Ulid",
+            id::uuid as "id!: Ulid",
             source,
             event_type,
             schema_version,
@@ -393,7 +497,7 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>> {
         SchemaRecord,
         r#"
         SELECT 
-            id as "id: Ulid",
+            id::uuid as "id!: Ulid",
             source,
             event_type,
             schema_version,

@@ -1,10 +1,15 @@
+use semver::Version;
 use sinex_satellite_sdk::version::{satellite_version, SatelliteVersion};
 use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn satellite_version_env_is_valid() -> color_eyre::eyre::Result<()> {
     let version = satellite_version()?;
-    assert!(version.major >= 1);
+    let minimum_supported = Version::new(0, 1, 0);
+    assert!(
+        version >= minimum_supported,
+        "satellite version must be at least {minimum_supported}, got {version}"
+    );
     assert!(version.patch > 0);
     Ok(())
 }

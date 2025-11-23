@@ -17,8 +17,13 @@ use sinex_core::{
     types::Ulid,
     Id, SourceMaterialRecord,
 };
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
@@ -72,6 +77,7 @@ pub struct AcquisitionManager {
     state: Arc<RwLock<RotationState>>,
     source_type: String,
     source_path: String,
+    streams_ready: Arc<AtomicBool>,
 }
 
 /// Handle to an active source material being captured
@@ -193,6 +199,7 @@ impl AcquisitionManager {
             state,
             source_type,
             source_path,
+            streams_ready: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -222,6 +229,8 @@ impl AcquisitionManager {
     ///
     /// Ported from TemporalLedger::create_material + MaterialRotationManager logic
     pub async fn begin_material(&self, source_identifier: &str) -> Result<SourceMaterialHandle> {
+        self.ensure_streams_ready().await?;
+
         // Register in-flight material in database
         let material_hint = "stream"; // Default, can be parameterized
         let metadata = json!({
@@ -273,6 +282,16 @@ impl AcquisitionManager {
             bytes_written: 0,
             started_at: Utc::now(),
         })
+    }
+
+    async fn ensure_streams_ready(&self) -> Result<()> {
+        if self.streams_ready.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        AcquisitionManager::bootstrap_streams(&self.nats_client).await?;
+        self.streams_ready.store(true, Ordering::SeqCst);
+        Ok(())
     }
 
     /// Publish material begin event to NATS

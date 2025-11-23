@@ -32,7 +32,9 @@ impl ContentService {
             .ingest_from_bytes(content, filename, content_type)
             .await
             .map_err(|e| {
-                SinexError::service(format!("Blob storage failed: {}", e))
+                let debug_error = format!("{:?}", e);
+                eprintln!("Blob ingestion error for {}: {}", filename, debug_error);
+                SinexError::service(format!("Blob storage failed: {}", debug_error))
                     .with_operation("blob_manager.ingest_from_bytes")
                     .with_context("filename", filename)
                     .with_context("content_type", content_type)

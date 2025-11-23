@@ -1,5 +1,9 @@
 name: Schema Compatibility Check
 
+permissions:
+  contents: read
+  pull-requests: write
+
 on:
   pull_request:
     paths:
@@ -12,19 +16,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0  # Need full history for comparison
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v11
+      - name: Setup Nix environment
+        uses: ./.github/actions/nix-bootstrap
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@v2
+          cache-name: sinity
+          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
       - name: Run schema compatibility check
+        env:
+          SQLX_OFFLINE: '1'
         run: |
           chmod +x scripts/check-schema-compatibility.sh
           CI_BASE_BRANCH=${{ github.base_ref }} ./scripts/check-schema-compatibility.sh

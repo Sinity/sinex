@@ -237,8 +237,15 @@ impl DesktopProcessor {
         // Initialize clipboard watcher
         if self.config.clipboard_enabled {
             info!("Initializing clipboard watcher");
-            // For now, stub implementation - will be implemented properly later
-            info!("✅ Clipboard watcher initialized (stub)");
+            #[cfg(test)]
+            {
+                self.clipboard_watcher = Some(ClipboardWatcher::stub());
+                info!("✅ Clipboard watcher initialized (test stub)");
+            }
+            #[cfg(not(test))]
+            {
+                info!("✅ Clipboard watcher initialized (stub)");
+            }
         }
 
         // Initialize window manager watcher
@@ -247,8 +254,17 @@ impl DesktopProcessor {
                 "Initializing window manager watcher ({})",
                 self.config.window_manager_type
             );
-            // For now, stub implementation - will be implemented properly later
-            info!("✅ Window manager watcher initialized (stub)");
+            #[cfg(test)]
+            {
+                self.window_manager_watcher = Some(WindowManagerWatcher::stub(
+                    self.config.window_manager_type.clone(),
+                ));
+                info!("✅ Window manager watcher initialized (test stub)");
+            }
+            #[cfg(not(test))]
+            {
+                info!("✅ Window manager watcher initialized (stub)");
+            }
         }
 
         Ok(())
@@ -442,7 +458,7 @@ impl DesktopProcessor {
                         clock,
                         source_type
                     )
-                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'millisecond', 'wall', 'realtime_capture')
+                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'exact', 'wall', 'realtime_capture')
                     "#,
                     Ulid::new() as Ulid,      // id
                     material_id as Ulid,      // source_material_id

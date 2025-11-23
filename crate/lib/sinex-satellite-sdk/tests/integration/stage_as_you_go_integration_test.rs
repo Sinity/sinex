@@ -38,9 +38,14 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
+    let processor_config = EventProcessorConfig {
+        batch_size: 1,
+        batch_timeout: Duration::from_millis(100),
+        ..EventProcessorConfig::default()
+    };
     let processor_handle = spawn_event_processor(
         EventTransport::Nats(publisher),
-        EventProcessorConfig::default(),
+        processor_config,
         event_rx,
         shutdown_rx,
     );

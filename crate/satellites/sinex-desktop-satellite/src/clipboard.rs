@@ -686,6 +686,27 @@ impl ClipboardWatcher {
     }
 }
 
+#[cfg(test)]
+impl ClipboardWatcher {
+    /// Lightweight stub used by unit tests so we don't require wl-paste/xclip.
+    pub fn stub() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(1),
+            last_content: None,
+            last_primary_content: None,
+            clipboard_history: VecDeque::new(),
+            max_preview_length: DEFAULT_MAX_PREVIEW_LENGTH,
+            max_content_size: DEFAULT_MAX_CONTENT_SIZE,
+            max_history_entries: DEFAULT_MAX_HISTORY_ENTRIES,
+            enable_primary_selection: false,
+            enable_history: false,
+            db_pool: None,
+            source_identifier: "desktop_clipboard_stub".to_string(),
+            blob_manager: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ClipboardStorage {
     Inline(usize),
@@ -726,7 +747,8 @@ impl ClipboardWatcher {
         max_content_size: usize,
         db_pool: Option<PgPool>,
     ) -> SatelliteResult<Self> {
-        let mut watcher = ClipboardWatcher::new(1, db_pool).await?;
+        let mut watcher = ClipboardWatcher::stub();
+        watcher.db_pool = db_pool;
         watcher.max_content_size = max_content_size;
         Ok(watcher)
     }
@@ -737,6 +759,14 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use sinex_test_utils::{sinex_test, TestContext};
+
+    fn desktop_native_tests_enabled() -> bool {
+        matches!(
+            std::env::var("SINEX_NATIVE_DESKTOP_TESTS")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+            Ok(true)
+        )
+    }
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {
@@ -754,6 +784,13 @@ mod tests {
 
     #[sinex_test]
     async fn clipboard_large_content_is_persisted(ctx: TestContext) -> color_eyre::Result<()> {
+        if !desktop_native_tests_enabled() {
+            eprintln!(
+                "⚠️  Skipping clipboard_large_content_is_persisted (native desktop tests disabled)"
+            );
+            return Ok(());
+        }
+
         let watcher = ClipboardWatcher::test_watcher(16, Some(ctx.pool.clone())).await?;
         let large_text = "A".repeat(1024);
         let content = sample_clipboard_content(&large_text, &watcher);
@@ -772,6 +809,13 @@ mod tests {
 
     #[sinex_test]
     async fn desktop_clipboard_requires_database_pool() -> color_eyre::Result<()> {
+        if !desktop_native_tests_enabled() {
+            eprintln!(
+                "⚠️  Skipping desktop_clipboard_requires_database_pool (native desktop tests disabled)"
+            );
+            return Ok(());
+        }
+
         let watcher = ClipboardWatcher::test_watcher(DEFAULT_MAX_CONTENT_SIZE, None).await?;
         let content = sample_clipboard_content("clipboard text", &watcher);
 

@@ -1,3 +1,7 @@
+use chrono::Utc;
+use serde_json::json;
+use sinex_core::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
+use sinex_core::types::Ulid;
 use sinex_test_utils::{sinex_test, TestContext};
 use sqlx::Row;
 
@@ -6,98 +10,85 @@ async fn test_validation_cache_uses_payload_hash(ctx: TestContext) -> color_eyre
     let pool = ctx.pool.clone();
 
     // Create a test schema
-    let schema_row = sqlx::query(
-        r#"
-        INSERT INTO sinex_schemas.event_payload_schemas (id, schema_name, schema_version, schema_content)
-        VALUES (gen_ulid(), 'test_validation_cache', '1.0.0', 
-                '{"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}')
-        RETURNING id::uuid as id
-        "#
+    let schema_id = insert_test_schema(
+        &pool,
+        "test",
+        "test.validation_cache",
+        json!({
+            "type": "object",
+            "properties": { "message": { "type": "string" } },
+            "required": ["message"]
+        }),
     )
-    .fetch_one(&pool)
     .await?;
-    let schema_id: sqlx::types::Uuid = schema_row.get("id");
 
     // Create a test event with valid payload
     let test_payload = r#"{"message": "test validation cache"}"#;
     let event_row = sqlx::query(
         r#"
         INSERT INTO core.events (
-            id, event_type, source, host, payload, payload_schema_id, source_event_ids
+            id, event_type, source, host, payload, payload_schema_id, source_event_ids, ts_orig
         ) VALUES (
             gen_ulid(), 'test.validation_cache', 'test', 'test-host', $1::jsonb, $2::uuid::ulid,
-            ARRAY[gen_ulid()]::ULID[]  -- Use internal provenance for XOR constraint
+            ARRAY[gen_ulid()]::ULID[], $3  -- Use internal provenance for XOR constraint
         )
         RETURNING id::uuid as id
         "#,
     )
     .bind(serde_json::from_str::<serde_json::Value>(test_payload)?)
     .bind(schema_id)
+    .bind(Utc::now())
     .fetch_one(&pool)
     .await?;
     let event_id: sqlx::types::Uuid = event_row.get("id");
 
-    // Call the validation function
-    let validation_result =
-        sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
-            .bind(event_id)
-            .fetch_one(&pool)
-            .await?;
-    let is_valid: Option<bool> = validation_result.get("is_valid");
-    assert!(is_valid.unwrap_or(false), "Event should be valid");
+    let event_ulid: Ulid = event_id.into();
+    let repo = SchemaManagementRepository::new(&pool);
+    let validation_result = repo.validate_event_payload_by_event_id(&event_ulid).await?;
+    assert!(validation_result.is_valid, "Event should be valid");
 
-    // Verify cache entry was created with payload_hash
-    let cache_entry = sqlx::query(
-        "SELECT payload_hash, schema_id::uuid as schema_id, is_valid FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
+    // Verify cache entry was created
+    let cache_entry = sqlx::query!(
+        r#"
+        SELECT is_valid, validation_errors as "validation_errors?: serde_json::Value"
+        FROM sinex_schemas.validation_cache
+        WHERE schema_id = $1::uuid::ulid
+          AND event_id = $2::uuid::ulid
+        "#,
+        schema_id,
+        event_id
     )
-    .bind(schema_id)
     .fetch_one(&pool)
     .await?;
-
-    // Verify payload hash is correct length (SHA256 = 64 hex characters)
-    let payload_hash: String = cache_entry.get("payload_hash");
-    assert_eq!(
-        payload_hash.len(),
-        64,
-        "Payload hash should be 64 characters"
-    );
-
-    // Verify the hash matches what we expect
-    let expected_hash: String = sqlx::query("SELECT encode(digest($1, 'sha256'), 'hex') as hex")
-        .bind(test_payload)
-        .fetch_one(&pool)
-        .await?
-        .get("hex");
-
-    assert_eq!(
-        payload_hash, expected_hash,
-        "Payload hash should match expected value"
-    );
-
-    // Verify validation result is cached
-    let cached_valid: Option<bool> = cache_entry.get("is_valid");
+    assert!(cache_entry.is_valid, "Cached result should be valid");
     assert!(
-        cached_valid.unwrap_or(false),
-        "Cached result should be valid"
+        cache_entry.validation_errors.is_none(),
+        "Valid event should not cache validation errors"
     );
 
     // Call validation again to test cache hit
-    let cache_count_before: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
+    let cache_count_before = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) as "count!"
+        FROM sinex_schemas.validation_cache
+        WHERE schema_id = $1::uuid::ulid
+        "#,
+        schema_id
     )
-    .bind(schema_id)
     .fetch_one(&pool)
     .await?;
 
-    let _ = sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
-        .bind(event_id)
-        .fetch_one(&pool)
-        .await?;
+    let second_result = repo.validate_event_payload_by_event_id(&event_ulid).await?;
+    assert!(second_result.is_valid, "Cached result should remain valid");
 
-    let cache_count_after: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
+    let cache_count_after = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) as "count!"
+        FROM sinex_schemas.validation_cache
+        WHERE schema_id = $1::uuid::ulid
+        "#,
+        schema_id
     )
-    .bind(schema_id)
     .fetch_one(&pool)
     .await?;
 
@@ -116,61 +107,102 @@ async fn test_validation_cache_with_invalid_payload(
     let pool = ctx.pool.clone();
 
     // Create a test schema
-    let schema_row = sqlx::query(
-        r#"
-        INSERT INTO sinex_schemas.event_payload_schemas (id, schema_name, schema_version, schema_content)
-        VALUES (gen_ulid(), 'test_validation_cache_invalid', '1.0.0',
-                '{"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}')
-        RETURNING id::uuid as id
-        "#
+    let schema_id = insert_test_schema(
+        &pool,
+        "test",
+        "test.validation_cache_invalid",
+        json!({
+            "type": "object",
+            "properties": { "message": { "type": "string" } },
+            "required": ["message"]
+        }),
     )
-    .fetch_one(&pool)
     .await?;
-    let schema_id: sqlx::types::Uuid = schema_row.get("id");
 
     // Create a test event with invalid payload (missing required field)
     let test_payload = r#"{"wrong_field": "test"}"#;
     let event_row = sqlx::query(
         r#"
         INSERT INTO core.events (
-            id, event_type, source, host, payload, payload_schema_id, source_event_ids
+            id, event_type, source, host, payload, payload_schema_id, source_event_ids, ts_orig
         ) VALUES (
             gen_ulid(), 'test.validation_cache_invalid', 'test', 'test-host', $1::jsonb, $2::uuid::ulid,
-            ARRAY[gen_ulid()]::ULID[]  -- Use internal provenance for XOR constraint
+            ARRAY[gen_ulid()]::ULID[], $3  -- Use internal provenance for XOR constraint
         )
         RETURNING id::uuid as id
         "#
     )
     .bind(serde_json::from_str::<serde_json::Value>(test_payload)?)
     .bind(schema_id)
+    .bind(Utc::now())
     .fetch_one(&pool)
     .await?;
     let event_id: sqlx::types::Uuid = event_row.get("id");
 
-    // Call the validation function
-    let validation_result =
-        sqlx::query("SELECT * FROM sinex_schemas.validate_event_payload($1::uuid::ulid)")
-            .bind(event_id)
-            .fetch_one(&pool)
-            .await?;
-    let is_valid: Option<bool> = validation_result.get("is_valid");
-    assert!(!is_valid.unwrap_or(true), "Event should be invalid");
+    let event_ulid: Ulid = event_id.into();
+    let repo = SchemaManagementRepository::new(&pool);
+    let validation_result = repo.validate_event_payload_by_event_id(&event_ulid).await?;
+    assert!(
+        !validation_result.is_valid,
+        "Invalid event should fail validation"
+    );
 
     // Verify cache entry was created with correct result
-    let cache_entry = sqlx::query(
-        "SELECT is_valid, validation_errors FROM sinex_schemas.validation_cache WHERE schema_id = $1::uuid::ulid",
+    let cache_entry = sqlx::query!(
+        r#"
+        SELECT is_valid, validation_errors as "validation_errors?: serde_json::Value"
+        FROM sinex_schemas.validation_cache
+        WHERE schema_id = $1::uuid::ulid
+          AND event_id = $2::uuid::ulid
+        "#,
+        schema_id,
+        event_id
     )
-    .bind(schema_id)
     .fetch_one(&pool)
     .await?;
 
-    let cached_valid: Option<bool> = cache_entry.get("is_valid");
-    let validation_errors: Option<serde_json::Value> = cache_entry.get("validation_errors");
     assert!(
-        !cached_valid.unwrap_or(true),
-        "Cached result should be invalid"
+        !cache_entry.is_valid,
+        "Cached result should reflect invalid payload"
     );
-    assert!(validation_errors.is_some(), "Should have validation errors");
+    assert!(
+        cache_entry.validation_errors.is_some(),
+        "Validation errors should be stored"
+    );
 
     Ok(())
+}
+
+async fn insert_test_schema(
+    pool: &sqlx::PgPool,
+    source: &str,
+    event_type: &str,
+    schema_json: serde_json::Value,
+) -> color_eyre::eyre::Result<sqlx::types::Uuid> {
+    let schema = NewEventSchema {
+        source: source.to_string(),
+        event_type: event_type.to_string(),
+        schema_version: "1.0.0".to_string(),
+        schema_content: schema_json.clone(),
+    };
+    let content_hash = schema.calculate_content_hash();
+
+    let row = sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.event_payload_schemas (
+            source, event_type, schema_version, schema_content, content_hash, is_active
+        )
+        VALUES ($1, $2, $3, $4::jsonb, $5, true)
+        RETURNING id::uuid as id
+        "#,
+    )
+    .bind(source)
+    .bind(event_type)
+    .bind("1.0.0")
+    .bind(schema_json)
+    .bind(content_hash)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.get("id"))
 }

@@ -39,9 +39,14 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
+    let processor_config = EventProcessorConfig {
+        batch_size: 1,
+        batch_timeout: Duration::from_millis(100),
+        ..EventProcessorConfig::default()
+    };
     let processor_handle = spawn_event_processor(
         EventTransport::Nats(publisher),
-        EventProcessorConfig::default(),
+        processor_config,
         event_rx,
         shutdown_rx,
     );
@@ -56,12 +61,23 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         .await?;
     assert_eq!(stage_result.event_ids.len(), 3, "one event per log line");
 
-    sleep(Duration::from_millis(250)).await;
-
-    let recent = ctx.pool.events().get_recent(10).await?;
+    let mut recent_found = false;
+    let mut last_recent_count = 0;
+    let recent_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < recent_deadline {
+        let recent = ctx.pool.events().get_recent(10).await?;
+        last_recent_count = recent.len();
+        if last_recent_count >= 3 {
+            recent_found = true;
+            break;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    let total_events = ctx.pool.events().count_all().await?;
     assert!(
-        recent.len() >= 3,
-        "stage-as-you-go should emit at least three events"
+        recent_found,
+        "stage-as-you-go should emit at least three events (recent_count={}, total_events={})",
+        last_recent_count, total_events
     );
 
     let analytics = AnalyticsService::new(ctx.pool.clone());

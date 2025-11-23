@@ -7,7 +7,6 @@ use crate::TestResult;
 use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
-use sinex_core::types::ulid::Ulid;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService};
 use tokio::process::Child;
 use tokio::task::JoinHandle;
@@ -97,6 +96,14 @@ pub async fn start_test_ingestd_with_config(
     let work_dir = Utf8PathBuf::try_from(work_dir_path)
         .map_err(|e| SinexError::configuration(e.to_string()))?;
 
+    let stream_name = "sinex_test_events";
+
+    let nats_client = async_nats::connect(&config.nats_url)
+        .await
+        .map_err(|e| SinexError::network(format!("Failed to connect to NATS: {e}")))?;
+    let jetstream = async_nats::jetstream::new(nats_client.clone());
+    let _ = jetstream.delete_stream(stream_name).await;
+
     let ingest_config = IngestdConfig::builder()
         .database_url(config.database_url.clone())
         .nats_url(config.nats_url.clone())
@@ -105,7 +112,7 @@ pub async fn start_test_ingestd_with_config(
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir)
-        .nats_stream_name(format!("sinex_test_events_{}", Ulid::new()))
+        .nats_stream_name(stream_name.to_string())
         .build();
 
     let service = IngestService::new(ingest_config.clone()).await?;
@@ -114,11 +121,6 @@ pub async fn start_test_ingestd_with_config(
     let join_handle = tokio::spawn(async move { service_runner.run().await });
 
     // Verify service is ready by checking NATS stream exists
-    let nats_client = async_nats::connect(&config.nats_url)
-        .await
-        .map_err(|e| SinexError::network(format!("Failed to connect to NATS: {e}")))?;
-    let jetstream = async_nats::jetstream::new(nats_client);
-
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             match jetstream.get_stream(&ingest_config.nats_stream_name).await {

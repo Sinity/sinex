@@ -1,8 +1,6 @@
 use serde_json::json;
 use sinex_satellite_sdk::stage_as_you_go::StageAsYouGoContext;
-use sinex_test_utils::{
-    satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext, TestResult,
-};
+use sinex_test_utils::{satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use sqlx::postgres::PgPoolOptions;
 
 #[sinex_test]
@@ -48,7 +46,7 @@ async fn jetstream_material_ingest_conflicts_with_satellite_inserts(
         INSERT INTO raw.temporal_ledger
             (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
         VALUES
-            ($1::uuid::ulid, $2, $3, 'byte', now(), 'millisecond', 'system', 'ingestd')
+            ($1::uuid::ulid, $2, $3, 'byte', now(), 'exact', 'wall', 'realtime_capture')
         "#,
         material_id.to_uuid(),
         0_i64,

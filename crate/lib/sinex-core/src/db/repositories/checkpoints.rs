@@ -220,6 +220,39 @@ impl<'a> CheckpointRepository<'a> {
         .map_err(|e| db_error(e, "get checkpoint by processor and consumer"))
     }
 
+    pub async fn get_latest_for_processor_group(
+        &self,
+        processor_name: &ProcessorName,
+        consumer_group: &ConsumerGroup,
+    ) -> DbResult<Option<CheckpointRecord>> {
+        sqlx::query_as!(
+            CheckpointRecord,
+            r#"
+            SELECT 
+                id::uuid as "id!: Id<CheckpointRecord>",
+                processor_name as "processor_name!: ProcessorName",
+                consumer_group as "consumer_group!: ConsumerGroup",
+                consumer_name as "consumer_name!: ConsumerName",
+                last_processed_id::uuid as "last_processed_id: Id<Event<JsonValue>>",
+                processed_count as "processed_count!",
+                checkpoint_data,
+                checkpoint_version as "checkpoint_version!",
+                created_at as "created_at!",
+                last_activity as "last_activity!",
+                updated_at as "updated_at!"
+            FROM core.processor_checkpoints
+            WHERE processor_name = $1 AND consumer_group = $2
+            ORDER BY processed_count DESC
+            LIMIT 1
+            "#,
+            processor_name.as_ref(),
+            consumer_group.as_ref()
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get latest checkpoint for processor group"))
+    }
+
     pub async fn update(
         &self,
         processor_name: &ProcessorName,

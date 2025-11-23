@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use sinex_core::types::events::payloads::process::ProcessStatus;
 use sinex_satellite_sdk::heartbeat::{HeartbeatEmitter, HeartbeatLogSink};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 #[derive(Default, Debug)]
 struct RecordingSink {

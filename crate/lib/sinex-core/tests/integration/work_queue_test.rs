@@ -94,7 +94,7 @@ async fn simulate_work_processor(
     subject_filter: String,
     worker_id: String,
     tracker: WorkTracker,
-    max_items: usize,
+    total_items: usize,
     processing_delay: Duration,
 ) -> Result<usize, color_eyre::eyre::Error> {
     let jetstream = async_nats::jetstream::new(client);
@@ -120,7 +120,10 @@ async fn simulate_work_processor(
     let start_time = Instant::now();
     let timeout_duration = Duration::from_secs(30);
 
-    while processed_count < max_items && start_time.elapsed() < timeout_duration {
+    while start_time.elapsed() < timeout_duration {
+        if tracker.get_processed_count() >= total_items {
+            break;
+        }
         // Fetch work items
         match consumer
             .fetch()
@@ -158,6 +161,9 @@ async fn simulate_work_processor(
                         if tracker.complete_work_item(&work_item_id) {
                             processed_count += 1;
                             debug!("Worker {} completed work item {}", worker_id, work_item_id);
+                            if tracker.get_processed_count() >= total_items {
+                                break;
+                            }
                         }
 
                         // Acknowledge the message
@@ -187,7 +193,8 @@ async fn simulate_work_processor(
 async fn test_work_queue_event_processing_pipeline(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
-    let client = async_nats::connect("localhost:4222").await?;
+    let ctx = ctx.with_nats().await?;
+    let client = ctx.nats_client();
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let test_id = Ulid::new();
@@ -253,11 +260,12 @@ async fn test_work_queue_event_processing_pipeline(
     // Start multiple workers to process work items concurrently
     let mut join_set = JoinSet::new();
     let num_workers = 2;
+    let consumer_name = format!("work_consumer_{}", test_id);
 
     for worker_num in 0..num_workers {
         let client_clone = client.clone();
         let stream_name_clone = stream_name.clone();
-        let consumer_name = format!("work_consumer_{}_{}", test_id, worker_num);
+        let consumer_name = consumer_name.clone();
         let subject_clone = subject.clone();
         let worker_id = format!("worker_{}", worker_num);
         let tracker_clone = tracker.clone();
@@ -308,7 +316,8 @@ async fn test_work_queue_event_processing_pipeline(
 async fn test_concurrent_work_claiming_patterns(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
-    let client = async_nats::connect("localhost:4222").await?;
+    let ctx = ctx.with_nats().await?;
+    let client = ctx.nats_client();
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let test_id = Ulid::new();
@@ -348,11 +357,12 @@ async fn test_concurrent_work_claiming_patterns(
     // Start many workers competing for work items
     let mut join_set = JoinSet::new();
     let num_workers = 5;
+    let consumer_name = format!("concurrent_consumer_{}", test_id);
 
     for worker_num in 0..num_workers {
         let client_clone = client.clone();
         let stream_name_clone = stream_name.clone();
-        let consumer_name = format!("concurrent_consumer_{}_{}", test_id, worker_num);
+        let consumer_name = consumer_name.clone();
         let subject_clone = subject.clone();
         let worker_id = format!("concurrent_worker_{}", worker_num);
         let tracker_clone = tracker.clone();
@@ -419,7 +429,8 @@ async fn test_concurrent_work_claiming_patterns(
 async fn test_work_queue_cleanup_and_tracking(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
-    let client = async_nats::connect("localhost:4222").await?;
+    let ctx = ctx.with_nats().await?;
+    let client = ctx.nats_client();
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let test_id = Ulid::new();
@@ -477,10 +488,11 @@ async fn test_work_queue_cleanup_and_tracking(
 
     // Create a single worker for cleanup processing
     let tracker = WorkTracker::new();
+    let cleanup_consumer = format!("cleanup_consumer_{}", test_id);
     let cleanup_worker = simulate_work_processor(
         client.clone(),
         stream_name.clone(),
-        format!("cleanup_consumer_{}", test_id),
+        cleanup_consumer.clone(),
         subject.clone(),
         "cleanup_worker".to_string(),
         tracker.clone(),
@@ -506,51 +518,28 @@ async fn test_work_queue_cleanup_and_tracking(
     );
 
     // Verify no remaining work in the queue
-    let stream = jetstream.get_stream(&stream_name).await?;
-    let remaining_consumer_name = format!("remaining_check_{}", test_id);
-    let remaining_consumer = stream
+    let stream_handle = jetstream.get_stream(&stream_name).await?;
+    let mut consumer = stream_handle
         .get_or_create_consumer(
-            &remaining_consumer_name,
+            &cleanup_consumer,
             ConsumerConfig {
-                durable_name: Some(remaining_consumer_name.clone()),
+                durable_name: Some(cleanup_consumer.clone()),
                 deliver_policy: DeliverPolicy::All,
                 ack_policy: AckPolicy::Explicit,
+                filter_subject: subject.clone(),
                 ..Default::default()
             },
         )
-        .await?;
-
-    // Try to fetch any remaining messages (should be none)
-    let remaining_messages = remaining_consumer
-        .fetch()
-        .max_messages(10)
-        .expires(Duration::from_secs(2))
-        .messages()
-        .await;
-
-    match remaining_messages {
-        Ok(messages) => {
-            let mut message_stream = messages;
-            let mut remaining_count = 0;
-
-            while let Some(message) = message_stream.next().await {
-                remaining_count += 1;
-                if let Ok(msg) = message {
-                    msg.ack()
-                        .await
-                        .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
-                }
-            }
-
-            assert_eq!(
-                remaining_count, 0,
-                "No work should remain in queue after processing"
-            );
-        }
-        Err(_) => {
-            // No messages available - this is expected
-        }
-    }
+        .await
+        .map_err(|e| eyre!("failed to load cleanup consumer: {e}"))?;
+    let consumer_info = consumer
+        .info()
+        .await
+        .map_err(|e| eyre!("failed to fetch consumer info: {e}"))?;
+    assert_eq!(
+        consumer_info.num_pending, 0,
+        "No work should remain in queue after processing"
+    );
 
     // Cleanup
     jetstream.delete_stream(&stream_name).await?;
@@ -562,7 +551,8 @@ async fn test_work_queue_cleanup_and_tracking(
 /// Test work item priority and processor targeting
 #[sinex_test]
 async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_eyre::eyre::Error> {
-    let client = async_nats::connect("localhost:4222").await?;
+    let ctx = ctx.with_nats().await?;
+    let client = ctx.nats_client();
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let test_id = Ulid::new();
@@ -659,6 +649,8 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
     // Create targeted workers for each priority level
     let mut join_set = JoinSet::new();
     let tracker = WorkTracker::new();
+    let total_work_items =
+        high_priority_work.len() + medium_priority_work.len() + low_priority_work.len();
 
     for (subject, priority) in &priority_streams {
         let client_clone = client.clone();
@@ -675,7 +667,7 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
             subject_clone,
             worker_id,
             tracker_clone,
-            10, // Max items per worker
+            total_work_items,
             Duration::from_millis(25),
         ));
     }
@@ -686,8 +678,6 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
     }
 
     // Verify processing results
-    let total_work_items =
-        high_priority_work.len() + medium_priority_work.len() + low_priority_work.len();
     let processed_count = tracker.get_processed_count();
 
     assert_eq!(

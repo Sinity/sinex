@@ -30,26 +30,57 @@ impl MigrationTrait for Migration {
             CREATE SCHEMA IF NOT EXISTS sinex_schemas;
             CREATE SCHEMA IF NOT EXISTS metrics;
 
-            -- Ensure ulid type exposes binary send/receive functions for SQL clients
-            CREATE OR REPLACE FUNCTION public.ulid_send(ulid)
-            RETURNS bytea
-            AS 'uuid_send'
-            LANGUAGE internal
-            IMMUTABLE STRICT PARALLEL SAFE;
+            CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at() RETURNS TRIGGER AS 'BEGIN NEW.updated_at = NOW(); RETURN NEW; END;' LANGUAGE plpgsql;
 
-            CREATE OR REPLACE FUNCTION public.ulid_recv(internal)
-            RETURNS ulid
-            AS 'uuid_recv'
-            LANGUAGE internal
-            IMMUTABLE STRICT PARALLEL SAFE;
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_proc p
+                    JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public'
+                      AND p.proname = 'ulid_to_timestamptz'
+                      AND p.pronargs = 1
+                ) THEN
+                    CREATE FUNCTION public.ulid_to_timestamptz(input ULID)
+                    RETURNS TIMESTAMPTZ
+                    AS 'SELECT input::timestamp'
+                    LANGUAGE sql
+                    IMMUTABLE;
+                END IF;
+            END;
+            $$;
 
-            ALTER TYPE ulid SET (
-                SEND = ulid_send,
-                RECEIVE = ulid_recv
+            CREATE TABLE IF NOT EXISTS sinex_schemas.dlq_events (
+                dlq_id ULID PRIMARY KEY DEFAULT gen_ulid(),
+                failed_event_id ULID NOT NULL,
+                automaton_name TEXT NOT NULL,
+                agent_name TEXT,
+                source TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                error_category TEXT NOT NULL CHECK (error_category IN ('retryable','permanent','system','user')),
+                failure_reason TEXT NOT NULL,
+                original_event_payload JSONB NOT NULL,
+                additional_metadata JSONB,
+                retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+                failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_retry_at TIMESTAMPTZ,
+                next_retry_at TIMESTAMPTZ,
+                resolved_at TIMESTAMPTZ,
+                resolved_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
 
-            CREATE OR REPLACE FUNCTION public.ulid_to_timestamptz(id_val ULID) RETURNS TIMESTAMPTZ AS 'SELECT id_val::timestamp' LANGUAGE sql IMMUTABLE;
-            CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at() RETURNS TRIGGER AS 'BEGIN NEW.updated_at = NOW(); RETURN NEW; END;' LANGUAGE plpgsql;
+            CREATE INDEX IF NOT EXISTS idx_dlq_events_automaton ON sinex_schemas.dlq_events (automaton_name);
+            CREATE INDEX IF NOT EXISTS idx_dlq_events_resolved ON sinex_schemas.dlq_events (resolved_at);
+            CREATE INDEX IF NOT EXISTS idx_dlq_events_category ON sinex_schemas.dlq_events (error_category);
+
+            DROP TRIGGER IF EXISTS set_timestamp ON sinex_schemas.dlq_events;
+            CREATE TRIGGER set_timestamp
+                BEFORE UPDATE ON sinex_schemas.dlq_events
+                FOR EACH ROW
+                EXECUTE FUNCTION public.set_current_timestamp_updated_at();
             "#
         ).await?;
 
@@ -538,6 +569,12 @@ impl MigrationTrait for Migration {
         for index in ProcessorManifests::create_indexes() {
             manager.create_index(index).await?;
         }
+        for index_sql in ProcessorManifests::create_gin_indexes_sql() {
+            manager
+                .get_connection()
+                .execute_unprepared(&index_sql)
+                .await?;
+        }
         for index in GitopsSchemaSources::create_indexes() {
             manager.create_index(index).await?;
         }
@@ -557,8 +594,8 @@ impl MigrationTrait for Migration {
             DROP SCHEMA IF EXISTS audit CASCADE;
             DROP SCHEMA IF EXISTS sinex_schemas CASCADE;
             DROP SCHEMA IF EXISTS metrics CASCADE;
-            DROP FUNCTION IF EXISTS public.ulid_to_timestamptz(ULID);
             DROP FUNCTION IF EXISTS public.set_current_timestamp_updated_at();
+            DROP FUNCTION IF EXISTS public.ulid_to_timestamptz(ULID);
             "#,
             )
             .await?;

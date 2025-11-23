@@ -1083,6 +1083,9 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                     },
                     "satellite": {
                         "enable": true
+                    },
+                    "shell": {
+                        "kitty": {"enable": true}
                     }
                 }
             }
@@ -1106,6 +1109,9 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                         "eventSources": {
                             "filesystem": {"enable": true}
                         }
+                    },
+                    "shell": {
+                        "kitty": {"enable": true}
                     }
                 }
             }

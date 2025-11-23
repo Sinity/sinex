@@ -275,8 +275,10 @@ fn cache_leaked_path(path: PathBuf) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{sinex_prop, TestContext, TestResult};
+    use crate::{sinex_prop, TestContext};
     use color_eyre::eyre::Report;
+    const FLOAT_ABS_TOLERANCE: f64 = 1e-12;
+    const FLOAT_REL_TOLERANCE: f64 = 1e-12;
 
     #[sinex_prop(cases = 8)]
     async fn property_creates_filesystem_events(
@@ -300,7 +302,7 @@ mod tests {
             .await?;
         let mut expected = payload.clone();
         TestContext::sanitize_payload(&mut expected);
-        assert_eq!(inserted.payload, expected);
+        assert_json_equivalent(&inserted.payload, &expected);
         Ok::<(), Report>(())
     }
 
@@ -315,5 +317,38 @@ mod tests {
             "source not normalized: {source}",
         );
         Ok::<(), Report>(())
+    }
+
+    fn assert_json_equivalent(left: &Value, right: &Value) {
+        match (left, right) {
+            (Value::Number(a), Value::Number(b)) => {
+                if let (Some(af), Some(bf)) = (a.as_f64(), b.as_f64()) {
+                    let delta = (af - bf).abs();
+                    let scale = af.abs().max(bf.abs()).max(1.0);
+                    assert!(
+                        delta <= FLOAT_ABS_TOLERANCE || (delta / scale) <= FLOAT_REL_TOLERANCE,
+                        "float mismatch: {af} vs {bf} (Δ={delta})"
+                    );
+                } else {
+                    assert_eq!(a, b);
+                }
+            }
+            (Value::Array(a), Value::Array(b)) => {
+                assert_eq!(a.len(), b.len(), "array length mismatch");
+                for (la, rb) in a.iter().zip(b.iter()) {
+                    assert_json_equivalent(la, rb);
+                }
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                assert_eq!(a.len(), b.len(), "object length mismatch");
+                for (key, va) in a {
+                    let Some(vb) = b.get(key) else {
+                        panic!("missing key '{key}' in rhs object");
+                    };
+                    assert_json_equivalent(va, vb);
+                }
+            }
+            _ => assert_eq!(left, right),
+        }
     }
 }

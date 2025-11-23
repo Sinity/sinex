@@ -72,11 +72,30 @@ impl ServiceContainer {
         let nats_url =
             std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into());
 
+        let allow_replay_bypass =
+            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").map_or(false, |value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            });
+
         let control_client = match spawn_replay_control(replay.clone(), &nats_url).await {
             Ok(client) => Some(client),
-            Err(err) => {
-                warn!(error = %err, "Replay control bus disabled (NATS connection failed)");
+            Err(err) if allow_replay_bypass => {
+                warn!(
+                    error = %err,
+                    "Replay control bus disabled (SINEX_ALLOW_REPLAY_CONTROL_BYPASS=1)"
+                );
                 None
+            }
+            Err(err) => {
+                return Err(
+                    SinexError::service("Failed to initialize replay control")
+                        .with_operation("gateway.spawn_replay_control")
+                        .with_source(err.to_string())
+                        .into(),
+                )
             }
         };
 
