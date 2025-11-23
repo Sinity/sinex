@@ -1,10 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+log_step() {
+  printf '[ci-postgres] %s\n' "$*"
+}
+
 PGDATA="${PGDATA:-$PWD/postgres_data}"
 PGHOST="${CI_PGHOST:-127.0.0.1}"
 PGPORT="${CI_PGPORT:-55432}"
 export PGDATA PGHOST PGPORT
+
+stop_existing_postgres() {
+  if [ -d "$PGDATA" ] && [ -f "$PGDATA/postmaster.pid" ]; then
+    if pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then
+      log_step "Stopping previous PostgreSQL cluster in $PGDATA"
+      pg_ctl -D "$PGDATA" -m fast stop >/dev/null || true
+    fi
+  fi
+
+  mapfile -t orphan_pids < <(pgrep -f "postgres -k $PWD -p $PGPORT" || true)
+  if [ "${#orphan_pids[@]}" -gt 0 ]; then
+    log_step "Cleaning up orphaned postgres processes on port $PGPORT (${orphan_pids[*]})"
+    kill "${orphan_pids[@]}" >/dev/null 2>&1 || true
+    for pid in "${orphan_pids[@]}"; do
+      while kill -0 "$pid" >/dev/null 2>&1; do
+        sleep 0.1
+      done
+    done
+  fi
+}
+
+stop_existing_postgres
 
 rm -rf "$PGDATA"
 mkdir -p "$PGDATA"
@@ -26,12 +52,24 @@ trap cleanup EXIT
 SUPERUSER=$(id -un)
 export PGHOST PGPORT SUPERUSER
 
+psql_exec() {
+  local database="$1"
+  shift
+  PGUSER="$SUPERUSER" psql -q -h "$PGHOST" -p "$PGPORT" -d "$database" -v ON_ERROR_STOP=1 -c "$*" >/dev/null
+}
+
 if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE sinity LOGIN CREATEDB;"
+  log_step "Creating role sinity"
+  psql_exec postgres "CREATE ROLE sinity LOGIN CREATEDB;"
 fi
 
+# Ensure CI sessions satisfy RLS policies requiring sinex.operation_id
+log_step "Configuring default sinex.operation_id for sinity"
+psql_exec postgres "ALTER ROLE sinity SET sinex.operation_id = 'ci-tests';"
+
 if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'sinex_dev'" | grep -q 1; then
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sinex_dev OWNER sinity;"
+  log_step "Creating database sinex_dev"
+  psql_exec postgres "CREATE DATABASE sinex_dev OWNER sinity;"
 fi
 
 ensure_extension() {
@@ -39,7 +77,8 @@ ensure_extension() {
   shift
   for candidate in "$@"; do
     if PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -tAc "SELECT 1 FROM pg_available_extensions WHERE name = '${candidate}'" | grep -q 1; then
-      PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d "$db" -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS ${candidate};"
+      log_step "Ensuring extension ${candidate} in ${db}"
+      psql_exec "$db" "CREATE EXTENSION IF NOT EXISTS ${candidate};"
       return 0
     fi
   done
@@ -50,14 +89,15 @@ ensure_extension() {
 
 grant_schema_access() {
   local schema="$1"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS ${schema};"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA ${schema} TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON TABLES TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON SEQUENCES TO sinity;"
-  PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -v ON_ERROR_STOP=1 -c "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT EXECUTE ON FUNCTIONS TO sinity;"
+  log_step "Granting access to schema ${schema}"
+  psql_exec sinex_dev "CREATE SCHEMA IF NOT EXISTS ${schema};"
+  psql_exec sinex_dev "GRANT USAGE ON SCHEMA ${schema} TO sinity;"
+  psql_exec sinex_dev "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA ${schema} TO sinity;"
+  psql_exec sinex_dev "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA ${schema} TO sinity;"
+  psql_exec sinex_dev "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${schema} TO sinity;"
+  psql_exec sinex_dev "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON TABLES TO sinity;"
+  psql_exec sinex_dev "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT ALL PRIVILEGES ON SEQUENCES TO sinity;"
+  psql_exec sinex_dev "ALTER DEFAULT PRIVILEGES FOR ROLE ${SUPERUSER} IN SCHEMA ${schema} GRANT EXECUTE ON FUNCTIONS TO sinity;"
 }
 
 export -f ensure_extension
@@ -72,13 +112,43 @@ for schema in core raw audit sinex_schemas metrics; do
   grant_schema_access "$schema"
 done
 
-export DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
-export DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
+DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
+export DATABASE_URL_APP DATABASE_URL_SUPERUSER
 export DATABASE_URL="$DATABASE_URL_APP"
 
-if [ ! -t 0 ]; then
-  tmpfile=$(mktemp)
-  cat >"$tmpfile"
-  bash "$tmpfile"
-  rm -f "$tmpfile"
-fi
+run_payload() {
+  if [ "$#" -gt 0 ]; then
+    "$@"
+    return $?
+  fi
+
+  if [ ! -t 0 ]; then
+    local tmpfile
+    tmpfile=$(mktemp)
+    {
+      echo "export PGHOST=\"$PGHOST\""
+      echo "export PGPORT=\"$PGPORT\""
+      echo "export PGDATA=\"$PGDATA\""
+      echo "export SUPERUSER=\"$SUPERUSER\""
+      echo "export DATABASE_URL_APP=\"$DATABASE_URL_APP\""
+      echo "export DATABASE_URL_SUPERUSER=\"$DATABASE_URL_SUPERUSER\""
+      echo "export DATABASE_URL=\"$DATABASE_URL_APP\""
+      cat
+    } >"$tmpfile"
+    if [ -n "${CI_POSTGRES_KEEP_SCRIPT:-}" ]; then
+      cp "$tmpfile" "$CI_POSTGRES_KEEP_SCRIPT"
+    fi
+    bash "$tmpfile"
+    local status=$?
+    rm -f "$tmpfile"
+    return $status
+  fi
+
+  echo "Usage: $0 <command> [args...] (or pipe a script via stdin)" >&2
+  return 1
+}
+
+run_payload "$@"
+status=$?
+exit $status

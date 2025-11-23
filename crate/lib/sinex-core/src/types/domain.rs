@@ -802,7 +802,8 @@ mod sqlx_impl {
 
 /// Helper function to normalize a path lexically (without filesystem access)
 fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
-    let mut components = Vec::new();
+    let mut components: Vec<String> = Vec::new();
+    let mut is_absolute = path.is_absolute();
 
     for component in path.components() {
         match component {
@@ -819,11 +820,11 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
                     // Skip current directory references
                     continue;
                 }
-                components.push(name);
+                components.push(name.to_string());
             }
             camino::Utf8Component::RootDir => {
                 components.clear();
-                components.push("/");
+                is_absolute = true;
             }
             camino::Utf8Component::CurDir => {
                 // Skip current directory references
@@ -832,22 +833,28 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
             camino::Utf8Component::ParentDir => {
                 // Treat as ".." component
                 if let Some(last) = components.last() {
-                    if *last != ".." && *last != "/" {
+                    if last != ".." {
                         components.pop();
                         continue;
                     }
                 }
-                components.push("..");
+                components.push("..".to_string());
             }
             camino::Utf8Component::Prefix(_) => {
                 // Handle Windows prefixes by keeping them
-                components.push(component.as_str());
+                components.push(component.as_str().to_string());
             }
         }
     }
 
     if components.is_empty() {
-        Utf8PathBuf::from(".")
+        if is_absolute {
+            Utf8PathBuf::from("/")
+        } else {
+            Utf8PathBuf::from(".")
+        }
+    } else if is_absolute {
+        Utf8PathBuf::from(format!("/{}", components.join("/")))
     } else {
         Utf8PathBuf::from(components.join("/"))
     }

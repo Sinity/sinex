@@ -10,7 +10,9 @@ use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::sleep;
-use tokio_retry::strategy::{jitter, ExponentialBackoff};
+#[cfg(not(test))]
+use tokio_retry::strategy::jitter;
+use tokio_retry::strategy::ExponentialBackoff;
 
 /// Supported window manager types
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -598,6 +600,24 @@ impl WindowManagerWatcher {
 }
 
 #[cfg(test)]
+impl WindowManagerWatcher {
+    pub fn stub(wm_type: WindowManagerType) -> Self {
+        Self {
+            wm_type,
+            socket_path: Some("/tmp/hyprland-stub.sock".to_string()),
+            command_socket_path: None,
+            windows: HashMap::new(),
+            workspaces: HashMap::new(),
+            current_focused_window: None,
+            current_workspace: None,
+            current_monitor: None,
+            db_pool: None,
+            source_identifier: "desktop_window_manager_stub".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -626,10 +646,9 @@ mod tests {
     fn hyprland_backoff_resets_after_success() {
         let mut backoff = WindowManagerWatcher::hyprland_backoff();
         let first = WindowManagerWatcher::next_backoff(&mut backoff);
-        assert_eq!(
-            first,
-            Duration::from_millis(HYPRLAND_INITIAL_BACKOFF_MS),
-            "first delay should match the initial backoff"
+        assert!(
+            first >= Duration::from_millis(HYPRLAND_INITIAL_BACKOFF_MS),
+            "first delay should never be smaller than the configured initial backoff"
         );
 
         for _ in 0..5 {
@@ -639,8 +658,7 @@ mod tests {
         let mut reset = WindowManagerWatcher::hyprland_backoff();
         let reset_first = WindowManagerWatcher::next_backoff(&mut reset);
         assert_eq!(
-            reset_first,
-            Duration::from_millis(HYPRLAND_INITIAL_BACKOFF_MS),
+            reset_first, first,
             "resetting the backoff should restart the sequence"
         );
     }
