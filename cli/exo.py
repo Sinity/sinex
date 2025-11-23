@@ -72,10 +72,32 @@ def handle_rpc_error(error: SinexRPCError, *, use_db: bool = False) -> None:
 
 
 def get_db_connection():
-    """Get database connection using environment variable or default."""
-    # Default to development database name; production uses 'sinex'
-    db_url = os.environ.get('DATABASE_URL', 'postgresql://localhost/sinex_dev')
-    return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    """Get database connection using environment variables or sensible defaults."""
+    db_url = os.environ.get('DATABASE_URL')
+    if db_url:
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
+    conn_params: Dict[str, Any] = {}
+    env_map = {
+        'PGHOST': 'host',
+        'PGPORT': 'port',
+        'PGUSER': 'user',
+        'PGPASSWORD': 'password',
+        'PGDATABASE': 'dbname',
+    }
+    for env_key, param_key in env_map.items():
+        value = os.environ.get(env_key)
+        if value:
+            conn_params[param_key] = value
+
+    if conn_params:
+        return psycopg2.connect(cursor_factory=RealDictCursor, **conn_params)
+
+    # Fallback to the dev database on the local unix socket
+    return psycopg2.connect(
+        "postgresql:///sinex_dev?host=/run/postgresql",
+        cursor_factory=RealDictCursor,
+    )
 
 
 def _report_db_unavailable(error: Exception) -> None:
@@ -1937,32 +1959,37 @@ def dlq_list(agent: Optional[str], source: Optional[str], event_type: Optional[s
 
                 if not include_resolved:
                     conditions.append("resolved_at IS NULL")
-            
+
                 if agent:
-                conditions.append("automaton_name = %s")
+                    conditions.append("automaton_name = %s")
                     params.append(agent)
-                
-            if source:
-                conditions.append("source = %s")
-                params.append(source)
-            
-            if event_type:
-                conditions.append("event_type = %s")
-                params.append(event_type)
-            
-            if category:
-                conditions.append("error_category = %s")
-                params.append(category)
-            
-            if conditions:
-                query_parts.append("WHERE " + " AND ".join(conditions))
-            
-            query_parts.append("ORDER BY failed_at DESC")
-            query_parts.append(f"LIMIT {limit}")
-            
-            query_sql = " ".join(query_parts)
-            cur.execute(query_sql, params)
-            dlq_entries = cur.fetchall()
+
+                if source:
+                    conditions.append("source = %s")
+                    params.append(source)
+
+                if event_type:
+                    conditions.append("event_type = %s")
+                    params.append(event_type)
+
+                if category:
+                    conditions.append("error_category = %s")
+                    params.append(category)
+
+                if conditions:
+                    query_parts.append("WHERE " + " AND ".join(conditions))
+
+                query_parts.append("ORDER BY failed_at DESC")
+                query_parts.append(f"LIMIT {limit}")
+
+                query_sql = " ".join(query_parts)
+                cur.execute(query_sql, params)
+                dlq_entries = cur.fetchall()
+    except psycopg2.errors.UndefinedTable:
+        console.print(
+            "[yellow]DLQ metadata is unavailable (table sinex_schemas.dlq_events is missing).[/yellow]"
+        )
+        return
     except psycopg2.Error as error:
         _report_db_unavailable(error)
         return
@@ -2478,12 +2505,20 @@ def dlq_metrics(window: str):
 
             console.print(backlog_table)
 
+    except psycopg2.errors.UndefinedTable:
+        console.print(
+            "[yellow]DLQ metrics are unavailable (table sinex_schemas.dlq_events is missing).[/yellow]"
+        )
+        return
+    except psycopg2.Error as error:
+        _report_db_unavailable(error)
+        return
     except Exception as e:
         console.print(f"[red]Failed to compute DLQ metrics: {e}[/red]")
         sys.exit(1)
 
 
-@cli.group()
+@click.group()
 def confirmations():
     """Confirmation stream utilities."""
     pass
@@ -2514,31 +2549,34 @@ def confirmations_tail(limit: int):
                     (limit,),
                 )
                 confirmations = cur.fetchall()
+
+        if not confirmations:
+            console.print("[yellow]No confirmation events found.[/yellow]")
+            return
+
+        table = Table(title=f"Recent Confirmations (showing {len(confirmations)})", box=box.SIMPLE)
+        table.add_column("Event ID", style="cyan")
+        table.add_column("Source", style="green")
+        table.add_column("Event Type", style="blue")
+        table.add_column("Status", style="magenta")
+        table.add_column("Ingested At", style="white")
+
+        for entry in confirmations:
+            table.add_row(
+                (entry.get("event_id") or "")[:8],
+                entry.get("source") or "unknown",
+                entry.get("event_type") or "confirmations.event",
+                entry.get("status") or "unknown",
+                entry.get("ts_ingest").isoformat() if entry.get("ts_ingest") else "n/a",
+            )
+
+        console.print(table)
     except psycopg2.Error as error:
         _report_db_unavailable(error)
-        return
-
-    if not confirmations:
-        console.print("[yellow]No confirmation events found.[/yellow]")
-        return
-
-    table = Table(title=f"Recent Confirmations (showing {len(confirmations)})", box=box.SIMPLE)
-    table.add_column("Event ID", style="cyan")
-    table.add_column("Source", style="green")
-    table.add_column("Event Type", style="blue")
-    table.add_column("Status", style="magenta")
-    table.add_column("Ingested At", style="white")
-
-    for entry in confirmations:
-        table.add_row(
-            entry["event_id"][:8],
-            entry["source"],
-            entry["event_type"],
-            entry.get("status") or "unknown",
-            entry["ts_ingest"].isoformat() if entry["ts_ingest"] else "n/a",
+    except Exception as error:
+        console.print(
+            f"[yellow]Confirmation data unavailable (falling back to empty result): {error}[/yellow]"
         )
-
-    console.print(table)
 
 
 @dlq.command('purge')
@@ -4400,6 +4438,7 @@ try:
     from .replay_commands import replay as replay_plan_group
 except ImportError:
     from replay_commands import replay as replay_plan_group
+cli.add_command(confirmations)
 cli.add_command(replay_plan_group, name='replay-plan')
 
 if __name__ == '__main__':

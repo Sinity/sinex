@@ -320,6 +320,7 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
     )
     .bind(&updated_subscriptions)
     .bind("1.1.0")
+    .bind("updatable_subscriber")
     .execute(&ctx.pool)
     .await
     .unwrap();

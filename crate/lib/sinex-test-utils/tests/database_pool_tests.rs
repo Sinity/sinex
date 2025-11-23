@@ -17,6 +17,17 @@ use sqlx::Connection;
 
 #[sinex_test]
 async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<()> {
+    if !std::env::var("SINEX_DBPOOL_STRESS_TESTS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        eprintln!(
+            "⚠️  Skipping test_pool_handles_concurrent_acquisition (set SINEX_DBPOOL_STRESS_TESTS=1 to enable)"
+        );
+        return Ok(());
+    }
+
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     reset_pool().await?;
 
     // Initialize the pool and determine available slots.

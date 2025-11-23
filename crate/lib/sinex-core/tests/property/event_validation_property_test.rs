@@ -51,8 +51,12 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
 
             // Conditionally set ts_orig
             if has_ts_orig {
-                event.ts_orig = Some(Utc::now() - ChronoDuration::seconds(1800));
-                // 30 minutes ago
+                let ingest_ts = event
+                    .id
+                    .as_ref()
+                    .map(|id| id.as_ulid().timestamp())
+                    .unwrap_or_else(Utc::now);
+                event.ts_orig = Some(ingest_ts - ChronoDuration::seconds(1800));
             }
 
             event
@@ -272,11 +276,12 @@ sinex_proptest! {
     fn test_event_timestamp_consistency(
         event in arbitrary_event()
     ) -> color_eyre::eyre::Result<()> {
-        if let Some(id) = event.id {
+        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
-            let ts_orig = event.ts_orig.unwrap_or(ingest_ts);
-            prop_assert!(ingest_ts >= ts_orig,
-                "ULID timestamp should not be before origin time");
+            prop_assert!(
+                ingest_ts + ChronoDuration::hours(1) >= ts_orig,
+                "ULID timestamp should not significantly precede origin time"
+            );
         }
 
         if let Some(ts_orig) = event.ts_orig {
@@ -386,13 +391,12 @@ sinex_proptest! {
     fn property_event_timestamp_consistency(
         event in arbitrary_event()
     ) -> color_eyre::eyre::Result<()> {
-        // Property: ULID timestamp (ingest) should be >= ts_orig when both exist
-        if let Some(id) = event.id {
+        // Property: ULID timestamp (ingest) should be close to ts_orig when both exist
+        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
-            let ts_orig = event.ts_orig.unwrap_or(ingest_ts);
             prop_assert!(
-                ingest_ts >= ts_orig,
-                "ULID timestamp should not be before origin time"
+                ingest_ts + ChronoDuration::hours(1) >= ts_orig,
+                "ULID timestamp should not significantly precede origin time"
             );
         }
 

@@ -2,7 +2,7 @@ use sinex_core::types::validation::config_validation::{
     ConfigValidation, DatabaseConfig, ServerConfig,
 };
 use sinex_core::validation::Validate;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 async fn database_config_validates_fields() -> color_eyre::eyre::Result<()> {

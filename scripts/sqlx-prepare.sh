@@ -25,6 +25,7 @@ extra_crates=(
   crate/lib/sinex-services
   crate/core/sinex-gateway
   crate/core/sinex-ingestd
+  crate/satellites/sinex-desktop-satellite
 )
 
 for crate in "${extra_crates[@]}"; do

@@ -365,6 +365,10 @@ impl ReplayStateMachine {
         ) {
             meta.finished_at = Some(now);
         }
+        if matches!(new_state, ReplayState::Completed) {
+            meta.outcome = Some("success".into());
+            meta.error_details = None;
+        }
 
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;
@@ -590,6 +594,7 @@ impl ReplayStateMachine {
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(Utc::now());
+        meta.outcome = Some("failed".into());
         meta.error_details = Some(error.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta)?;

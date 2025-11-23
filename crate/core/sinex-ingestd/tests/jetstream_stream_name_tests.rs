@@ -1,4 +1,5 @@
 use async_nats::jetstream;
+use color_eyre::eyre::eyre;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::time::Duration;
 
@@ -21,12 +22,26 @@ async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<(
     })
     .await?;
 
-    // Give JetStream a moment to register the stream before lookup.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    js.get_stream(&env.nats_subject("source_material_begin"))
-        .await
-        .expect("stream lookup by subject should succeed");
+    wait_for_stream(&js, &stream_name, Duration::from_secs(5)).await?;
 
     Ok(())
+}
+
+async fn wait_for_stream(
+    js: &jetstream::Context,
+    name: &str,
+    timeout: Duration,
+) -> color_eyre::Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match js.get_stream(name).await {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(eyre!("stream {name} not ready: {err}"));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    }
 }

@@ -549,15 +549,14 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
 async fn insert_event(pool: &DbPool, event: &RawEvent) -> TestResult<()> {
     sqlx::query!(
         r#"
-        INSERT INTO core.events (id, source, event_type, payload, ts_orig, ts_ingest)
-        VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6)
+        INSERT INTO core.events (id, source, event_type, payload, ts_orig)
+        VALUES ($1::uuid::ulid, $2, $3, $4, $5)
         "#,
         event.id.to_uuid(),
         event.source,
         event.event_type,
         event.payload,
-        event.ts_orig,
-        event.ts_ingest
+        event.ts_orig
     )
     .execute(pool)
     .await

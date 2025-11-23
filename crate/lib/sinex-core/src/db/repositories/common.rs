@@ -103,9 +103,9 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
     /// Check if a record exists by primary key
     async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
         // SAFE: schema_name(), table_name(), and primary_key() return &'static str constants
-        // from trait implementations. User input is properly parameterized via $1::ulid
+        // from trait implementations. User input is properly parameterized via $1::uuid
         let sql = format!(
-            "SELECT 1 FROM {}.{} WHERE {} = $1::ulid LIMIT 1",
+            "SELECT 1 FROM {}.{} WHERE {}::uuid = $1::uuid LIMIT 1",
             Self::Table::schema_name(),
             Self::Table::table_name(),
             Self::Table::primary_key()

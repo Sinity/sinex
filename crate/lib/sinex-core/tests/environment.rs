@@ -2,6 +2,19 @@ use sinex_core::environment::{environment, SinexEnvironment};
 use sinex_test_utils::sinex_test;
 use std::env;
 use std::path::PathBuf;
+use url::Url;
+
+fn assert_equivalent_db_url(actual: &str, expected: &str) -> color_eyre::eyre::Result<()> {
+    let actual_url = Url::parse(actual)?;
+    let expected_url = Url::parse(expected)?;
+    assert_eq!(actual_url.scheme(), expected_url.scheme());
+    assert_eq!(actual_url.path(), expected_url.path());
+    assert_eq!(
+        actual_url.query_pairs().collect::<Vec<_>>(),
+        expected_url.query_pairs().collect::<Vec<_>>()
+    );
+    Ok(())
+}
 
 #[sinex_test]
 async fn environment_creation() -> color_eyre::eyre::Result<()> {
@@ -44,7 +57,7 @@ async fn database_urls_are_namespaced_once() -> color_eyre::eyre::Result<()> {
 
     let base_url = "postgresql:///sinex?host=/run/postgresql";
     let namespaced = env.database_url(base_url).unwrap();
-    assert_eq!(namespaced, "postgresql:///sinex_dev?host=/run/postgresql");
+    assert_equivalent_db_url(&namespaced, "postgresql:///sinex_dev?host=/run/postgresql")?;
 
     let unchanged = env.database_url(&namespaced).unwrap();
     assert_eq!(unchanged, namespaced);
@@ -57,10 +70,10 @@ async fn database_urls_dbname_query_support() -> color_eyre::eyre::Result<()> {
 
     let base_url = "postgresql:///?host=/run/postgresql&dbname=sinex";
     let namespaced = env.database_url(base_url)?;
-    assert_eq!(
-        namespaced,
-        "postgresql:///?host=/run/postgresql&dbname=sinex_dev"
-    );
+    assert_equivalent_db_url(
+        &namespaced,
+        "postgresql:///?host=/run/postgresql&dbname=sinex_dev",
+    )?;
 
     // Should not double-namespace
     let unchanged = env.database_url(&namespaced)?;
@@ -73,10 +86,10 @@ async fn database_urls_dbname_case_insensitive() -> color_eyre::eyre::Result<()>
     let env = SinexEnvironment::new("staging").unwrap();
     let base_url = "postgresql:///?DBNAME=sinex&host=/run/postgresql";
     let namespaced = env.database_url(base_url)?;
-    assert_eq!(
-        namespaced,
-        "postgresql:///?DBNAME=sinex_staging&host=/run/postgresql"
-    );
+    assert_equivalent_db_url(
+        &namespaced,
+        "postgresql:///?DBNAME=sinex_staging&host=/run/postgresql",
+    )?;
     Ok(())
 }
 
@@ -85,10 +98,10 @@ async fn database_urls_database_param_supported() -> color_eyre::eyre::Result<()
     let env = SinexEnvironment::new("prod").unwrap();
     let base_url = "postgresql:///?host=/run/postgresql&database=sinex";
     let namespaced = env.database_url(base_url)?;
-    assert_eq!(
-        namespaced,
-        "postgresql:///?host=/run/postgresql&database=sinex_prod"
-    );
+    assert_equivalent_db_url(
+        &namespaced,
+        "postgresql:///?host=/run/postgresql&database=sinex_prod",
+    )?;
     Ok(())
 }
 

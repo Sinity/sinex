@@ -74,6 +74,7 @@ async fn clipboard_file_operations_capture_paths() -> Result<()> {
     let payload = ClipboardCopiedPayload::test_default("file_hash")
         .with_content_type("application/x-file-list")
         .with_file_paths(file_paths.clone())
+        .with_file_count(file_paths.len())
         .with_source_app("file_manager");
 
     let json_value = serde_json::to_value(&payload)?;
@@ -110,7 +111,8 @@ async fn builder_method_chaining_sets_all_fields() -> Result<()> {
         .with_content_size(2048usize)
         .with_text_preview("Image preview")
         .with_source_app("image_editor")
-        .with_file_paths(vec!["/tmp/image.png".to_string()]);
+        .with_file_paths(vec!["/tmp/image.png".to_string()])
+        .with_file_count(1usize);
 
     let json_value = serde_json::to_value(&payload)?;
     assert_eq!(json_value["operation"], "paste");

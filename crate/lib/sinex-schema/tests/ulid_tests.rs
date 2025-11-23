@@ -345,28 +345,31 @@ mod property_tests {
     use sinex_test_utils::sinex_proptest;
 
     sinex_proptest! {
-        fn test_ulid_string_roundtrip(ulid: Ulid in ulid_strategy()) {
+        fn test_ulid_string_roundtrip(ulid: Ulid in ulid_strategy()) -> TestResult<()> {
             let ulid_str = ulid.to_string();
             let parsed = ulid_str.parse::<Ulid>().unwrap();
             prop_assert_eq!(ulid, parsed);
+            Ok(())
         }
 
-        fn test_ulid_bytes_roundtrip(ulid: Ulid in ulid_strategy()) {
+        fn test_ulid_bytes_roundtrip(ulid: Ulid in ulid_strategy()) -> TestResult<()> {
             let bytes = ulid.to_bytes();
             let restored = Ulid::from_bytes(bytes).unwrap();
             prop_assert_eq!(ulid, restored);
+            Ok(())
         }
 
-        fn test_ulid_uuid_roundtrip(ulid: Ulid in ulid_strategy()) {
+        fn test_ulid_uuid_roundtrip(ulid: Ulid in ulid_strategy()) -> TestResult<()> {
             let uuid = ulid.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             prop_assert_eq!(ulid, restored);
+            Ok(())
         }
 
         fn test_ulid_ordering_consistency(
             ulid1: Ulid in ulid_strategy(),
             ulid2: Ulid in ulid_strategy()
-        ) {
+        ) -> TestResult<()> {
             // Compare ULIDs
             let ulid_cmp = ulid1.cmp(&ulid2);
 
@@ -378,9 +381,10 @@ mod property_tests {
 
             prop_assert_eq!(ulid_cmp, str_cmp);
             prop_assert_eq!(ulid_cmp, uuid_cmp);
+            Ok(())
         }
 
-        fn test_timestamp_extraction_reasonable(ulid: Ulid in ulid_strategy()) {
+        fn test_timestamp_extraction_reasonable(ulid: Ulid in ulid_strategy()) -> TestResult<()> {
             let timestamp = ulid.timestamp();
 
             // Should be within reasonable range (1970 to far future)
@@ -389,6 +393,7 @@ mod property_tests {
 
             prop_assert!(timestamp >= unix_epoch);
             prop_assert!(timestamp <= far_future);
+            Ok(())
         }
     }
 

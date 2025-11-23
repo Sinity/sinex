@@ -26,7 +26,7 @@ mod ulid_property_tests {
     use sinex_test_utils::sinex_proptest;
 
     sinex_proptest! {
-        fn prop_ulid_string_representation_always_26_chars(ulid in ulid_strategy()) {
+        fn prop_ulid_string_representation_always_26_chars(ulid in ulid_strategy()) -> TestResult<()> {
             let s = ulid.to_string();
             prop_assert_eq!(s.len(), 26);
 
@@ -36,36 +36,41 @@ mod ulid_property_tests {
                     '0'..='9' | 'A'..='H' | 'J'..='K' | 'M'..='N' | 'P'..='T' | 'V'..='Z'
                 ));
             }
+            Ok(())
         }
 
-        fn prop_ulid_parsing_roundtrip(ulid in ulid_strategy()) {
+        fn prop_ulid_parsing_roundtrip(ulid in ulid_strategy()) -> TestResult<()> {
             let s = ulid.to_string();
             let parsed = s.parse::<Ulid>().unwrap();
             prop_assert_eq!(ulid, parsed);
+            Ok(())
         }
 
-        fn prop_ulid_bytes_roundtrip(ulid in ulid_strategy()) {
+        fn prop_ulid_bytes_roundtrip(ulid in ulid_strategy()) -> TestResult<()> {
             let bytes = ulid.to_bytes();
             let restored = Ulid::from_bytes(bytes).unwrap();
             prop_assert_eq!(ulid, restored);
+            Ok(())
         }
 
-        fn prop_ulid_uuid_roundtrip(ulid in ulid_strategy()) {
+        fn prop_ulid_uuid_roundtrip(ulid in ulid_strategy()) -> TestResult<()> {
             let uuid = ulid.to_uuid();
             let restored = Ulid::from_uuid(uuid);
             prop_assert_eq!(ulid, restored);
+            Ok(())
         }
 
-        fn prop_ulid_ordering_is_consistent(ulid1 in ulid_strategy(), ulid2 in ulid_strategy()) {
+        fn prop_ulid_ordering_is_consistent(ulid1 in ulid_strategy(), ulid2 in ulid_strategy()) -> TestResult<()> {
             let ord1 = ulid1.cmp(&ulid2);
             let ord2 = ulid1.to_string().cmp(&ulid2.to_string());
             let ord3 = ulid1.to_uuid().cmp(&ulid2.to_uuid());
 
             prop_assert_eq!(ord1, ord2);
             prop_assert_eq!(ord1, ord3);
+            Ok(())
         }
 
-        fn prop_timestamp_extraction_is_reasonable(ulid in ulid_strategy()) {
+        fn prop_timestamp_extraction_is_reasonable(ulid in ulid_strategy()) -> TestResult<()> {
             let timestamp = ulid.timestamp();
 
             // Should be within the representable ULID timestamp range (48-bit ms)
@@ -75,11 +80,12 @@ mod ulid_property_tests {
 
             prop_assert!(timestamp >= min_time);
             prop_assert!(timestamp <= max_time);
+            Ok(())
         }
 
         fn prop_nil_ulid_behavior(
             bytes_prefix in proptest::collection::vec(any::<u8>(), 0..16)
-        ) {
+        ) -> TestResult<()> {
             // Generate various patterns of bytes
             let mut test_bytes = [0u8; 16];
             for (i, &byte) in bytes_prefix.iter().enumerate() {
@@ -97,12 +103,13 @@ mod ulid_property_tests {
                 prop_assert!(!ulid.is_nil());
                 prop_assert_ne!(ulid, Ulid::nil());
             }
+            Ok(())
         }
 
         fn prop_concurrent_generation_produces_unique_ulids(
             num_threads in 1usize..=8,
             ulids_per_thread in 1usize..=100
-        ) {
+        ) -> TestResult<()> {
             let total_ulids = num_threads * ulids_per_thread;
             prop_assume!(total_ulids <= 1000); // Keep test runtime reasonable
 
@@ -120,9 +127,10 @@ mod ulid_property_tests {
             // All ULIDs should be unique
             let unique_ulids: HashSet<_> = all_ulids.iter().cloned().collect();
             prop_assert_eq!(unique_ulids.len(), all_ulids.len());
+            Ok(())
         }
 
-        fn prop_rapid_generation_maintains_monotonicity(count in 1usize..=1000) {
+        fn prop_rapid_generation_maintains_monotonicity(count in 1usize..=1000) -> TestResult<()> {
             let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
             // All should be unique
@@ -130,11 +138,12 @@ mod ulid_property_tests {
             prop_assert_eq!(unique_count, ulids.len());
 
             // Note: We don't assert strict monotonicity across large bursts; generation may span clock jitter
+            Ok(())
         }
 
         fn prop_ulid_with_specific_timestamp_behavior(
             timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
-        ) {
+        ) -> TestResult<()> {
             let datetime = chrono::DateTime::from_timestamp_millis(timestamp_ms as i64).unwrap();
             let ulid = Ulid::from_datetime(datetime);
 
@@ -143,9 +152,10 @@ mod ulid_property_tests {
             // Should be very close (within a few seconds due to precision)
             let diff = (extracted.timestamp_millis() - timestamp_ms as i64).abs();
             prop_assert!(diff <= 1000); // Within 1 second
+            Ok(())
         }
 
-        fn prop_ulid_hash_stability(ulid in ulid_strategy()) {
+        fn prop_ulid_hash_stability(ulid in ulid_strategy()) -> TestResult<()> {
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
 
@@ -167,6 +177,7 @@ mod ulid_property_tests {
             let hash3 = hasher3.finish();
 
             prop_assert_eq!(hash1, hash3);
+            Ok(())
         }
     }
 
@@ -176,13 +187,13 @@ mod ulid_property_tests {
 #[cfg(test)]
 mod stress_tests {
     use super::*;
+    use sinex_test_utils::sinex_proptest;
 
     sinex_proptest! {
-        #[test]
         fn prop_high_frequency_generation_stress_test(
             burst_size in 100usize..=1000,
             num_bursts in 1usize..=10
-        ) {
+        ) -> TestResult<()> {
             let mut all_ulids = Vec::new();
 
             for _ in 0..num_bursts {
@@ -201,33 +212,34 @@ mod stress_tests {
             prop_assert_eq!(unique_count, all_ulids.len());
 
             // Do not assert global ordering; only uniqueness is required
+            Ok(())
         }
 
-        #[test]
         fn prop_memory_efficiency_of_ulid_storage(
-            ulids_count in 100usize..=10000
-        ) {
-            prop_assume!(ulids_count <= 5000); // Keep memory usage reasonable
+            ulids_count in 100usize..=5000
+        ) -> TestResult<()> {
+            const MAX_ULIDS_UNDER_TEST: usize = 5000;
+            let sample_count = ulids_count.min(MAX_ULIDS_UNDER_TEST);
 
-            let ulids: Vec<_> = (0..ulids_count).map(|_| Ulid::new()).collect();
+            let ulids: Vec<_> = (0..sample_count).map(|_| Ulid::new()).collect();
 
             // Verify we can store many ULIDs efficiently
-            prop_assert_eq!(ulids.len(), ulids_count);
+            prop_assert_eq!(ulids.len(), sample_count);
 
             // All should be unique
             let unique_count = ulids.iter().cloned().collect::<HashSet<_>>().len();
-            prop_assert_eq!(unique_count, ulids_count);
+            prop_assert_eq!(unique_count, sample_count);
 
             // Memory usage should be reasonable (16 bytes per ULID + Vec overhead)
-            let expected_min_bytes = ulids_count * 16;
+            let expected_min_bytes = sample_count * 16;
             let actual_bytes = std::mem::size_of_val(&ulids[..]);
             prop_assert!(actual_bytes >= expected_min_bytes);
+            Ok(())
         }
 
-        #[test]
         fn prop_conversion_performance_stability(
             conversion_count in 100usize..=1000
-        ) {
+        ) -> TestResult<()> {
             let ulid = Ulid::new();
 
             // Multiple conversions should be stable
@@ -254,6 +266,7 @@ mod stress_tests {
             for b in &bytes {
                 prop_assert_eq!(*b, ulid.to_bytes());
             }
+            Ok(())
         }
     }
 }
@@ -261,14 +274,14 @@ mod stress_tests {
 #[cfg(test)]
 mod edge_case_properties {
     use super::*;
+    use sinex_test_utils::sinex_proptest;
 
     sinex_proptest! {
-        #[test]
         fn prop_ulid_comparison_transitivity(
             ulid1 in ulid_strategy(),
             ulid2 in ulid_strategy(),
             ulid3 in ulid_strategy()
-        ) {
+        ) -> TestResult<()> {
             // Test transitivity: if a < b and b < c, then a < c
             if ulid1 < ulid2 && ulid2 < ulid3 {
                 prop_assert!(ulid1 < ulid3);
@@ -281,10 +294,10 @@ mod edge_case_properties {
 
             // Test reflexivity: a == a
             prop_assert_eq!(ulid1.cmp(&ulid1), std::cmp::Ordering::Equal);
+            Ok(())
         }
 
-        #[test]
-        fn prop_ulid_json_serialization_stability(ulid in ulid_strategy()) {
+        fn prop_ulid_json_serialization_stability(ulid in ulid_strategy()) -> TestResult<()> {
             // ULIDs should serialize consistently as strings
             let json1 = serde_json::to_string(&ulid).unwrap();
             let json2 = serde_json::to_string(&ulid).unwrap();
@@ -293,10 +306,10 @@ mod edge_case_properties {
             // Should deserialize back to the same ULID (keep json1 for reuse without move)
             let deserialized: Ulid = serde_json::from_str(json1.as_str()).unwrap();
             prop_assert_eq!(ulid, deserialized);
+            Ok(())
         }
 
-        #[test]
-        fn prop_ulid_clone_and_copy_semantics(ulid in ulid_strategy()) {
+        fn prop_ulid_clone_and_copy_semantics(ulid in ulid_strategy()) -> TestResult<()> {
             let cloned = ulid.clone();
             let copied = ulid;
 
@@ -307,10 +320,10 @@ mod edge_case_properties {
             // All should have same string representation
             prop_assert_eq!(ulid.to_string(), cloned.to_string());
             prop_assert_eq!(ulid.to_string(), copied.to_string());
+            Ok(())
         }
 
-        #[test]
-        fn prop_ulid_debug_format_consistency(ulid in ulid_strategy()) {
+        fn prop_ulid_debug_format_consistency(ulid in ulid_strategy()) -> TestResult<()> {
             let debug1 = format!("{:?}", ulid);
             let debug2 = format!("{:?}", ulid);
 
@@ -318,13 +331,13 @@ mod edge_case_properties {
             prop_assert!(debug1.starts_with("Ulid("));
             prop_assert!(debug1.ends_with(")"));
             prop_assert!(debug1.contains(&ulid.to_string()));
+            Ok(())
         }
 
-        #[test]
         fn prop_ulid_from_datetime_precision(
             timestamp_secs in 1577836800i64..1893456000i64, // 2020-2030
             nanos in 0u32..1_000_000_000u32
-        ) {
+        ) -> TestResult<()> {
             let datetime = chrono::DateTime::from_timestamp(timestamp_secs, nanos).unwrap();
             let ulid = Ulid::from_datetime(datetime);
             let extracted = ulid.timestamp();
@@ -332,6 +345,7 @@ mod edge_case_properties {
             // Should be within reasonable precision (millisecond level)
             let diff_ms = (extracted.timestamp_millis() - datetime.timestamp_millis()).abs();
             prop_assert!(diff_ms <= 1); // Within 1 millisecond
+            Ok(())
         }
     }
 }
@@ -364,14 +378,14 @@ fn ulid_strategy() -> BoxedStrategy<Ulid> {
 #[cfg(test)]
 mod concurrent_property_tests {
     use super::*;
+    use sinex_test_utils::sinex_proptest;
     use std::sync::{Arc, Barrier, Mutex};
 
     sinex_proptest! {
-        #[test]
         fn prop_concurrent_ulid_generation_ordering(
             num_threads in 2usize..=8,
             ulids_per_thread in 10usize..=100
-        ) {
+        ) -> TestResult<()> {
             let barrier = Arc::new(Barrier::new(num_threads));
             let results = Arc::new(Mutex::new(Vec::new()));
 
@@ -410,12 +424,12 @@ mod concurrent_property_tests {
             // All ULIDs across all threads should be unique
             let unique_count = all_ulids.iter().cloned().collect::<HashSet<_>>().len();
             prop_assert_eq!(unique_count, all_ulids.len(), "All ULIDs should be unique");
+            Ok(())
         }
 
-        #[test]
         fn prop_timestamp_consistency_under_load(
             generation_count in 100usize..=1000
-        ) {
+        ) -> TestResult<()> {
             let start_time = chrono::Utc::now() - chrono::Duration::seconds(2);
 
             let ulids: Vec<_> = (0..generation_count).map(|_| Ulid::new()).collect();
@@ -442,6 +456,7 @@ mod concurrent_property_tests {
                     time1, time2
                 );
             }
+            Ok(())
         }
     }
 }

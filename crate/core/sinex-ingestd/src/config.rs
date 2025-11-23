@@ -108,9 +108,9 @@ pub struct IngestdConfig {
 impl IngestdConfig {
     /// Build a Figment instance with defaults, config files, and environment overrides.
     fn build_figment_base() -> Figment {
-        Figment::from(Serialized::defaults(Self::default()))
-            .merge(Toml::file("ingestd.toml").nested())
-            .merge(Toml::file("/etc/sinex/ingestd.toml").nested())
+        let figment = Figment::from(Serialized::defaults(Self::default()));
+        let figment = Self::merge_config_file(figment, "ingestd.toml");
+        Self::merge_config_file(figment, "/etc/sinex/ingestd.toml")
     }
 
     /// Add shared environment variable layers for ingestd configuration.
@@ -127,7 +127,7 @@ impl IngestdConfig {
 
     /// Load configuration including a specific config file.
     pub fn load_from_path(path: impl AsRef<str>) -> Result<Self, figment::Error> {
-        let figment = Self::build_figment_base().merge(Toml::file(path.as_ref()));
+        let figment = Self::merge_config_file(Self::build_figment_base(), path.as_ref());
         Self::add_env(figment).extract()
     }
 
@@ -294,6 +294,14 @@ impl IngestdConfig {
             .acquire_timeout(std::time::Duration::from_secs(30))
             .idle_timeout(std::time::Duration::from_secs(600))
             .max_lifetime(std::time::Duration::from_secs(1800))
+    }
+}
+
+impl IngestdConfig {
+    fn merge_config_file(figment: Figment, path: &str) -> Figment {
+        figment
+            .merge(Toml::file(path).nested())
+            .merge(Figment::from(Toml::file(path)).select("ingestd"))
     }
 }
 

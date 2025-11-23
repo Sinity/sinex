@@ -175,7 +175,9 @@ pub mod malformed_detection {
             anomalies.push("event type has invalid dot placement".to_string());
         }
 
-        let payload_size = event.payload.to_string().len();
+        let payload_size = serde_json::to_vec(&event.payload)
+            .map(|bytes| bytes.len())
+            .unwrap_or_default();
         if payload_size > DEFAULT_MAX_PAYLOAD_BYTES {
             anomalies.push(format!(
                 "payload size {payload_size} exceeds limit {DEFAULT_MAX_PAYLOAD_BYTES}"

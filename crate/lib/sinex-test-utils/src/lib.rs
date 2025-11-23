@@ -286,9 +286,9 @@ pub use channel_enhancements::{
     EnhancedEventSender, PerformanceMetrics as ChannelPerformanceMetrics,
 };
 pub use database_pool::{
-    acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
-    optional_extension_missing, pool_slot_count, reset_pool, with_pool_size, DatabaseStats,
-    PoolHealthReport, TestDatabase,
+    acquire_admin_connection, acquire_pool_test_guard, acquire_test_database, check_pool_health,
+    get_pool_stats, optional_extension_missing, pool_slot_count, reset_pool, with_pool_size,
+    DatabasePoolTestGuard, DatabaseStats, PoolHealthReport, TestDatabase,
 };
 pub use deployment_scenario_utils::{
     CompatibilityResult, CompatibilityTestScenario, ComponentConfig, ConfigCompatibilityTester,

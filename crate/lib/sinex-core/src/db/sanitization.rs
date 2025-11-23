@@ -260,8 +260,7 @@ mod tests {
         assert!(
             !changed,
             "sanitizing twice should be stable: {} -> {}",
-            event.source,
-            sanitized.source
+            event.source, sanitized.source
         );
         assert_eq!(event.source, sanitized.source);
     }

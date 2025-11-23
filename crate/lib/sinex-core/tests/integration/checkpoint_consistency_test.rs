@@ -16,6 +16,7 @@ use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::TestResult;
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 
 #[sinex_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<()> {
@@ -90,21 +91,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     );
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.checkpoint'")
-        .execute(&pool)
-        .await?;
+    cleanup_processor_state(&pool, &processor_name, &["test.checkpoint"]).await?;
 
     Ok(())
 }
@@ -211,21 +198,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     );
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.gap_detection'")
-        .execute(&pool)
-        .await?;
+    cleanup_processor_state(&pool, &processor_name, &["test.gap_detection"]).await?;
 
     Ok(())
 }
@@ -362,21 +335,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     }
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.stale_checkpoint'")
-        .execute(&pool)
-        .await?;
+    cleanup_processor_state(&pool, &processor_name, &["test.stale_checkpoint"]).await?;
 
     Ok(())
 }
@@ -517,24 +476,9 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         "Should detect various checkpoint inconsistency types"
     );
 
-    // Cleanup
     for name in &processor_names {
-        sqlx::query!(
-            "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-            name
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query!(
-            "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-            name
-        )
-        .execute(&pool)
-        .await?;
+        cleanup_processor_state(&pool, name, &["test.cross_validation"]).await?;
     }
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.cross_validation'")
-        .execute(&pool)
-        .await?;
 
     Ok(())
 }
@@ -683,21 +627,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     );
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
-        .execute(&pool)
-        .await?;
+    cleanup_processor_state(&pool, &processor_name, &["test.recovery"]).await?;
 
     Ok(())
 }
@@ -717,6 +647,42 @@ struct CheckpointInconsistency {
     details: String,
     inconsistency_type: CheckpointInconsistencyType,
     events_potentially_missed: u64,
+}
+
+async fn cleanup_processor_state(
+    pool: &DbPool,
+    processor_name: &str,
+    event_sources: &[&str],
+) -> TestResult<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
+        .bind("checkpoint-test-cleanup")
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query!(
+        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
+        processor_name
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
+        processor_name
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    for source in event_sources {
+        sqlx::query("DELETE FROM core.events WHERE source = $1")
+            .bind(*source)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn analyze_checkpoint(
@@ -846,21 +812,15 @@ async fn analyze_checkpoint(
 }
 
 async fn fetch_event_ulid_at(pool: &DbPool, source: &str, offset: i64) -> TestResult<Ulid> {
-    let row = sqlx::query!(
-        r#"
-        SELECT id as "id!: Ulid"
-        FROM core.events
-        WHERE source = $1
-        ORDER BY id
-        OFFSET $2
-        LIMIT 1
-        "#,
-        source,
-        offset
+    let id_text = sqlx::query_scalar::<_, String>(
+        "SELECT id::text FROM core.events WHERE source = $1 ORDER BY id OFFSET $2 LIMIT 1",
     )
+    .bind(source)
+    .bind(offset)
     .fetch_one(pool)
     .await?;
-    Ok(row.id)
+    let ulid = Ulid::from_str(&id_text)?;
+    Ok(ulid)
 }
 
 fn checkpoint_format_issue(
@@ -895,17 +855,23 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     .execute(&pool)
     .await?;
 
-    // Create a sequence of events
+    // Create a sequence of events and capture their IDs for deterministic references.
+    let mut created_event_ids = Vec::with_capacity(20);
     for i in 0..20 {
-        let _event = ctx
+        let event = ctx
             .create_test_event("test.data_loss", "sequence_event", json!({"sequence": i}))
             .await?;
+        if let Some(id) = event.id {
+            created_event_ids.push(*id.as_ulid());
+        }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Simulate data loss scenario: checkpoint jumps from event 5 to event 15
     // This suggests events 6-14 were "processed" but there's a gap
-    let checkpoint_ulid = fetch_event_ulid_at(&pool, "test.data_loss", 14).await?; // 15th event (0-indexed)
+    let checkpoint_ulid = *created_event_ids
+        .get(14)
+        .expect("expected at least 15 generated events for data loss test");
 
     sqlx::query!(
         r#"
@@ -921,13 +887,16 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
 
     // Now add more events after the checkpoint
     for i in 20..25 {
-        let _event = ctx
+        let event = ctx
             .create_test_event(
                 "test.data_loss",
                 "post_checkpoint_event",
                 json!({"sequence": i}),
             )
             .await?;
+        if let Some(id) = event.id {
+            created_event_ids.push(*id.as_ulid());
+        }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
@@ -974,22 +943,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
         "Should detect at least the expected unprocessed events"
     );
 
-    // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.data_loss'")
-        .execute(&pool)
-        .await?;
+    cleanup_processor_state(&pool, &processor_name, &["test.data_loss"]).await?;
 
     Ok(())
 }

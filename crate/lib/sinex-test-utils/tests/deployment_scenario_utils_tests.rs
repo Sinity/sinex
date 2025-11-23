@@ -4,8 +4,7 @@ use sinex_test_utils::{
     sinex_test, CompatibilityResult, CompatibilityTestScenario, ComponentConfig,
     ConfigCompatibilityTester, DependencyAvailability, DependencyType, EnvironmentSetup,
     EnvironmentType, ExpectedOutcome, ExternalDependency, PerformanceExpectations,
-    PerformanceMetrics, ResourceConstraints, TestContext, ValidationExpectation, ValidationStep,
-    ValidationType,
+    PerformanceMetrics, ResourceConstraints, ValidationExpectation, ValidationStep, ValidationType,
 };
 
 #[sinex_test]

@@ -1,7 +1,7 @@
 use sinex_core::db::query_helpers::{
     db_error, with_retry_transaction, with_transaction, RetryConfig,
 };
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn with_transaction_accepts_async_closures(ctx: TestContext) -> TestResult<()> {

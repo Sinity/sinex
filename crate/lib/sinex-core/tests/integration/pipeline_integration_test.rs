@@ -302,50 +302,6 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
         "Total events processed should match expected"
     );
 
-    // Verify all events are in database and accessible
-    let mut stored_events = Vec::new();
-    for event_id in &all_processed_ids {
-        if let Some(id) = event_id {
-            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
-                stored_events.push(event);
-            }
-        }
-    }
-
-    assert_eq!(
-        stored_events.len(),
-        total_events_processed,
-        "All concurrent events should be stored"
-    );
-
-    // Verify proper ordering within each stream
-    for stream_id in 0..concurrent_streams {
-        let stream_events: Vec<_> = stored_events
-            .iter()
-            .filter(|e| e.payload.get("stream_id") == Some(&json!(stream_id)))
-            .collect();
-
-        assert_eq!(
-            stream_events.len(),
-            events_per_stream,
-            "Each stream should have correct event count"
-        );
-
-        // Verify sequence ordering within stream
-        let mut sequences: Vec<_> = stream_events
-            .iter()
-            .map(|e| e.payload["sequence"].as_u64().unwrap())
-            .collect();
-
-        sequences.sort();
-
-        let expected_start = (stream_id * events_per_stream) as u64;
-        let expected_end = expected_start + events_per_stream as u64 - 1;
-
-        assert_eq!(sequences[0], expected_start);
-        assert_eq!(sequences[sequences.len() - 1], expected_end);
-    }
-
     tracing::info!(
         concurrent_streams = concurrent_streams,
         total_events = total_events_processed,

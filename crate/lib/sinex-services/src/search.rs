@@ -179,7 +179,7 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[allow(dead_code)]
     #[sinex_test]

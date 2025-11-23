@@ -111,6 +111,16 @@ use lazy_static::lazy_static;
 lazy_static! {
     static ref TEMPLATE_CREATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }
+lazy_static! {
+    static ref DATABASE_POOL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+pub type DatabasePoolTestGuard = tokio::sync::MutexGuard<'static, ()>;
+
+/// Acquire a global guard to run database pool tests exclusively.
+pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
+    DATABASE_POOL_TEST_LOCK.lock().await
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TemplateStamp {
@@ -215,7 +225,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(12);
+            .unwrap_or(64);
 
         let mut config = Self {
             size,
@@ -670,6 +680,13 @@ impl DatabasePool {
                                 .fetch_one(&db_pool)
                                 .await;
 
+                                let events_has_subnano = sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                )
+                                .fetch_one(&db_pool)
+                                .await;
+
                                 let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
                                     "SELECT COUNT(*) = 2 FROM information_schema.columns \
                                      WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
@@ -678,21 +695,49 @@ impl DatabasePool {
                                 .fetch_one(&db_pool)
                                 .await;
 
-                                match (events_has_blobs, checkpoints_has_metadata) {
-                                    (Ok(true), Ok(true)) => {}
-                                    (Ok(false), _) => {
+                                let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
+                                       AND column_name = 'updated_at')",
+                                )
+                                .fetch_one(&db_pool)
+                                .await;
+
+                                match (
+                                    events_has_blobs,
+                                    events_has_subnano,
+                                    checkpoints_has_metadata,
+                                    payload_has_updated_at,
+                                ) {
+                                    (Ok(true), Ok(true), Ok(true), Ok(true)) => {}
+                                    (Ok(false), _, _, _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing core.events.associated_blob_ids; recreating"
                                         );
                                     }
-                                    (_, Ok(false)) => {
+                                    (_, Ok(false), _, _) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Database {name} missing core.events.ts_orig_subnano; recreating"
+                                        );
+                                    }
+                                    (_, _, Ok(false), _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing core.processor_checkpoints metadata columns; recreating"
                                         );
                                     }
-                                    (Err(err), _) | (_, Err(err)) => {
+                                    (_, _, _, Ok(false)) => {
+                                        needs_recreate = true;
+                                        eprintln!(
+                                            "  Database {name} missing sinex_schemas.event_payload_schemas.updated_at; recreating"
+                                        );
+                                    }
+                                    (Err(err), _, _, _)
+                                    | (_, Err(err), _, _)
+                                    | (_, _, Err(err), _)
+                                    | (_, _, _, Err(err)) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Failed to inspect columns in {name} ({err}); recreating"
@@ -1133,16 +1178,36 @@ async fn ensure_template_database(
     base_url: &str,
     slot_max_connections: u32,
 ) -> Result<String> {
-    // Check if we already have a template database cached
+    // Fast-path reuse if cached template is reachable.
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        return Ok(template_name.clone());
+        let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
+        if PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(750))
+            .connect(&template_url)
+            .await
+            .is_ok()
+        {
+            return Ok(template_name.clone());
+        } else {
+            eprintln!("♻️  Cached template {template_name} is inaccessible; forcing rebuild");
+        }
     }
 
     // Acquire lock to prevent race condition between parallel tests
     let _lock = TEMPLATE_CREATION_LOCK.lock().await;
 
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        return Ok(template_name.clone());
+        let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
+        if PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(750))
+            .connect(&template_url)
+            .await
+            .is_ok()
+        {
+            return Ok(template_name.clone());
+        }
     }
 
     // Create the template database name - use a shared name based on migrations hash
@@ -1165,33 +1230,6 @@ async fn ensure_template_database(
 
     // Connect to admin database with timeout
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
-
-    // Capture the currently available TimescaleDB default version so we can
-    // invalidate cached templates when the packaged extension revs.
-    let timescaledb_default_version: Option<String> = sqlx::query_scalar(
-        "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb'",
-    )
-    .fetch_optional(&mut admin_conn)
-    .await?;
-
-    let mut extension_version_changed = false;
-    if let (Some(stamp), Some(ref default_version)) =
-        (cached_stamp.as_ref(), timescaledb_default_version.as_ref())
-    {
-        if stamp.extensions.get("timescaledb").map(|v| v.as_str()) != Some(default_version.as_str())
-        {
-            eprintln!(
-                "♻️  TimescaleDB default version changed ({} → {}); forcing template rebuild",
-                stamp
-                    .extensions
-                    .get("timescaledb")
-                    .map(|v| v.as_str())
-                    .unwrap_or("unknown"),
-                default_version
-            );
-            extension_version_changed = true;
-        }
-    }
 
     let lock_key = advisory_lock_key(template_name);
     tokio::time::timeout(
@@ -1218,7 +1256,7 @@ async fn ensure_template_database(
 
     // Determine if we can reuse the existing template without rebuild
     let mut reuse_allowed = false;
-    if exists && !extension_version_changed {
+    if exists {
         if let (Some(fp), Some(stamp)) = (&desired_fingerprint, cached_stamp.as_ref()) {
             if stamp.template_name == template_name && stamp.fingerprint == *fp {
                 if let Ok(pool) = PgPoolOptions::new()
@@ -1230,62 +1268,75 @@ async fn ensure_template_database(
                     match collect_extension_versions(&pool).await {
                         Ok(current_exts) => {
                             if current_exts == stamp.extensions {
-                                let version_matches_default = match (
-                                    current_exts.get("timescaledb"),
-                                    timescaledb_default_version.as_ref(),
+                                let events_has_blobs = sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+                                )
+                                .fetch_one(&pool)
+                                .await;
+
+                                let events_has_subnano = sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                )
+                                .fetch_one(&pool)
+                                .await;
+
+                                let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
+                                    "SELECT COUNT(*) = 2 FROM information_schema.columns \
+                                     WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
+                                       AND column_name IN ('checkpoint_version', 'created_at')",
+                                )
+                                .fetch_one(&pool)
+                                .await;
+
+                                let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
+                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+                                     WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
+                                       AND column_name = 'updated_at')",
+                                )
+                                .fetch_one(&pool)
+                                .await;
+
+                                match (
+                                    events_has_blobs,
+                                    events_has_subnano,
+                                    checkpoints_has_metadata,
+                                    payload_has_updated_at,
                                 ) {
-                                    (Some(current_ts), Some(default_version)) => {
-                                        if current_ts != default_version {
-                                            eprintln!(
-                                                "♻️  Template TimescaleDB version {} diverged from server default {}; recreating",
-                                                current_ts, default_version
-                                            );
-                                            false
-                                        } else {
-                                            true
-                                        }
+                                    (Ok(true), Ok(true), Ok(true), Ok(true)) => {
+                                        eprintln!(
+                                            "✅ Template database {template_name} reused (migrations unchanged)"
+                                        );
+                                        reuse_allowed = true;
                                     }
-                                    _ => true,
-                                };
-
-                                if version_matches_default {
-                                    let events_has_blobs = sqlx::query_scalar::<_, bool>(
-                                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                         WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
-                                    )
-                                    .fetch_one(&pool)
-                                    .await;
-
-                                    let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
-                                        "SELECT COUNT(*) = 2 FROM information_schema.columns \
-                                         WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
-                                           AND column_name IN ('checkpoint_version', 'created_at')",
-                                    )
-                                    .fetch_one(&pool)
-                                    .await;
-
-                                    match (events_has_blobs, checkpoints_has_metadata) {
-                                        (Ok(true), Ok(true)) => {
-                                            eprintln!(
-                                                "✅ Template database {template_name} reused (migrations unchanged)"
-                                            );
-                                            reuse_allowed = true;
-                                        }
-                                        (Ok(false), _) => {
-                                            eprintln!(
-                                                "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
-                                            );
-                                        }
-                                        (_, Ok(false)) => {
-                                            eprintln!(
-                                                "♻️  Template {template_name} missing core.processor_checkpoints metadata columns; recreating"
-                                            );
-                                        }
-                                        (Err(err), _) | (_, Err(err)) => {
-                                            eprintln!(
-                                                "⚠️  Failed to inspect template schema ({err}); forcing recreation"
-                                            );
-                                        }
+                                    (Ok(false), _, _, _) => {
+                                        eprintln!(
+                                            "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
+                                        );
+                                    }
+                                    (_, Ok(false), _, _) => {
+                                        eprintln!(
+                                            "♻️  Template {template_name} missing core.events.ts_orig_subnano; recreating"
+                                        );
+                                    }
+                                    (_, _, Ok(false), _) => {
+                                        eprintln!(
+                                            "♻️  Template {template_name} missing core.processor_checkpoints metadata columns; recreating"
+                                        );
+                                    }
+                                    (_, _, _, Ok(false)) => {
+                                        eprintln!(
+                                            "♻️  Template {template_name} missing sinex_schemas.event_payload_schemas.updated_at; recreating"
+                                        );
+                                    }
+                                    (Err(err), _, _, _)
+                                    | (_, Err(err), _, _)
+                                    | (_, _, Err(err), _)
+                                    | (_, _, _, Err(err)) => {
+                                        eprintln!(
+                                            "⚠️  Failed to inspect template schema ({err}); forcing recreation"
+                                        );
                                     }
                                 }
                             } else {
@@ -1491,16 +1542,6 @@ async fn ensure_template_database(
             .await
             .map_err(|_| SinexError::database("Template setup timeout"))?;
 
-    if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(lock_key)
-        .execute(&mut admin_conn)
-        .await
-    {
-        eprintln!("⚠️  Failed to release template advisory lock for {template_name}: {e}");
-    }
-
-    admin_conn.close().await?;
-
     let extensions = migration_result?;
 
     let template_elapsed = template_start.elapsed();
@@ -1516,9 +1557,21 @@ async fn ensure_template_database(
     }
 
     // Cache the template name for future use
-    TEMPLATE_DB_NAME
-        .set(template_name.to_string())
-        .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
+    if TEMPLATE_DB_NAME.get().is_none() {
+        TEMPLATE_DB_NAME
+            .set(template_name.to_string())
+            .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
+    }
+
+    if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(lock_key)
+        .execute(&mut admin_conn)
+        .await
+    {
+        eprintln!("⚠️  Failed to release template advisory lock for {template_name}: {e}");
+    }
+
+    admin_conn.close().await?;
 
     Ok(template_name.to_string())
 }

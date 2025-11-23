@@ -11,10 +11,12 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use sinex_core::db::integrity::malformed_detection;
 use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
-use sinex_core::db::validation::{EventValidator, ValidationError};
+use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
 use sinex_test_utils::{sinex_test, TestContext};
+
+const FS_WATCHER_SOURCE: &str = "fs-watcher";
 
 #[sinex_test]
 async fn test_malformed_event_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -100,7 +102,7 @@ async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre
 
     // Test filesystem events with missing required fields
     let invalid_filesystem_event = build_test_event(
-        "filesystem",
+        FS_WATCHER_SOURCE,
         "file.created",
         json!({
             // Missing required "path" field
@@ -124,7 +126,7 @@ async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre
 
     // Test with invalid field types
     let invalid_type_event = build_test_event(
-        "filesystem",
+        FS_WATCHER_SOURCE,
         "file.created",
         json!({
             "path": "/test/file.txt",
@@ -220,7 +222,7 @@ async fn test_security_validation_injection_attacks(
     ];
 
     for (payload, attack_type, description) in cases {
-        let event = build_test_event("filesystem", "file.created", payload);
+        let event = build_test_event(FS_WATCHER_SOURCE, "file.created", payload);
         let result = validator.validate(&event);
         tracing::info!("Testing {} attack: {}", attack_type, description);
         if result.is_err() {
@@ -248,7 +250,7 @@ async fn test_schema_validation_performance_under_load(
             "size": 1024,
             "permissions": 0o644
         });
-        events.push(build_test_event("filesystem", "file.created", payload));
+        events.push(build_test_event(FS_WATCHER_SOURCE, "file.created", payload));
     }
 
     // Measure validation performance
@@ -311,13 +313,13 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre
         ),
         (
             "missing_path",
-            build_test_event("filesystem", "file.created", json!({"size": 2048})),
+            build_test_event(FS_WATCHER_SOURCE, "file.created", json!({"size": 2048})),
             false,
         ),
         (
             "invalid_type",
             build_test_event(
-                "filesystem",
+                FS_WATCHER_SOURCE,
                 "file.created",
                 json!({"path": "/tmp/file.txt", "size": "oops"}),
             ),
@@ -326,7 +328,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre
         (
             "oversized_payload",
             build_test_event(
-                "filesystem",
+                FS_WATCHER_SOURCE,
                 "file.created",
                 json!({"path": "/tmp/big.bin", "size": 1024, "blob": "x".repeat(600_000)}),
             ),
@@ -383,7 +385,7 @@ async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> color_eyre:
         (
             "test.source",
             "oversized",
-            json!({"large_field": "x".repeat(500)}),
+            json!({"large_field": "x".repeat(DEFAULT_MAX_PAYLOAD_BYTES + 1024)}),
             "oversized_payload",
             true,
             "Should detect oversized payload",
@@ -438,7 +440,7 @@ async fn test_event_type_specific_validation(ctx: TestContext) -> color_eyre::ey
         // Valid filesystem event
         (
             build_test_event(
-                "filesystem",
+                FS_WATCHER_SOURCE,
                 "file.created",
                 json!({"path": "/test/valid.txt", "size": 1024, "permissions": 0o644}),
             ),
@@ -446,13 +448,13 @@ async fn test_event_type_specific_validation(ctx: TestContext) -> color_eyre::ey
         ),
         // Invalid filesystem event - missing path
         (
-            build_test_event("filesystem", "file.created", json!({"size": 1024})),
+            build_test_event(FS_WATCHER_SOURCE, "file.created", json!({"size": 1024})),
             false,
         ),
         // Invalid filesystem event - invalid size type
         (
             build_test_event(
-                "filesystem",
+                FS_WATCHER_SOURCE,
                 "file.created",
                 json!({"path": "/test.txt", "size": "not_a_number"}),
             ),

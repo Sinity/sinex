@@ -184,16 +184,25 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 
     assert_eq!(events.len(), precision_cases.len());
 
-    for (i, event) in events.iter().enumerate() {
-        let original_ts = precision_cases[i];
-        let stored_ts = event.ts_orig.expect("Should have original timestamp");
+    let mut stored_by_level: Vec<(usize, DateTime<Utc>)> = events
+        .iter()
+        .map(|event| {
+            let level = event.payload["precision_level"]
+                .as_u64()
+                .expect("precision level metadata present") as usize;
+            let ts = event.ts_orig.expect("Should have original timestamp");
+            (level, ts)
+        })
+        .collect();
+    stored_by_level.sort_by_key(|(level, _)| *level);
 
-        // Verify timestamp precision is preserved
+    for (level, stored_ts) in stored_by_level {
+        let original_ts = precision_cases[level];
         assert_eq!(
             original_ts.timestamp_nanos_opt(),
             stored_ts.timestamp_nanos_opt(),
             "Nanosecond precision should be preserved for event {}",
-            i
+            level
         );
     }
 
@@ -332,14 +341,24 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 
     // Events should be ordered by ULID (ingestion time) by default
     // but we can verify logical timestamps are preserved
-    for (i, event) in events.iter().enumerate() {
-        let stored_ts = event.ts_orig.expect("Should have original timestamp");
-        let expected_ts = expected_order[i];
+    let mut ordered_events: Vec<(usize, DateTime<Utc>)> = events
+        .iter()
+        .map(|event| {
+            let sequence = event.payload["sequence"]
+                .as_u64()
+                .expect("sequence metadata present") as usize;
+            let ts = event.ts_orig.expect("Should have original timestamp");
+            (sequence, ts)
+        })
+        .collect();
+    ordered_events.sort_by_key(|(sequence, _)| *sequence);
 
+    for (sequence, stored_ts) in ordered_events {
+        let expected_ts = expected_order[sequence];
         assert_eq!(
             stored_ts, expected_ts,
             "Logical timestamp should be preserved for event {}",
-            i
+            sequence
         );
     }
 

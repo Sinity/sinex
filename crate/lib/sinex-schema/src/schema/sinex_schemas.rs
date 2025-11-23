@@ -166,6 +166,7 @@ pub enum ProcessorManifests {
     // Key field for reproducible replays
     AnchorRuleVersion,
     ConfigSchema,
+    ConsumesEventTypes,
     CreatedAt,
 }
 
@@ -191,6 +192,7 @@ pub struct ProcessorManifestRecord {
     pub description: Option<String>,
     pub anchor_rule_version: i32,
     pub config_schema: Option<JsonValue>,
+    pub consumes_event_types: Option<JsonValue>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -233,6 +235,7 @@ impl ProcessorManifests {
                     .default(1),
             )
             .col(ColumnDef::new(ProcessorManifests::ConfigSchema).json_binary())
+            .col(ColumnDef::new(ProcessorManifests::ConsumesEventTypes).json_binary())
             .col(
                 ColumnDef::new(ProcessorManifests::CreatedAt)
                     .timestamp_with_time_zone()
@@ -250,6 +253,16 @@ impl ProcessorManifests {
             .col(ProcessorManifests::Version)
             .unique()
             .to_owned()]
+    }
+
+    pub fn create_gin_indexes_sql() -> Vec<String> {
+        vec![format!(
+            "CREATE INDEX IF NOT EXISTS ix_processor_manifests_consumes_event_types \
+             ON {}.{} USING GIN ({})",
+            Self::schema_name(),
+            Self::table_name(),
+            ProcessorManifests::ConsumesEventTypes.to_string()
+        )]
     }
 }
 

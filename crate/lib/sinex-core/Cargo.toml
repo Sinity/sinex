@@ -30,6 +30,7 @@ once_cell = { workspace = true }
 jsonschema = "0.17"
 gethostname = { workspace = true }
 urlencoding = "2.1"
+percent-encoding = "2.3"
 blake3 = "1.5"
 strum = { version = "0.26", features = ["derive"] }
 validator = { workspace = true }
