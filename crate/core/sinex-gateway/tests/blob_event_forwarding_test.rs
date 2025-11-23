@@ -1,12 +1,72 @@
+use camino::Utf8PathBuf;
+use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
 use sinex_test_utils::{sinex_test, TestContext};
+use sinex_satellite_sdk::annex::GitAnnex;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
+use which::which;
+
+struct ReplayBypassGuard {
+    previous: Option<String>,
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ReplayBypassGuard {
+    fn enable() -> Self {
+        let previous = std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").ok();
+        std::env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
+        Self { previous }
+    }
+}
+
+impl Drop for ReplayBypassGuard {
+    fn drop(&mut self) {
+        if let Some(ref value) = self.previous {
+            std::env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", value);
+        } else {
+            std::env::remove_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS");
+        }
+    }
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(ref value) = self.previous {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+fn require_git_annex() -> color_eyre::eyre::Result<()> {
+    which("git-annex")
+        .wrap_err("git-annex binary is required for gateway blob forwarding tests")
+        .map(|_| ())
+}
 
 #[sinex_test]
 async fn blob_routes_do_not_persist_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    require_git_annex()?;
+    let _bypass = ReplayBypassGuard::enable();
     let temp_dir = TempDir::new()?;
-    std::env::set_var("SINEX_ANNEX_PATH", temp_dir.path().to_str().unwrap());
+    let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
+        .map_err(|_| color_eyre::eyre::eyre!("annex path is not valid UTF-8"))?;
+    GitAnnex::init(&repo_path, Some("gateway-blob-forwarding")).await?;
+    let _annex_guard = EnvVarGuard::set("SINEX_ANNEX_PATH", repo_path.as_str());
 
     let initial_count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM core.events WHERE event_type = 'blob.ingested'"#
