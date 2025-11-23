@@ -67,12 +67,14 @@ impl StatefulStreamProcessor for MockProcessor {
 
 struct ShutdownAwareProcessor {
     shutdown_called: Arc<AtomicBool>,
+    ready_tx: Option<oneshot::Sender<()>>,
 }
 
 impl ShutdownAwareProcessor {
-    fn new(flag: Arc<AtomicBool>) -> Self {
+    fn with_ready_notifier(flag: Arc<AtomicBool>, ready_tx: oneshot::Sender<()>) -> Self {
         Self {
             shutdown_called: flag,
+            ready_tx: Some(ready_tx),
         }
     }
 }
@@ -95,6 +97,9 @@ impl StatefulStreamProcessor for ShutdownAwareProcessor {
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         if matches!(until, TimeHorizon::Continuous) {
+            if let Some(tx) = self.ready_tx.take() {
+                let _ = tx.send(());
+            }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
@@ -164,7 +169,8 @@ async fn processor_runner_executes_scan(ctx: TestContext) -> color_eyre::Result<
 #[sinex_test]
 async fn processor_runner_triggers_processor_shutdown(ctx: TestContext) -> color_eyre::Result<()> {
     let shutdown_flag = Arc::new(AtomicBool::new(false));
-    let processor = ShutdownAwareProcessor::new(shutdown_flag.clone());
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let processor = ShutdownAwareProcessor::with_ready_notifier(shutdown_flag.clone(), ready_tx);
 
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool.clone(),
@@ -185,7 +191,8 @@ async fn processor_runner_triggers_processor_shutdown(ctx: TestContext) -> color
 
     let handle = tokio::spawn(async move { runner.run().await });
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Wait until the processor has entered continuous scanning before sending shutdown
+    let _ = ready_rx.await;
     let _ = signal_tx.send(());
 
     handle.await??;

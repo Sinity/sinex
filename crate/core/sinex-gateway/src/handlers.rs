@@ -365,7 +365,7 @@ fn blob_response_payload(
 mod tests {
     use super::*;
     use sinex_core::Blob;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn blob_response_payload_encodes_base64() -> TestResult<()> {
