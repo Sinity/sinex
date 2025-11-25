@@ -80,3 +80,4 @@ scripts/git-state-tracker.sh
 **/.sqlx/
 !/.sqlx/
 combined-bundles/
+postgres_data/
