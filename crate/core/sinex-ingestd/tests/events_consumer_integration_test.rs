@@ -232,3 +232,48 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     handle.abort();
     Ok(())
 }
+
+#[sinex_test]
+async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("confirm-{}", Ulid::new());
+    let (handle, _js, _topology) =
+        start_consumer(&ctx, &suffix, Duration::from_secs(5), None).await?;
+
+    let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("confirm.{suffix}"));
+    let event_id = publisher
+        .publish_event("confirmation.test", json!({"confirm": true}))
+        .await?;
+
+    let confirmation_subject = format!(
+        "{}.{}",
+        ctx.env().nats_subject("events.confirmations"),
+        event_id
+    );
+    let mut sub = ctx
+        .nats_client()
+        .subscribe(confirmation_subject.clone())
+        .await?;
+
+    let msg = timeout(Duration::from_secs(10), sub.next())
+        .await?
+        .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
+    let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+    assert_eq!(payload["event_id"], event_id.to_string());
+    assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
+
+    // The event should be persisted by the time confirmation is observed.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(event) = ctx.pool.events().get_by_id(event_id.into()).await? {
+                assert_eq!(event.id.as_ref().unwrap().as_ulid(), &event_id);
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+
+    handle.abort();
+    Ok(())
+}
