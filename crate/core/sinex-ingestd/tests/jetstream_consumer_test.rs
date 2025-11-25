@@ -233,7 +233,11 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     let material_record = ctx
         .pool
         .source_materials()
-        .register_in_flight("terminal-history", Some("/tmp/history"), json!({"test": true}))
+        .register_in_flight(
+            "terminal-history",
+            Some("/tmp/history"),
+            json!({"test": true}),
+        )
         .await?;
 
     let event_id = Ulid::new();

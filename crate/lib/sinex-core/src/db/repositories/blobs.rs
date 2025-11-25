@@ -88,8 +88,9 @@ impl BlobRepository {
                 const RETRY_DELAY_MS: u64 = 50;
 
                 for attempt in 0..MAX_FETCH_RETRIES {
-                    if let Some(existing) =
-                        self.get_by_content(&natural_backend, &natural_hash, natural_size).await?
+                    if let Some(existing) = self
+                        .get_by_content(&natural_backend, &natural_hash, natural_size)
+                        .await?
                     {
                         return Ok(existing);
                     }

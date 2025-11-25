@@ -1,8 +1,8 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
-use sinex_test_utils::{sinex_test, TestContext};
 use sinex_satellite_sdk::annex::GitAnnex;
+use sinex_test_utils::{sinex_test, TestContext};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 use which::which;

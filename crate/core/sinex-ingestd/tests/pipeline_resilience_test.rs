@@ -173,12 +173,11 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     for id in ids {
-        let occurrences: Option<i64> = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid",
-        )
-        .bind(ulid_to_uuid(id))
-        .fetch_one(&ctx.pool)
-        .await?;
+        let occurrences: Option<i64> =
+            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
+                .bind(ulid_to_uuid(id))
+                .fetch_one(&ctx.pool)
+                .await?;
         assert_eq!(
             occurrences.unwrap_or(0),
             1,
