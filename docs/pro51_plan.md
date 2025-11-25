@@ -245,7 +245,9 @@ Goal: prove that **real** satellites, using the SDK, can publish data all the wa
 
 ### 2.1 E2E satellite → DB tests
 
-**File:** `crate/lib/sinex-test-utils/tests/e2e_satellite_to_db_test.rs` (or a dedicated e2e crate)
+**File:** `crate/lib/sinex-test-utils/tests/e2e_satellite_to_db_test.rs`
+
+**Status:** ✅ Implemented `end_to_end_single_satellite_full_flow`: spins up an ingestd consumer, publishes 25 events via `TestSatellitePublisher`, waits for DB persistence, and verifies confirmations via a wildcard subscription with DLQ remaining empty.
 
 Scenarios:
 
