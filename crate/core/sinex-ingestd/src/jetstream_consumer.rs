@@ -8,7 +8,7 @@ use sinex_core::{db::DbPool, environment::SinexEnvironment, types::ulid::Ulid, J
 use sqlx::QueryBuilder;
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -59,6 +59,8 @@ pub struct JetStreamConsumer {
     pool: DbPool,
     validator: Arc<RwLock<EventValidator>>,
     topology: JetStreamTopology,
+    ack_wait: Duration,
+    fail_once: Option<Arc<AtomicBool>>,
     stats: ConsumerStats,
 }
 
@@ -158,8 +160,37 @@ impl JetStreamConsumer {
             pool,
             validator,
             topology,
+            ack_wait: Duration::from_secs(30),
+            fail_once: None,
             stats: ConsumerStats::default(),
         }
+    }
+
+    /// Build a consumer with a custom AckWait (primarily for tests).
+    pub fn with_ack_wait(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+    ) -> Self {
+        let mut consumer = Self::new(nats_client, pool, validator, topology);
+        consumer.ack_wait = ack_wait;
+        consumer
+    }
+
+    /// Build a consumer that will fail once before proceeding (test-only hook).
+    pub fn with_ack_wait_and_fail_once(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+        fail_once: Arc<AtomicBool>,
+    ) -> Self {
+        let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
+        consumer.fail_once = Some(fail_once);
+        consumer
     }
 
     /// Bootstrap all required JetStream streams
@@ -240,7 +271,8 @@ impl JetStreamConsumer {
                 jetstream::consumer::pull::Config {
                     durable_name: Some(self.topology.consumer_durable.clone()),
                     ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait: Duration::from_secs(30),
+                    ack_wait: self.ack_wait,
+                    max_deliver: 10,
                     max_ack_pending: 100,
                     ..Default::default()
                 },
@@ -603,6 +635,12 @@ impl JetStreamConsumer {
     async fn persist_batch_optimized(&self, batch: &[PreparedEvent]) -> IngestdResult<Vec<Ulid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
+        }
+
+        if let Some(fail_flag) = &self.fail_once {
+            if fail_flag.swap(false, Ordering::SeqCst) {
+                return Err(SinexError::database("forced transient failure"));
+            }
         }
 
         let mut builder = QueryBuilder::new(
