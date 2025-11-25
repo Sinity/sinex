@@ -61,6 +61,8 @@ pub struct JetStreamConsumer {
     topology: JetStreamTopology,
     ack_wait: Duration,
     fail_once: Option<Arc<AtomicBool>>,
+    processing_delay: Option<Duration>,
+    delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
 }
 
@@ -162,6 +164,8 @@ impl JetStreamConsumer {
             topology,
             ack_wait: Duration::from_secs(30),
             fail_once: None,
+            processing_delay: None,
+            delivery_observer: None,
             stats: ConsumerStats::default(),
         }
     }
@@ -188,8 +192,33 @@ impl JetStreamConsumer {
         ack_wait: Duration,
         fail_once: Arc<AtomicBool>,
     ) -> Self {
+        Self::with_test_hooks(
+            nats_client,
+            pool,
+            validator,
+            topology,
+            ack_wait,
+            Some(fail_once),
+            None,
+            None,
+        )
+    }
+
+    /// Build a consumer with optional test-only hooks.
+    pub fn with_test_hooks(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+        fail_once: Option<Arc<AtomicBool>>,
+        processing_delay: Option<Duration>,
+        delivery_observer: Option<Arc<AtomicU64>>,
+    ) -> Self {
         let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
-        consumer.fail_once = Some(fail_once);
+        consumer.fail_once = fail_once;
+        consumer.processing_delay = processing_delay;
+        consumer.delivery_observer = delivery_observer;
         consumer
     }
 
@@ -318,6 +347,10 @@ impl JetStreamConsumer {
                     continue;
                 }
             };
+
+            if let Some(counter) = &self.delivery_observer {
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
 
             // Parse event
             let raw_event: RawEvent = match serde_json::from_slice(&msg.payload) {
@@ -553,6 +586,9 @@ impl JetStreamConsumer {
         match self.persist_batch_optimized(&batch).await {
             Ok(persisted_ids) => {
                 let persisted_set: HashSet<_> = persisted_ids.iter().cloned().collect();
+                if let Some(delay) = self.processing_delay {
+                    tokio::time::sleep(delay).await;
+                }
                 // Publish confirmations for every message in the batch to guarantee downstream delivery
                 for prepared in &batch {
                     if let Err(e) = self.publish_confirmation(&prepared.parsed_id).await {

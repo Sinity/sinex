@@ -7,7 +7,7 @@ use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::prelude::*;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -35,6 +35,8 @@ async fn start_consumer(
     suffix: &str,
     ack_wait: Duration,
     fail_once: Option<Arc<AtomicBool>>,
+    processing_delay: Option<Duration>,
+    delivery_observer: Option<Arc<AtomicU64>>,
 ) -> TestResult<(
     JoinHandle<sinex_ingestd::IngestdResult<()>>,
     jetstream::Context,
@@ -49,23 +51,16 @@ async fn start_consumer(
     let stream = env.nats_stream_name(&format!("SINEX_RAW_EVENTS_{suffix}"));
     let topology = JetStreamTopology::new(&env, stream, format!("ingestd-{suffix}"));
 
-    let consumer = match fail_once {
-        Some(flag) => JetStreamConsumer::with_ack_wait_and_fail_once(
-            nats_client.clone(),
-            pool,
-            Arc::new(RwLock::new(validator)),
-            topology.clone(),
-            ack_wait,
-            flag,
-        ),
-        None => JetStreamConsumer::with_ack_wait(
-            nats_client.clone(),
-            pool,
-            Arc::new(RwLock::new(validator)),
-            topology.clone(),
-            ack_wait,
-        ),
-    };
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        pool,
+        Arc::new(RwLock::new(validator)),
+        topology.clone(),
+        ack_wait,
+        fail_once,
+        processing_delay,
+        delivery_observer,
+    );
     let handle = tokio::spawn(async move { consumer.run().await });
 
     wait_for_stream(&js, &topology.events_stream).await?;
@@ -80,7 +75,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     let ctx = ctx.with_nats().await?;
     let suffix = format!("batch-{}", Ulid::new());
     let (handle, js, topology) =
-        start_consumer(&ctx, &suffix, Duration::from_secs(5), None).await?;
+        start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
 
     let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("integration.{suffix}"));
 
@@ -128,8 +123,15 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     let ctx = ctx.with_nats().await?;
     let suffix = format!("retry-{}", Ulid::new());
     let fail_once = Arc::new(AtomicBool::new(true));
-    let (handle, js, topology) =
-        start_consumer(&ctx, &suffix, Duration::from_secs(2), Some(fail_once)).await?;
+    let (handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(2),
+        Some(fail_once),
+        None,
+        None,
+    )
+    .await?;
 
     let event_id = Ulid::new();
     let confirmation_subject = format!(
@@ -238,7 +240,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
     let ctx = ctx.with_nats().await?;
     let suffix = format!("confirm-{}", Ulid::new());
     let (handle, _js, _topology) =
-        start_consumer(&ctx, &suffix, Duration::from_secs(5), None).await?;
+        start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
 
     let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("confirm.{suffix}"));
     let event_id = publisher
@@ -273,6 +275,87 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         }
     })
     .await??;
+
+    handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("ackwait-{}", Ulid::new());
+    let delivery_counter = Arc::new(AtomicU64::new(0));
+
+    let (handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_millis(500),
+        None,
+        Some(Duration::from_secs(2)),
+        Some(delivery_counter.clone()),
+    )
+    .await?;
+
+    let event_id = Ulid::new();
+    let subject = ctx
+        .env()
+        .nats_subject(&format!("events.raw.ackwait_{}.slow", suffix));
+    let payload = json!({
+        "id": event_id.to_string(),
+        "source": format!("ackwait.{suffix}"),
+        "event_type": "slow.ack",
+        "ts_orig": Utc::now().to_rfc3339(),
+        "host": "ackwait-host",
+        "payload": {"slow": true},
+    });
+
+    js.publish(subject, serde_json::to_vec(&payload)?.into())
+        .await?
+        .await?;
+
+    // Ensure persistence eventually happens.
+    timeout(Duration::from_secs(20), async {
+        loop {
+            if ctx
+                .pool
+                .events()
+                .get_by_id(event_id.into())
+                .await?
+                .is_some()
+            {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+
+    // Expect at least one redelivery due to ack_wait expiring.
+    let attempts = delivery_counter.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        attempts >= 2,
+        "expected redelivery after ack_wait expiry, saw {attempts}"
+    );
+
+    // Only one row should exist despite multiple deliveries.
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid")
+            .bind(ulid_to_uuid(event_id))
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(count, 1, "idempotency must hold under redelivery");
+
+    // DLQ should stay empty.
+    let dlq_state = js
+        .get_stream(&topology.dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state;
+    assert_eq!(
+        dlq_state.messages, 0,
+        "DLQ should not be used during ack_wait redelivery"
+    );
 
     handle.abort();
     Ok(())
