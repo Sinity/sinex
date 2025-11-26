@@ -14,11 +14,10 @@ async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> Result<()> {
     let wildcard_subject = format!("{subject_prefix}.>");
     let stream = env.nats_stream_name("TEST_SAMPLE_STREAM");
 
-    nats.create_stream(&stream, &[wildcard_subject.as_str()])
-        .await?;
-    let _consumer = nats
-        .create_consumer(
+    let (_stream_name, _consumer) = nats
+        .ensure_stream_with_consumer(
             &stream,
+            &[wildcard_subject.as_str()],
             ConsumerConfig {
                 durable_name: Some("helper".to_string()),
                 ..Default::default()

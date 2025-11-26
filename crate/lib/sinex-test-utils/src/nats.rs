@@ -99,6 +99,15 @@ impl EphemeralNats {
         self.stream_prefix.as_deref()
     }
 
+    /// Apply the configured stream prefix (if any) to a name.
+    pub fn qualify(&self, name: &str) -> String {
+        if let Some(prefix) = &self.stream_prefix {
+            format!("{prefix}{name}")
+        } else {
+            name.to_string()
+        }
+    }
+
     /// Create a JetStream context bound to this server.
     pub async fn jetstream(&self) -> Result<jetstream::Context> {
         let client = self.connect().await?;
@@ -119,6 +128,33 @@ impl EphemeralNats {
         Ok(())
     }
 
+    /// Create or reuse a stream, then create (or reuse) a durable pull consumer.
+    /// Returns the final stream name (including any prefix) and the consumer.
+    pub async fn ensure_stream_with_consumer(
+        &self,
+        stream: &str,
+        subjects: &[&str],
+        mut consumer_cfg: ConsumerConfig,
+    ) -> Result<(String, PullConsumer)> {
+        let qualified_stream = self.qualify(stream);
+        let qualified_subjects: Vec<String> = subjects.iter().map(|s| self.qualify(s)).collect();
+        let subject_refs: Vec<&str> = qualified_subjects.iter().map(String::as_str).collect();
+
+        self.ensure_stream_allowing_overlap(&qualified_stream, &subject_refs)
+            .await?;
+
+        if consumer_cfg.durable_name.is_none() {
+            consumer_cfg.durable_name =
+                Some(format!("{}-consumer", qualified_stream.to_lowercase()));
+        }
+
+        let consumer = self
+            .create_consumer(&qualified_stream, consumer_cfg)
+            .await?;
+
+        Ok((qualified_stream, consumer))
+    }
+
     /// Create a stream, skipping if the existing stream has overlapping subjects.
     /// Useful for concurrent test runs where streams may already exist with a slightly
     /// different config.
@@ -131,9 +167,7 @@ impl EphemeralNats {
             Ok(()) => Ok(()),
             Err(err) => {
                 let msg = err.to_string();
-                if msg.contains("stream name already in use")
-                    || msg.contains("subjects overlap")
-                {
+                if msg.contains("stream name already in use") || msg.contains("subjects overlap") {
                     // Treat overlapping config as non-fatal in shared NATS instances.
                     Ok(())
                 } else {

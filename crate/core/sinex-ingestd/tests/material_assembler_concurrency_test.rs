@@ -4,10 +4,10 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
-use sqlx::Row;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_test_utils::prelude::*;
+use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,7 +111,9 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     );
 
     // Prepare three materials with predictable hashes/offsets.
-    let material_ids: Vec<_> = (0..3).map(|_| sinex_core::types::ulid::Ulid::new()).collect();
+    let material_ids: Vec<_> = (0..3)
+        .map(|_| sinex_core::types::ulid::Ulid::new())
+        .collect();
     let mut material_plans = Vec::new();
     for (idx, material_id) in material_ids.iter().enumerate() {
         let mut slices = Vec::new();
@@ -165,8 +167,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Fire off begin messages for each material.
     for (material_id, _, _, _) in &material_plans {
         js.publish(
-            ctx.env()
-                .nats_subject(&format!("{}.begin", subject_prefix)),
+            ctx.env().nats_subject(&format!("{}.begin", subject_prefix)),
             json!({
                 "material_id": material_id.to_string(),
                 "material_kind": "annex",

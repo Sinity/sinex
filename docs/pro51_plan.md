@@ -28,7 +28,7 @@ Goal: one coherent “bus+satellite” harness so later tests don’t reinvent p
 
 **File:** `crate/lib/sinex-test-utils/src/nats.rs`
 
-**Status:** Partially implemented. Helpers cover stream/consumer creation and chaos; recent changes add overlap-tolerant stream creation and optional stream prefixes for isolation. Still need to make these the single entry point for JetStream setup in tests (replace ad-hoc contexts).
+**Status:** Stream/consumer factory is in place (`ensure_stream_with_consumer`, prefix helpers, overlap-tolerant creation) plus chaos hooks and subject wait helpers. `jetstream_helpers_tests` now exercises the new factory. Broader test refactors to route through `EphemeralNats` remain to do (many suites still build JetStream contexts directly).
 
 Next actions:
 - Provide a concise stream+consumer factory and subject wait helper; refactor tests to use it.

@@ -32,7 +32,10 @@ impl TestSatellitePublisher {
     }
 
     /// Helper to connect via EphemeralNats with a given source label.
-    pub async fn from_ephemeral(nats: &crate::EphemeralNats, source: impl Into<String>) -> Result<Self> {
+    pub async fn from_ephemeral(
+        nats: &crate::EphemeralNats,
+        source: impl Into<String>,
+    ) -> Result<Self> {
         let client = nats.connect().await?;
         Ok(Self::new(client, source))
     }
