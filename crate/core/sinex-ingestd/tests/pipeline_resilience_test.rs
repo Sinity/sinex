@@ -8,7 +8,7 @@ use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::types::Ulid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
 
@@ -31,10 +31,12 @@ async fn spawn_consumer(
     ctx: &TestContext,
     durable: &str,
 ) -> Result<(
+    EphemeralNats,
     tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>,
     jetstream::Context,
 )> {
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
     let js = jetstream::new(nats_client.clone());
@@ -58,13 +60,13 @@ async fn spawn_consumer(
 
     wait_for_stream(&js, &topology.events_stream, Duration::from_secs(5)).await?;
 
-    Ok((consumer_handle, js))
+    Ok((nats, consumer_handle, js))
 }
 
 #[sinex_test]
 async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
-    let (consumer_handle, js) = spawn_consumer(&ctx, "latency").await?;
+    let (_nats, consumer_handle, js) = spawn_consumer(&ctx, "latency").await?;
 
     let env = ctx.env();
     let subject = env.nats_subject("events.raw.latency");
@@ -115,7 +117,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> Resul
 #[sinex_test]
 async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
-    let (consumer_handle, js) = spawn_consumer(&ctx, "restart").await?;
+    let (_nats, consumer_handle, js) = spawn_consumer(&ctx, "restart").await?;
 
     let env = ctx.env();
     let subject = env.nats_subject("events.raw.restart");
