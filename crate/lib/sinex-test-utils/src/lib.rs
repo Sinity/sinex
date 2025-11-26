@@ -25,6 +25,7 @@ pub use sinex_core::types::error::SinexError;
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
 pub use chaos::ChaosInjestor;
+pub use chaos::ChaosInjestor;
 pub use jetstream::ensure_material_streams;
 pub use satellite_publisher::TestSatellitePublisher;
 pub use snapshot::TestSnapshot;

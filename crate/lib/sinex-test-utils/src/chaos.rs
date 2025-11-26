@@ -1,18 +1,22 @@
+//! Lightweight chaos utilities for test scenarios.
+//!
+//! These helpers allow injecting latency/failure into async operations and
+//! simulating temporary partitions without forcing production code to change.
+
 use std::time::Duration;
 
 use color_eyre::eyre::{eyre, Result};
 use rand::Rng;
 use tokio::time::sleep;
 
-/// Lightweight chaos simulator used by integration tests.
-#[derive(Debug, Clone, Copy)]
-pub struct ChaosInjestor {
-    latency: Duration,
-    failure_rate: f64,
+/// Chaos injection settings.
+#[derive(Clone, Copy, Debug)]
+pub struct ChaosConfig {
+    pub latency: Duration,
+    pub failure_rate: f64,
 }
 
-impl ChaosInjestor {
-    /// Create a new chaos helper with the provided latency + failure knobs.
+impl ChaosConfig {
     pub fn new(latency: Duration, failure_rate: f64) -> Self {
         Self {
             latency,
@@ -20,56 +24,33 @@ impl ChaosInjestor {
         }
     }
 
-    /// Run the provided future while optionally injecting latency/failures.
-    pub async fn with_simulated_failures<Fut, T>(&self, operation: Fut) -> Result<T>
+    /// Apply latency then randomly fail based on `failure_rate`.
+    pub async fn inject<T, F, Fut>(&self, op: F) -> Result<T>
     where
+        F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
-        self.inject_latency().await;
-        self.maybe_fail("chaos failure before operation")?;
-        let result = operation.await;
-        match result {
-            Ok(value) => {
-                self.maybe_fail("chaos failure after operation")?;
-                Ok(value)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Simulate a temporary network partition.
-    pub async fn simulate_network_partition(&self) -> Result<()> {
-        self.inject_latency().await;
-        self.maybe_fail("simulated network partition")
-    }
-
-    /// Simulate an abrupt database crash.
-    pub async fn simulate_database_crash(&self) -> Result<()> {
-        Err(eyre!(
-            "simulated database crash (chaos failure rate = {:.2})",
-            self.failure_rate
-        ))
-    }
-
-    async fn inject_latency(&self) {
         if !self.latency.is_zero() {
             sleep(self.latency).await;
         }
-    }
-
-    fn maybe_fail(&self, message: &str) -> Result<()> {
         if self.failure_rate > 0.0 {
             let mut rng = rand::thread_rng();
             if rng.gen_bool(self.failure_rate) {
-                return Err(eyre!("{}", message));
+                return Err(eyre!("chaos: induced failure"));
             }
         }
-        Ok(())
+        op().await
     }
-}
 
-impl Default for ChaosInjestor {
-    fn default() -> Self {
-        Self::new(Duration::from_millis(0), 0.0)
+    /// Simulate a transient partition by sleeping for the given duration.
+    pub async fn partition(&self, duration: Duration) {
+        let delay = if duration.is_zero() {
+            self.latency
+        } else {
+            duration
+        };
+        if !delay.is_zero() {
+            sleep(delay).await;
+        }
     }
 }
