@@ -145,3 +145,21 @@ async fn test_satellite_publisher_emits_events_and_confirmations() -> Result<()>
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ephemeral_nats_with_chaos_refuses_connections() {
+    let nats = EphemeralNats::start()
+        .await
+        .expect("nats should start")
+        .with_chaos(std::time::Duration::ZERO, 1.0);
+    let err = nats
+        .connect()
+        .await
+        .expect_err("chaos failure_rate=1 should force connect error");
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("simulated connection failure"),
+        "unexpected error: {err}"
+    );
+}

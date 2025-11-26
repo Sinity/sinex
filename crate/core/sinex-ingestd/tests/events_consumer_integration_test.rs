@@ -460,3 +460,59 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
     handle.abort();
     Ok(())
 }
+
+#[sinex_test]
+async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("malformed-{}", Ulid::new());
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(5),
+        true,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    // Malformed JSON bytes (not parseable).
+    let malformed = br#"{ bad json"#;
+    let subject = ctx
+        .env()
+        .nats_subject(&format!("events.raw.{}.malformed", suffix));
+    js.publish(subject, malformed.to_vec().into())
+        .await?
+        .await?;
+
+    // Expect DLQ to have at least one message; no event persisted.
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let dlq = js
+                .get_stream(&topology.dlq_stream)
+                .await?
+                .info()
+                .await?
+                .state;
+            if dlq.messages >= 1 {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+
+    let dlq_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sinex_schemas.dlq_events WHERE error_category = 'parse_error'",
+    )
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap_or(0);
+    assert!(
+        dlq_count >= 1,
+        "DLQ table should record parse_error for malformed JSON"
+    );
+
+    handle.abort();
+    Ok(())
+}
