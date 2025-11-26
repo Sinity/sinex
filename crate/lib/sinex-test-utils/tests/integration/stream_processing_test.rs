@@ -4,11 +4,10 @@
 //! event routing, consumer behavior, and stream processing patterns.
 //! Focuses on correctness and integration rather than raw performance.
 
-use sinex_test_utils::TestResult;
-use async_nats::jetstream::{consumer::PullConsumer, stream::Config as StreamConfig, Context};
+use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -16,23 +15,20 @@ use tokio::time::timeout;
 /// Test basic NATS stream publishing and consuming
 #[sinex_test]
 async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Create NATS connection
-    let client = async_nats::connect("localhost:4222").await?;
-    let jetstream = async_nats::jetstream::new(client);
-
-    let stream_name = "sinex-test-basic";
+    let _ = ctx;
+    let nats = EphemeralNats::start().await?;
     let subject = "events.test.basic";
-
-    // Create stream
-    let stream_config = StreamConfig {
-        name: stream_name.to_string(),
-        subjects: vec![subject.to_string()],
-        ..Default::default()
-    };
-    
-    let _stream = jetstream
-        .get_or_create_stream(stream_config)
+    let (stream_name, consumer) = nats
+        .ensure_stream_with_consumer(
+            "sinex-test-basic",
+            &[subject],
+            ConsumerConfig {
+                durable_name: Some("test-basic-consumer".to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
+    let jetstream = nats.jetstream().await?;
 
     // Publish test events
     let test_events = vec![
@@ -56,25 +52,11 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
     // Publish events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream
-            .publish(subject, event_bytes.into())
-            .await?;
+        let ack = jetstream.publish(subject, event_bytes.into()).await?;
         ack.await?;
         
         println!("Published event {}: {:?}", i + 1, event["event_type"]);
     }
-
-    // Create consumer
-    let stream = jetstream.get_stream(stream_name).await?;
-    let consumer = stream
-        .get_or_create_consumer(
-            "test-basic-consumer",
-            async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some("test-basic-consumer".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
 
     // Consume messages
     let mut messages = consumer.messages().await?;
@@ -92,7 +74,8 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
-    }).await??;
+    })
+    .await??;
 
     // Verify all events were received
     assert_eq!(received_events.len(), test_events.len());
@@ -103,34 +86,31 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
         assert_eq!(original["payload"], received["payload"]);
     }
 
-    println!("✅ Basic stream processing test passed - processed {} events", received_events.len());
+    println!(
+        "✅ Basic stream processing test passed - processed {} events on stream {}",
+        received_events.len(),
+        stream_name
+    );
     Ok(())
 }
 
 /// Test stream processing with multiple subjects
 #[sinex_test]
 async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let client = async_nats::connect("localhost:4222").await?;
-    let jetstream = async_nats::jetstream::new(client);
-
-    let stream_name = "sinex-test-multi-subject";
-    
-    // Create stream with multiple subjects
-    let subjects = vec![
-        "events.filesystem.*".to_string(),
-        "events.terminal.*".to_string(),
-        "events.system.*".to_string(),
-    ];
-    
-    let stream_config = StreamConfig {
-        name: stream_name.to_string(),
-        subjects: subjects.clone(),
-        ..Default::default()
-    };
-    
-    let _stream = jetstream
-        .get_or_create_stream(stream_config)
+    let _ = ctx;
+    let nats = EphemeralNats::start().await?;
+    let subjects = ["events.filesystem.*", "events.terminal.*", "events.system.*"];
+    let (_stream_name, consumer) = nats
+        .ensure_stream_with_consumer(
+            "sinex-test-multi-subject",
+            &subjects,
+            ConsumerConfig {
+                durable_name: Some("test-multi-subject-consumer".to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
+    let jetstream = nats.jetstream().await?;
 
     // Test events for different subjects
     let test_cases = vec![
@@ -231,22 +211,21 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::e
 /// Test consumer groups and load balancing
 #[sinex_test]
 async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let client = async_nats::connect("localhost:4222").await?;
-    let jetstream = async_nats::jetstream::new(client);
-
-    let stream_name = "sinex-test-consumer-groups";
+    let _ = ctx;
+    let nats = EphemeralNats::start().await?;
     let subject = "events.test.consumer_groups";
 
-    // Create stream
-    let stream_config = StreamConfig {
-        name: stream_name.to_string(),
-        subjects: vec![subject.to_string()],
-        ..Default::default()
-    };
-    
-    let _stream = jetstream
-        .get_or_create_stream(stream_config)
+    let (stream_name, _) = nats
+        .ensure_stream_with_consumer(
+            "sinex-test-consumer-groups",
+            &[subject],
+            ConsumerConfig {
+                durable_name: Some("cg-bootstrap".to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
+    let jetstream = nats.jetstream().await?;
 
     // Publish many test events
     let event_count = 20;
@@ -273,7 +252,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
     
     let mut consumers = Vec::new();
     for i in 0..consumer_count {
-        let stream = jetstream.get_stream(stream_name).await?;
+        let stream = jetstream.get_stream(&stream_name).await?;
         let durable = format!("{}-{}", consumer_group, i);
         let consumer = stream
             .get_or_create_consumer(
@@ -366,22 +345,22 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
 /// Test stream processing with message ordering
 #[sinex_test]
 async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let client = async_nats::connect("localhost:4222").await?;
-    let jetstream = async_nats::jetstream::new(client);
-
-    let stream_name = "sinex-test-ordering";
+    let _ = ctx;
+    let nats = EphemeralNats::start().await?;
     let subject = "events.test.ordering";
 
-    // Create stream
-    let stream_config = StreamConfig {
-        name: stream_name.to_string(),
-        subjects: vec![subject.to_string()],
-        ..Default::default()
-    };
-    
-    let _stream = jetstream
-        .get_or_create_stream(stream_config)
+    let (stream_name, consumer) = nats
+        .ensure_stream_with_consumer(
+            "sinex-test-ordering",
+            &[subject],
+            ConsumerConfig {
+                durable_name: Some("test-ordering-consumer".to_string()),
+                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+                ..Default::default()
+            },
+        )
         .await?;
+    let jetstream = nats.jetstream().await?;
 
     // Publish ordered sequence of events
     let sequence_length = 15;
@@ -394,9 +373,7 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
         });
         
         let event_bytes = serde_json::to_vec(&event)?;
-        let ack = jetstream
-            .publish(subject, event_bytes.into())
-            .await?;
+        let ack = jetstream.publish(subject, event_bytes.into()).await?;
         ack.await?;
         
         // Small delay to ensure ordering
@@ -455,22 +432,21 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
 /// Test stream processing error handling and recovery
 #[sinex_test]
 async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let client = async_nats::connect("localhost:4222").await?;
-    let jetstream = async_nats::jetstream::new(client);
-
-    let stream_name = "sinex-test-error-handling";
+    let _ = ctx;
+    let nats = EphemeralNats::start().await?;
     let subject = "events.test.errors";
 
-    // Create stream
-    let stream_config = StreamConfig {
-        name: stream_name.to_string(),
-        subjects: vec![subject.to_string()],
-        ..Default::default()
-    };
-    
-    let _stream = jetstream
-        .get_or_create_stream(stream_config)
+    let (stream_name, consumer) = nats
+        .ensure_stream_with_consumer(
+            "sinex-test-error-handling",
+            &[subject],
+            ConsumerConfig {
+                durable_name: Some("test-error-handling-consumer".to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
+    let jetstream = nats.jetstream().await?;
 
     // Publish mix of valid and problematic events
     let test_events = vec![
@@ -489,25 +465,11 @@ async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Resul
     // Publish all events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream
-            .publish(subject, event_bytes.into())
-            .await?;
+        let ack = jetstream.publish(subject, event_bytes.into()).await?;
         ack.await?;
         
         println!("Published event {}: {:?}", i + 1, event["event_type"]);
     }
-
-    // Create consumer
-    let stream = jetstream.get_stream(stream_name).await?;
-    let consumer = stream
-        .get_or_create_consumer(
-            "test-error-handling-consumer",
-            async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some("test-error-handling-consumer".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
 
     // Consume messages and handle errors gracefully
     let mut messages = consumer.messages().await?;

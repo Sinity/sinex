@@ -90,12 +90,10 @@ impl ServiceContainer {
                 None
             }
             Err(err) => {
-                return Err(
-                    SinexError::service("Failed to initialize replay control")
-                        .with_operation("gateway.spawn_replay_control")
-                        .with_source(err.to_string())
-                        .into(),
-                )
+                return Err(SinexError::service("Failed to initialize replay control")
+                    .with_operation("gateway.spawn_replay_control")
+                    .with_source(err.to_string())
+                    .into())
             }
         };
 

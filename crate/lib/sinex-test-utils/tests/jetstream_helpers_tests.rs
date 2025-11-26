@@ -14,11 +14,10 @@ async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> Result<()> {
     let wildcard_subject = format!("{subject_prefix}.>");
     let stream = env.nats_stream_name("TEST_SAMPLE_STREAM");
 
-    nats.create_stream(&stream, &[wildcard_subject.as_str()])
-        .await?;
-    let _consumer = nats
-        .create_consumer(
+    let (_stream_name, _consumer) = nats
+        .ensure_stream_with_consumer(
             &stream,
+            &[wildcard_subject.as_str()],
             ConsumerConfig {
                 durable_name: Some("helper".to_string()),
                 ..Default::default()
@@ -145,4 +144,22 @@ async fn test_satellite_publisher_emits_events_and_confirmations() -> Result<()>
     );
 
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ephemeral_nats_with_chaos_refuses_connections() {
+    let nats = EphemeralNats::start()
+        .await
+        .expect("nats should start")
+        .with_chaos(std::time::Duration::ZERO, 1.0);
+    let err = nats
+        .connect()
+        .await
+        .expect_err("chaos failure_rate=1 should force connect error");
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("simulated connection failure"),
+        "unexpected error: {err}"
+    );
 }

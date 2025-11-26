@@ -1,10 +1,10 @@
 //! JetStream idempotency scenarios.
 
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -17,7 +17,8 @@ async fn test_duplicate_event_rejection_smoke() -> color_eyre::Result<()> {
 async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
 
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 

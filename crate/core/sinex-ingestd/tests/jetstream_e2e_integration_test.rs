@@ -8,7 +8,7 @@
 //!
 //! This validates Phase 1 (Event Backbone) and Phase 2 (Confirmation-Aware Consumption).
 
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use serde_json::json;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
@@ -17,7 +17,7 @@ use sinex_satellite_sdk::{
     AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NatsPublisher,
     ProcessingModel,
 };
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -30,7 +30,8 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
 
     // Setup test infrastructure
     let ctx = TestContext::new().await?.with_nats().await?;
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client: Client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let env = ctx.env();
 
