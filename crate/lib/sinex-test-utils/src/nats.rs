@@ -22,6 +22,7 @@ pub struct EphemeralNats {
     url: String,
     _store: TempDir,
     chaos: Option<ChaosConfig>,
+    stream_prefix: Option<String>,
 }
 
 impl EphemeralNats {
@@ -57,6 +58,7 @@ impl EphemeralNats {
             url,
             _store: store_dir,
             chaos: None,
+            stream_prefix: None,
         })
     }
 
@@ -83,6 +85,18 @@ impl EphemeralNats {
             failure_rate: failure_rate.clamp(0.0, 1.0),
         });
         self
+    }
+
+    /// Override the stream/subject prefix tests should use when creating streams.
+    /// Useful for isolating multiple test suites sharing a single NATS instance.
+    pub fn with_stream_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.stream_prefix = Some(prefix.into());
+        self
+    }
+
+    /// Return the active stream prefix (if any).
+    pub fn stream_prefix(&self) -> Option<&str> {
+        self.stream_prefix.as_deref()
     }
 
     /// Create a JetStream context bound to this server.
