@@ -119,6 +119,8 @@ pub struct MaterialAssembler {
     assembler_state: Arc<RwLock<HashMap<Ulid, AssemblerState>>>,
     state_root: PathBuf,
     dlq_subject: String,
+    stream_prefix: String,
+    subject_prefix: String,
 }
 
 impl MaterialAssembler {
@@ -128,6 +130,18 @@ impl MaterialAssembler {
         pool: DbPool,
         annex: Arc<GitAnnex>,
         state_root: PathBuf,
+    ) -> IngestdResult<Self> {
+        Self::with_prefix(nats_client, pool, annex, state_root, None, None)
+    }
+
+    /// Create a new material assembler with an optional stream prefix override (test-only).
+    pub fn with_prefix(
+        nats_client: NatsClient,
+        pool: DbPool,
+        annex: Arc<GitAnnex>,
+        state_root: PathBuf,
+        stream_prefix: Option<String>,
+        subject_prefix: Option<String>,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
@@ -139,6 +153,8 @@ impl MaterialAssembler {
 
         let js = jetstream::new(nats_client);
         let env = sinex_core::environment().clone();
+        let prefix = stream_prefix.unwrap_or_else(|| env.nats_stream_name("SOURCE_MATERIAL_"));
+        let subject_prefix = subject_prefix.unwrap_or_else(|| "source_material".to_string());
 
         Ok(Self {
             js,
@@ -148,6 +164,8 @@ impl MaterialAssembler {
             assembler_state: Arc::new(RwLock::new(HashMap::new())),
             state_root,
             dlq_subject: env.nats_subject(&format!("events.dlq.{DLQ_CONSUMER}")),
+            stream_prefix: prefix,
+            subject_prefix,
         })
     }
 
@@ -884,11 +902,10 @@ impl MaterialAssembler {
     /// Spawn consumer for begin messages
     fn spawn_begin_consumer(&self) -> tokio::task::JoinHandle<IngestdResult<()>> {
         let js = self.js.clone();
-        let env = self.env.clone();
         let assembler = self.clone_for_task();
 
         tokio::spawn(async move {
-            let stream_name = env.nats_subject("source_material_begin");
+            let stream_name = format!("{}BEGIN", assembler.stream_prefix);
             let stream = js
                 .get_stream(&stream_name)
                 .await
@@ -900,6 +917,9 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_begin".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        filter_subject: assembler
+                            .env
+                            .nats_subject(&format!("{}.begin", assembler.subject_prefix)),
                         ..Default::default()
                     },
                 )
@@ -945,11 +965,10 @@ impl MaterialAssembler {
     /// Spawn consumer for slice messages
     fn spawn_slices_consumer(&self) -> tokio::task::JoinHandle<IngestdResult<()>> {
         let js = self.js.clone();
-        let env = self.env.clone();
         let assembler = self.clone_for_task();
 
         tokio::spawn(async move {
-            let stream_name = env.nats_subject("source_material_slices");
+            let stream_name = format!("{}SLICES", assembler.stream_prefix);
             let stream = js
                 .get_stream(&stream_name)
                 .await
@@ -962,6 +981,9 @@ impl MaterialAssembler {
                         durable_name: Some("ingestd_material_slices".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
                         max_ack_pending: 1_000,
+                        filter_subject: assembler
+                            .env
+                            .nats_subject(&format!("{}.slices.>", assembler.subject_prefix)),
                         ..Default::default()
                     },
                 )
@@ -1042,11 +1064,10 @@ impl MaterialAssembler {
     /// Spawn consumer for end messages
     fn spawn_end_consumer(&self) -> tokio::task::JoinHandle<IngestdResult<()>> {
         let js = self.js.clone();
-        let env = self.env.clone();
         let assembler = self.clone_for_task();
 
         tokio::spawn(async move {
-            let stream_name = env.nats_subject("source_material_end");
+            let stream_name = format!("{}END", assembler.stream_prefix);
             let stream = js
                 .get_stream(&stream_name)
                 .await
@@ -1058,6 +1079,9 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_end".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        filter_subject: assembler
+                            .env
+                            .nats_subject(&format!("{}.end", assembler.subject_prefix)),
                         ..Default::default()
                     },
                 )
@@ -1122,6 +1146,8 @@ impl MaterialAssembler {
             assembler_state: self.assembler_state.clone(),
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
+            stream_prefix: self.stream_prefix.clone(),
+            subject_prefix: self.subject_prefix.clone(),
         }
     }
 
@@ -1129,10 +1155,16 @@ impl MaterialAssembler {
     async fn bootstrap_streams(&self) -> IngestdResult<()> {
         info!("Bootstrapping material streams");
 
+        let begin_stream = format!("{}BEGIN", self.stream_prefix);
+        let slices_stream = format!("{}SLICES", self.stream_prefix);
+        let end_stream = format!("{}END", self.stream_prefix);
+
         self.js
             .get_or_create_stream(jetstream::stream::Config {
-                name: self.env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-                subjects: vec![self.env.nats_subject("source_material.begin")],
+                name: begin_stream,
+                subjects: vec![self
+                    .env
+                    .nats_subject(&format!("{}.begin", self.subject_prefix))],
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -1141,8 +1173,10 @@ impl MaterialAssembler {
 
         self.js
             .get_or_create_stream(jetstream::stream::Config {
-                name: self.env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-                subjects: vec![self.env.nats_subject("source_material.slices.>")],
+                name: slices_stream,
+                subjects: vec![self
+                    .env
+                    .nats_subject(&format!("{}.slices.>", self.subject_prefix))],
                 storage: jetstream::stream::StorageType::File,
                 max_age: tokio::time::Duration::from_secs(7 * 24 * 60 * 60),
                 max_message_size: 512 * 1024,
@@ -1153,8 +1187,10 @@ impl MaterialAssembler {
 
         self.js
             .get_or_create_stream(jetstream::stream::Config {
-                name: self.env.nats_stream_name("SOURCE_MATERIAL_END"),
-                subjects: vec![self.env.nats_subject("source_material.end")],
+                name: end_stream,
+                subjects: vec![self
+                    .env
+                    .nats_subject(&format!("{}.end", self.subject_prefix))],
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })

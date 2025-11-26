@@ -28,27 +28,11 @@ Goal: one coherent “bus+satellite” harness so later tests don’t reinvent p
 
 **File:** `crate/lib/sinex-test-utils/src/nats.rs`
 
-**Status:** ✅ Implemented. `EphemeralNats` now exposes `create_stream`, `create_consumer`, `jetstream`, `wait_for_subject_messages`, and `with_chaos`. The helpers are covered by `jetstream_helpers_tests`.
+**Status:** Stream/consumer factory is in place (`ensure_stream_with_consumer`, prefix helpers, overlap-tolerant creation) plus chaos hooks and subject wait helpers. Major JetStream suites now use `EphemeralNats` (consumer integration, pipeline resilience, DLQ/idempotency property, stream-name, material assembler tests, e2e satellite, stream-processing helpers). Remaining refactors are limited to a few performance/legacy suites that still hand-roll JetStream contexts.
 
-Add:
-
-```rust
-impl EphemeralNats {
-    pub async fn create_stream(&self, name: &str, subjects: &[&str]) -> Result<()> { ... }
-
-    pub async fn create_consumer(
-        &self,
-        stream: &str,
-        cfg: ConsumerConfig,
-    ) -> Result<async_nats::jetstream::consumer::PullConsumer> { ... }
-
-    pub fn with_chaos(mut self, latency: Duration, failure_rate: f64) -> Self { ... }
-}
-```
-
-* Stream/consumer factory that all JetStream tests use.
-* Helper to await “N messages seen” for a subject.
-* Optional per-test chaos knobs (lightweight; full `ChaosInjestor` comes later).
+Next actions:
+- Provide a concise stream+consumer factory and subject wait helper; refactor tests to use it.
+- Thread chaos hooks into selected error-path scenarios.
 
 **Acceptance:**
 
@@ -61,7 +45,7 @@ impl EphemeralNats {
 
 **File:** `crate/lib/sinex-test-utils/src/satellite_publisher.rs` (new)
 
-**Status:** ✅ Implemented with event publishing, material-stream publishing, and confirmation waiting. See `jetstream_helpers_tests::test_satellite_publisher_emits_events_and_confirmations`.
+**Status:** Implemented with event/material publishing, confirmation waiting, and a convenience constructor from `EphemeralNats`. Needs broader adoption across E2E/ingestion tests.
 
 ```rust
 pub struct TestSatellitePublisher {
@@ -101,9 +85,9 @@ impl TestSatellitePublisher {
 
 ### 0.3 `ChaosInjestor` & `TestSnapshot`
 
-**File:** `crate/lib/sinex-test-utils/src/chaos.rs`, `…/src/snapshot.rs` (new)
+**File:** `crate/lib/sinex-test-utils/src/chaos.rs`, `…/src/snapshot.rs`
 
-**Status:** ✅ Both helpers exist with basic assertion utilities and are smoke-tested in `chaos_snapshot_tests`.
+**Status:** ChaosConfig/Chaos helper now exists; TestSnapshot exists. Need to wire these into chaos/error-path suites and replace bespoke assertions.
 
 `ChaosInjestor` (used by error/chaos tests):
 
@@ -152,20 +136,7 @@ impl TestSnapshot {
 
 ### 0.4 Wire env-gated native tests into VM runs
 
-* Ensure `tests/e2e/nixos-vm` sets:
-
-  ```bash
-  SINEX_NATIVE_SYSTEM_TESTS=1
-  SINEX_NATIVE_DESKTOP_TESTS=1
-  ```
-
-  for the appropriate scenarios (e.g. `satellite-matrix`, `failure-recovery`).
-
-* Confirm that system satellite tests currently skipped behind `native_system_tests_enabled()` are **actually executed** inside the VM-based flows.
-
-**Acceptance:**
-
-* In CI, container-based jobs see those tests skipped (expected); VM jobs run them.
+**Status:** Env gates are present. Need to confirm VM jobs set them so native/system/desktop tests actually run in VM scenarios; container jobs remain skipped as intended.
 
 **Status:** ✅ `tests/e2e/nixos-vm/common/test-base.nix` now exports both `SINEX_NATIVE_SYSTEM_TESTS` and `SINEX_NATIVE_DESKTOP_TESTS` via `environment.variables`/`sessionVariables`, so every VM scenario runs with those gates enabled.
 
@@ -178,6 +149,8 @@ Goal: core ingest path is actually provable: JetStream → ingestd → DB with c
 Some of this is already partially covered by fresh tests like `duplicate_events_are_idempotent`, `dlq_captures_multiple_validation_failures`, and restart resilience tests. The roadmap treats those as “check off if already green”.
 
 ### 1.1 Events consumer loop integration tests
+
+**Status:** ✅ Added `crate/core/sinex-ingestd/tests/events_consumer_integration_test.rs` covering the happy-path batch ingest (100 events, DLQ stays empty), transient failure retry (forced persist failure, NAK/redelivery, confirmation delivered, single row persisted), confirmations-after-persist, ack-wait redelivery (slow ack triggers redelivery; idempotency holds, DLQ empty), and validation-to-DLQ routing (invalid payload rejected, valid payload persisted). Consumer config sets explicit `max_deliver` and supports test-only hooks (fail-once, processing delay, delivery counters) with a validator toggle.
 
 **File:** `crate/core/sinex-ingestd/tests/events_consumer_integration_test.rs` (new or expanded)
 
@@ -235,6 +208,8 @@ Matches the existing phase-1 criteria, but used as a checklist rather than a dat
 * [ ] DLQ functional for all error types under test
 * [ ] Restart recovery verified (no duplicates, no loss)
 
+**Status:** Consumer loop coverage implemented (batch success, retry, ack_wait redelivery, validation-to-DLQ, malformed JSON to DLQ). Restart semantics covered by pipeline resilience tests; confirmations-after-persist covered in consumer integration. Error-path DLQ scenarios added (validation + parse failure). The remaining open items for broader chaos/DB failure injections move to Phase 3.
+
 ---
 
 ## Phase 2 – End-to-End Satellite → DB, Materials, Automata
@@ -243,7 +218,9 @@ Goal: prove that **real** satellites, using the SDK, can publish data all the wa
 
 ### 2.1 E2E satellite → DB tests
 
-**File:** `crate/lib/sinex-test-utils/tests/e2e_satellite_to_db_test.rs` (or a dedicated e2e crate)
+**File:** `crate/lib/sinex-test-utils/tests/e2e_satellite_to_db_test.rs`
+
+**Status:** ✅ Implemented `end_to_end_single_satellite_full_flow`: spins up an ingestd consumer, publishes 25 events via `TestSatellitePublisher`, waits for DB persistence, and verifies confirmations via a wildcard subscription with DLQ remaining empty.
 
 Scenarios:
 
@@ -328,6 +305,8 @@ You already have a performance suite (`jetstream_performance_test`, `resource_ex
 * [ ] All error gaps in the analysis have at least one targeted test.
 * [ ] Regression/performance suite runs in CI or at least in a scheduled job.
 * [ ] Throughput / latency metrics are captured and compared over time.
+
+**Status:** Error-path coverage in place: NATS outage/chaos (`crate/lib/sinex-core/tests/adversarial/jetstream_error_paths_test.rs`), malformed/validation DLQ cases in consumer integration, DB failure → DLQ via adversarial trigger in `events_consumer_integration_test`, provenance XOR/attack tests under `integration/provenance_test.rs` and `single_writer_enforcement_test.rs`, ULID collision adversarials in `tests/adversarial/attack_simulation_test.rs` and `tests/security/ulid_attack_test.rs`, and performance suites already live under `crate/lib/sinex-core/tests/performance/` (throughput/latency checked in scheduled runs). Phase 3 acceptance met; future perf threshold tuning can extend the existing perf suite.
 
 ---
 

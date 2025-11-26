@@ -31,6 +31,15 @@ impl TestSatellitePublisher {
         }
     }
 
+    /// Helper to connect via EphemeralNats with a given source label.
+    pub async fn from_ephemeral(
+        nats: &crate::EphemeralNats,
+        source: impl Into<String>,
+    ) -> Result<Self> {
+        let client = nats.connect().await?;
+        Ok(Self::new(client, source))
+    }
+
     /// Publish an event to the standard `events.raw.<source>.<event_type>` subject.
     pub async fn publish_event(
         &self,

@@ -8,7 +8,7 @@ use sinex_core::{db::DbPool, environment::SinexEnvironment, types::ulid::Ulid, J
 use sqlx::QueryBuilder;
 use std::collections::HashSet;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -59,6 +59,10 @@ pub struct JetStreamConsumer {
     pool: DbPool,
     validator: Arc<RwLock<EventValidator>>,
     topology: JetStreamTopology,
+    ack_wait: Duration,
+    fail_once: Option<Arc<AtomicBool>>,
+    processing_delay: Option<Duration>,
+    delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
 }
 
@@ -158,8 +162,64 @@ impl JetStreamConsumer {
             pool,
             validator,
             topology,
+            ack_wait: Duration::from_secs(30),
+            fail_once: None,
+            processing_delay: None,
+            delivery_observer: None,
             stats: ConsumerStats::default(),
         }
+    }
+
+    /// Build a consumer with a custom AckWait (primarily for tests).
+    pub fn with_ack_wait(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+    ) -> Self {
+        let mut consumer = Self::new(nats_client, pool, validator, topology);
+        consumer.ack_wait = ack_wait;
+        consumer
+    }
+
+    /// Build a consumer that will fail once before proceeding (test-only hook).
+    pub fn with_ack_wait_and_fail_once(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+        fail_once: Arc<AtomicBool>,
+    ) -> Self {
+        Self::with_test_hooks(
+            nats_client,
+            pool,
+            validator,
+            topology,
+            ack_wait,
+            Some(fail_once),
+            None,
+            None,
+        )
+    }
+
+    /// Build a consumer with optional test-only hooks.
+    pub fn with_test_hooks(
+        nats_client: NatsClient,
+        pool: DbPool,
+        validator: Arc<RwLock<EventValidator>>,
+        topology: JetStreamTopology,
+        ack_wait: Duration,
+        fail_once: Option<Arc<AtomicBool>>,
+        processing_delay: Option<Duration>,
+        delivery_observer: Option<Arc<AtomicU64>>,
+    ) -> Self {
+        let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
+        consumer.fail_once = fail_once;
+        consumer.processing_delay = processing_delay;
+        consumer.delivery_observer = delivery_observer;
+        consumer
     }
 
     /// Bootstrap all required JetStream streams
@@ -240,7 +300,8 @@ impl JetStreamConsumer {
                 jetstream::consumer::pull::Config {
                     durable_name: Some(self.topology.consumer_durable.clone()),
                     ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait: Duration::from_secs(30),
+                    ack_wait: self.ack_wait,
+                    max_deliver: 10,
                     max_ack_pending: 100,
                     ..Default::default()
                 },
@@ -286,6 +347,10 @@ impl JetStreamConsumer {
                     continue;
                 }
             };
+
+            if let Some(counter) = &self.delivery_observer {
+                counter.fetch_add(1, Ordering::Relaxed);
+            }
 
             // Parse event
             let raw_event: RawEvent = match serde_json::from_slice(&msg.payload) {
@@ -521,6 +586,9 @@ impl JetStreamConsumer {
         match self.persist_batch_optimized(&batch).await {
             Ok(persisted_ids) => {
                 let persisted_set: HashSet<_> = persisted_ids.iter().cloned().collect();
+                if let Some(delay) = self.processing_delay {
+                    tokio::time::sleep(delay).await;
+                }
                 // Publish confirmations for every message in the batch to guarantee downstream delivery
                 for prepared in &batch {
                     if let Err(e) = self.publish_confirmation(&prepared.parsed_id).await {
@@ -603,6 +671,12 @@ impl JetStreamConsumer {
     async fn persist_batch_optimized(&self, batch: &[PreparedEvent]) -> IngestdResult<Vec<Ulid>> {
         if batch.is_empty() {
             return Ok(Vec::new());
+        }
+
+        if let Some(fail_flag) = &self.fail_once {
+            if fail_flag.swap(false, Ordering::SeqCst) {
+                return Err(SinexError::database("forced transient failure"));
+            }
         }
 
         let mut builder = QueryBuilder::new(

@@ -1,12 +1,13 @@
 use async_nats::jetstream;
 use color_eyre::eyre::eyre;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use std::time::Duration;
 
 #[sinex_test]
 async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let js = jetstream::new(nats_client);
     let env = ctx.env();
 

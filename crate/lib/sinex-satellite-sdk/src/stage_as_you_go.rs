@@ -160,11 +160,8 @@ impl StageAsYouGoContext {
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
         let source_material_repo = self.db_pool.source_materials();
-        let register_future = source_material_repo.register_in_flight(
-            material_type,
-            source_uri,
-            initial_metadata,
-        );
+        let register_future =
+            source_material_repo.register_in_flight(material_type, source_uri, initial_metadata);
         let result = match timeout(Self::db_registration_timeout(), register_future).await {
             Ok(res) => res.map_err(|err| err.to_string()),
             Err(_) => Err("register_in_flight timed out while waiting for database".to_string()),
@@ -200,7 +197,7 @@ impl StageAsYouGoContext {
                 return Err(SatelliteError::General(eyre!(
                     "Failed to register in-flight source material: {}",
                     err
-                )))
+                )));
             }
         };
 
