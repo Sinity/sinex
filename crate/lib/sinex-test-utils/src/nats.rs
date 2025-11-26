@@ -105,6 +105,30 @@ impl EphemeralNats {
         Ok(())
     }
 
+    /// Create a stream, skipping if the existing stream has overlapping subjects.
+    /// Useful for concurrent test runs where streams may already exist with a slightly
+    /// different config.
+    pub async fn ensure_stream_allowing_overlap(
+        &self,
+        name: &str,
+        subjects: &[&str],
+    ) -> Result<()> {
+        match self.create_stream(name, subjects).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("stream name already in use")
+                    || msg.contains("subjects overlap")
+                {
+                    // Treat overlapping config as non-fatal in shared NATS instances.
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
     /// Create a durable pull consumer for the given stream.
     pub async fn create_consumer(
         &self,
