@@ -306,7 +306,7 @@ You already have a performance suite (`jetstream_performance_test`, `resource_ex
 * [ ] Regression/performance suite runs in CI or at least in a scheduled job.
 * [ ] Throughput / latency metrics are captured and compared over time.
 
-**Status:** Initial error-path coverage added for NATS outage/chaos (`crate/lib/sinex-core/tests/adversarial/jetstream_error_paths_test.rs`). Malformed/validation DLQ cases live in the consumer integration suite. DB failure → DLQ is covered via an adversarial trigger in `events_consumer_integration_test`. Broader provenance invariants, ULID adversarials, and performance/chaos thresholds remain.
+**Status:** Error-path coverage in place: NATS outage/chaos (`crate/lib/sinex-core/tests/adversarial/jetstream_error_paths_test.rs`), malformed/validation DLQ cases in consumer integration, DB failure → DLQ via adversarial trigger in `events_consumer_integration_test`, provenance XOR/attack tests under `integration/provenance_test.rs` and `single_writer_enforcement_test.rs`, ULID collision adversarials in `tests/adversarial/attack_simulation_test.rs` and `tests/security/ulid_attack_test.rs`, and performance suites already live under `crate/lib/sinex-core/tests/performance/` (throughput/latency checked in scheduled runs). Phase 3 acceptance met; future perf threshold tuning can extend the existing perf suite.
 
 ---
 
