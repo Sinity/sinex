@@ -208,6 +208,8 @@ Matches the existing phase-1 criteria, but used as a checklist rather than a dat
 * [ ] DLQ functional for all error types under test
 * [ ] Restart recovery verified (no duplicates, no loss)
 
+**Status:** Consumer loop coverage implemented (batch success, retry, ack_wait redelivery, validation-to-DLQ, malformed JSON to DLQ). Restart semantics covered by pipeline resilience tests; confirmations-after-persist covered in consumer integration. Error-path DLQ scenarios added (validation + parse failure). The remaining open items for broader chaos/DB failure injections move to Phase 3.
+
 ---
 
 ## Phase 2 – End-to-End Satellite → DB, Materials, Automata
