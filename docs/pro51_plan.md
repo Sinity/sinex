@@ -306,6 +306,8 @@ You already have a performance suite (`jetstream_performance_test`, `resource_ex
 * [ ] Regression/performance suite runs in CI or at least in a scheduled job.
 * [ ] Throughput / latency metrics are captured and compared over time.
 
+**Status:** Initial error-path coverage added for NATS outage/chaos (`crate/lib/sinex-core/tests/adversarial/jetstream_error_paths_test.rs`). Malformed/validation DLQ cases live in the consumer integration suite. Broader DB failure injections, provenance invariants, and performance/chaos thresholds remain.
+
 ---
 
 ## Phase 4 – Chaos & Security
