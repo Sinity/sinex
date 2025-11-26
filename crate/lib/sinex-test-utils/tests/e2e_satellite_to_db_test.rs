@@ -1,9 +1,9 @@
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use serde_json::json;
 use sinex_ingestd::{
     validator::EventValidator, IngestdResult, JetStreamConsumer, JetStreamTopology,
 };
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats, TestSatellitePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -11,20 +11,20 @@ use tokio::time::{sleep, timeout};
 
 async fn start_ingestd(
     ctx: &TestContext,
+    nats_client: async_nats::Client,
     suffix: &str,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
     jetstream::Context,
     JetStreamTopology,
 )> {
-    let nats = ctx.nats_client();
-    let js = jetstream::new(nats.clone());
+    let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
     let stream = env.nats_stream_name(&format!("SINEX_RAW_EVENTS_E2E_{suffix}"));
     let topology = JetStreamTopology::new(&env, stream, format!("ingestd-e2e-{suffix}"));
 
     let consumer = JetStreamConsumer::new(
-        nats.clone(),
+        nats_client.clone(),
         ctx.pool.clone(),
         Arc::new(RwLock::new(EventValidator::new(false))),
         topology.clone(),
@@ -51,15 +51,15 @@ async fn start_ingestd(
 #[sinex_test]
 async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let suffix = format!("e2e-{}", uuid::Uuid::new_v4());
-    let (handle, js, topology) = start_ingestd(&ctx, &suffix).await?;
+    let (handle, js, topology) = start_ingestd(&ctx, nats_client.clone(), &suffix).await?;
 
-    let mut confirmations = ctx
-        .nats_client()
-        .subscribe(ctx.env().nats_subject("events.confirmations.>"))
-        .await?;
+    let confirmation_subject = ctx.env().nats_subject("events.confirmations.>").to_string();
+    let mut confirmation_sub = nats_client.subscribe(confirmation_subject).await?;
 
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("satellite.{suffix}"));
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("satellite.{suffix}"));
     let mut ids = Vec::new();
     for idx in 0..25u32 {
         let id = publisher
@@ -90,7 +90,7 @@ async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<(
     let mut seen: HashSet<String> = HashSet::new();
     timeout(Duration::from_secs(10), async {
         while seen.len() < expected.len() {
-            if let Some(msg) = confirmations.next().await {
+            if let Some(msg) = confirmation_sub.next().await {
                 let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
                 if let Some(id) = payload.get("event_id").and_then(|v| v.as_str()) {
                     if expected.contains(id) {
