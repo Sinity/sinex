@@ -150,7 +150,7 @@ Some of this is already partially covered by fresh tests like `duplicate_events_
 
 ### 1.1 Events consumer loop integration tests
 
-**Status:** ✅ Added `crate/core/sinex-ingestd/tests/events_consumer_integration_test.rs` covering the happy-path batch ingest (100 events, DLQ stays empty), transient failure retry (forced persist failure, NAK/redelivery, confirmation delivered, single row persisted), confirmations-after-persist, and ack-wait redelivery (slow ack triggers redelivery; idempotency holds, DLQ empty). Consumer config now sets an explicit `max_deliver` and supports test-only hooks (fail-once, processing delay, delivery counters).
+**Status:** ✅ Added `crate/core/sinex-ingestd/tests/events_consumer_integration_test.rs` covering the happy-path batch ingest (100 events, DLQ stays empty), transient failure retry (forced persist failure, NAK/redelivery, confirmation delivered, single row persisted), confirmations-after-persist, ack-wait redelivery (slow ack triggers redelivery; idempotency holds, DLQ empty), and validation-to-DLQ routing (invalid payload rejected, valid payload persisted). Consumer config sets explicit `max_deliver` and supports test-only hooks (fail-once, processing delay, delivery counters) with a validator toggle.
 
 **File:** `crate/core/sinex-ingestd/tests/events_consumer_integration_test.rs` (new or expanded)
 
