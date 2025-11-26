@@ -516,3 +516,94 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     handle.abort();
     Ok(())
 }
+
+#[sinex_test]
+async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("dbfail-{}", Ulid::new());
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(2),
+        false,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    // Install a temporary trigger that forces an exception when source = 'db-fail'.
+    let func_name = format!("force_fail_for_source_{}", suffix.replace('-', "_"));
+    let trigger_name = format!("force_fail_trigger_{}", suffix.replace('-', "_"));
+    let create_fn = format!(
+        r#"
+        CREATE OR REPLACE FUNCTION core.{func_name}() RETURNS trigger AS $$
+        BEGIN
+            IF NEW.source = 'db-fail' THEN
+                RAISE EXCEPTION 'forced_db_failure';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+        "#,
+    );
+    let create_trigger = format!(
+        r#"
+        CREATE TRIGGER {trigger_name}
+        BEFORE INSERT ON core.events
+        FOR EACH ROW
+        WHEN (NEW.source = 'db-fail')
+        EXECUTE FUNCTION core.{func_name}();
+        "#
+    );
+    sqlx::query(&create_fn).execute(&ctx.pool).await?;
+    sqlx::query(&create_trigger).execute(&ctx.pool).await?;
+
+    // Publish an event that will trigger the DB failure.
+    let event_id = Ulid::new();
+    let payload = json!({
+        "id": event_id.to_string(),
+        "source": "db-fail",
+        "event_type": "db.failure",
+        "ts_orig": Utc::now().to_rfc3339(),
+        "host": "db-fail-host",
+        "payload": {"force": "db_error"},
+    });
+    let subject = ctx
+        .env()
+        .nats_subject(&format!("events.raw.{}.dbfail", suffix));
+    js.publish(subject, serde_json::to_vec(&payload)?.into())
+        .await?
+        .await?;
+
+    // Expect DLQ to contain the failing message after max_deliver is exhausted.
+    timeout(Duration::from_secs(20), async {
+        loop {
+            let dlq_state = js
+                .get_stream(&topology.dlq_stream)
+                .await?
+                .info()
+                .await?
+                .state;
+            if dlq_state.messages >= 1 {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await??;
+
+    // Ensure the failing event never persisted.
+    let stored = ctx.pool.events().get_by_id(event_id.into()).await?;
+    assert!(stored.is_none(), "DB-failing event should not be persisted");
+
+    handle.abort();
+
+    // Cleanup trigger/function
+    let drop_trigger = format!("DROP TRIGGER IF EXISTS {trigger_name} ON core.events CASCADE;");
+    let drop_fn = format!("DROP FUNCTION IF EXISTS core.{func_name}();");
+    let _ = sqlx::query(&drop_trigger).execute(&ctx.pool).await;
+    let _ = sqlx::query(&drop_fn).execute(&ctx.pool).await;
+
+    Ok(())
+}
