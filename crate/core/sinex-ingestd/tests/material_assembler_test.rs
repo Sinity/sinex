@@ -1,10 +1,10 @@
 //! Material assembler corruption coverage.
 
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -24,19 +24,20 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
+    nats_client: Client,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
     jetstream::Context,
     tempfile::TempDir,
     tempfile::TempDir,
 )> {
-    let nats = ctx.nats_client();
-    let js = jetstream::new(nats.clone());
+    let js = jetstream::new(nats_client.clone());
 
     let (annex, annex_dir) = fake_annex().await?;
     let state_dir = tempfile::tempdir()?;
     let state_path = state_dir.path().to_path_buf();
-    let assembler = MaterialAssembler::new(nats.clone(), ctx.pool.clone(), annex, state_path)?;
+    let assembler =
+        MaterialAssembler::new(nats_client.clone(), ctx.pool.clone(), annex, state_path)?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
 
@@ -46,12 +47,15 @@ async fn start_assembler(
 #[sinex_test]
 async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
-    let (handle, js, _annex_guard, _state_guard) = start_assembler(&ctx).await?;
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
+    let (handle, js, _annex_guard, _state_guard) =
+        start_assembler(&ctx, nats_client.clone()).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
     let env = ctx.env();
     let dlq_subject = env.nats_subject("events.dlq.ingestd");
-    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject.clone()).await?;
+    let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     // Wait for assembler to bootstrap streams; skip silently if conflicting config exists.
     let stream_names = [
