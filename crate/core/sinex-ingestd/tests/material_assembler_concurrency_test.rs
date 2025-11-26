@@ -1,6 +1,6 @@
 //! Concurrency and ledger assertions for the material assembler.
 
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
@@ -26,6 +26,7 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
+    nats_client: Client,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
     jetstream::Context,
@@ -34,8 +35,7 @@ async fn start_assembler(
     String,
     String,
 )> {
-    let nats = ctx.nats_client();
-    let js = jetstream::new(nats.clone());
+    let js = jetstream::new(nats_client.clone());
     let (annex, annex_dir) = fake_annex().await?;
     let state_dir = tempfile::tempdir()?;
     let prefix = format!(
@@ -45,7 +45,7 @@ async fn start_assembler(
     );
     let subject_prefix = format!("test_material.{}", uuid::Uuid::new_v4());
     let assembler = MaterialAssembler::with_prefix(
-        nats.clone(),
+        nats_client.clone(),
         ctx.pool.clone(),
         annex,
         state_dir.path().to_path_buf(),
@@ -96,11 +96,13 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let full_run = std::env::var("SINEX_MATERIAL_ASSEMBLER_FULL")
         .map(|v| v == "1")
         .unwrap_or(false);
     let (handle, js, _annex_guard, _state_guard, stream_prefix, subject_prefix) =
-        start_assembler(&ctx).await?;
+        start_assembler(&ctx, nats_client.clone()).await?;
     let begin_stream = format!("{stream_prefix}BEGIN");
     let slices_stream = format!("{stream_prefix}SLICES");
     let end_stream = format!("{stream_prefix}END");
