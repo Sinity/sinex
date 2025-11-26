@@ -1,12 +1,12 @@
 //! Integration coverage for the JetStream consumer covering batching, DLQ, and retry paths.
 
-use async_nats::jetstream;
+use async_nats::{jetstream, Client};
 use chrono::Utc;
 use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats, TestSatellitePublisher};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,11 +38,14 @@ async fn start_consumer(
     processing_delay: Option<Duration>,
     delivery_observer: Option<Arc<AtomicU64>>,
 ) -> TestResult<(
+    EphemeralNats,
+    Client,
     JoinHandle<sinex_ingestd::IngestdResult<()>>,
     jetstream::Context,
     JetStreamTopology,
 )> {
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
@@ -67,17 +70,18 @@ async fn start_consumer(
     wait_for_stream(&js, &topology.confirmations_stream).await?;
     wait_for_stream(&js, &topology.dlq_stream).await?;
 
-    Ok((handle, js, topology))
+    Ok((nats, nats_client, handle, js, topology))
 }
 
 #[sinex_test]
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let suffix = format!("batch-{}", Ulid::new());
-    let (handle, js, topology) =
+    let (_nats, nats_client, handle, js, topology) =
         start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
 
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("integration.{suffix}"));
+    let publisher =
+        TestSatellitePublisher::new(nats_client.clone(), format!("integration.{suffix}"));
 
     for idx in 0..100u32 {
         publisher
@@ -123,7 +127,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     let ctx = ctx.with_nats().await?;
     let suffix = format!("retry-{}", Ulid::new());
     let fail_once = Arc::new(AtomicBool::new(true));
-    let (handle, js, topology) = start_consumer(
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
         &ctx,
         &suffix,
         Duration::from_secs(2),
@@ -139,10 +143,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         ctx.env().nats_subject("events.confirmations"),
         event_id
     );
-    let mut confirmation_sub = ctx
-        .nats_client()
-        .subscribe(confirmation_subject.clone())
-        .await?;
+    let mut confirmation_sub = nats_client.subscribe(confirmation_subject.clone()).await?;
 
     let subject = ctx
         .env()
@@ -239,10 +240,10 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let suffix = format!("confirm-{}", Ulid::new());
-    let (handle, _js, _topology) =
+    let (_nats, nats_client, handle, _js, _topology) =
         start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
 
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), format!("confirm.{suffix}"));
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("confirm.{suffix}"));
     let event_id = publisher
         .publish_event("confirmation.test", json!({"confirm": true}))
         .await?;
@@ -252,10 +253,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         ctx.env().nats_subject("events.confirmations"),
         event_id
     );
-    let mut sub = ctx
-        .nats_client()
-        .subscribe(confirmation_subject.clone())
-        .await?;
+    let mut sub = nats_client.subscribe(confirmation_subject.clone()).await?;
 
     let msg = timeout(Duration::from_secs(10), sub.next())
         .await?
@@ -286,7 +284,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     let suffix = format!("ackwait-{}", Ulid::new());
     let delivery_counter = Arc::new(AtomicU64::new(0));
 
-    let (handle, js, topology) = start_consumer(
+    let (_nats, _nats_client, handle, js, topology) = start_consumer(
         &ctx,
         &suffix,
         Duration::from_millis(500),
