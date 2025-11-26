@@ -28,27 +28,11 @@ Goal: one coherent “bus+satellite” harness so later tests don’t reinvent p
 
 **File:** `crate/lib/sinex-test-utils/src/nats.rs`
 
-**Status:** ✅ Implemented. `EphemeralNats` now exposes `create_stream`, `create_consumer`, `jetstream`, `wait_for_subject_messages`, and `with_chaos`. The helpers are covered by `jetstream_helpers_tests`.
+**Status:** Partially implemented. Helpers cover stream/consumer creation and chaos; recent changes add overlap-tolerant stream creation and optional stream prefixes for isolation. Still need to make these the single entry point for JetStream setup in tests (replace ad-hoc contexts).
 
-Add:
-
-```rust
-impl EphemeralNats {
-    pub async fn create_stream(&self, name: &str, subjects: &[&str]) -> Result<()> { ... }
-
-    pub async fn create_consumer(
-        &self,
-        stream: &str,
-        cfg: ConsumerConfig,
-    ) -> Result<async_nats::jetstream::consumer::PullConsumer> { ... }
-
-    pub fn with_chaos(mut self, latency: Duration, failure_rate: f64) -> Self { ... }
-}
-```
-
-* Stream/consumer factory that all JetStream tests use.
-* Helper to await “N messages seen” for a subject.
-* Optional per-test chaos knobs (lightweight; full `ChaosInjestor` comes later).
+Next actions:
+- Provide a concise stream+consumer factory and subject wait helper; refactor tests to use it.
+- Thread chaos hooks into selected error-path scenarios.
 
 **Acceptance:**
 
@@ -61,7 +45,7 @@ impl EphemeralNats {
 
 **File:** `crate/lib/sinex-test-utils/src/satellite_publisher.rs` (new)
 
-**Status:** ✅ Implemented with event publishing, material-stream publishing, and confirmation waiting. See `jetstream_helpers_tests::test_satellite_publisher_emits_events_and_confirmations`.
+**Status:** Implemented with event/material publishing, confirmation waiting, and a convenience constructor from `EphemeralNats`. Needs broader adoption across E2E/ingestion tests.
 
 ```rust
 pub struct TestSatellitePublisher {
@@ -101,9 +85,9 @@ impl TestSatellitePublisher {
 
 ### 0.3 `ChaosInjestor` & `TestSnapshot`
 
-**File:** `crate/lib/sinex-test-utils/src/chaos.rs`, `…/src/snapshot.rs` (new)
+**File:** `crate/lib/sinex-test-utils/src/chaos.rs`, `…/src/snapshot.rs`
 
-**Status:** ✅ Both helpers exist with basic assertion utilities and are smoke-tested in `chaos_snapshot_tests`.
+**Status:** ChaosConfig/Chaos helper now exists; TestSnapshot exists. Need to wire these into chaos/error-path suites and replace bespoke assertions.
 
 `ChaosInjestor` (used by error/chaos tests):
 
@@ -152,20 +136,7 @@ impl TestSnapshot {
 
 ### 0.4 Wire env-gated native tests into VM runs
 
-* Ensure `tests/e2e/nixos-vm` sets:
-
-  ```bash
-  SINEX_NATIVE_SYSTEM_TESTS=1
-  SINEX_NATIVE_DESKTOP_TESTS=1
-  ```
-
-  for the appropriate scenarios (e.g. `satellite-matrix`, `failure-recovery`).
-
-* Confirm that system satellite tests currently skipped behind `native_system_tests_enabled()` are **actually executed** inside the VM-based flows.
-
-**Acceptance:**
-
-* In CI, container-based jobs see those tests skipped (expected); VM jobs run them.
+**Status:** Env gates are present. Need to confirm VM jobs set them so native/system/desktop tests actually run in VM scenarios; container jobs remain skipped as intended.
 
 **Status:** ✅ `tests/e2e/nixos-vm/common/test-base.nix` now exports both `SINEX_NATIVE_SYSTEM_TESTS` and `SINEX_NATIVE_DESKTOP_TESTS` via `environment.variables`/`sessionVariables`, so every VM scenario runs with those gates enabled.
 
