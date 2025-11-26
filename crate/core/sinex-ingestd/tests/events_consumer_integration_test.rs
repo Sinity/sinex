@@ -34,6 +34,7 @@ async fn start_consumer(
     ctx: &TestContext,
     suffix: &str,
     ack_wait: Duration,
+    validate: bool,
     fail_once: Option<Arc<AtomicBool>>,
     processing_delay: Option<Duration>,
     delivery_observer: Option<Arc<AtomicU64>>,
@@ -47,7 +48,7 @@ async fn start_consumer(
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
+    let validator = EventValidator::new(validate);
 
     let js = jetstream::new(nats_client.clone());
     let env = ctx.env();
@@ -77,8 +78,16 @@ async fn start_consumer(
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let suffix = format!("batch-{}", Ulid::new());
-    let (_nats, nats_client, handle, js, topology) =
-        start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(5),
+        false,
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     let publisher =
         TestSatellitePublisher::new(nats_client.clone(), format!("integration.{suffix}"));
@@ -131,6 +140,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         &ctx,
         &suffix,
         Duration::from_secs(2),
+        false,
         Some(fail_once),
         None,
         None,
@@ -240,8 +250,16 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let suffix = format!("confirm-{}", Ulid::new());
-    let (_nats, nats_client, handle, _js, _topology) =
-        start_consumer(&ctx, &suffix, Duration::from_secs(5), None, None, None).await?;
+    let (_nats, nats_client, handle, _js, _topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(5),
+        false,
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("confirm.{suffix}"));
     let event_id = publisher
@@ -288,6 +306,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         &ctx,
         &suffix,
         Duration::from_millis(500),
+        false,
         None,
         Some(Duration::from_secs(2)),
         Some(delivery_counter.clone()),
@@ -353,6 +372,89 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     assert_eq!(
         dlq_state.messages, 0,
         "DLQ should not be used during ack_wait redelivery"
+    );
+
+    handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("dlq-{}", Ulid::new());
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(5),
+        true,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    // One invalid payload (bad timestamp), one valid.
+    let invalid_payload = json!({
+        "id": Ulid::new().to_string(),
+        "source": "dlq-source",
+        "event_type": "dlq.event.invalid",
+        "ts_orig": "not-a-timestamp",
+        "host": "dlq-host",
+        "payload": {"kind": "invalid"},
+    });
+
+    let valid_event_id = Ulid::new();
+    let valid_payload = json!({
+        "id": valid_event_id.to_string(),
+        "source": "dlq-source",
+        "event_type": "dlq.event.valid",
+        "ts_orig": Utc::now().to_rfc3339(),
+        "host": "dlq-host",
+        "payload": {"kind": "valid"},
+    });
+
+    js.publish(
+        ctx.env()
+            .nats_subject(&format!("events.raw.{}.invalid", suffix)),
+        serde_json::to_vec(&invalid_payload)?.into(),
+    )
+    .await?
+    .await?;
+    js.publish(
+        ctx.env()
+            .nats_subject(&format!("events.raw.{}.valid", suffix)),
+        serde_json::to_vec(&valid_payload)?.into(),
+    )
+    .await?
+    .await?;
+
+    // Valid event should persist.
+    timeout(Duration::from_secs(10), async {
+        loop {
+            if ctx
+                .pool
+                .events()
+                .get_by_id(valid_event_id.into())
+                .await?
+                .is_some()
+            {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+
+    // DLQ should have the invalid payload.
+    let dlq_info = js
+        .get_stream(&topology.dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state;
+    assert!(
+        dlq_info.messages >= 1,
+        "expected DLQ to contain the invalid event"
     );
 
     handle.abort();
