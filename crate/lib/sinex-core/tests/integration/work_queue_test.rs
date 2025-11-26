@@ -21,7 +21,7 @@ use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -194,7 +194,8 @@ async fn test_work_queue_event_processing_pipeline(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
     let ctx = ctx.with_nats().await?;
-    let client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let test_id = Ulid::new();
