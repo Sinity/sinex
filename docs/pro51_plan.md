@@ -28,7 +28,7 @@ Goal: one coherent “bus+satellite” harness so later tests don’t reinvent p
 
 **File:** `crate/lib/sinex-test-utils/src/nats.rs`
 
-**Status:** Stream/consumer factory is in place (`ensure_stream_with_consumer`, prefix helpers, overlap-tolerant creation) plus chaos hooks and subject wait helpers. `jetstream_helpers_tests` now exercises the new factory. Broader test refactors to route through `EphemeralNats` remain to do (many suites still build JetStream contexts directly).
+**Status:** Stream/consumer factory is in place (`ensure_stream_with_consumer`, prefix helpers, overlap-tolerant creation) plus chaos hooks and subject wait helpers. Major JetStream suites now use `EphemeralNats` (consumer integration, pipeline resilience, DLQ/idempotency property, stream-name, material assembler tests, e2e satellite, stream-processing helpers). Remaining refactors are limited to a few performance/legacy suites that still hand-roll JetStream contexts.
 
 Next actions:
 - Provide a concise stream+consumer factory and subject wait helper; refactor tests to use it.
