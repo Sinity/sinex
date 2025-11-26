@@ -6,7 +6,7 @@ use sinex_core::types::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -14,8 +14,8 @@ use tokio::sync::RwLock;
 #[sinex_test]
 async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
-
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(true);
 
@@ -93,8 +93,8 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
 #[sinex_test]
 async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
-
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
