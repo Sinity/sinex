@@ -7,7 +7,7 @@ use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,7 +41,8 @@ async fn start_isolated_consumer(
     jetstream::Context,
     JetStreamTopology,
 )> {
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
@@ -72,8 +73,8 @@ async fn start_isolated_consumer(
 #[sinex_test]
 async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
-
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
@@ -137,8 +138,8 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
-
-    let nats_client = ctx.nats_client();
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
