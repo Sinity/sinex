@@ -37,6 +37,7 @@ in
   imports = [
     ./secrets.nix
     ./database.nix
+    ./nats.nix
     ./blob-storage.nix
     ./monitoring.nix
     ./preflight-verification.nix
@@ -1098,6 +1099,7 @@ in
 
       (mkIf cfg.enable {
         services.sinex.database.autoSetup = mkDefault true;
+        services.sinex.nats.autoSetup = mkDefault true;
       })
 
       (mkIf (cfg.storage.dlq.enable && cfg.lifecycle.maintenance.enable && cfg.lifecycle.maintenance.tasks.dlq && cfg.cliPackage != null) {
@@ -1123,6 +1125,12 @@ in
             Persistent = true;
           };
         };
+      })
+
+      (mkIf (cfg.nats.enable || cfg.nats.autoSetup) {
+        services.sinex.satellites.nats.servers = mkDefault [
+          "nats://${cfg.nats.host}:${toString cfg.nats.port}"
+        ];
       })
     ];
 }
