@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/ulid_conversions.md")]
+#![doc = include_str!("../docs/ulid_conversions.md")]
 
 use crate::ulid::Ulid;
 use sqlx::types::Uuid as SqlxUuid;

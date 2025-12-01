@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/native_messaging.md")]
+#![doc = include_str!("../docs/native_messaging.md")]
 
 use async_trait::async_trait;
 use color_eyre::eyre::{bail, eyre, Context, Result};

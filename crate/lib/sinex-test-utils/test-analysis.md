@@ -9,4 +9,4 @@ review moved into the individual repositories.
 If you need a fresh audit, re-run the tooling against the modern layout and
 update this note with the capture date. Until then, prefer the
 [`TESTING.md`](../../../../TESTING.md) handbook and the
-crate-level documentation in `doc/` for authoritative guidance.
+crate-level documentation in `docs/` for authoritative guidance.

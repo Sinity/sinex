@@ -135,9 +135,9 @@ Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
 
 ## Authoritative References
 
-- `crate/lib/sinex-test-utils/doc/overview.md` – API reference for
+- `crate/lib/sinex-test-utils/docs/overview.md` – API reference for
   `TestContext`, fixtures, assertions, timing utilities, and the database pool.
-- `crate/lib/sinex-test-utils/doc/testing_quality_overview.md` – QA strategy,
+- `crate/lib/sinex-test-utils/docs/testing_quality_overview.md` – QA strategy,
   Nextest configuration, and CI expectations.
 - `tests/e2e/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
   commands.

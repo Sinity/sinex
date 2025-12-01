@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/automaton.md")]
+#![doc = include_str!("../docs/automaton.md")]
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};

@@ -14,7 +14,7 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{acquire_pool_test_guard, sinex_test, TestContext};
 
 const FS_WATCHER_SOURCE: &str = "fs-watcher";
 
@@ -97,6 +97,8 @@ async fn test_malformed_event_detection(ctx: TestContext) -> color_eyre::eyre::R
 
 #[sinex_test]
 async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 

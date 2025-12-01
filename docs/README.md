@@ -20,10 +20,10 @@ into the curated list below.
 
 ## Implementation References
 
-- Each crate under `crate/**/doc/` documents its domain (core types, satellite
+- Each crate under `crate/**/docs/` documents its domain (core types, satellite
   SDK, schema, services, test utils). Prefer crate-local docs for implementation
   detail before expanding this index.
-- `TESTING.md` and `crate/lib/sinex-test-utils/doc/testing_quality_overview.md`
+- `TESTING.md` and `crate/lib/sinex-test-utils/docs/testing_quality_overview.md`
   define testing contracts.
 - `docs/documentation-guidelines.md` covers authoring conventions.
 

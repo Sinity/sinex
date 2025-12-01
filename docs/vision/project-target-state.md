@@ -18,7 +18,7 @@ Invariants Quick Reference (one-page)
 - Namespacing: `SINEX_ENVIRONMENT` scopes DB/schema names, JetStream streams, sockets, and paths.
 
 > **Cross-reference (2025-11-13)**
-> Interface-level implementation notes for the gateway and CLI now live in `crate/core/sinex-gateway/doc/overview.md` and `docs/architecture/UserInteraction_And_Query_Architecture.md`. Treat this document as the system-level target state.
+> Interface-level implementation notes for the gateway and CLI now live in `crate/core/sinex-gateway/docs/overview.md` and `docs/architecture/UserInteraction_And_Query_Architecture.md`. Treat this document as the system-level target state.
 
 Contents
 

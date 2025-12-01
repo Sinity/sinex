@@ -1,6 +1,6 @@
-#![doc = include_str!("../doc/README.md")]
-#![doc = include_str!("../doc/overview.md")]
-#![doc = include_str!("../doc/testing_quality_overview.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/overview.md")]
+#![doc = include_str!("../docs/testing_quality_overview.md")]
 #![doc = include_str!("../../../../TESTING.md")]
 
 //! Workspace testing utilities and fixtures.
@@ -25,9 +25,8 @@ pub use sinex_core::types::error::SinexError;
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
 pub use chaos::ChaosInjestor;
-pub use chaos::ChaosInjestor;
 pub use jetstream::ensure_material_streams;
-pub use satellite_publisher::TestSatellitePublisher;
+pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
 
@@ -87,7 +86,7 @@ pub mod snapshot_helper;
 mod test_context;
 #[macro_use]
 mod test_macros;
-mod timing_utils;
+pub mod timing_utils;
 
 // New benchmark infrastructure modules
 #[cfg(feature = "bench")]
@@ -110,7 +109,7 @@ pub mod prelude {
     pub use crate::TestContext;
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_test};
-    pub use crate::{ChaosInjestor, TestSatellitePublisher, TestSnapshot};
+    pub use crate::{ChaosInjestor, EventOverrides, TestSatellitePublisher, TestSnapshot};
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated

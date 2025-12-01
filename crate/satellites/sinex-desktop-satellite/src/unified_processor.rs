@@ -11,6 +11,11 @@ use sinex_core::types::Ulid;
 use sqlx::PgPool;
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
+use sinex_satellite_sdk::{
+    acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
+    event_processor::EventTransport,
+};
+use std::sync::Arc;
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,50 +281,39 @@ impl DesktopProcessor {
         &mut self,
         _from_checkpoint: Checkpoint,
     ) -> SatelliteResult<()> {
-        info!("Starting continuous desktop monitoring via sensd jobs");
+        info!("Starting continuous desktop monitoring via AcquisitionManager");
 
         let db_pool = self.db_pool()?;
 
-        // TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
-        // Sensd job submission removed - desktop monitoring needs to be migrated
-        // to use AcquisitionManager for material capture
-
-        /* REMOVED - sensd integration
-        // Create sensd job submitter
-        let submitter = crate::sensd_job_submitter::DesktopSensdSubmitter::new(
-            db_pool.clone(),
-            "desktop-satellite".to_string(),
-        )
-        .await
-        .map_err(|e| SatelliteError::Processing(e.to_string()))?;
-
-        // Submit job for clipboard monitoring if enabled
-        if self.config.clipboard_enabled {
-            info!("Submitting clipboard monitoring job to sensd");
-            submitter
-                .submit_clipboard_job(self.config.clipboard_poll_interval_secs)
-                .await
-                .map_err(|e| SatelliteError::Processing(e.to_string()))?;
-        }
-
-        // Submit job for window manager monitoring if enabled
-        if self.config.window_manager_enabled {
-            info!("Submitting window manager monitoring job to sensd");
-            let socket_path = match self.config.window_manager_type {
-                WindowManagerType::Hyprland => {
-                    "/tmp/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+        // Acquire NATS client from the runtime transport (JetStream path is required).
+        let nats_client =
+            match self
+                .runtime
+                .as_ref()
+                .and_then(|rt| match rt.handles().transport() {
+                    EventTransport::Nats(publisher) => Some(publisher.nats_client().clone()),
+                }) {
+                Some(client) => client,
+                None => {
+                    return Err(SatelliteError::Processing(
+                        "Desktop processor requires NATS transport for material capture".into(),
+                    ))
                 }
             };
 
-            submitter
-                .submit_window_manager_job(
-                    self.config.window_manager_type.as_str(),
-                    socket_path,
-                )
-                .await
-                .map_err(|e| SatelliteError::Processing(e.to_string()))?;
-        }
-        */
+        AcquisitionManager::bootstrap_streams(&nats_client)
+            .await
+            .map_err(|e| {
+                SatelliteError::Processing(format!("Failed to bootstrap desktop streams: {e}"))
+            })?;
+        let acquisition = Arc::new(AcquisitionManager::new(
+            nats_client,
+            db_pool.clone(),
+            RotationPolicy::default(),
+            "desktop".to_string(),
+            "/desktop".to_string(),
+        ));
+        let mut acquirer = AppendStreamAcquirer::new(acquisition.clone());
 
         // Store monitoring started event as source material
         let monitoring_data = serde_json::json!({
@@ -327,8 +321,19 @@ impl DesktopProcessor {
             "clipboard_enabled": self.config.clipboard_enabled,
             "window_manager_enabled": self.config.window_manager_enabled,
             "start_time": Utc::now().to_rfc3339(),
-            "submitted_to_sensd": true
+            "submitted_to_sensd": false
         });
+
+        let monitoring_bytes = serde_json::to_vec(&monitoring_data)?;
+        acquirer
+            .append(&monitoring_bytes, "desktop-monitoring")
+            .await
+            .map_err(|e| {
+                SatelliteError::Processing(format!("Failed to append desktop material: {e}"))
+            })?;
+        acquirer.finalize("monitoring_started").await.map_err(|e| {
+            SatelliteError::Processing(format!("Failed to finalize desktop material: {e}"))
+        })?;
 
         let _ = self
             .store_desktop_source_material(

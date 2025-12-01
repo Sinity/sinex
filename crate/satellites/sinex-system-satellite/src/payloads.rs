@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/payloads.md")]
+#![doc = include_str!("../docs/payloads.md")]
 
 //! Payload structures for system events handled by the system satellite.
 

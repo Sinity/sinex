@@ -5,6 +5,8 @@
 //! handles with no additional wrappers.
 
 use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
+use sinex_core::types::utils::ResourceGuard;
+use sinex_core::SinexError;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -13,41 +15,69 @@ use tokio::time::{sleep, Duration};
 
 #[sinex_test]
 async fn test_advisory_lock_basic_acquisition(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
+    let lock_name = format!("basic_lock_{}", Ulid::new());
 
-    let lock1 = AdvisoryLock::try_acquire(&pool, "basic_lock").await?;
+    let lock1 = AdvisoryLock::try_acquire(&pool, &lock_name).await?;
     assert!(lock1.is_some());
 
     // Second acquisition should fail while the first guard is in scope.
-    let lock2 = AdvisoryLock::try_acquire(&pool, "basic_lock").await?;
+    let lock2 = AdvisoryLock::try_acquire(&pool, &lock_name).await?;
     assert!(lock2.is_none());
 
     drop(lock1);
-    let lock3 = AdvisoryLock::try_acquire(&pool, "basic_lock").await?;
-    assert!(lock3.is_some());
+    let lock3 = tokio::time::timeout(Duration::from_millis(1000), async {
+        loop {
+            if let Some(lock) = AdvisoryLock::try_acquire(&pool, &lock_name).await? {
+                break Ok::<ResourceGuard<AdvisoryLock>, SinexError>(lock);
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    assert!(lock3.resource().await.is_some());
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
 
     Ok(())
 }
 
 #[sinex_test]
 async fn test_advisory_lock_different_names(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let pool = ctx.pool.clone();
+    let suffix = Ulid::new();
+    let lock1_name = format!("lock_name_1_{suffix}");
+    let lock2_name = format!("lock_name_2_{suffix}");
+    let lock3_name = format!("lock_name_3_{suffix}");
 
-    let lock1 = AdvisoryLock::try_acquire(&pool, "lock_name_1").await?;
+    let lock1 = AdvisoryLock::try_acquire(&pool, &lock1_name).await?;
     assert!(lock1.is_some());
-    let lock2 = AdvisoryLock::try_acquire(&pool, "lock_name_2").await?;
+    let lock2 = AdvisoryLock::try_acquire(&pool, &lock2_name).await?;
     assert!(lock2.is_some());
 
     // Release one connection before acquiring a third distinct lock to avoid pool exhaustion.
     drop(lock1);
-    let lock3 = AdvisoryLock::try_acquire(&pool, "lock_name_3").await?;
+    let lock3 = AdvisoryLock::try_acquire(&pool, &lock3_name).await?;
     assert!(lock3.is_some());
 
+    drop(lock2);
+    drop(lock3);
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> Result<()> {
+    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     let successes = Arc::new(AtomicU32::new(0));
     let failures = Arc::new(AtomicU32::new(0));
@@ -91,24 +121,40 @@ async fn test_advisory_lock_concurrent_contention(ctx: TestContext) -> Result<()
 
 #[sinex_test]
 async fn test_advisory_lock_automatic_release_on_drop(ctx: TestContext) -> Result<()> {
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
-    let name = "automatic_release_lock";
+    let name = format!("automatic_release_lock_{}", Ulid::new());
 
     {
-        let first = AdvisoryLock::try_acquire(&pool, name).await?;
+        let first = AdvisoryLock::try_acquire(&pool, &name).await?;
         assert!(first.is_some());
 
         // Should be held while the guard is alive.
-        assert!(AdvisoryLock::try_acquire(&pool, name).await?.is_none());
+        assert!(AdvisoryLock::try_acquire(&pool, &name).await?.is_none());
     }
 
-    let re_acquired = AdvisoryLock::try_acquire(&pool, name).await?;
-    assert!(re_acquired.is_some());
+    let re_acquired = tokio::time::timeout(Duration::from_millis(2000), async {
+        loop {
+            match AdvisoryLock::try_acquire(&pool, &name).await? {
+                Some(lock) => break Ok::<ResourceGuard<AdvisoryLock>, SinexError>(lock),
+                None => sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await??;
+    assert!(re_acquired.resource().await.is_some());
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn test_distributed_coordination_leadership_locking(ctx: TestContext) -> Result<()> {
+    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     let coordination = DistributedCoordination::new(pool.clone());
     let service = format!("coordination.leader.{}", Ulid::new());
@@ -123,14 +169,23 @@ async fn test_distributed_coordination_leadership_locking(ctx: TestContext) -> R
     assert!(coordination.try_become_leader(&service).await?.is_none());
 
     drop(leader);
-    let successor = coordination.try_become_leader(&service).await?;
-    assert!(successor.is_some());
+    let _successor = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            match coordination.try_become_leader(&service).await? {
+                Some(lock) => break Ok::<ResourceGuard<AdvisoryLock>, SinexError>(lock),
+                None => sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await??;
+    assert!(coordination.has_leader(&service).await?);
 
     Ok(())
 }
 
 #[sinex_test]
 async fn test_distributed_coordination_job_lock_contention(ctx: TestContext) -> Result<()> {
+    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     let coordination = DistributedCoordination::new(pool);
     let job_id = format!("job-{}", Ulid::new());
@@ -141,9 +196,20 @@ async fn test_distributed_coordination_job_lock_contention(ctx: TestContext) -> 
     let second = coordination.acquire_job_lock(&job_id).await?;
     assert!(second.is_none());
 
+    // Wait for the async RAII cleanup to release the advisory lock before attempting a
+    // third acquisition; ResourceGuard cleanup runs in the background.
     drop(first);
-    let third = coordination.acquire_job_lock(&job_id).await?;
-    assert!(third.is_some());
+    let _third = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            match coordination.acquire_job_lock(&job_id).await? {
+                Some(lock) => break Ok::<ResourceGuard<AdvisoryLock>, SinexError>(lock),
+                None => {
+                    sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    })
+    .await??;
 
     Ok(())
 }

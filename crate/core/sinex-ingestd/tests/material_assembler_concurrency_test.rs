@@ -6,7 +6,7 @@ use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +26,7 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
+    nats: &EphemeralNats,
     nats_client: Client,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
@@ -35,7 +36,7 @@ async fn start_assembler(
     String,
     String,
 )> {
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
     let (annex, annex_dir) = fake_annex().await?;
     let state_dir = tempfile::tempdir()?;
     let prefix = format!(
@@ -102,7 +103,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         .map(|v| v == "1")
         .unwrap_or(false);
     let (handle, js, _annex_guard, _state_guard, stream_prefix, subject_prefix) =
-        start_assembler(&ctx, nats_client.clone()).await?;
+        start_assembler(&ctx, &nats, nats_client.clone()).await?;
     let begin_stream = format!("{stream_prefix}BEGIN");
     let slices_stream = format!("{stream_prefix}SLICES");
     let end_stream = format!("{stream_prefix}END");

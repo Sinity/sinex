@@ -1,6 +1,6 @@
-#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
-#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! Search automaton.
 //!

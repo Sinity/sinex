@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/error.md")]
+#![doc = include_str!("../../docs/error.md")]
 
 // Re-export the with_context macro for error context enrichment
 #[cfg(feature = "macros")]

@@ -29,7 +29,7 @@ Key architectural decisions and implementation details are documented at their i
 - **TimescaleDB Hypertable Creation**: [`crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs`](../crate/lib/sinex-schema/src/migrations/m20241028_000001_create_canonical_schema.rs)
   - Chunk interval optimization guidelines
   - Compression strategy documentation
-- **ULID Implementation**: [`crate/lib/sinex-schema/doc/ulid.md`](../crate/lib/sinex-schema/doc/ulid.md)
+- **ULID Implementation**: [`crate/lib/sinex-schema/docs/ulid.md`](../crate/lib/sinex-schema/docs/ulid.md)
   - ULID/UUID casting helpers used by repositories
   - Monotonic generation for high concurrency
 
@@ -37,7 +37,7 @@ Key architectural decisions and implementation details are documented at their i
 - **Ingestion & JetStream Playbook**: [`docs/way.md`](../docs/way.md)
   - Target architecture for satellites → JetStream → ingestd
   - Stream naming conventions, Stage-as-You-Go responsibilities
-- **Satellite SDK Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](../crate/lib/sinex-satellite-sdk/doc/overview.md)
+- **Satellite SDK Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](../crate/lib/sinex-satellite-sdk/docs/overview.md)
   - Unified processor interface and checkpoint semantics
   - Replay patterns and lifecycle hooks
 - **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/lib/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)

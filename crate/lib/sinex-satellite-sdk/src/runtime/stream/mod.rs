@@ -1,4 +1,4 @@
-#![doc = include_str!("../../../doc/stream_processor.md")]
+#![doc = include_str!("../../../docs/stream_processor.md")]
 
 mod checkpoint;
 mod handles;

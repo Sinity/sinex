@@ -24,6 +24,7 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
+    nats: &EphemeralNats,
     nats_client: Client,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
@@ -31,7 +32,7 @@ async fn start_assembler(
     tempfile::TempDir,
     tempfile::TempDir,
 )> {
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
 
     let (annex, annex_dir) = fake_annex().await?;
     let state_dir = tempfile::tempdir()?;
@@ -50,7 +51,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let (handle, js, _annex_guard, _state_guard) =
-        start_assembler(&ctx, nats_client.clone()).await?;
+        start_assembler(&ctx, &nats, nats_client.clone()).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
     let env = ctx.env();

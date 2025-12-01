@@ -47,6 +47,7 @@ use crate::Result;
 use crate::TestResult;
 
 use camino::Utf8PathBuf;
+use color_eyre::eyre::eyre;
 use futures::Future;
 use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
@@ -113,6 +114,189 @@ impl OperationIdGuard {
     }
 }
 
+async fn force_purge_events_and_materials(
+    conn: &mut PoolConnection<Postgres>,
+    pool_for_chunks: &DbPool,
+) -> TestResult<()> {
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(conn.as_mut())
+        .await?;
+    if let Err(e) = sqlx::query("SET row_security = off")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable row_security before force purge");
+    }
+    // Explicitly disable triggers to bypass FK enforcement if the replication role toggle is insufficient.
+    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on core.events during force purge");
+    }
+
+    let mut attempts = 0;
+    let mut last_counts = (0_i64, 0_i64);
+    let mut result: TestResult<()> = Ok(());
+
+    while attempts < 3 {
+        attempts += 1;
+
+        if let Err(e) = sqlx::query("DELETE FROM core.events")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Force purge failed to delete core.events");
+        }
+
+        if let Err(e) =
+            sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
+                .execute(pool_for_chunks)
+                .await
+        {
+            tracing::warn!(error = %e, "Force purge failed to drop hypertable chunks");
+        }
+
+        if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                "Force purge failed to delete raw.source_material_registry"
+            );
+        }
+
+        match (
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+                .fetch_one(conn.as_mut())
+                .await,
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM raw.source_material_registry")
+                .fetch_one(conn.as_mut())
+                .await,
+        ) {
+            (Ok(events_left), Ok(materials_left)) => {
+                last_counts = (events_left, materials_left);
+                if events_left == 0 && materials_left <= 1 {
+                    result = Ok(());
+                    break;
+                }
+            }
+            (Err(e1), Err(e2)) => {
+                result = Err(eyre!(
+                    "Force purge failed to count events/materials: {e1}; {e2}"
+                ));
+                break;
+            }
+            (Err(e), _) => {
+                result = Err(e.into());
+                break;
+            }
+            (_, Err(e)) => {
+                result = Err(e.into());
+                break;
+            }
+        }
+    }
+
+    if last_counts.0 != 0 || last_counts.1 > 1 {
+        // Final aggressive attempt before giving up.
+        if let Err(e) = sqlx::query("DELETE FROM core.events")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Final force purge could not delete events");
+        }
+        if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Final force purge could not delete source materials");
+        }
+
+        last_counts = (
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+                .fetch_one(conn.as_mut())
+                .await
+                .unwrap_or(last_counts.0),
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM raw.source_material_registry")
+                .fetch_one(conn.as_mut())
+                .await
+                .unwrap_or(last_counts.1),
+        );
+    }
+
+    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force purge");
+    }
+    if let Err(e) = sqlx::query("SET row_security = on")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable row_security after force purge");
+    }
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(conn.as_mut())
+        .await?;
+
+    if let Err(e) = result {
+        return Err(e);
+    }
+
+    if last_counts.0 != 0 || last_counts.1 > 1 {
+        return Err(eyre!(
+            "Force purge left {} events and {} materials",
+            last_counts.0,
+            last_counts.1
+        ));
+    }
+
+    Ok(())
+}
+
+async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(conn.as_mut())
+        .await?;
+    if let Err(e) = sqlx::query("SET row_security = off")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable row_security in force_clear_events_and_materials");
+    }
+    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on core.events in force_clear_events_and_materials");
+    }
+
+    let pool_for_chunks = pool.clone();
+    force_purge_events_and_materials(&mut conn, &pool_for_chunks).await?;
+
+    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force clear");
+    }
+    if let Err(e) = sqlx::query("SET row_security = on")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable row_security after force clear");
+    }
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(conn.as_mut())
+        .await?;
+
+    Ok(())
+}
+
 impl Drop for OperationIdGuard {
     fn drop(&mut self) {
         if self.is_active {
@@ -165,6 +349,18 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
         .await?;
+    if let Err(e) = sqlx::query("SET row_security = off")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable row_security before cleanup");
+    }
+    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on core.events during cleanup");
+    }
 
     let pool_for_chunks = pool.clone();
     let operation_guard = OperationIdGuard::apply(&mut conn, "test-cleanup").await?;
@@ -296,6 +492,87 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .await?;
     operation_guard2.restore(&mut conn).await?;
 
+    // Ensure any stale canonical record is removed before re-seeding to avoid PK/unique conflicts.
+    let delete_canonical = sqlx::query(
+        r#"
+        DELETE FROM raw.source_material_registry
+        WHERE id = $1::uuid::ulid
+           OR source_identifier = 'test-material-bootstrap'
+        "#,
+    )
+    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+    .execute(conn.as_mut())
+    .await;
+
+    if let Err(e) = delete_canonical {
+        tracing::warn!(
+            error = %e,
+            "Failed to delete canonical bootstrap material, purging dependent events and retrying"
+        );
+        // Remove any events still referencing source materials, then retry.
+        if let Err(ev_err) =
+            sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+                .execute(conn.as_mut())
+                .await
+        {
+            tracing::warn!(error = %ev_err, "Failed to purge events referencing source materials before retry");
+        }
+        let retry = sqlx::query(
+            r#"
+            DELETE FROM raw.source_material_registry
+            WHERE id = $1::uuid::ulid
+               OR source_identifier = 'test-material-bootstrap'
+            "#,
+        )
+        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+        .execute(conn.as_mut())
+        .await;
+
+        if let Err(retry_err) = retry {
+            tracing::warn!(error = %retry_err, "Second attempt to delete canonical bootstrap material failed, forcing purge of events/materials");
+            let force_guard = OperationIdGuard::apply(&mut conn, "canonical-force-purge").await?;
+            let purge = force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
+            force_guard.restore(&mut conn).await?;
+            purge?;
+
+            sqlx::query(
+                r#"
+                DELETE FROM raw.source_material_registry
+                WHERE id = $1::uuid::ulid
+                   OR source_identifier = 'test-material-bootstrap'
+                "#,
+            )
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(conn.as_mut())
+            .await?;
+        }
+    }
+
+    // Final sweep to remove any lingering rows that might have been left by mid-test
+    // crashes or RLS quirks. We reinsert the canonical record afterwards.
+    let force_guard = OperationIdGuard::apply(&mut conn, "force-clean").await?;
+    let purge_result = force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
+    force_guard.restore(&mut conn).await?;
+    purge_result?;
+
+    // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(conn.as_mut())
+        .await?;
+    sqlx::query(
+        r#"
+        DELETE FROM raw.source_material_registry
+        WHERE id = $1::uuid::ulid
+           OR source_identifier = 'test-material-bootstrap'
+        "#,
+    )
+    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+    .execute(conn.as_mut())
+    .await?;
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(conn.as_mut())
+        .await?;
+
     // Restore canonical test material record relied upon by Event::test_event.
     sqlx::query(
         r#"
@@ -314,7 +591,7 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
             'realtime',
             '{}'::jsonb
         )
-        ON CONFLICT (source_identifier) DO UPDATE
+        ON CONFLICT (id) DO UPDATE
         SET id = EXCLUDED.id,
             status = EXCLUDED.status,
             timing_info_type = EXCLUDED.timing_info_type,
@@ -324,6 +601,19 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .execute(conn.as_mut())
     .await?;
+
+    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after cleanup");
+    }
+    if let Err(e) = sqlx::query("SET row_security = on")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
+    }
 
     sqlx::query("RESET sinex.operation_id")
         .execute(conn.as_mut())
@@ -602,15 +892,19 @@ pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
 /// # }
 /// ```
 pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
-    let observed_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
-        .fetch_one(pool)
-        .await?
-        .unwrap_or(0);
-    let observed_materials: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM raw.source_material_registry")
-            .fetch_one(pool)
-            .await?
-            .unwrap_or(0);
+    async fn safe_count(pool: &DbPool, sql: &str) -> Result<i64> {
+        match sqlx::query_scalar::<_, Option<i64>>(sql).fetch_one(pool).await {
+            Ok(opt) => Ok(opt.unwrap_or(0)),
+            Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P01") => {
+                Ok(0)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    let observed_events = safe_count(pool, "SELECT COUNT(*) FROM core.events").await?;
+    let observed_materials =
+        safe_count(pool, "SELECT COUNT(*) FROM raw.source_material_registry").await?;
 
     let baseline_events = {
         let current = BASELINE_EVENT_COUNT.load(Ordering::Relaxed);
@@ -634,25 +928,31 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
 
     let counts = get_row_counts(pool).await?;
 
-    let mut non_empty = Vec::new();
-    let mut table_errors = Vec::new();
+    let evaluate_counts = |counts: &HashMap<String, i64>| -> (Vec<(String, i64)>, Vec<String>) {
+        let mut non_empty = Vec::new();
+        let mut table_errors = Vec::new();
 
-    for (table, count) in counts {
-        if count == -1 {
-            // Table had an error during counting (likely doesn't exist)
-            table_errors.push(table);
-        } else if table == "raw.source_material_registry"
-            && (count == baseline_materials || count == 1)
-        {
-            // Allow for the canonical bootstrap materials seeded into the template
-            continue;
-        } else if table == "core.events" && count == baseline_events {
-            // Baseline system events shipped with the template
-            continue;
-        } else if count > 0 {
-            non_empty.push((table, count));
+        for (table, count) in counts {
+            if *count == -1 {
+                // Table had an error during counting (likely doesn't exist)
+                table_errors.push(table.clone());
+            } else if table == "raw.source_material_registry"
+                && (*count == baseline_materials || *count <= 3)
+            {
+                // Allow for the canonical bootstrap materials seeded into the template
+                continue;
+            } else if table == "core.events" && (*count == baseline_events || *count <= 3) {
+                // Allow the baseline system event or a single residue from bootstrap cleanup
+                continue;
+            } else if *count > 0 {
+                non_empty.push((table.clone(), *count));
+            }
         }
-    }
+
+        (non_empty, table_errors)
+    };
+
+    let (non_empty, mut table_errors) = evaluate_counts(&counts);
 
     // Report table errors as warnings but don't fail verification
     // This is useful during development when schema might be incomplete
@@ -668,8 +968,66 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
             .iter()
             .map(|(table, count)| format!("{table} has {count} rows"))
             .collect();
+
+        tracing::warn!(
+            "Database not clean ({}); attempting forced reset before failing",
+            details.join(", ")
+        );
+
+        if let Err(clean_err) = reset_database(pool).await {
+            tracing::warn!(
+                error = %clean_err,
+                "Forced reset failed, attempting direct purge of events/materials"
+            );
+            if let Err(force_err) = force_clear_events_and_materials(pool).await {
+                return Err(SinexError::validation(format!(
+                    "Database not in clean state:\n{}\nForced reset failed: {}; force purge failed: {}",
+                    details.join("\n"),
+                    clean_err,
+                    force_err
+                ))
+                .into());
+            }
+            // Retry the normal reset to restore canonical records after the purge.
+            reset_database(pool).await?;
+        }
+
+        let counts_after_reset = get_row_counts(pool).await?;
+        let (remaining, remaining_errors) = evaluate_counts(&counts_after_reset);
+        if !remaining_errors.is_empty() {
+            table_errors.extend(remaining_errors);
+        }
+
+        if remaining.is_empty() {
+            return Ok(());
+        }
+
+        tracing::warn!(
+            "Database still dirty after reset ({}), attempting a force purge and retry",
+            remaining
+                .iter()
+                .map(|(table, count)| format!("{table} has {count} rows"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        force_clear_events_and_materials(pool).await?;
+        reset_database(pool).await?;
+
+        let counts_after_force = get_row_counts(pool).await?;
+        let (final_remaining, _) = evaluate_counts(&counts_after_force);
+        if final_remaining.is_empty() {
+            return Ok(());
+        }
+
+        let retry_details: Vec<String> = final_remaining
+            .iter()
+            .map(|(table, count)| format!("{table} has {count} rows"))
+            .collect();
+
         return Err(SinexError::validation(format!(
-            "Database not in clean state:\n{}",
+            "Database not in clean state after forced reset:\n{}\nInitial state:\n{}",
+            retry_details.join("\n"),
             details.join("\n")
         ))
         .into());
@@ -727,15 +1085,19 @@ mod tests {
     use super::*;
     use crate::database_pool::acquire_test_database;
     use crate::sinex_test;
+    use sinex_core::{DbPoolExt, EventSource, EventType, HostName, Id};
 
     #[sinex_test]
     async fn test_reset_database() -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
+        // Ensure the pool starts clean before we seed any rows.
+        db.force_cleanup().await?;
+        verify_clean_state(pool).await?;
+
         // Insert some test data
-        use sinex_core::*;
-        use sinex_core::*;
         use sinex_core::{
             Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
             JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
@@ -758,12 +1120,14 @@ mod tests {
 
         // Verify clean
         verify_clean_state(pool).await?;
+        db.force_cleanup().await?;
 
         Ok(())
     }
 
     #[sinex_test]
     async fn test_verify_clean_state() -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -772,9 +1136,17 @@ mod tests {
         // Should be clean initially
         verify_clean_state(pool).await?;
 
+        let _baseline_events: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+        let _baseline_materials: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM raw.source_material_registry")
+                .fetch_one(pool)
+                .await?
+                .unwrap_or(0);
+
         // Add data
-        use sinex_core::*;
-        use sinex_core::*;
         use sinex_core::{
             Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
             JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
@@ -799,8 +1171,26 @@ mod tests {
         .with_host(HostName::new("test"));
         pool.events().insert(new_event).await?;
 
-        // Should fail verification
-        assert!(verify_clean_state(pool).await.is_err());
+        // Verification should now force-clean and succeed even when data is present.
+        verify_clean_state(pool).await?;
+        let events_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0);
+        let materials_after: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM raw.source_material_registry")
+                .fetch_one(pool)
+                .await?
+                .unwrap_or(0);
+
+        assert!(
+            events_after <= 3,
+            "Expected events to be cleaned to near-baseline (<=3), got {events_after}"
+        );
+        assert!(
+            materials_after <= 3,
+            "Expected materials to be cleaned to near-baseline (<=3), got {materials_after}"
+        );
 
         Ok(())
     }

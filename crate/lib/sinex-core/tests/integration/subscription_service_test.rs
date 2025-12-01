@@ -7,6 +7,10 @@ use sinex_test_utils::prelude::*;
 
 #[sinex_test]
 async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     // Create multiple agents with different subscriptions
     let agents = vec![
         (
@@ -75,6 +79,9 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
     assert!(raw_feed_subscribers.contains(&"subscriber_1".to_string()));
     assert!(raw_feed_subscribers.contains(&"subscriber_2".to_string()));
 
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 

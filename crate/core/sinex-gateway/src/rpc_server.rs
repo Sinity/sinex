@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/rpc_server.md")]
+#![doc = include_str!("../docs/rpc_server.md")]
 
 // Local crate imports
 use crate::{

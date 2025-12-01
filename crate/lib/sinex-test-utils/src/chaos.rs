@@ -54,3 +54,37 @@ impl ChaosConfig {
         }
     }
 }
+
+/// High-level chaos helper used by integration/chaos suites.
+#[derive(Clone, Debug)]
+pub struct ChaosInjestor {
+    config: ChaosConfig,
+}
+
+impl ChaosInjestor {
+    pub fn new(latency: Duration, failure_rate: f64) -> Self {
+        Self {
+            config: ChaosConfig::new(latency, failure_rate),
+        }
+    }
+
+    /// Execute an async operation with optional simulated failures/latency.
+    pub async fn with_simulated_failures<F, Fut, T>(&self, op: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        self.config.inject(op).await
+    }
+
+    /// Simulate a temporary network partition.
+    pub async fn simulate_network_partition(&self) -> Result<()> {
+        self.config.partition(Duration::ZERO).await;
+        Ok(())
+    }
+
+    /// Simulate a database crash for callers that expect a failure.
+    pub async fn simulate_database_crash(&self) -> Result<()> {
+        Err(eyre!("simulated database crash"))
+    }
+}

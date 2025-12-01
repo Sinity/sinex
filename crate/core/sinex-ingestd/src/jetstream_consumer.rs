@@ -64,6 +64,7 @@ pub struct JetStreamConsumer {
     processing_delay: Option<Duration>,
     delivery_observer: Option<Arc<AtomicU64>>,
     stats: ConsumerStats,
+    route_db_errors_to_dlq: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +168,7 @@ impl JetStreamConsumer {
             processing_delay: None,
             delivery_observer: None,
             stats: ConsumerStats::default(),
+            route_db_errors_to_dlq: false,
         }
     }
 
@@ -201,6 +203,7 @@ impl JetStreamConsumer {
             Some(fail_once),
             None,
             None,
+            false,
         )
     }
 
@@ -214,11 +217,13 @@ impl JetStreamConsumer {
         fail_once: Option<Arc<AtomicBool>>,
         processing_delay: Option<Duration>,
         delivery_observer: Option<Arc<AtomicU64>>,
+        route_db_errors_to_dlq: bool,
     ) -> Self {
         let mut consumer = Self::with_ack_wait(nats_client, pool, validator, topology, ack_wait);
         consumer.fail_once = fail_once;
         consumer.processing_delay = processing_delay;
         consumer.delivery_observer = delivery_observer;
+        consumer.route_db_errors_to_dlq = route_db_errors_to_dlq;
         consumer
     }
 
@@ -614,12 +619,22 @@ impl JetStreamConsumer {
             }
             Err(e) => {
                 error!("Failed to persist batch: {}", e);
-                // NACK all - they'll be redelivered
-                for prepared in &batch {
-                    let _ = prepared
-                        .message
-                        .ack_with(jetstream::AckKind::Nak(None))
-                        .await;
+                if self.route_db_errors_to_dlq {
+                    for prepared in &batch {
+                        self.route_to_dlq(&prepared.message, format!("Persistence error: {}", e))
+                            .await;
+                        let _ = prepared.message.ack().await;
+                    }
+                    self.stats
+                        .dlq_routed
+                        .fetch_add(batch.len() as u64, Ordering::Relaxed);
+                } else {
+                    for prepared in &batch {
+                        let _ = prepared
+                            .message
+                            .ack_with(jetstream::AckKind::Nak(None))
+                            .await;
+                    }
                 }
                 self.stats
                     .events_failed

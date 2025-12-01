@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/unified_processor.md")]
+#![doc = include_str!("../docs/unified_processor.md")]
 
 //! Filesystem watcher processor using JetStream-first acquisition.
 //!
@@ -849,6 +849,10 @@ mod tests {
 
     #[sinex_test]
     async fn handle_file_created_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
+        let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
         let nats = EphemeralNats::start().await?;
         let nats_client = nats.connect().await?;
 
@@ -878,7 +882,7 @@ mod tests {
 
         handle_file_created(&watch_ctx, temp_root.path().to_str().unwrap(), &file_path).await?;
 
-        let event = timeout(Duration::from_secs(5), event_rx.recv())
+        let event = timeout(Duration::from_secs(10), event_rx.recv())
             .await?
             .expect("filesystem event emitted");
 
@@ -906,6 +910,9 @@ mod tests {
 
         assert_eq!(total_bytes.unwrap_or_default(), 11);
 
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 }

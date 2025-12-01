@@ -4613,6 +4613,7 @@ dependencies = [
  "sha2",
  "sinex-core",
  "sinex-satellite-sdk",
+ "sinex-schema",
  "sinex-test-utils",
  "sqlx",
  "thiserror 2.0.17",

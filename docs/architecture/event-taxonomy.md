@@ -60,7 +60,7 @@ Families (canonical event_type and minimal payload)
 
 Notes
 - Minimal payloads prioritize identifiers/hashes; put large content in blobs and reference by hash.
-- See `crate/lib/sinex-schema/doc/overview.md` for database columns and provenance rules; schemas live under `crate/lib/sinex-schema/src/schema/`.
+- See `crate/lib/sinex-schema/docs/overview.md` for database columns and provenance rules; schemas live under `crate/lib/sinex-schema/src/schema/`.
 
 Relations (planned)
 - Purpose: capture causality, context, and workflows between events.

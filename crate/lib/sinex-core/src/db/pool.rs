@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/pool.md")]
+#![doc = include_str!("../../docs/pool.md")]
 
 use crate::{DbPool, PoolConfig};
 use color_eyre::eyre::Result;

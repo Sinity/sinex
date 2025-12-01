@@ -13,11 +13,11 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
    - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
 
 2. **Enforce rate limiting and payload caps on RPC** — ✅ *Guards wired via tower middleware*  
-   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `crate/core/sinex-gateway/doc/rpc_server.md`.  
+   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `crate/core/sinex-gateway/docs/rpc_server.md`.  
    - **Status:** Router is wrapped in `LoadShed + ConcurrencyLimit + Timeout + RequestBodyLimit` with env-tunable knobs (`SINEX_GATEWAY_MAX_CONCURRENCY`, `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, `SINEX_GATEWAY_MAX_BODY_BYTES`). Tests `concurrency_limit_returns_429`, `timeout_layer_returns_504`, and `body_limit_returns_413` confirm each guard.
 
 3. **Validate native-messaging origins**  
-   - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`, `doc/native_messaging.md`.  
+   - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`, `docs/native_messaging.md`.  
    - **Steps:** ✅ Enforce allowlists via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`, optionally requiring per-extension secrets. Structured logging now emits `native_messaging.auth` events for every allow/deny decision so operators can audit failures.  
    - **Tests:** `native_messaging_rejects_untrusted_extensions`, `native_messaging_accepts_trusted_extension_with_secret`, and `native_messaging_rejects_missing_secret` in `crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`.
 
@@ -159,7 +159,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Status:** `gateway_requires_admin_token_secret` (`crate/core/sinex-gateway/tests/gateway_secret_management_test.rs`) now fails because `SINEX_GATEWAY_ADMIN_TOKEN_FILE` is unset, proving secrets aren’t wired through agenix yet.
 
 31. **Better documentation surfacing for watchers**  
-    - **Files:** `crate/satellites/sinex-system-satellite/doc/README.md`, workspace docs.  
+    - **Files:** `crate/satellites/sinex-system-satellite/docs/README.md`, workspace docs.  
     - **Steps:** explain how each watcher works, configuration knobs, and failure behavior; currently the README doesn’t mention the real implementations, leading to confusion.  
     - **Tests:** documentation lint or manual review (no automated failure today), but include this task so we update the docs alongside code.  
     - **Status:** README now includes a watcher matrix (subsystems, captured signals, config knobs, shutdown notes). Remove TODO once runtime docs cover failure semantics too.

@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/validator.md")]
+#![doc = include_str!("../docs/validator.md")]
 
 //! Event validation wrapper that reuses sinex-core's shared validator logic while
 //! keeping ingestd-specific ergonomics (stats, enum result, etc.).

@@ -1,23 +1,30 @@
-#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
-//! Document ingestor that ingests local files directly instead of relying on the
-//! removed sensd pipeline.
+//! Document ingestor that captures materials directly into JetStream via the
+//! AcquisitionManager (Stage-as-You-Go), replacing the legacy sensd pipeline.
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use color_eyre::eyre::{eyre, Result};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
+use sinex_core::{
+    types::{
+        domain::{EventSource, EventType, SanitizedPath},
+        ulid::Ulid,
+    },
+    Event as CoreEvent, Id, OffsetKind, Provenance,
+};
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sinex_satellite_sdk::{
-    annex::{AnnexConfig, BlobManager},
+    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    event_processor::EventTransport,
+    stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
         ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor, TimeHorizon,
@@ -25,10 +32,12 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
-use tokio::{fs, io::AsyncReadExt, sync::mpsc};
+use tokio::{fs, io::AsyncReadExt};
 use tracing::{error, info, warn};
 
 const ENCODING_SNIFF_BYTES: usize = 4096;
+const MATERIAL_REASON_INGEST: &str = "document-ingestor:ingest";
+const MAX_CHUNK_BYTES: usize = 256 * 1024;
 
 /// Configuration for the document ingestor.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,12 +65,30 @@ impl Default for DocumentIngestorConfig {
     }
 }
 
+impl DocumentIngestorConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1024..=512 * 1024 * 1024).contains(&self.max_document_size) {
+            return Err("Max document size must be between 1KB and 512MB".to_string());
+        }
+
+        if self
+            .supported_mime_types
+            .iter()
+            .any(|m| m.trim().is_empty())
+        {
+            return Err("Supported MIME types cannot contain empty entries".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 /// Simplified document processor that ingests local files.
 pub struct DocumentProcessor {
     runtime: Option<ProcessorRuntimeState>,
     config: DocumentIngestorConfig,
-    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
-    blob_manager: Option<Arc<BlobManager>>,
+    stage_context: Option<StageAsYouGoContext>,
+    acquisition: Option<Arc<AcquisitionManager>>,
 }
 
 impl DocumentProcessor {
@@ -69,8 +96,8 @@ impl DocumentProcessor {
         Self {
             runtime: None,
             config: DocumentIngestorConfig::default(),
-            event_sender: None,
-            blob_manager: None,
+            stage_context: None,
+            acquisition: None,
         }
     }
 
@@ -79,60 +106,52 @@ impl DocumentProcessor {
         runtime: ProcessorRuntimeState,
         config: DocumentIngestorConfig,
     ) -> SatelliteResult<()> {
-        let annex_repo = match std::env::var("SINEX_ANNEX_PATH") {
-            Ok(path) => Utf8PathBuf::from(path),
-            Err(_) => {
-                let default_path =
-                    sinex_core::environment::environment().work_directory("/tmp/sinex/annex");
-                Utf8PathBuf::from_path_buf(default_path)
-                    .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/annex"))
-            }
+        config.validate().map_err(SatelliteError::Processing)?;
+
+        let publisher = match runtime.transport() {
+            EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
 
-        fs::create_dir_all(annex_repo.as_std_path())
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
             .await
-            .map_err(|e| {
-                SatelliteError::General(eyre!("Failed to create annex directory: {}", e))
-            })?;
+            .map_err(SatelliteError::from)?;
 
-        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            while let Some(event) = blob_event_rx.recv().await {
-                tracing::debug!(?event, "Blob manager emitted event");
-            }
-        });
-
-        let annex_config = AnnexConfig {
-            repo_path: annex_repo,
-            num_copies: None,
-            large_files: None,
-        };
-
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, runtime.db_pool().clone(), Some(blob_event_tx))
-                .map_err(|e| {
-                    SatelliteError::General(eyre!("Failed to create blob manager: {}", e))
-                })?,
-        );
-
-        let event_sender = runtime.event_sender();
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "document",
+            "document-ingestor",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
 
         self.runtime = Some(runtime);
         self.config = config;
-        self.event_sender = Some(event_sender);
-        self.blob_manager = Some(blob_manager);
+        self.stage_context = Some(stage_context);
+        self.acquisition = Some(acquisition);
 
         Ok(())
     }
 
-    async fn ingest_target(&self, target: &str) -> Result<Vec<Event<JsonValue>>> {
+    async fn ingest_target(&self, target: &str) -> SatelliteResult<Option<Ulid>> {
+        let stage_context = self
+            .stage_context
+            .as_ref()
+            .ok_or_else(|| SatelliteError::Processing("Stage context not initialised".into()))?;
+        let acquisition = self.acquisition.as_ref().ok_or_else(|| {
+            SatelliteError::Processing("Acquisition manager not initialised".into())
+        })?;
+
         let path_buf = std::path::PathBuf::from(target);
-        let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone())
-            .map_err(|_| eyre!("Document path must be valid UTF-8: {}", target))?;
+        let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone()).map_err(|_| {
+            SatelliteError::Processing(format!("Document path must be valid UTF-8: {target}"))
+        })?;
+        let sanitized_path = SanitizedPath::from_str_validated(utf8_path.as_str())
+            .map_err(|e| SatelliteError::Processing(format!("Invalid document path: {e}")))?;
 
         let metadata = fs::metadata(&utf8_path).await?;
         if !metadata.is_file() {
-            return Err(eyre!("Document path is not a file: {}", target));
+            return Err(SatelliteError::Processing(format!(
+                "Document path is not a file: {target}"
+            )));
         }
 
         let file_size = metadata.len();
@@ -143,7 +162,7 @@ impl DocumentProcessor {
                 path = %utf8_path,
                 "Skipping document larger than configured limit"
             );
-            return Ok(Vec::new());
+            return Ok(None);
         }
 
         let guess = MimeGuess::from_path(&utf8_path);
@@ -163,19 +182,6 @@ impl DocumentProcessor {
             "mime_type": mime,
         });
 
-        if let Some(manager) = &self.blob_manager {
-            match manager.ingest_file(&utf8_path, utf8_path.file_name()).await {
-                Ok(blob) => {
-                    metadata_json["blob_id"] = json!(blob.id.to_string());
-                    metadata_json["annex_key"] = json!(blob.annex_key());
-                }
-                Err(err) => {
-                    warn!(error = %err, path = %utf8_path, "Failed to ingest document into annex");
-                }
-            }
-        }
-
-        let material_id = Ulid::new();
         let encoding = self
             .detect_encoding(&utf8_path, &mime)
             .await
@@ -183,69 +189,69 @@ impl DocumentProcessor {
                 warn!(error = %err, path = %utf8_path, "Failed to detect encoding; defaulting to binary");
                 Some("binary".to_string())
             });
-        self.process_complete_document(material_id, file_size, encoding, metadata_json)
+        metadata_json["encoding"] = match encoding {
+            Some(ref enc) => json!(enc),
+            None => serde_json::Value::Null,
+        };
+
+        let mut handle = acquisition
+            .begin_material(utf8_path.as_str())
             .await
-    }
+            .map_err(SatelliteError::from)?;
+        let mut file = fs::File::open(&utf8_path).await?;
+        let mut total_bytes: i64 = 0;
+        let mut buf = vec![0u8; MAX_CHUNK_BYTES];
 
-    fn event_sender(&self) -> Result<&mpsc::UnboundedSender<Event<JsonValue>>> {
-        self.event_sender
-            .as_ref()
-            .ok_or_else(|| eyre!("Event sender not initialized"))
-    }
+        loop {
+            let read = file.read(&mut buf).await?;
+            if read == 0 {
+                break;
+            }
 
-    async fn emit_events(&self, events: Vec<Event<JsonValue>>) -> Result<u64> {
-        let sender = self.event_sender()?;
-        let mut emitted = 0;
-        for event in events {
-            sender
-                .send(event)
-                .map_err(|e| eyre!("Failed to emit document event: {}", e))?;
-            emitted += 1;
+            acquisition
+                .append_slice(&mut handle, &buf[..read])
+                .await
+                .map_err(SatelliteError::from)?;
+            total_bytes += read as i64;
         }
-        Ok(emitted)
-    }
 
-    async fn process_complete_document(
-        &self,
-        material_id: Ulid,
-        size_bytes: u64,
-        encoding: Option<String>,
-        metadata: serde_json::Value,
-    ) -> Result<Vec<Event<JsonValue>>> {
-        let mut events = Vec::new();
+        let material_id = handle.material_id;
 
-        let file_path = metadata
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+        acquisition
+            .finalize(handle, MATERIAL_REASON_INGEST)
+            .await
+            .map_err(SatelliteError::from)?;
 
-        let mime_type = metadata
-            .get("mime_type")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let payload = serde_json::json!({
+            "file_path": sanitized_path.as_str(),
+            "source_material_id": material_id.to_string(),
+            "size_bytes": file_size,
+            "mime_type": mime.clone(),
+            "encoding": encoding,
+            "metadata": metadata_json,
+        });
 
-        let event = Event::<JsonValue>::dynamic(
-            sinex_core::types::domain::EventSource::from("document_ingestor"),
-            sinex_core::types::domain::EventType::from("document.ingested"),
-            serde_json::json!({
-                "file_path": file_path,
-                "source_material_id": material_id.to_string(),
-                "size_bytes": size_bytes,
-                "mime_type": mime_type,
-                "encoding": encoding,
-                "metadata": metadata,
-            }),
-        )
-        .with_provenance(sinex_core::db::models::event::Provenance::from_material(
-            sinex_core::types::Id::from(material_id),
-            0,
-            Some(0),
-            Some(size_bytes as i64),
-        ))
-        .build();
+        let provenance = Provenance::Material {
+            id: Id::from_ulid(material_id),
+            anchor_byte: 0,
+            offset_start: Some(0),
+            offset_end: Some(total_bytes),
+            offset_kind: OffsetKind::Byte,
+        };
 
-        events.push(event);
-        Ok(events)
+        let mut event = CoreEvent::create(
+            EventSource::from_static("document_ingestor"),
+            EventType::from("document.ingested"),
+            payload,
+            provenance,
+        );
+        event.id = Some(Id::from_ulid(Ulid::new()));
+
+        stage_context
+            .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
+            .await?;
+
+        Ok(Some(material_id))
     }
 
     async fn detect_encoding(
@@ -301,6 +307,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
         let mut events_processed = 0u64;
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
+        let mut warnings = Vec::new();
 
         match until {
             TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
@@ -309,10 +316,13 @@ impl StatefulStreamProcessor for DocumentProcessor {
                 } else {
                     for target in &args.targets {
                         match self.ingest_target(target).await {
-                            Ok(events) => {
-                                if !events.is_empty() {
-                                    events_processed += self.emit_events(events).await?;
-                                }
+                            Ok(Some(_doc)) => {
+                                events_processed += 1;
+                                successful_targets.push(target.clone());
+                            }
+                            Ok(None) => {
+                                warnings
+                                    .push(format!("Skipped target {target} (no events emitted)"));
                                 successful_targets.push(target.clone());
                             }
                             Err(err) => {
@@ -338,7 +348,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
             processor_stats: HashMap::new(),
             successful_targets,
             failed_targets,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -441,8 +451,8 @@ impl Clone for DocumentProcessor {
         Self {
             runtime: self.runtime.clone(),
             config: self.config.clone(),
-            event_sender: self.event_sender.clone(),
-            blob_manager: self.blob_manager.clone(),
+            stage_context: self.stage_context.clone(),
+            acquisition: self.acquisition.clone(),
         }
     }
 }

@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/annex.md")]
+#![doc = include_str!("../../docs/annex.md")]
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::{bail, Context, Result};

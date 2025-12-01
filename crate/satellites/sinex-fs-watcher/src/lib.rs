@@ -1,6 +1,6 @@
-#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! Filesystem watcher satellite facade.
 

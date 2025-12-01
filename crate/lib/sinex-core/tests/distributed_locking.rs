@@ -1,9 +1,10 @@
 use sinex_core::distributed_locking::{AdvisoryLock, DistributedCoordination};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{acquire_pool_test_guard, sinex_test, TestContext};
 use std::time::Duration;
 
 #[sinex_test]
 async fn advisory_lock_try_acquire(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
 
     let lock1 = AdvisoryLock::try_acquire(pool, "test_key").await?;
@@ -22,6 +23,7 @@ async fn advisory_lock_try_acquire(ctx: TestContext) -> color_eyre::eyre::Result
 
 #[sinex_test]
 async fn leadership_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
 
     {
@@ -55,6 +57,7 @@ async fn leadership_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
 #[sinex_test]
 async fn advisory_lock_basic_acquisition(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
 
     let lock1 = AdvisoryLock::try_acquire(pool, "test_lock_basic").await?;
@@ -76,6 +79,7 @@ async fn advisory_lock_basic_acquisition(ctx: TestContext) -> color_eyre::eyre::
 
 #[sinex_test]
 async fn advisory_lock_raii_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
 
     {
@@ -95,7 +99,15 @@ async fn advisory_lock_raii_cleanup(ctx: TestContext) -> color_eyre::eyre::Resul
 
 #[sinex_test]
 async fn advisory_lock_different_names(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
+
+    // Ensure no lingering advisory locks from previous runs.
+    for name in ["lock_alpha", "lock_beta", "lock_gamma"] {
+        let _ = AdvisoryLock::force_release(pool, name).await;
+    }
 
     for name in ["lock_alpha", "lock_beta", "lock_gamma"] {
         let guard = AdvisoryLock::try_acquire(pool, name)
@@ -111,20 +123,55 @@ async fn advisory_lock_different_names(ctx: TestContext) -> color_eyre::eyre::Re
     assert!(conflict.is_none());
 
     drop(held);
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    AdvisoryLock::force_release(pool, "lock_alpha").await.ok();
+
+    let _ = sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                Ok::<bool, sinex_test_utils::SinexError>(
+                    AdvisoryLock::try_acquire(&pool, "lock_alpha")
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some(),
+                )
+            }
+        },
+        10,
+    )
+    .await;
+
     Ok(())
 }
 
 #[sinex_test]
 async fn distributed_coordination_patterns(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
+        tracing::warn!(error = %e, "Reset before distributed_coordination_patterns failed, retrying after cleanup");
+        ctx.force_cleanup().await?;
+        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    }
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = &ctx.pool;
     let coordination = DistributedCoordination::new(pool.clone());
     let _ = coordination;
+    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
+        tracing::warn!(error = %e, "Reset after distributed_coordination_patterns failed, retrying after cleanup");
+        ctx.force_cleanup().await?;
+        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    }
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn job_lock_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
     let coordination = DistributedCoordination::new(pool.clone());
     let _ = coordination;
@@ -133,6 +180,7 @@ async fn job_lock_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
 #[sinex_test]
 async fn resource_coordination_with_timeout(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    ctx.ensure_clean().await?;
     let pool = &ctx.pool;
     let coordination = DistributedCoordination::new(pool.clone());
 
@@ -185,24 +233,52 @@ async fn advisory_lock_concurrent_acquisition(ctx: TestContext) -> color_eyre::e
 
 #[sinex_test]
 async fn lock_status_checking(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = &ctx.pool;
 
     let _ = AdvisoryLock::try_acquire(pool, "simple").await;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn force_release_functionality(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = &ctx.pool;
+    ctx.ensure_clean().await?;
     let _ = AdvisoryLock::force_release(pool, "test").await;
     Ok(())
 }
 
 #[sinex_test]
 async fn multiple_different_services(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+
     let pool = &ctx.pool;
     let coordination = DistributedCoordination::new(pool.clone());
-    let _ = coordination;
+    // basic smoke: try to become leader under different service ids
+    let services = ["svc-a", "svc-b", "svc-c"];
+    for svc in services {
+        if let Ok(Some(guard)) = coordination.try_become_leader(svc).await {
+            drop(guard);
+        }
+    }
+
+    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
+        tracing::warn!(error = %e, "Reset after multiple_different_services failed, retrying after force_cleanup");
+        ctx.force_cleanup().await?;
+        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    }
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-#![doc = include_str!("../../../doc/events_blanket_impls.md")]
+#![doc = include_str!("../../../docs/events_blanket_impls.md")]
 
 use super::EventPayload;
 use crate::domain::{EventSource, EventType};

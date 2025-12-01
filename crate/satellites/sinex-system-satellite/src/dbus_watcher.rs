@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/dbus_watcher.md")]
+#![doc = include_str!("../docs/dbus_watcher.md")]
 
 //! D-Bus watcher with real-time signal subscription.
 //!

@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/preflight.md")]
+#![doc = include_str!("../../docs/preflight.md")]
 
 pub mod configuration;
 pub mod database;

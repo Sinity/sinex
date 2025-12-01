@@ -166,14 +166,19 @@ async fn test_post_commit_publish_property(ctx: TestContext) -> Result<()> {
     );
 
     // Clean up
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL sinex.operation_id = 'single-writer-test'")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         r#"
         DELETE FROM core.events WHERE id = $1::uuid::ulid
         "#,
     )
     .bind(event_id.to_uuid())
-    .execute(&pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(())
 }

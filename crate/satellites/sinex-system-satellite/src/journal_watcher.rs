@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/journal_watcher.md")]
+#![doc = include_str!("../docs/journal_watcher.md")]
 
 //! Journal watcher with historical import and cursor tracking.
 

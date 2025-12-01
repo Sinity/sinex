@@ -6,7 +6,9 @@ use sinex_core::types::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
+use sinex_test_utils::{
+    sinex_test, EphemeralNats, EventOverrides, TestContext, TestSatellitePublisher,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -19,7 +21,7 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(true);
 
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -55,19 +57,16 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    let event_id = Ulid::new();
-    let invalid_payload = json!({
-        "id": event_id.to_string(),
-        "source": "test",
-        "event_type": "test.invalid",
-        "ts_orig": "invalid-timestamp-format",
-        "host": "test-host",
-        "payload": {"data": "test"}
-    });
-
-    let subject = env.nats_subject("events.raw.test");
-    js.publish(subject, invalid_payload.to_string().into())
-        .await?
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
+    let event_id = publisher
+        .publish_event_with_overrides(
+            "test.invalid",
+            json!({"data": "test"}),
+            EventOverrides {
+                ts_orig: Some("invalid-timestamp-format".to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -98,7 +97,7 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -134,10 +133,10 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    let subject = env.nats_subject("events.raw.test");
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
     let malformed_json = b"{\"id\": \"not-closed\"";
-    js.publish(subject, malformed_json.to_vec().into())
-        .await?
+    publisher
+        .publish_raw_event_bytes("test.malformed", malformed_json, None)
         .await?;
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -162,7 +161,7 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
-    let js = jetstream::new(nats_client.clone());
+    let js = ctx.jetstream().await?;
     let env = ctx.env();
 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -198,14 +197,17 @@ async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> 
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
     let incomplete_payload = json!({
         "id": Ulid::new().to_string(),
         "source": "test"
     });
-
-    let subject = env.nats_subject("events.raw.test");
-    js.publish(subject, incomplete_payload.to_string().into())
-        .await?
+    publisher
+        .publish_raw_event_bytes(
+            "test.missing_fields",
+            serde_json::to_vec(&incomplete_payload)?,
+            None,
+        )
         .await?;
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

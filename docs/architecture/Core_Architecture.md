@@ -20,7 +20,7 @@ Data Substrate
 - Storage: PostgreSQL (+ TimescaleDB)
 - IDs: ULIDs for ordering and distribution
 - Event store: `core.events` with strict provenance
-- Schema: see `crate/lib/sinex-schema/doc/overview.md` for table details
+- Schema: see `crate/lib/sinex-schema/docs/overview.md` for table details
 
 Streaming & Ingestion
 - Messaging: NATS JetStream (subjects, durable consumers, explicit acks)
@@ -33,11 +33,11 @@ Security & Operations
 - Ops & integrity: backups, invariants, journald-based observability: `docs/architecture/SystemOperations_And_Integrity_Architecture.md`
 
 Schema & Taxonomy
-- Schema notes: `crate/lib/sinex-schema/doc/overview.md`
+- Schema notes: `crate/lib/sinex-schema/docs/overview.md`
 - Event taxonomy: `docs/architecture/event-taxonomy.md`
 
 Implementation Guides
-- Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/doc/overview.md`
+- Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/docs/overview.md`
 - Gateway/CLI: see repository README and `./cli/exo.py`
 
 See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

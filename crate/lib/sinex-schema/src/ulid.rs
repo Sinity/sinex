@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/ulid.md")]
+#![doc = include_str!("../docs/ulid.md")]
 
 use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;

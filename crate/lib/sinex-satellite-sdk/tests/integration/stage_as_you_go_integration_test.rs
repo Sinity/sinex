@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
-    let jetstream = jetstream::new(nats_client.clone());
+    let jetstream = ctx.jetstream().await?;
 
     let ingest_config = TestIngestdConfig {
         nats_url: format!(

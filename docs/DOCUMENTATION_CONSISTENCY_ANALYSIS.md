@@ -596,7 +596,7 @@ docs/README.md (index)
 │   └── docs/architecture/SystemOperations_And_Integrity_Architecture.md
 ├── docs/vision/manifesto.md
 ├── docs/vision/project-target-state.md [PROBLEMATIC: mixed tenses]
-│   └── crate/core/sinex-gateway/doc/overview.md [external doc]
+│   └── crate/core/sinex-gateway/docs/overview.md [external doc]
 ├── docs/vision/streaming-architecture.md [BROKEN REF: TARGET_final.md]
 └── Other vision docs
 ```

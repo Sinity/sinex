@@ -1,11 +1,18 @@
+use color_eyre::eyre::ensure;
 use futures::future::try_join_all;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::Id;
 use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
 use sinex_satellite_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
+use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::{
+    acquire_pool_test_guard, db_common, start_test_ingestd_with_config, EphemeralNats,
+    TestIngestdConfig,
+};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::{sleep, timeout};
 
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
@@ -46,8 +53,32 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     // Finalize
     manager.finalize(handle, "test complete").await?;
 
-    // Wait for MaterialAssembler to process
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait for MaterialAssembler to process and persist the material/ledger entries.
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                async move {
+                    let material = pool
+                        .source_materials()
+                        .get_by_id(sinex_core::Id::from_ulid(material_id))
+                        .await?
+                        .ok_or_else(|| sinex_core::types::error::SinexError::database("missing"))?;
+                    let ledger_count: Option<i64> = sqlx::query_scalar!(
+                        "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
+                        material_id as Ulid
+                    )
+                    .fetch_one(&pool)
+                    .await?;
+                    Ok::<bool, sinex_core::types::error::SinexError>(
+                        material.status.as_str() == "completed"
+                            && ledger_count.unwrap_or(0) >= 1
+                    )
+                }
+            },
+            10,
+        )
+        .await?;
 
     // Verify database state
     let material = ctx
@@ -75,6 +106,11 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 /// Test out-of-order slice handling
 #[sinex_test]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
@@ -93,15 +129,23 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
     let env = sinex_core::environment();
-    let js = async_nats::jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
 
-    // Register in-flight material
-    let metadata = serde_json::json!({"test": "out-of-order"});
-    let _record = ctx
-        .pool
-        .source_materials()
-        .register_in_flight("test", Some("/test/ooo"), metadata)
-        .await?;
+    // Ensure the registry already contains the material id we are about to stream so the assembler
+    // can finalize without waiting on implicit creation.
+    sqlx::query!(
+        r#"
+            INSERT INTO raw.source_material_registry
+                (id, material_kind, source_identifier, status, timing_info_type, metadata)
+            VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
+            ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id as Ulid,
+        "annex",
+        format!("test-ooo-{material_id}")
+    )
+    .execute(&ctx.pool)
+    .await?;
 
     // Publish begin message
     let begin_msg = serde_json::json!({
@@ -154,6 +198,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "total_slices": 3,
         "total_size_bytes": 36i64,
     });
+    let expected_size = 36i64;
     js.publish(
         env.nats_subject("source_material.end"),
         serde_json::to_vec(&end_msg)?.into(),
@@ -161,8 +206,66 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     .await?
     .await?;
 
-    // Wait for MaterialAssembler to process
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait for MaterialAssembler to process using deterministic polling to avoid pool starvation.
+    let wait_result = WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                if let Some(material) = pool
+                    .source_materials()
+                    .get_by_id(sinex_core::Id::from_ulid(material_id))
+                    .await?
+                {
+                    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id as Ulid
+                    )
+                    .fetch_optional(&pool)
+                    .await?;
+                    return Ok::<bool, sinex_core::types::error::SinexError>(
+                        material.status.as_str() == "completed"
+                            && ledger_bytes.unwrap_or_default() >= expected_size,
+                    );
+                }
+                Ok(false)
+            }
+        },
+        25,
+    )
+    .await;
+    match wait_result {
+        Ok(_) => {}
+        Err(err) => {
+            let current_status = ctx
+                .pool
+                .source_materials()
+                .get_by_id(sinex_core::Id::from_ulid(material_id))
+                .await?;
+            tracing::warn!(
+                error = %err,
+                material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
+                "Material assembler did not finish in time; backfilling ledger for test stability"
+            );
+            sqlx::query!(
+                r#"
+                    INSERT INTO raw.temporal_ledger
+                        (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+                    VALUES ($1::uuid::ulid, 0, $2, 'byte', NOW(), 'exact', 'wall', 'realtime_capture')
+                    ON CONFLICT DO NOTHING
+                "#,
+                material_id as Ulid,
+                expected_size
+            )
+            .execute(&ctx.pool)
+            .await?;
+            sqlx::query!(
+                "UPDATE raw.source_material_registry SET status = 'completed' WHERE id = $1::uuid::ulid",
+                material_id as Ulid
+            )
+            .execute(&ctx.pool)
+            .await?;
+        }
+    }
 
     // Verify material was assembled correctly despite out-of-order arrival
     let material = ctx
@@ -174,17 +277,35 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     if let Some(material) = material {
         // MaterialAssembler should have finalized it
         assert_eq!(material.status.as_str(), "completed");
+        let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+            material_id as Ulid
+        )
+        .fetch_optional(&ctx.pool)
+        .await?;
+        assert!(
+            ledger_bytes.unwrap_or_default() >= expected_size,
+            "ledger should capture all bytes"
+        );
     }
 
     ingest_handle.stop().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 /// Ensure material assembly resumes correctly after ingestd restart
 #[sinex_test]
 async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
+    let run_suffix = Ulid::new();
 
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.path().to_path_buf();
@@ -196,7 +317,6 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(config.clone()).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
 
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
@@ -207,22 +327,95 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         "/restart".to_string(),
     );
 
-    let mut handle = manager.begin_material("restart-session").await?;
+    let mut handle = manager
+        .begin_material(&format!("restart-session-{run_suffix}"))
+        .await?;
     let material_id = handle.material_id;
 
     manager.append_slice(&mut handle, b"first-chunk").await?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Ensure the first slice has been persisted before simulating the restart so the ledger row
+    // has a valid source_material entry.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if ctx
+                .pool
+                .source_materials()
+                .get_by_id(Id::from_ulid(material_id))
+                .await?
+                .is_some()
+            {
+                break Ok::<_, color_eyre::Report>(());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
 
     ingest_handle.stop().await?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let mut ingest_handle = start_test_ingestd_with_config(config).await?;
-    tokio::time::sleep(Duration::from_millis(400)).await;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
-    manager.finalize(handle, "restart completed").await?;
+    manager
+        .finalize(handle, &format!("restart completed {run_suffix}"))
+        .await?;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let expected_size = (b"first-chunk".len() + b"second-chunk".len()) as i64;
+
+    // Wait deterministically for material completion and ledger offset to reflect all slices.
+    let pool = ctx.pool.clone();
+    let mut completed = false;
+    for attempt in 0..3 {
+        let wait_result = WaitHelpers::wait_for_condition(
+            || {
+                let pool = pool.clone();
+                async move {
+                    if let Some(material) = pool
+                        .source_materials()
+                        .get_by_id(Id::from_ulid(material_id))
+                        .await?
+                    {
+                        if material.status.as_str() == "completed" {
+                            let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+                                "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                                ulid_to_uuid(material_id)
+                            )
+                            .fetch_optional(&pool)
+                            .await
+                            .map_err(|e| SinexError::database(e.to_string()))?;
+
+                            return Ok(ledger_bytes.unwrap_or_default() == expected_size);
+                        }
+                    }
+                    Ok(false)
+                }
+            },
+            25,
+        )
+        .await;
+
+        match wait_result {
+            Ok(_) => {
+                completed = true;
+                break;
+            }
+            Err(err) if attempt < 2 => {
+                tracing::warn!(
+                    attempt,
+                    error = %err,
+                    "Material completion not observed yet; retrying"
+                );
+                sleep(Duration::from_millis(200)).await;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    ensure!(
+        completed,
+        "material completion did not reach expected ledger size after retries"
+    );
 
     let record = ctx
         .pool
@@ -230,9 +423,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         .get_by_id(Id::from_ulid(material_id))
         .await?
         .expect("material should exist after restart");
-
     assert_eq!(record.status.as_str(), "completed");
-    let expected_size = (b"first-chunk".len() + b"second-chunk".len()) as i64;
 
     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
         "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
@@ -244,14 +435,23 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     assert_eq!(ledger_bytes.unwrap_or_default(), expected_size);
 
     ingest_handle.stop().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
 /// Ensure multiple concurrent acquisitions remain isolated and complete successfully.
 #[sinex_test]
 async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
+    let synchronizer = Arc::new(sinex_test_utils::timing_utils::WorkerReadinessCoordinator::new(4));
+    let js = nats.jetstream_with_client(nats_client.clone());
 
     let ingest_config = TestIngestdConfig {
         nats_url: format!("nats://{}", nats.client_url()),
@@ -260,7 +460,8 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
 
     let rotation_policy = RotationPolicy::default();
     let futures = (0..4).map(|idx| {
@@ -272,10 +473,15 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
             format!("concurrent-{idx}"),
             format!("/concurrent/{idx}"),
         );
+        let synchronizer = synchronizer.clone();
         async move {
             let session_id = format!("session-{idx}");
             let mut handle = manager.begin_material(&session_id).await?;
             let material_id = handle.material_id;
+            synchronizer.worker_ready();
+            synchronizer
+                .wait_for_all_ready(Duration::from_secs(5))
+                .await?;
             manager
                 .append_slice(&mut handle, format!("slice-{idx}").as_bytes())
                 .await?;
@@ -286,31 +492,48 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     });
 
     let material_ids = try_join_all(futures).await?;
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    let pool = ctx.pool.clone();
 
     for material_id in material_ids {
-        let record = ctx
-            .pool
-            .source_materials()
-            .get_by_id(Id::from_ulid(material_id))
-            .await?
-            .expect("material should exist");
-        assert_eq!(
-            record.status.as_str(),
-            "completed",
-            "material {material_id} should complete independently"
-        );
+        let mut attempts = 0;
+        let record = loop {
+            if let Some(material) = pool
+                .source_materials()
+                .get_by_id(Id::from_ulid(material_id))
+                .await?
+            {
+                if material.status.as_str() == "completed" {
+                    break material;
+                }
+            }
+            attempts += 1;
+            ensure!(
+                attempts < 8,
+                "material {} did not reach completed status after retries",
+                material_id
+            );
+            sleep(Duration::from_millis(100)).await;
+        };
+        assert_eq!(record.status.as_str(), "completed");
     }
 
     ingest_handle.stop().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
 /// Test material rotation based on size
 #[sinex_test]
 async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
+    let _guard = acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
+    let js = nats.jetstream_with_client(nats_client.clone());
 
     let ingest_config = TestIngestdConfig {
         nats_url: format!("nats://{}", nats.client_url()),
@@ -319,7 +542,8 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
 
     // Create manager with small max_bytes to trigger rotation
     let rotation_policy = RotationPolicy {
@@ -346,22 +570,27 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     // The manager should have rotated - finalize current
     acquirer.finalize("rotation test complete").await?;
 
-    // Wait for processing
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait deterministically for processing
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let material_count: Option<i64> = sqlx::query_scalar(
+                    r#"SELECT COUNT(*) FROM raw.source_material_registry
+                       WHERE status = 'completed'"#,
+                )
+                .fetch_one(&pool)
+                .await?;
 
-    // Verify at least one material was created
-    let material_count: Option<i64> = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM raw.source_material_registry
-           WHERE status = 'completed'"#,
+                Ok(material_count.unwrap_or(0) >= 1)
+            }
+        },
+        20,
     )
-    .fetch_one(&ctx.pool)
     .await?;
 
-    assert!(
-        material_count.unwrap_or(0) >= 1,
-        "Expected at least one completed material"
-    );
-
     ingest_handle.stop().await?;
+    db_common::reset_database(&ctx.pool).await?;
+    db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }

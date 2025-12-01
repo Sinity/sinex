@@ -19,6 +19,22 @@ pub struct TestSatellitePublisher {
     source: String,
 }
 
+#[derive(Clone, Default)]
+pub struct EventOverrides {
+    pub id: Option<Ulid>,
+    pub ts_orig: Option<String>,
+    pub host: Option<String>,
+    pub ingestor_version: Option<String>,
+    pub payload_schema_id: Option<Ulid>,
+    pub source_event_ids: Option<Vec<Ulid>>,
+    pub source_material_id: Option<Ulid>,
+    pub anchor_byte: Option<i64>,
+    pub offset_start: Option<i64>,
+    pub offset_end: Option<i64>,
+    pub offset_kind: Option<String>,
+    pub associated_blob_ids: Option<Vec<Ulid>>,
+}
+
 impl TestSatellitePublisher {
     /// Create a publisher from a raw NATS client and logical source name.
     pub fn new(client: Client, source: impl Into<String>) -> Self {
@@ -46,9 +62,22 @@ impl TestSatellitePublisher {
         event_type: &str,
         payload: serde_json::Value,
     ) -> Result<Ulid> {
-        let event_id = Ulid::new();
-        let now = Utc::now().to_rfc3339();
-        let host = gethostname().to_string_lossy().to_string();
+        self.publish_event_with_overrides(event_type, payload, EventOverrides::default())
+            .await
+    }
+
+    /// Publish an event with optional envelope overrides.
+    pub async fn publish_event_with_overrides(
+        &self,
+        event_type: &str,
+        payload: serde_json::Value,
+        overrides: EventOverrides,
+    ) -> Result<Ulid> {
+        let event_id = overrides.id.unwrap_or_else(Ulid::new);
+        let now = overrides.ts_orig.unwrap_or_else(|| Utc::now().to_rfc3339());
+        let host = overrides
+            .host
+            .unwrap_or_else(|| gethostname().to_string_lossy().to_string());
 
         let message = json!({
             "id": event_id.to_string(),
@@ -57,22 +86,28 @@ impl TestSatellitePublisher {
             "ts_orig": now,
             "host": host,
             "payload": payload,
-            "ingestor_version": "test-satellite",
-            "payload_schema_id": null,
-            "associated_blob_ids": null,
-            "source_material_id": null,
-            "anchor_byte": null,
-            "offset_start": null,
-            "offset_end": null,
-            "offset_kind": null,
-            "source_event_ids": null,
+            "ingestor_version": overrides
+                .ingestor_version
+                .unwrap_or_else(|| "test-satellite".to_string()),
+            "payload_schema_id": overrides
+                .payload_schema_id
+                .map(|id| id.to_string()),
+            "associated_blob_ids": overrides
+                .associated_blob_ids
+                .map(|ids| ids.into_iter().map(|id| id.to_string()).collect::<Vec<_>>()),
+            "source_material_id": overrides
+                .source_material_id
+                .map(|id| id.to_string()),
+            "anchor_byte": overrides.anchor_byte,
+            "offset_start": overrides.offset_start,
+            "offset_end": overrides.offset_end,
+            "offset_kind": overrides.offset_kind,
+            "source_event_ids": overrides
+                .source_event_ids
+                .map(|ids| ids.into_iter().map(|id| id.to_string()).collect::<Vec<_>>()),
         });
 
-        let subject = self.env.nats_subject(&format!(
-            "events.raw.{}.{}",
-            self.source.replace('.', "_"),
-            event_type.replace('.', "_")
-        ));
+        let subject = self.event_subject(event_type);
 
         let mut headers = HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
@@ -82,6 +117,30 @@ impl TestSatellitePublisher {
             .await?
             .await
             .map_err(|err| eyre!("failed to publish event: {err}"))?;
+
+        Ok(event_id)
+    }
+
+    /// Publish raw bytes on the standard subject with a stable message id.
+    pub async fn publish_raw_event_bytes(
+        &self,
+        event_type: &str,
+        raw_payload: impl AsRef<[u8]>,
+        event_id: Option<Ulid>,
+    ) -> Result<Ulid> {
+        let event_id = event_id.unwrap_or_else(Ulid::new);
+        let mut headers = HeaderMap::new();
+        headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
+
+        self.js
+            .publish_with_headers(
+                self.event_subject(event_type),
+                headers,
+                raw_payload.as_ref().to_vec().into(),
+            )
+            .await?
+            .await
+            .map_err(|err| eyre!("failed to publish raw event bytes: {err}"))?;
 
         Ok(event_id)
     }
@@ -194,5 +253,13 @@ impl TestSatellitePublisher {
     /// Access the raw NATS client (useful for custom subscriptions).
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    fn event_subject(&self, event_type: &str) -> String {
+        self.env.nats_subject(&format!(
+            "events.raw.{}.{}",
+            self.source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ))
     }
 }

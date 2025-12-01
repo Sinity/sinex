@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/schema_sync.md")]
+#![doc = include_str!("../docs/schema_sync.md")]
 
 //! Helpers that ensure ingestd stays in sync with schema metadata.
 

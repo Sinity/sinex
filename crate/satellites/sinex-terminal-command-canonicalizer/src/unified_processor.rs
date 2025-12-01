@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/unified_processor.md")]
+#![doc = include_str!("../docs/unified_processor.md")]
 
 //! Unified `StatefulStreamProcessor` implementation for the terminal command canonicalizer.
 

@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/cascade_analyzer.md")]
+#![doc = include_str!("../docs/cascade_analyzer.md")]
 
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};

@@ -1,5 +1,5 @@
-#![doc = include_str!("../doc/README.md")]
-#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
 
 //! Procedural macro toolkit that keeps Sinex ergonomics consistent across crates.

@@ -296,9 +296,9 @@ Additional notes:
 
 ### Key Components
 - **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
-- **Schema & Taxonomy**: [`crate/lib/sinex-schema/doc/overview.md`](crate/lib/sinex-schema/doc/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+- **Schema & Taxonomy**: [`crate/lib/sinex-schema/docs/overview.md`](crate/lib/sinex-schema/docs/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
   - When any `EventPayload` changes, run `./scripts/schema-dev.sh generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
-- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](crate/lib/sinex-satellite-sdk/doc/overview.md)
+- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](crate/lib/sinex-satellite-sdk/docs/overview.md)
 
 ### For Contributors
 - **Testing Guide**: [`TESTING.md`](TESTING.md)

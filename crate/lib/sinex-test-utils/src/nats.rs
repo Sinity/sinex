@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_nats::{
-    jetstream::{self, consumer::pull::Config as ConsumerConfig, consumer::PullConsumer},
+    jetstream::{
+        self,
+        consumer::PullConsumer,
+        consumer::{pull::Config as ConsumerConfig, AckPolicy},
+    },
     Client,
 };
 use color_eyre::eyre::{eyre, Result};
@@ -114,6 +118,12 @@ impl EphemeralNats {
         Ok(jetstream::new(client))
     }
 
+    /// Create a JetStream context using an existing client connection.
+    /// This keeps tests coupled to `EphemeralNats` while avoiding extra connections.
+    pub fn jetstream_with_client(&self, client: Client) -> jetstream::Context {
+        jetstream::new(client)
+    }
+
     /// Create or update a JetStream stream with the provided subjects.
     pub async fn create_stream(&self, name: &str, subjects: &[&str]) -> Result<()> {
         let js = self.jetstream().await?;
@@ -153,6 +163,22 @@ impl EphemeralNats {
             .await?;
 
         Ok((qualified_stream, consumer))
+    }
+
+    /// Create a stream + durable consumer with sensible defaults (explicit ack, 30s wait,
+    /// max_deliver=10) for simple test setups.
+    pub async fn ensure_default_stream_with_consumer(
+        &self,
+        stream: &str,
+        subject: &str,
+    ) -> Result<(String, PullConsumer)> {
+        let mut cfg = ConsumerConfig::default();
+        cfg.ack_policy = AckPolicy::Explicit;
+        cfg.ack_wait = Duration::from_secs(30);
+        cfg.max_deliver = 10;
+
+        self.ensure_stream_with_consumer(stream, &[subject], cfg)
+            .await
     }
 
     /// Create a stream, skipping if the existing stream has overlapping subjects.
@@ -233,6 +259,27 @@ impl EphemeralNats {
             }
         }
         Ok(())
+    }
+
+    /// Wait for a stream to become available on this JetStream server.
+    pub async fn wait_for_stream(
+        &self,
+        js: &jetstream::Context,
+        name: &str,
+        timeout_duration: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout_duration;
+        loop {
+            match js.get_stream(name).await {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    if Instant::now() >= deadline {
+                        return Err(eyre!("stream {name} not ready: {err}"));
+                    }
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
     }
 
     fn resolve_binary() -> Result<PathBuf> {

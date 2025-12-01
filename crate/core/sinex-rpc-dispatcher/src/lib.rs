@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/README.md")]
+#![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
 
 //! RPC Dispatcher - Unified `StatefulStreamProcessor` implementation.
