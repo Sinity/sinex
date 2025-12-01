@@ -385,6 +385,36 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         let blob = self.get_blob_metadata(annex_key).await?;
+
+        // Verify integrity against the stored hash if available.
+        if !blob.content_hash.is_empty() {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&content);
+            let computed = format!("{:x}", hasher.finalize());
+
+            // Accept raw hash or common prefixes.
+            let expected = blob
+                .content_hash
+                .trim_start_matches("sha256:")
+                .trim_start_matches("SHA256:")
+                .trim_start_matches("SHA256E-")
+                .to_string();
+
+            if !expected.is_empty() && computed != expected {
+                // Mark as corrupted and bail.
+                let _ = self.update_verification_status(annex_key, "corrupted").await;
+                bail!(
+                    "Blob content hash mismatch for {} (expected {}, got {})",
+                    annex_key,
+                    expected,
+                    computed
+                );
+            } else if !expected.is_empty() {
+                let _ = self.update_verification_status(annex_key, "verified").await;
+            }
+        }
+
         self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
