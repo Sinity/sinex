@@ -225,7 +225,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(64);
+            .unwrap_or(32);
 
         let mut config = Self {
             size,
