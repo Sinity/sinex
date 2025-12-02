@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🏗️ Repository Overview
 
-Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. The system uses a distributed satellite-based architecture where independent services capture events and feed them into a central PostgreSQL + TimescaleDB data substrate via NATS JetStream.
+Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. The system uses a distributed satellite-based architecture where independent services capture events and publish directly to NATS JetStream; `sinex-ingestd` consumes from JetStream and persists to PostgreSQL (TimescaleDB is available but lightly used).
 
-**Core Architecture**: Satellites → ingestd → Event Substrate → NATS JetStream → Automata → Query Interface
+**Core Architecture**: Satellites → NATS JetStream → ingestd → PostgreSQL → Automata → Query Interface
 
 ## 🚀 Essential Development Commands
 
@@ -105,7 +105,7 @@ just unused             # Check unused dependencies
 
 ### Satellite Architecture
 
-Sinex uses a satellite constellation pattern. Today satellites submit events to `sinex-ingestd` over gRPC; ingestd persists to Postgres and fans out via NATS JetStream. The JetStream-first ingestion path (satellites publishing directly to JetStream) is tracked in `docs/way.md` and under active development.
+Sinex uses a satellite constellation pattern. Satellites publish events directly to NATS JetStream; ingestd consumes from JetStream, validates, and persists to Postgres while emitting confirmations. JetStream-first ingestion is the current, authoritative flow (see `docs/planning/active/way.md`).
 
 - **Satellites**: Independent event capture services
 - **ingestd**: Central ingestion hub and coordinator
@@ -127,7 +127,7 @@ Sinex uses a satellite constellation pattern. Today satellites submit events to 
 - Each satellite runs as independent systemd service
 - Dual-mode operation: sensor (real-time) and scanner (batch)
 - StatefulStreamProcessor interface for consistency
-- gRPC communication with automatic reconnection
+- JetStream transport (no gRPC client code in satellites)
 - Services configured via NixOS modules in `nixos/`
 
 **Testing Architecture**:
@@ -147,7 +147,6 @@ crate/
     sinex-gateway/         # API gateway service
     sinex-ingestd/         # Central ingestion coordinator
     sinex-rpc-dispatcher/  # RPC routing and dispatch
-    sinex-sensd/           # Sensor management daemon
   lib/                     # Shared libraries
     sinex-core/            # Core types, db, utilities
     sinex-macros/          # Procedural macros
@@ -171,7 +170,7 @@ crate/
 
 ### Key Directories
 
-- `test/` - Comprehensive test suite organized by category
+- `test/` - Comprehensive test suite organized by category (integration/property/adversarial/performance/unit)
 - `cli/` - Python query interface (exo.py)
 - `nixos/` - NixOS module for system deployment
 - `docs/` - Documentation and specifications
