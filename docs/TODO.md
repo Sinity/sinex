@@ -57,6 +57,11 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
         4. Once KV + schema broadcast are in place, delete/disable redundant DB-only satellite codepaths and drop their backing tables from the base schema (no new migration—update the squashed schema and reset DB) to avoid parallel modes.  
     - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
 
+48. **RPC transport security for TCP bindings is missing**  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, NixOS module defaults, docs/architecture/security-architecture.md.  
+    - **Steps:** Require TLS/mTLS when the gateway binds to TCP (Unix socket remains default); disallow `SINEX_GATEWAY_ALLOW_INSECURE=1` outside dev; add cert/key options (agenix-delivered) and enforce token + TLS for any non-localhost binding.  
+    - **Tests:** Integration test that TCP startup fails without TLS; test that with cert/key the server accepts TLS and rejects unauthenticated clients.
+
 
 49. **Browser activity capture is missing**  
     - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.  
