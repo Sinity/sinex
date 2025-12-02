@@ -5,7 +5,9 @@ use base64::Engine;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::handlers::handle_store_blob;
-use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager, GitAnnex};
+use sinex_satellite_sdk::annex::{
+    blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, GitAnnex,
+};
 use sinex_services::ContentService;
 use sinex_test_utils::{sinex_test, TestContext};
 use tempfile::TempDir;
@@ -61,8 +63,7 @@ async fn blob_routes_should_enforce_auth_and_quota(
         large_files: Some("anything".to_string()),
     };
 
-    let (event_tx, _event_rx) =
-        mpsc::channel(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
+    let (event_tx, _event_rx) = mpsc::channel(BLOB_EVENT_CHANNEL_CAPACITY);
     let blob_manager = BlobManager::new(annex_config, ctx.pool.clone(), Some(event_tx))?;
     let content_service = ContentService::new(ctx.pool.clone(), Arc::new(blob_manager));
 

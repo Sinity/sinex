@@ -4,6 +4,7 @@
 use crate::common::*;
 use sinex_core::environment;
 use sinex_core::types::Ulid;
+use sinex_satellite_sdk::annex::blob_manager::BLOB_EVENT_CHANNEL_CAPACITY;
 use sinex_satellite_sdk::annex::GitAnnex;
 use std::sync::Arc;
 use tokio::fs;
@@ -73,9 +74,8 @@ impl ClipboardWatcher {
         }
 
         // Use a bounded channel to avoid unbounded buffering from annex emissions.
-        let (blob_event_tx, mut blob_event_rx) = mpsc::channel::<Event<JsonValue>>(
-            sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY,
-        );
+        let (blob_event_tx, mut blob_event_rx) =
+            mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
         tokio::spawn(async move {
             while let Some(event) = blob_event_rx.recv().await {
                 debug!(?event, "Clipboard blob manager emitted event");
