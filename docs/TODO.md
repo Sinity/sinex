@@ -78,6 +78,16 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Steps:** Make agenix first-class: wire the agenix module into the flake outputs, define age secret paths (e.g., `/run/agenix/sinex-gateway-token`, TLS keys) and propagate them to systemd units; ensure options work with external NixOS configs (e.g., `/realm/sinnix` deployments) without manual patching. Remove placeholder docs once live.  
     - **Tests:** NixOS VM test that provisions an age secret, runs `nixos-rebuild switch` with the module enabled, and asserts services fail fast when secrets are missing and start when secrets exist. Add a CI check to prevent fallback to plain env defaults.
 
+52. **Standard aggregation runner not adopted universally**  
+    - **Files:** aggregating automata (health aggregator, analytics automaton, any stream-to-state processors), shared SDK runner.  
+    - **Steps:** Define a shared aggregation trait/runner (left-fold with snapshot/replay, checkpointing) and migrate all stateful automata to use it, replacing bespoke reducers. Provide snapshotting/snapshot restore, error handling, and state persistence once in the runner; make this the single supported pattern for stream-to-state processing.  
+    - **Tests:** Integration tests for the runner (snapshot + replay), and refactored aggregators (health, analytics) proving identical behaviour under the new abstraction.
+
+53. **Event processing pipeline lacks universal middleware chain**  
+    - **Files:** ingestd pipelines, satellites’ `process_event` paths, shared processing utilities.  
+    - **Steps:** Introduce a composable step/middleware chain (tower-like) for validation → enrichment → transformation → side effects, and migrate all event processing paths to it to standardize metrics/tracing/error handling. Make the chain the default pattern for new processors; eliminate ad-hoc inline pipelines.  
+    - **Tests:** Unit tests for individual steps and composition; integration tests showing a migrated pipeline (e.g., ingestd event/material consumers, one satellite) behaves identically with the chain.
+
 ## Gateway Hardening
 
 1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
