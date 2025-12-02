@@ -9,6 +9,7 @@
 ## 🎯 Analysis So Far (Completed)
 
 **Phase 1: Core Event Flow & Coordination** ✅
+
 - Event flow architecture (provisional → confirmed)
 - NATS JetStream topology and retention
 - Leader/standby coordination via advisory locks
@@ -29,6 +30,7 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 #### P2.1: MaterialAssembler Chunking Strategy
 
 **Questions to Answer:**
+
 - How are large files split into chunks?
 - What chunk size is used? (configurable?)
 - How are chunks sequenced and numbered?
@@ -38,12 +40,14 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 - What's the failure/retry strategy?
 
 **Files to Analyze:**
+
 - `crate/core/sinex-ingestd/src/material_assembler.rs` (300+ lines, partially read)
 - Material begin/slice/end message types
 - Persisted state recovery on restart
 - Buffer directory management
 
 **Specific Issues to Investigate:**
+
 - Line 66-101: Persisted state structure - what's recoverable after crash?
 - Line 233-246: Hasher recomputation from existing bytes
 - Out-of-order slice buffering (BTreeMap at line 94)
@@ -51,6 +55,7 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 #### P2.2: Blob Deduplication via BLAKE3
 
 **Questions:**
+
 - Why BLAKE3 specifically? (vs SHA256, etc.)
 - What's the collision probability?
 - How is "already exists" detected before upload?
@@ -58,6 +63,7 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 - What's the dedup rate in practice?
 
 **Files:**
+
 - `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`
 - `crate/lib/sinex-satellite-sdk/src/annex/mod.rs`
 - GitAnnex wrapper implementation
@@ -65,6 +71,7 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 #### P2.3: git-annex Integration
 
 **Deep Questions:**
+
 - How does git-annex backend selection work?
 - What are the "num_copies" and "large_files" settings?
 - How does sinex interact with git-annex CLI?
@@ -73,18 +80,21 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 - How are annex keys generated?
 
 **Security Angle:**
+
 - Can malicious blobs escape git-annex isolation?
 - How is content addressing verified?
 
 #### P2.4: Stage-as-You-Go Provenance
 
 **Pattern Analysis:**
+
 - How does "register in-flight → emit events → finalize" work?
 - What's stored in `source_material_id`?
 - How are `offset_start` and `offset_end` used?
 - Can we trace event → material → blob → filesystem path?
 
 **Files:**
+
 - `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs` (200+ lines read)
 - Provenance tracking through database
 
@@ -92,6 +102,7 @@ During event flow analysis, I discovered the **MaterialAssembler** system handle
 
 **Tracing Exercise:**
 Create complete flow diagram:
+
 ```
 File created on disk
   ↓
@@ -109,6 +120,7 @@ Query: "Show me all events from this file"
 ```
 
 **Database Queries to Analyze:**
+
 - `source_materials` table schema
 - `blobs` table linkage
 - `events` provenance column
@@ -121,6 +133,7 @@ Query: "Show me all events from this file"
 ### Context
 
 The system has **6 automata** that process confirmed events. Each one is 600-1000 lines. I need to understand:
+
 1. What each automaton actually does
 2. How they consume events (JetStream? Direct DB queries?)
 3. What their output is
@@ -131,6 +144,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **File:** `crate/satellites/sinex-health-aggregator/src/lib.rs` (969 lines)
 
 **Questions:**
+
 - How does it parse heartbeat JSON from journald?
 - What aggregations are computed? (avg CPU, memory trends, etc.)
 - Where is aggregated data stored?
@@ -138,6 +152,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 - How does it detect service failures?
 
 **Deep Angle:**
+
 - Does it implement anomaly detection?
 - Is there trend analysis over time?
 - How are degraded vs failed states distinguished?
@@ -147,6 +162,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **File:** `crate/satellites/sinex-search-automaton/src/lib.rs` (1,094 lines - largest!)
 
 **Questions:**
+
 - What search backend? (Elasticsearch? MeiliSearch? Custom?)
 - What events are indexed?
 - Full-text search on what fields?
@@ -154,6 +170,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 - What's the query interface?
 
 **Performance Angle:**
+
 - Indexing throughput
 - Search latency
 - Index size growth
@@ -164,12 +181,14 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **File:** `crate/satellites/sinex-analytics-automaton/src/lib.rs` (982 lines)
 
 **Questions:**
+
 - What analytics are computed?
 - Aggregations? Time series? Statistics?
 - Output format and storage?
 - Real-time vs batch processing?
 
 **Potential Analytics:**
+
 - Events per second by type
 - File change frequency heatmaps
 - Command execution patterns
@@ -183,6 +202,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **This is mysterious - What is PKM doing?**
 
 **Hypotheses:**
+
 - Building knowledge graph from events?
 - Linking related documents?
 - Extracting entities/concepts?
@@ -190,6 +210,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 - Tagging and categorization?
 
 **Questions:**
+
 - What's the knowledge representation?
 - How are connections discovered?
 - Is there NLP/ML involved?
@@ -200,6 +221,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **File:** `crate/satellites/sinex-content-automaton/src/lib.rs` (597 lines)
 
 **Questions:**
+
 - Content extraction from files?
 - Format conversion?
 - Metadata enrichment?
@@ -211,6 +233,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 **File:** `crate/satellites/sinex-document-ingestor/src/lib.rs` (454 lines)
 
 **Questions:**
+
 - What document formats? (PDF, DOCX, HTML, Markdown?)
 - Text extraction strategy
 - Metadata parsing
@@ -224,6 +247,7 @@ The system has **6 automata** that process confirmed events. Each one is 600-100
 ### Pattern Analysis Goals
 
 Compare the 4 main satellites to identify:
+
 - Common patterns and abstractions
 - Differences in implementation approach
 - Security considerations per satellite
@@ -235,6 +259,7 @@ Compare the 4 main satellites to identify:
 **File:** `crate/satellites/sinex-fs-watcher/src/unified_processor.rs` (911 lines)
 
 **Specific Analysis:**
+
 1. **notify library integration**
    - How are FS events detected?
    - What events are captured? (create, modify, delete, rename, chmod?)
@@ -268,6 +293,7 @@ Compare the 4 main satellites to identify:
 **File:** `crate/satellites/sinex-terminal-satellite/src/unified_processor.rs` (894 lines)
 
 **Specific Analysis:**
+
 1. **Shell detection**
    - How is shell type detected? (bash, zsh, fish, etc.)
    - Shell-specific history formats
@@ -301,6 +327,7 @@ Compare the 4 main satellites to identify:
 **File:** `crate/satellites/sinex-desktop-satellite/src/unified_processor.rs` (906 lines)
 
 **Specific Analysis:**
+
 1. **Window manager integration**
    - X11 vs Wayland detection
    - Window focus tracking
@@ -331,6 +358,7 @@ Compare the 4 main satellites to identify:
 **This needs refactoring AND deep analysis**
 
 **Subsystems (each is 400-900 lines!):**
+
 1. **systemd integration** (`systemd_watcher.rs` - 578 lines)
    - Unit state changes
    - Service start/stop
@@ -352,6 +380,7 @@ Compare the 4 main satellites to identify:
    - USB monitoring
 
 **Questions:**
+
 - Why is this one satellite vs 4 separate?
 - Should it be split?
 - How does it coordinate between subsystems?
@@ -364,6 +393,7 @@ Compare the 4 main satellites to identify:
 ### High Value Analysis
 
 The gateway is the external API to the system. Needs thorough review for:
+
 - Security (authentication, authorization)
 - Performance (query optimization)
 - API design (consistency, usability)
@@ -373,6 +403,7 @@ The gateway is the external API to the system. Needs thorough review for:
 **File:** `crate/core/sinex-gateway/src/cascade_analyzer.rs` (600+ lines likely)
 
 **Questions:**
+
 - What is cascade analysis?
 - Event dependency graphing?
 - How are cycles detected?
@@ -380,6 +411,7 @@ The gateway is the external API to the system. Needs thorough review for:
 - How is it queried?
 
 **Algorithm Analysis:**
+
 - Graph traversal strategy
 - Cycle detection algorithm
 - Performance on large graphs
@@ -388,16 +420,19 @@ The gateway is the external API to the system. Needs thorough review for:
 #### P5.2: Replay Control State Machine
 
 **Files:**
+
 - `crate/core/sinex-gateway/src/replay_control.rs`
 - `crate/core/sinex-gateway/tests/replay_state_machine_tests.rs`
 
 **State Machine Analysis:**
+
 - What are the states?
 - What are valid transitions?
 - How is state persisted?
 - Concurrency control?
 
 **Replay Modes:**
+
 - Time-range replay
 - Event-range replay
 - Filtered replay
@@ -408,6 +443,7 @@ The gateway is the external API to the system. Needs thorough review for:
 **File:** `crate/core/sinex-gateway/src/native_messaging.rs`
 
 **Browser Extension Integration:**
+
 - What's the protocol format?
 - Authentication mechanism
 - Message schema
@@ -415,6 +451,7 @@ The gateway is the external API to the system. Needs thorough review for:
 - What can the extension do?
 
 **Security Critical:**
+
 - How is the extension authenticated?
 - Can malicious sites abuse this?
 - Message validation
@@ -425,6 +462,7 @@ The gateway is the external API to the system. Needs thorough review for:
 **File:** `crate/core/sinex-gateway/src/rpc_server.rs`
 
 **gRPC Analysis:**
+
 - What RPC methods are exposed?
 - Request/response schemas
 - Streaming vs unary RPCs
@@ -436,6 +474,7 @@ The gateway is the external API to the system. Needs thorough review for:
 **File:** `crate/core/sinex-gateway/src/service_container.rs`
 
 **Dependency Injection:**
+
 - What services are registered?
 - Lifetime management
 - Configuration injection
@@ -452,6 +491,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P6.1: TimescaleDB Query Patterns
 
 **Analysis Tasks:**
+
 1. Find all time-range queries
 2. Identify use of TimescaleDB functions
 3. Analyze hypertable configuration
@@ -459,11 +499,13 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 5. Retention policy usage
 
 **Files to Search:**
+
 - All `repositories/*.rs` files
 - `.sql` query files
 - Migration creating hypertables
 
 **Optimization Opportunities:**
+
 - Are continuous aggregates used?
 - Compression configured?
 - Retention policies set?
@@ -474,6 +516,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/core/sinex-ingestd/src/schema_sync.rs`
 
 **How does it work?**
+
 - Codebase has event schemas
 - Database has schema table
 - How are they synchronized?
@@ -481,6 +524,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 - What if schemas conflict?
 
 **Schema Evolution:**
+
 - How are breaking changes handled?
 - Migration strategy
 - Backward compatibility
@@ -490,11 +534,13 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-schema/src/schema/temporal_ledger.rs`
 
 **What is it?**
+
 - Time-based audit log?
 - Bitemporal data?
 - Event versioning?
 
 **Schema Analysis:**
+
 - Table structure
 - Query patterns
 - Use cases
@@ -504,6 +550,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-schema/src/schema/entities.rs`
 
 **Graph Model:**
+
 - Node types (entities)
 - Edge types (relationships)
 - Attributes
@@ -511,6 +558,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 - How is it populated?
 
 **Integration:**
+
 - How does PKM automaton use this?
 - What queries are supported?
 
@@ -519,6 +567,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-schema/src/schema/embeddings.rs`
 
 **Vector Search:**
+
 - What embedding model?
 - Dimensionality?
 - Distance metric?
@@ -526,6 +575,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 - Similarity search queries
 
 **Use Cases:**
+
 - Semantic search
 - Document similarity
 - Clustering
@@ -534,6 +584,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P6.6: Operations Log
 
 **Questions:**
+
 - What operations are logged?
 - Retention policy?
 - Query patterns?
@@ -548,12 +599,14 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-satellite-sdk/src/lease_manager.rs`
 
 **NATS KV Leases:**
+
 - How are leases acquired?
 - Lease duration?
 - Renewal strategy?
 - What happens on lease loss?
 
 **Comparison to Advisory Locks:**
+
 - When to use leases vs locks?
 - Trade-offs?
 
@@ -562,12 +615,14 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-satellite-sdk/src/dlq_retry.rs`
 
 **Retry Logic:**
+
 - Exponential backoff?
 - Max retry count?
 - Dead letter after how many tries?
 - Manual retry trigger?
 
 **Failure Categories:**
+
 - Transient vs permanent
 - Different strategies per category?
 
@@ -576,6 +631,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-core/src/db/distributed_locking.rs`
 
 **Advisory Lock Deep Dive:**
+
 - Lock key generation
 - Lock hierarchy
 - Deadlock prevention
@@ -586,6 +642,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-core/src/types/utils/resource_guard.rs`
 
 **RAII Patterns:**
+
 - What resources are guarded?
 - Drop implementation
 - Error handling in destructors
@@ -600,6 +657,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **Found 62 `Command::new` calls**
 
 **Systematic Review:**
+
 1. List all Command::new locations
 2. Categorize by input source
 3. Check for user input
@@ -607,6 +665,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 5. Test with malicious inputs
 
 **High-Risk Locations:**
+
 - System satellite (systemd, journald)
 - Desktop satellite (clipboard, window manager)
 
@@ -615,6 +674,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **Found 151 path operations**
 
 **Verification Tasks:**
+
 1. Find all user-provided paths
 2. Check validation usage
 3. Test with `../../etc/passwd`
@@ -624,10 +684,12 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P8.3: RPC Authentication
 
 **Files:**
+
 - `crate/core/sinex-gateway/tests/gateway_secret_management_test.rs`
 - `crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`
 
 **Auth Mechanisms:**
+
 - How is SINEX_RPC_TOKEN used?
 - Token generation?
 - Token rotation?
@@ -636,6 +698,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P8.4: Secret Management
 
 **Token Handling:**
+
 - Environment variables
 - File-based tokens
 - How are secrets redacted in logs?
@@ -643,12 +706,14 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P8.5: Security Test Coverage
 
 **Test Files Found:**
+
 - `blob_route_security_test.rs`
 - `fs_watcher_security_test.rs`
 - `history_config_security_test.rs`
 - `config_security_tests.rs`
 
 **Coverage Analysis:**
+
 - What attack vectors are tested?
 - What's missing?
 - Fuzzing?
@@ -662,6 +727,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `crate/lib/sinex-satellite-sdk/src/bin/sinex-preflight.rs`
 
 **Pre-flight Checks:**
+
 - Database connectivity
 - NATS connectivity
 - Configuration validation
@@ -670,6 +736,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 - What else?
 
 **Files:**
+
 - `preflight/verification.rs`
 - `preflight/resources.rs`
 - `preflight/database.rs`
@@ -683,6 +750,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P10.1: Channel Patterns
 
 **Bounded vs Unbounded:**
+
 - Where are bounded channels used?
 - What sizes?
 - Where are unbounded channels used?
@@ -691,6 +759,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P10.2: Lock Analysis
 
 **Mutex vs RwLock:**
+
 - Decision criteria
 - Read-heavy vs write-heavy
 - Contention points
@@ -699,6 +768,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P10.3: Task Spawning
 
 **tokio::spawn Analysis:**
+
 - 70 spawn sites found
 - Task lifecycle management
 - Panic handling in tasks
@@ -708,6 +778,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P10.4: Atomic Operations
 
 **CoordinationPrimitive:**
+
 - AtomicUsize usage
 - AtomicBool for flags
 - Memory ordering chosen
@@ -716,6 +787,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P10.5: Race Condition Hunt
 
 **Systematic Search:**
+
 - Shared mutable state
 - Multiple async tasks
 - Time-of-check time-of-use
@@ -731,6 +803,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **786 clones found**
 
 **Hot Path Identification:**
+
 - Profile to find expensive clones
 - Arc<T> clones (cheap)
 - String/Vec clones (expensive)
@@ -739,6 +812,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P11.2: Allocation Patterns
 
 **Heap Pressure:**
+
 - Vec allocations
 - HashMap sizing
 - String concatenation
@@ -747,6 +821,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P11.3: N+1 Query Detection
 
 **ORM Anti-patterns:**
+
 - Loop with queries inside
 - Lack of eager loading
 - Missing joins
@@ -755,6 +830,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P11.4: Message Size
 
 **NATS Performance:**
+
 - Average event size
 - Largest events
 - Compression?
@@ -763,6 +839,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P11.5: Throughput Limits
 
 **Benchmarking:**
+
 - Events/second ceiling
 - Bottleneck identification
 - Scalability testing
@@ -774,6 +851,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P12.1: Property Test Invariants
 
 **What properties are tested?**
+
 - ULID monotonicity
 - Event validation
 - Schema constraints
@@ -782,6 +860,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P12.2: Adversarial Tests
 
 **Attack Simulation:**
+
 - What attacks are simulated?
 - Chaos engineering?
 - Fuzzing?
@@ -789,6 +868,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P12.3: Test Isolation
 
 **64-Database Pool:**
+
 - How does it work?
 - Advisory lock coordination
 - Cleanup strategy
@@ -797,6 +877,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P12.4: Coverage Gaps
 
 **Missing Tests:**
+
 - What's not tested?
 - Critical paths without tests
 - Edge cases missed
@@ -804,6 +885,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P12.5: Fixture Patterns
 
 **Test Data:**
+
 - Small/medium/large fixtures
 - How are they generated?
 - Deterministic vs random
@@ -818,6 +900,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 **File:** `nixos/` directory
 
 **systemd Integration:**
+
 - Service definitions
 - Dependencies
 - Restart policies
@@ -826,6 +909,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P13.2: Version Upgrades
 
 **Upgrade Path:**
+
 - Blue-green deployment?
 - Rolling updates?
 - Database migrations during upgrade
@@ -834,6 +918,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P13.3: Backup & Restore
 
 **Data Durability:**
+
 - What needs backup?
 - Postgres backup strategy
 - NATS data
@@ -843,6 +928,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P13.4: Observability
 
 **Metrics & Alerts:**
+
 - What metrics are exposed?
 - Prometheus integration?
 - Grafana dashboards?
@@ -855,6 +941,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P14.1: Network Partitions
 
 **Split Brain Scenarios:**
+
 - What happens if DB unreachable?
 - NATS unreachable?
 - Satellite isolated from ingestd?
@@ -862,6 +949,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P14.2: Database Failure
 
 **Recovery:**
+
 - Connection pool exhaustion
 - Transaction failures
 - PostgreSQL crash
@@ -870,6 +958,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P14.3: NATS Outage
 
 **Message Loss:**
+
 - Are events lost?
 - Disk persistence
 - Replay after recovery
@@ -878,6 +967,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P14.4: Disk Full
 
 **Degradation:**
+
 - Which component fails first?
 - Graceful degradation?
 - Alerts before full?
@@ -885,6 +975,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 #### P14.5: Clock Issues
 
 **Time Sync:**
+
 - Clock skew detection
 - Clock jump handling
 - ULID timestamp implications
@@ -918,6 +1009,7 @@ The system uses TimescaleDB for time-series optimization. Need to understand:
 ## 🎯 Prioritization Criteria
 
 **High Value / High Urgency:**
+
 1. Material assembly (understand core data flow)
 2. Security audit (command injection, path traversal)
 3. Automata analysis (understand what system actually does)

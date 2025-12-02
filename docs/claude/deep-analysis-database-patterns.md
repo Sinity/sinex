@@ -11,6 +11,7 @@
 Sinex uses a **sophisticated multi-layered database architecture** combining PostgreSQL + TimescaleDB with a comprehensive repository pattern, type-safe query interface, and advanced test database pool. The system demonstrates industry-leading practices in several areas:
 
 **Architectural Strengths:**
+
 - ⭐⭐⭐⭐⭐ Repository pattern with compile-time type safety via SQLX
 - ⭐⭐⭐⭐⭐ TimescaleDB hypertable partitioning for time-series optimization
 - ⭐⭐⭐⭐⭐ Test database pool with PostgreSQL advisory locks (64 parallel databases)
@@ -20,6 +21,7 @@ Sinex uses a **sophisticated multi-layered database architecture** combining Pos
 **Critical Issues Found:** 13 issues across repositories, transactions, and pool management
 
 **Key Technologies:**
+
 - PostgreSQL 14+ with TimescaleDB 2.x
 - SQLX for compile-time query validation
 - Sea-ORM migrations for schema management
@@ -48,6 +50,7 @@ pub trait Repository<'a> {
 ```
 
 **Design Pattern:** Lifetime-based ownership pattern
+
 - Repositories borrow the pool with lifetime `'a`
 - No owned pool = no connection leaks
 - Zero-cost abstraction (compiles to direct function calls)
@@ -100,6 +103,7 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 ```
 
 **Strengths:**
+
 1. ✅ SQL injection protection via compile-time constants
 2. ✅ Generic implementation reduces boilerplate
 3. ✅ Type-safe ULID binding
@@ -107,6 +111,7 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 **Issues Identified:**
 
 **Issue 51: Format! for Query Building (MEDIUM)**
+
 - **Location:** `common.rs:89-92, 107-112`
 - **Risk:** While safe here (compile-time constants), pattern sets precedent
 - **Impact:** Developers may copy this pattern for user input
@@ -136,6 +141,7 @@ where
 **Status:** ⚠️ **Trait defined but no implementations found**
 
 **Issue 52: BatchRepository Trait Unused (LOW)**
+
 - **Location:** `common.rs:126`
 - **Impact:** Dead code, suggests incomplete bulk operation support
 - **Recommendation:** Either implement for Event/SourceMaterial repos or remove trait
@@ -173,11 +179,13 @@ pub trait TransactionalRepository<'a>: Repository<'a> {
 ```
 
 **Strengths:**
+
 1. ✅ Automatic commit on success
 2. ✅ Best-effort rollback on error
 3. ✅ RAII-style transaction management
 
 **Issue 53: Rollback Error Ignored (MEDIUM)**
+
 - **Location:** `common.rs:165`
 - **Code:** `let _ = tx.rollback().await;`
 - **Impact:** Silent rollback failures, no logging
@@ -207,12 +215,14 @@ impl DbPoolExt for PgPool {
 ```
 
 **Usage Example:**
+
 ```rust
 let event = pool.events().get_by_id(event_id).await?;
 let checkpoint = pool.checkpoints().get_latest(processor_name).await?;
 ```
 
 **Strengths:**
+
 1. ✅ Clean, fluent API
 2. ✅ No manual repository construction
 3. ✅ Type inference works perfectly
@@ -253,11 +263,13 @@ macro_rules! event_select_columns {
 ```
 
 **Strengths:**
+
 1. ✅ DRY principle - single source of truth for columns
 2. ✅ Type-safe casting (uuid, arrays)
 3. ✅ Consistent ordering across queries
 
 **Issue 54: Macro Doesn't Enforce Schema Changes (LOW)**
+
 - **Impact:** Schema changes require manual macro updates
 - **Recommendation:** Consider code generation from schema
 
@@ -324,13 +336,16 @@ where
 ```
 
 **Strengths:**
+
 1. ⭐⭐⭐⭐⭐ Compile-time SQL validation (catches typos, schema mismatches)
 2. ⭐⭐⭐⭐⭐ Type-safe bindings with proper nullability
 3. ✅ Automatic RETURNING for optimistic insert
 
 **Issue 55: Test-Only Material Bootstrap (MEDIUM)**
+
 - **Location:** `events.rs:444-469`
 - **Code:**
+
 ```rust
 #[cfg(any(test, feature = "testing"))]
 if let Some(material_ulid) = source_material_id {
@@ -339,6 +354,7 @@ if let Some(material_ulid) = source_material_id {
         .await;
 }
 ```
+
 - **Impact:** Test code in production path, error ignored with `let _`
 - **Recommendation:** Move to test utilities, propagate errors
 
@@ -393,17 +409,20 @@ pub async fn insert_batch<T>(&self, events: Vec<Event<T>>) -> DbResult<Vec<Event
 ```
 
 **Strengths:**
+
 1. ✅ Adaptive batching based on size (50-event chunks)
 2. ✅ Controlled concurrency (max 3 parallel chunks)
 3. ✅ Early error propagation
 
 **Issue 56: Pool Clone for Each Chunk (MEDIUM)**
+
 - **Location:** `events.rs:970`
 - **Code:** `let pool_clone = self.pool.clone();`
 - **Impact:** Creates new Arc reference per chunk (low overhead but unnecessary)
 - **Recommendation:** Pass `&PgPool` directly, repositories are cheap to construct
 
 **Issue 57: No Progress Reporting for Large Batches (LOW)**
+
 - **Impact:** Inserting 10,000 events = silent operation
 - **Recommendation:** Emit progress event or metric every 1000 events
 
@@ -477,18 +496,21 @@ pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<EventSea
 ```
 
 **Strengths:**
+
 1. ✅ SQL injection protection via proper binding
 2. ✅ Efficient ANY() for array matching
 3. ✅ JSONB containment operator (@>)
 4. ✅ Case-insensitive text search (ILIKE)
 
 **Issue 58: ILIKE on Payload::text is Slow (HIGH)**
+
 - **Location:** `events.rs:811`
 - **Code:** `AND payload::text ILIKE '%term%'`
 - **Impact:** Full table scan, slow for large datasets
 - **Recommendation:** Use GIN index with `to_tsvector()` or dedicated full-text search
 
 **Issue 59: No Query Timeout (MEDIUM)**
+
 - **Impact:** Long-running queries can block connection pool
 - **Recommendation:** Set `statement_timeout` per query or globally
 
@@ -508,6 +530,7 @@ pub fn create_hypertable_sql() -> &'static str {
 ```
 
 **Partition Strategy:**
+
 - **Partition column:** `id` (ULID)
 - **Partition function:** `ulid_to_timestamptz` - extracts timestamp from ULID
 - **Partition interval:** Automatic (TimescaleDB default ~7 days)
@@ -523,19 +546,23 @@ manager
 ```
 
 **Strengths:**
+
 1. ✅ Automatic time-based partitioning via ULID
 2. ✅ Efficient time-range queries
 3. ✅ Automatic chunk management
 
 **Issue 60: No Retention Policy Configured (HIGH)**
+
 - **Impact:** 90-day retention policy documented but not enforced in database
 - **Current:** Data accumulates indefinitely
 - **Recommendation:**
+
 ```sql
 SELECT add_retention_policy('core.events', INTERVAL '90 days');
 ```
 
 **Issue 61: No Chunk Size Configuration (MEDIUM)**
+
 - **Impact:** Default 7-day chunks may not be optimal
 - **Recommendation:** Analyze query patterns and set explicit chunk interval
 
@@ -579,11 +606,13 @@ pub async fn get_events_over_time(
 ```
 
 **Strengths:**
+
 1. ✅ Efficient time-series aggregation
 2. ✅ Configurable interval (1 hour, 1 day, etc.)
 3. ✅ Proper use of hypertable indexing
 
 **Usage Example:**
+
 ```rust
 let interval = PgInterval {
     months: 0,
@@ -649,11 +678,13 @@ pub fn create_gin_indexes_sql() -> Vec<String> {
 ```
 
 **TimescaleDB Hypertable Index Requirements:**
+
 1. ⚠️ Unique indexes MUST include partition key (id)
 2. ✅ Regular indexes work normally
 3. ✅ GIN indexes supported (JSONB, arrays)
 
 **Issue 62: Missing Index on ts_ingest (MEDIUM)**
+
 - **Impact:** Most queries filter on `ts_ingest` but only index `ts_orig`
 - **Recommendation:** Add `ix_events_ts_ingest` DESC index
 
@@ -748,12 +779,14 @@ END $$;
 ```
 
 **Strengths:**
+
 1. ⭐⭐⭐⭐⭐ Immutable audit trail - no data ever truly lost
 2. ✅ Session variables scope to transaction (SET LOCAL)
 3. ✅ Trigger enforces audit policy at database level
 4. ✅ Prevents accidental/malicious deletion without context
 
 **Issue 63: Operation ID Can Be Forged (MEDIUM)**
+
 - **Impact:** Any code can set `sinex.operation_id` and delete events
 - **Recommendation:** Add `pg_authid` check or cryptographic signature verification
 
@@ -850,12 +883,14 @@ $$ LANGUAGE plpgsql;
 ```
 
 **Strengths:**
+
 1. ✅ Database-level operation tracking
 2. ✅ Automatic duration calculation from ULID
 3. ✅ Status lifecycle (running → success/failure)
 4. ✅ Time-range scoping for replays
 
 **Issue 64: No Foreign Key to operations_log in Events (LOW)**
+
 - **Impact:** Events can reference non-existent operations
 - **Recommendation:** Add optional `operation_id` column to `core.events` with FK
 
@@ -870,6 +905,7 @@ $$ LANGUAGE plpgsql;
 The test database pool is a sophisticated system for parallel test execution:
 
 **Architecture:**
+
 1. **Template Database:** Single `sinex_test_template_shared` with all migrations applied
 2. **Pool Databases:** 64 databases created from template (configurable via `SINEX_TESTUTILS_POOL_SIZE`)
 3. **PostgreSQL Advisory Locks:** Inter-process coordination (lock ID = `(1000 + slot_index) * 100000 + process_id`)
@@ -931,12 +967,14 @@ fn recompute_connection_limits(&mut self) {
 ```
 
 **Connection Budget Math:**
+
 - 500 max_connections (PostgreSQL default)
 - -20 for admin/monitoring = 480 available
 - 2 connections per slot = 240 possible slots
 - Default 12 slots = 24 connections (leaves 456 spare)
 
 **Issue 65: Hardcoded Connection Math (MEDIUM)**
+
 - **Location:** `database_pool.rs:263`
 - **Code:** `conn_budget = 480` hardcoded
 - **Impact:** Doesn't adapt to PostgreSQL `max_connections` setting
@@ -1014,18 +1052,21 @@ async fn acquire(&self) -> Result<TestDatabase> {
 ```
 
 **Strengths:**
+
 1. ⭐⭐⭐⭐⭐ Inter-process coordination via PostgreSQL advisory locks
 2. ✅ Lock verification prevents race conditions
 3. ✅ Randomized start index reduces contention
 4. ✅ Automatic retry with exponential backoff
 
 **Issue 66: Infinite Loop on Acquisition (HIGH)**
+
 - **Location:** `database_pool.rs:797`
 - **Code:** `loop { ... }`
 - **Impact:** Test can hang forever if all slots permanently locked
 - **Recommendation:** Add max attempts (882-887 has attempt counter but doesn't exit!)
 
 **Issue 67: Lock Verification Race Window (LOW)**
+
 - **Location:** `database_pool.rs:836-845`
 - **Scenario:** Lock released between acquisition and verification
 - **Impact:** Extremely rare (nanoseconds), but theoretically possible
@@ -1160,16 +1201,19 @@ fn migrations_fingerprint() -> Option<String> {
 ```
 
 **Strengths:**
+
 1. ⭐⭐⭐⭐⭐ Smart caching - only rebuild when migrations change
 2. ✅ SHA256 fingerprint of all migration files
 3. ✅ Extension version tracking (detects TimescaleDB upgrades)
 4. ✅ Atomic template creation (advisory lock prevents races)
 
 **Issue 68: Fingerprint Doesn't Include Migration Order (LOW)**
+
 - **Impact:** Reordering migration files = same hash but different result
 - **Recommendation:** Hash (filename + content) in sorted order
 
 **Issue 69: No Cleanup of Old Stamp Files (LOW)**
+
 - **Impact:** `target/sinex-test-utils/template_stamp.json` accumulates
 - **Recommendation:** Add timestamp to stamp, cleanup files >7 days old
 
@@ -1236,12 +1280,14 @@ CASCADE;
 ```
 
 **Strengths:**
+
 1. ✅ Fast cleanup (TRUNCATE vs DELETE)
 2. ✅ CASCADE handles foreign keys
 3. ✅ Verification step catches incomplete cleanup
 4. ✅ Retry logic for transient failures
 
 **Issue 70: FK Drop is Permanent (MEDIUM)**
+
 - **Location:** `database_pool.rs:992-995`
 - **Code:** `DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey`
 - **Impact:** FK constraint removed from all subsequent tests
@@ -1382,12 +1428,14 @@ pub async fn cascade_depth_histogram(&self, table_name: &str) -> DbResult<Vec<(i
 ```
 
 **Strengths:**
+
 1. ⭐⭐⭐⭐⭐ Transitive dependency analysis for event replay
 2. ✅ Temp table isolation (concurrent cascade sessions)
 3. ✅ Depth tracking for understanding event lineage
 4. ✅ Integrity violation detection
 
 **Usage Example:**
+
 ```rust
 // Find all events derived from original event
 let table = repo.prepare_cascade_session("replay_123", false).await?;
@@ -1401,11 +1449,13 @@ repo.cleanup_cascade_session(&table).await?;
 ```
 
 **Issue 71: No Cycle Detection (HIGH)**
+
 - **Impact:** Circular event dependencies cause infinite loop
 - **Current:** `max_depth` parameter provides safety limit
 - **Recommendation:** Add explicit cycle detection before expansion
 
 **Issue 72: Unbounded Array Growth (MEDIUM)**
+
 - **Location:** `parent_ids ULID[]` column
 - **Impact:** Events with many parents = large array
 - **Recommendation:** Consider separate `cascade_edges` table for large graphs
@@ -1487,12 +1537,14 @@ pub async fn save_checkpoint(&self, checkpoint: CheckpointInput) -> DbResult<Che
 ```
 
 **Strengths:**
+
 1. ✅ Atomic upsert via `ON CONFLICT DO UPDATE`
 2. ✅ Automatic version incrementing
 3. ✅ Processed count tracking
 4. ✅ Last activity timestamp
 
 **Issue 73: Redundant Existence Check (MEDIUM)**
+
 - **Location:** `state.rs:278-286`
 - **Impact:** Extra query before upsert (performance waste)
 - **Recommendation:** Remove check, rely on `ON CONFLICT` alone
@@ -1589,6 +1641,7 @@ pub async fn save_checkpoint(&self, checkpoint: CheckpointInput) -> DbResult<Che
 ### 9.1 Compile-Time Query Validation ⭐⭐⭐⭐⭐
 
 SQLX's `query!` and `query_as!` macros connect to the database at compile time and verify:
+
 1. SQL syntax correctness
 2. Table/column existence
 3. Type compatibility
@@ -1599,6 +1652,7 @@ SQLX's `query!` and `query_as!` macros connect to the database at compile time a
 ### 9.2 Repository Pattern ⭐⭐⭐⭐⭐
 
 Clean separation of concerns:
+
 - Domain models (Event, SourceMaterial, Checkpoint)
 - Database records (EventRecord, CheckpointRecord)
 - Repository layer (conversion + queries)
@@ -1606,6 +1660,7 @@ Clean separation of concerns:
 ### 9.3 TimescaleDB Integration ⭐⭐⭐⭐⭐
 
 Automatic time-series optimization:
+
 - Hypertable partitioning via ULID
 - `time_bucket()` for aggregations
 - Efficient time-range queries
@@ -1613,6 +1668,7 @@ Automatic time-series optimization:
 ### 9.4 Test Database Pool ⭐⭐⭐⭐⭐
 
 Industry-leading parallel test infrastructure:
+
 - 64 isolated databases
 - PostgreSQL advisory locks
 - Template caching with fingerprinting
@@ -1621,6 +1677,7 @@ Industry-leading parallel test infrastructure:
 ### 9.5 Audit Trail ⭐⭐⭐⭐⭐
 
 Immutable audit via database triggers:
+
 - No event ever truly deleted
 - Session variable context
 - Archive table with metadata
@@ -1632,16 +1689,19 @@ Immutable audit via database triggers:
 ### Immediate Actions
 
 1. **Add TimescaleDB retention policy:**
+
 ```sql
 SELECT add_retention_policy('core.events', INTERVAL '90 days');
 ```
 
 2. **Add query timeout globally:**
+
 ```sql
 ALTER DATABASE sinex_dev SET statement_timeout = '30s';
 ```
 
 3. **Fix database acquisition infinite loop:**
+
 ```rust
 if attempts > 250 {
     return Err(SinexError::unknown(
@@ -1651,6 +1711,7 @@ if attempts > 250 {
 ```
 
 4. **Add full-text search index:**
+
 ```sql
 CREATE INDEX ix_events_payload_fts
 ON core.events

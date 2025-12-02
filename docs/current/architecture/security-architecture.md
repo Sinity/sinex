@@ -1,4 +1,5 @@
-Status: canonical
+Status: canonical  
+Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Canonical threat model + control-plane reference; pair with `docs/security.md` for current posture updates.
 # Security Architecture
 

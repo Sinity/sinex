@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
-#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../../docs/current/architecture/UserInteraction_And_Query_Architecture.md")]
 
 //! Desktop satellite integrating clipboard and window-sensing feeds.
 

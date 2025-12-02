@@ -9,7 +9,7 @@ It is responsible for:
 - Publishing derived events consumed by gateways and health dashboards.
 
 See `crate/lib/sinex-satellite-sdk/docs/overview.md` for the shared processor
-architecture and `docs/architecture/SystemOperations_And_Integrity_Architecture.md`
+architecture and `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
 for downstream consumers.
 
 ## Watcher Overview

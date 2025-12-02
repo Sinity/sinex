@@ -9,4 +9,4 @@ support snapshots, historical replays, and continuous monitoring.
 - Maintains checkpoints so the watcher can resume without gaps.
 
 See `crate/lib/sinex-satellite-sdk/docs/overview.md` for the shared lifecycle
-pattern and `docs/architecture/Core_Architecture.md` for downstream processing.
+pattern and `docs/current/architecture/Core_Architecture.md` for downstream processing.

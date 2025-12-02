@@ -15,4 +15,4 @@ returns lightweight DTOs for the gateway.
 `SearchQuery` and `SearchResult` are serializable structs designed for RPC.
 
 For discovery UX guidance see
-`docs/architecture/UserInteraction_And_Query_Architecture.md`.
+`docs/current/architecture/UserInteraction_And_Query_Architecture.md`.

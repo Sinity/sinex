@@ -7,5 +7,5 @@ and scheduling reindexing work.
 - Dispatches indexing jobs via `sinex-services` search APIs.
 - Maintains checkpointed state for incremental updates.
 
-See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
+See `docs/current/architecture/UserInteraction_And_Query_Architecture.md` and
 `crate/lib/sinex-satellite-sdk/docs/overview.md` for overarching design.

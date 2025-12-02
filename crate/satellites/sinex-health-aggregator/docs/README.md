@@ -7,5 +7,5 @@ health summaries. It exposes derived events that power operational dashboards.
 - Aggregates key metrics (latency, queue depth, failure counts).
 - Emits `HealthReport` payloads consumed by gateways and operators.
 
-See `docs/architecture/SystemOperations_And_Integrity_Architecture.md` for the
+See `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for the
 health model.

@@ -4182,6 +4182,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-content-automaton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "camino",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-processor-runtime",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sinex-core"
 version = "0.4.2"
 dependencies = [
@@ -4455,6 +4478,29 @@ dependencies = [
  "syn 2.0.108",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "sinex-pkm-automaton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "camino",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-processor-runtime",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -47,7 +47,7 @@ Example:
 
 ```rust
 #![doc = include_str!("docs/README.md")]
-#![doc = include_str!("../../docs/architecture/runtime/topology.md")]
+#![doc = include_str!("../../docs/current/architecture/Core_Architecture.md")]
 ```
 
 ## 4. Workspace Documentation
@@ -56,7 +56,7 @@ Example:
   historical analyses, and other cross-cutting material.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
-  `../../docs/architecture/data-plane.md` for wider context.
+  `../../docs/current/architecture/data-plane.md` for wider context.
 - When crate-level changes alter system-wide behaviour, update the relevant
   global doc and leave a short link from the crate so readers can follow the
   chain.

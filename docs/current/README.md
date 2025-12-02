@@ -1,4 +1,5 @@
 # Current State
+> Last Verified: 2025-12-02 (manual review)
 
 This section is the single source of truth for what **exists and works today**.
 

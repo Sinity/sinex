@@ -5,4 +5,4 @@ including helper functions for defaults, validation, CLI overrides, and Figment
 loading from layered sources (files + environment + defaults).
 
 Document any new knobs here and keep the examples in sync with
-`docs/architecture/SystemOperations_And_Integrity_Architecture.md`.
+`docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.

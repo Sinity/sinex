@@ -1,5 +1,5 @@
 #![doc = include_str!("../docs/README.md")]
-#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../../docs/current/architecture/UserInteraction_And_Query_Architecture.md")]
 #![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! PKM automaton.
@@ -10,20 +10,18 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::Event,
-        types::{events::payloads::*, Id},
+        db::{models::Event, repositories::DbPoolExt},
+        types::{Id, JsonValue},
     };
 
     pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     };
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            TimeHorizon,
+            Checkpoint, ProcessorInitContext, ProcessorRuntimeState, ProcessorType, ScanArgs,
+            ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
         SatelliteError, SatelliteResult,
     };
@@ -37,7 +35,7 @@ mod common {
         sqlx::PgPool,
         std::{collections::HashMap, time::Duration},
         tokio::sync::mpsc,
-        tracing::{debug, error, info, instrument, warn},
+        tracing::{info, warn},
     };
 }
 
@@ -92,7 +90,7 @@ pub struct KnowledgeItem {
     pub keywords: Vec<String>,
     pub related_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
-    pub source_event_id: Id<Event<JsonValue>>,
+    pub source_event_id: Option<Id<Event<JsonValue>>>,
 }
 
 /// Types of knowledge items we can extract
@@ -155,14 +153,6 @@ impl PKMAutomaton {
                 "Event sender not initialized"
             )))
         }
-    }
-
-    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            SatelliteError::General(color_eyre::eyre::eyre!(
-                "PKM automaton runtime not initialised"
-            ))
-        })
     }
 
     /// Process knowledge events and generate PKM insights
@@ -243,13 +233,23 @@ impl PKMAutomaton {
 
         let events = db_pool
             .events()
-            .get_recent(
-                1000,
-                Some(window_start),
-                Some(&self.config.knowledge_event_types),
-            )
+            .get_recent(1000)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
+            .into_iter()
+            .filter(|event| {
+                event
+                    .ts_orig
+                    .map(|ts| ts > window_start)
+                    .unwrap_or(true)
+            })
+            .filter(|event| {
+                self.config
+                    .knowledge_event_types
+                    .iter()
+                    .any(|t| event.event_type.as_str() == t)
+            })
+            .collect();
 
         Ok(events)
     }
@@ -285,8 +285,8 @@ impl PKMAutomaton {
                 content,
                 keywords,
                 related_paths,
-                timestamp: event.ts_orig,
-                source_event_id: event.id,
+                timestamp: event.ts_orig.unwrap_or_else(Utc::now),
+                source_event_id: event.id.clone(),
             })
         } else {
             None
@@ -400,7 +400,10 @@ impl PKMAutomaton {
         format!(
             "{} - {}",
             event.event_type,
-            event.ts_orig.format("%H:%M:%S")
+            event
+                .ts_orig
+                .unwrap_or_else(Utc::now)
+                .format("%H:%M:%S")
         )
     }
 
@@ -530,7 +533,7 @@ impl PKMAutomaton {
         let source_event_ids: Vec<Id<Event<JsonValue>>> = self
             .knowledge_items
             .iter()
-            .map(|item| item.source_event_id)
+            .filter_map(|item| item.source_event_id.clone())
             .collect();
 
         let insights_payload = serde_json::json!({
@@ -543,13 +546,14 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::new(
+        let event = Event::dynamic(
             "pkm-automaton",
             "pkm.knowledge_extraction",
             insights_payload,
-            source_event_ids,
         )
-        .with_timestamp(Utc::now());
+        .from_parents(source_event_ids.into_iter())
+        .at_time(Utc::now())
+        .build();
 
         Ok(event.into())
     }
@@ -567,14 +571,18 @@ impl PKMAutomaton {
 
         for event in events {
             let is_learning_event = self.is_learning_related_event(event);
+            let ts = event.ts_orig.unwrap_or_else(Utc::now);
+            let id_opt = event.id.clone();
 
             if is_learning_event {
                 match &mut current_session {
                     Some(session) => {
                         // Check if this event continues the current session
-                        if event.ts_orig - session.last_activity <= session_gap_threshold {
-                            session.events.push(event.id);
-                            session.last_activity = event.ts_orig;
+                        if ts - session.last_activity <= session_gap_threshold {
+                            if let Some(id) = id_opt.clone() {
+                                session.events.push(id);
+                            }
+                            session.last_activity = ts;
                         } else {
                             // End current session and start new one
                             if session.events.len() >= 3 {
@@ -583,20 +591,18 @@ impl PKMAutomaton {
                             }
 
                             *session = LearningSession {
-                                start_time: event.ts_orig,
-                                last_activity: event.ts_orig,
-                                events: vec![event.id],
-                                topics: Vec::new(),
+                                start_time: ts,
+                                last_activity: ts,
+                                events: id_opt.clone().into_iter().collect(),
                             };
                         }
                     }
                     None => {
                         // Start new session
                         current_session = Some(LearningSession {
-                            start_time: event.ts_orig,
-                            last_activity: event.ts_orig,
-                            events: vec![event.id],
-                            topics: Vec::new(),
+                            start_time: ts,
+                            last_activity: ts,
+                            events: id_opt.into_iter().collect(),
                         });
                     }
                 }
@@ -645,13 +651,15 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = Event::new(
+        let parents = session.events.clone();
+        let event = Event::dynamic(
             "pkm-automaton",
             "pkm.learning_session",
             session_payload,
-            session.events.clone(),
         )
-        .with_timestamp(Utc::now());
+        .from_parents(parents)
+        .at_time(Utc::now())
+        .build();
 
         Ok(event.into())
     }
@@ -679,7 +687,7 @@ impl PKMAutomaton {
                         item2
                             .related_paths
                             .iter()
-                            .any(|p2| p2.contains(p) || p.contains(p2))
+                            .any(|p2| p2.contains(p.as_str()) || p.contains(p2.as_str()))
                     })
                     .count();
 
@@ -701,7 +709,7 @@ impl PKMAutomaton {
             let all_event_ids: Vec<Id<Event<JsonValue>>> = self
                 .knowledge_items
                 .iter()
-                .map(|item| item.source_event_id)
+                .filter_map(|item| item.source_event_id.clone())
                 .collect();
 
             let graph_payload = serde_json::json!({
@@ -713,13 +721,14 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event = Event::new(
+            let graph_event = Event::dynamic(
                 "pkm-automaton",
                 "pkm.knowledge_graph",
                 graph_payload,
-                all_event_ids,
             )
-            .with_timestamp(Utc::now());
+            .from_parents(all_event_ids)
+            .at_time(Utc::now())
+            .build();
 
             graph_events.push(graph_event.into());
         }
@@ -740,7 +749,11 @@ impl PKMAutomaton {
 
         for event in events {
             let activity_type = self.classify_activity_type(event);
-            current_sequence.push((activity_type.clone(), event.ts_orig, event.id));
+            current_sequence.push((
+                activity_type.clone(),
+                event.ts_orig.unwrap_or_else(Utc::now),
+                event.id.clone(),
+            ));
 
             // Keep sequences within reasonable length
             if current_sequence.len() > 10 {
@@ -763,8 +776,10 @@ impl PKMAutomaton {
         for (pattern, frequency) in activity_sequences {
             if frequency >= 3 {
                 // Pattern appeared at least 3 times
-                let pattern_event_ids: Vec<Id<Event<JsonValue>>> =
-                    events.iter().map(|e| e.id).collect();
+                let pattern_event_ids: Vec<Id<Event<JsonValue>>> = events
+                    .iter()
+                    .filter_map(|e| e.id.clone())
+                    .collect();
 
                 let workflow_payload = serde_json::json!({
                     "analysis_type": "workflow_pattern",
@@ -774,13 +789,14 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = Event::new(
+                let pattern_event = Event::dynamic(
                     "pkm-automaton",
                     "pkm.workflow_pattern",
                     workflow_payload,
-                    pattern_event_ids,
                 )
-                .with_timestamp(Utc::now());
+                .from_parents(pattern_event_ids)
+                .at_time(Utc::now())
+                .build();
 
                 pattern_events.push(pattern_event.into());
             }
@@ -813,7 +829,6 @@ struct LearningSession {
     start_time: DateTime<Utc>,
     last_activity: DateTime<Utc>,
     events: Vec<Id<Event<JsonValue>>>,
-    topics: Vec<String>,
 }
 
 #[async_trait]
@@ -872,19 +887,19 @@ impl StatefulStreamProcessor for PKMAutomaton {
             processor_stats: HashMap::from([
                 (
                     "knowledge_items_extracted".to_string(),
-                    serde_json::Value::Number(self.knowledge_items.len().into()),
+                    self.knowledge_items.len() as u64,
                 ),
                 (
                     "analysis_window_hours".to_string(),
-                    serde_json::Value::Number((self.config.analysis_window_seconds / 3600).into()),
+                    (self.config.analysis_window_seconds / 3600) as u64,
                 ),
                 (
                     "knowledge_extraction_enabled".to_string(),
-                    serde_json::Value::Bool(self.config.enable_knowledge_extraction),
+                    self.config.enable_knowledge_extraction as u64,
                 ),
                 (
                     "learning_tracking_enabled".to_string(),
-                    serde_json::Value::Bool(self.config.enable_learning_tracking),
+                    self.config.enable_learning_tracking as u64,
                 ),
             ]),
             successful_targets: vec!["pkm".to_string()],
@@ -922,23 +937,23 @@ impl ExplorationProvider for PKMAutomaton {
             metadata: HashMap::from([
                 (
                     "knowledge_items".to_string(),
-                    self.knowledge_items.len().to_string(),
+                    serde_json::json!(self.knowledge_items.len()),
                 ),
                 (
                     "analysis_window_hours".to_string(),
-                    (self.config.analysis_window_seconds / 3600).to_string(),
+                    serde_json::json!(self.config.analysis_window_seconds / 3600),
                 ),
                 (
                     "knowledge_extraction".to_string(),
-                    self.config.enable_knowledge_extraction.to_string(),
+                    serde_json::json!(self.config.enable_knowledge_extraction),
                 ),
                 (
                     "knowledge_graph".to_string(),
-                    self.config.enable_knowledge_graph.to_string(),
+                    serde_json::json!(self.config.enable_knowledge_graph),
                 ),
                 (
                     "learning_tracking".to_string(),
-                    self.config.enable_learning_tracking.to_string(),
+                    serde_json::json!(self.config.enable_learning_tracking),
                 ),
             ]),
             healthy: true,

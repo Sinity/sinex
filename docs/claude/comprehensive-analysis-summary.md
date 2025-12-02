@@ -9,6 +9,7 @@
 ## 📋 Executive Summary
 
 This report presents findings from a comprehensive analysis of the Sinex codebase, covering:
+
 - **Static code analysis** (patterns, potential bugs, code smells)
 - **Architecture & design review** (error handling, module organization, testing)
 - **Satellite service implementations**
@@ -25,37 +26,6 @@ The codebase demonstrates **excellent** architecture, comprehensive testing, and
 
 ## 🔴 CRITICAL ISSUES
 
-### 1. Missing Justfile - Complete Documentation/Reality Mismatch
-
-**Severity:** CRITICAL
-**Impact:** Onboarding, Development Workflow
-
-The `CLAUDE.md` file (8,723 bytes, comprehensive developer guide) contains **52 references** to `just` commands:
-- `just migrate`, `just check`, `just test`, `just psql`
-- `just pre-commit`, `just watch`, `just errors`, `just warnings`
-- Entire workflow sections based on `just` commands
-
-**Reality:**
-- ❌ **No `justfile` exists** in the repository
-- ❌ The `just` command **is not installed** in the environment
-- ❌ `README.md` makes **zero mention** of `just`
-- ✅ Scripts directory contains shell scripts but no `just` integration
-
-**Impact:**
-- New developers following `CLAUDE.md` will encounter immediate failures
-- All documented development workflows are broken
-- Significant trust/reliability issue for documentation
-- Potential for lost developer productivity
-
-**Recommendation:**
-1. **Option A:** Create the missing `justfile` implementing all 52+ referenced commands
-2. **Option B:** Update `CLAUDE.md` to replace all `just` commands with actual cargo/script commands
-3. **Option C:** Remove `CLAUDE.md` entirely if it's outdated
-
-**Estimated Effort:** 4-8 hours to create justfile OR 2-4 hours to update documentation
-
----
-
 ## ⚠️ HIGH PRIORITY ISSUES
 
 ### 2. Duplicate ValidationError Types
@@ -64,10 +34,12 @@ The `CLAUDE.md` file (8,723 bytes, comprehensive developer guide) contains **52 
 **Pattern:** Naming collision
 
 Two `ValidationError` enums exist in related modules:
+
 - `crate/lib/sinex-core/src/db/validation.rs:31` (database validation)
 - `crate/lib/sinex-core/src/types/validation/core.rs:7` (general validation)
 
 **Consequences:**
+
 - Ambiguous imports
 - Potential type confusion
 - Error propagation complexity
@@ -75,6 +47,7 @@ Two `ValidationError` enums exist in related modules:
 
 **Recommendation:**
 Rename for clarity:
+
 - `DbValidationError` for database-specific validation
 - `PathValidationError` or `GeneralValidationError` for general validation
 
@@ -86,34 +59,43 @@ Rename for clarity:
 **Pattern:** Potential panics
 
 **Statistics:**
+
 - **599 occurrences** of `.unwrap()` across 121 files
 - **297 occurrences** of `.expect()` across 91 files
 
 **High-Risk Locations:**
 
 #### `crate/lib/sinex-processor-runtime/src/cli.rs:1059`
+
 ```rust
 let start = start_time.unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap());
 ```
+
 Nested unwrap in CLI runtime - potential panic on invalid timestamp
 
 #### `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs:511,516`
+
 ```rust
 let handle = self.current_handle.as_mut().unwrap();
 let old_handle = self.current_handle.take().unwrap();
 ```
+
 Assumes handle always exists - no error path
 
 #### `crate/core/sinex-gateway/src/rpc_server.rs`
+
 Multiple unwrap calls (lines 540, 541, 545, 567, 579, 581, 602, 605, 627)
+
 - Most appear to be in test code based on context
 
 **Positive Notes:**
+
 - Many unwraps are legitimately in test code
 - Proc macros using unwrap is acceptable (compile-time)
 - Test utilities can use unwrap for clarity
 
 **Recommendation:**
+
 1. Audit all production code (non-test, non-macro) unwraps
 2. Convert to proper `Result` propagation where appropriate
 3. Document intentional unwraps with comments
@@ -126,6 +108,7 @@ Multiple unwrap calls (lines 540, 541, 545, 567, 579, 581, 602, 605, 627)
 **Pattern:** Single Responsibility Principle violations
 
 **File Sizes:**
+
 - `sinex-system-satellite/src/unified_processor.rs`: **1,246 lines** ⚠️
 - `sinex-fs-watcher/src/unified_processor.rs`: 911 lines
 - `sinex-desktop-satellite/src/unified_processor.rs`: 906 lines
@@ -134,11 +117,13 @@ Multiple unwrap calls (lines 540, 541, 545, 567, 579, 581, 602, 605, 627)
 
 **Specific Concern:**
 The system-satellite processor (1,246 lines) contains:
+
 - **Only 3 functions** (0 public)
 - Suggests mostly type definitions + one massive implementation
 - Difficult to navigate and maintain
 
 **Recommendation:**
+
 1. Extract type definitions to separate modules
 2. Split large functions into smaller, testable units
 3. Consider refactoring system-satellite processor first (largest)
@@ -152,10 +137,12 @@ The system-satellite processor (1,246 lines) contains:
 **Pattern:** Debug output in production
 
 **Statistics:**
+
 - **1,287 occurrences** across 60 files
 - Found in **17 source files** under `src/`
 
 **Legitimate Uses Identified:**
+
 - `heartbeat.rs:60` - Structured logging to stdout (intentional for systemd)
 - `version.rs` - Version info display (CLI tool)
 - `sinex-preflight.rs` - CLI output
@@ -196,6 +183,7 @@ Audit non-CLI, non-binary `println!` usage and replace with `tracing` logging
 **Assessment:** ⭐⭐⭐⭐⭐ (5/5)
 
 The `SinexError` type is exemplary:
+
 - **19 comprehensive error variants** covering all scenarios
 - **Rich context** via `ErrorDetails`:
   - Primary message
@@ -208,6 +196,7 @@ The `SinexError` type is exemplary:
 - **Proper std conversions**
 
 **Example:**
+
 ```rust
 let err = SinexError::database("Query failed")
     .with_context("table", "users")
@@ -224,6 +213,7 @@ let err = SinexError::database("Query failed")
 **Assessment:** ⭐⭐⭐⭐⭐ (5/5)
 
 **Test Categories:**
+
 - ✅ **Unit tests** (fast, isolated, 57 modules)
 - ✅ **Integration tests** (database, NATS, 137 files)
 - ✅ **Property tests** (randomized, edge cases)
@@ -233,6 +223,7 @@ let err = SinexError::database("Query failed")
 - ✅ **System tests** (stress, reliability, end-to-end)
 
 **Test Infrastructure:**
+
 - Comprehensive `sinex-test-utils` crate
 - **64-database pool** with advisory locks for parallel testing
 - Fixture system with standard datasets (small/medium/large)
@@ -247,12 +238,14 @@ let err = SinexError::database("Query failed")
 ### 3. Documentation Quality
 
 **Statistics:**
+
 - **3,391 doc comments** across 228 files
 - Average ~14.8 comments per documented file
 - Module-level and API-level documentation
 - Examples in doc comments
 
 **Quality Examples:**
+
 - `crate/lib/sinex-core/src/types/error.rs` - Exemplary
 - `crate/lib/sinex-satellite-sdk/src/heartbeat.rs` - Comprehensive
 - `crate/lib/sinex-satellite-sdk/src/version.rs` - Well-documented
@@ -264,6 +257,7 @@ let err = SinexError::database("Query failed")
 ### 4. Clean Architecture
 
 **Module Organization:**
+
 ```
 crate/
   lib/           # Reusable libraries (shared functionality)
@@ -272,6 +266,7 @@ crate/
 ```
 
 **Patterns in Use:**
+
 - ✅ **Builder pattern** (error handling, config)
 - ✅ **Repository pattern** (database operations)
 - ✅ **Newtype pattern** (strong typing for IDs)
@@ -279,6 +274,7 @@ crate/
 - ✅ **Type state pattern** (lifecycle management)
 
 **Separation of Concerns:**
+
 - Models (`db/models/`)
 - Repositories (`db/repositories/`)
 - Types (`types/`)
@@ -292,26 +288,31 @@ crate/
 **Positive Security Patterns:**
 
 ✅ **SQL Injection Prevention:**
+
 - All queries use parameterized statements (`$1, $2, ...`)
 - No string concatenation in SQL found
 - Only test utilities use dynamic SQL (safely)
 
 ✅ **Credential Handling:**
+
 - `SINEX_RPC_TOKEN` loaded from environment
 - Password redaction: `redact_password()` function
 - No hardcoded secrets detected
 
 ✅ **Path Validation:**
+
 - Dedicated path validator: `annex/path_validator.rs`
 - `SAFE_PATH_REGEX` for input validation
 - Directory traversal protection
 
 ✅ **Input Validation:**
+
 - JSON Schema validation (`pg_jsonschema`)
 - Payload size limits (512 KB default)
 - Type validation throughout
 
 ✅ **Minimal Unsafe:**
+
 - Only 2 unsafe blocks (both in `heartbeat.rs`)
 - Proper `MaybeUninit` usage for libc calls
 - Well-justified and documented
@@ -325,6 +326,7 @@ crate/
 ### 6. Database Design
 
 **Schema Management:**
+
 - ✅ Single canonical migration (v7.0 schema)
 - ✅ Proper dependency ordering
 - ✅ PostgreSQL extensions: `ulid`, `pg_jsonschema`, `vector`, `timescaledb`
@@ -333,6 +335,7 @@ crate/
 - ✅ Helper functions for operations API
 
 **Table Design:**
+
 - ULID primary keys (time-ordered, distributed-safe)
 - Foreign key constraints
 - Check constraints for data integrity
@@ -347,27 +350,35 @@ crate/
 **Active TODOs requiring attention:**
 
 1. **System satellite incomplete implementation:**
+
    ```rust
    // TODO(system-satellite): Complete implementation of system satellite processor
    ```
+
    Location: `sinex-system-satellite/src/unified_processor.rs:193`
 
 2. **Desktop satellite migration pending:**
+
    ```rust
    // TODO: Migrate to AcquisitionManager from sinex-satellite-sdk
    ```
+
    Location: `sinex-desktop-satellite/src/unified_processor.rs:267`
 
 3. **Event model review needed:**
+
    ```rust
    /// TODO: Consider removing - might be redundant for local-only capture
    ```
+
    Location: `sinex-core/src/db/models/event.rs:56`
 
 4. **Test infrastructure:**
+
    ```rust
    // TODO: Implement fixture access without wrapper abstractions
    ```
+
    Location: `sinex-test-utils/src/test_context.rs:570`
 
 5. **Disabled async benchmarks (2 locations):**
@@ -380,6 +391,7 @@ crate/
    - ULID property tests need repository pattern (3 instances)
 
 **Recommendation:**
+
 - Create GitHub issues for each TODO
 - Prioritize: system-satellite and desktop-satellite TODOs (functionality)
 - Re-enable disabled tests or remove commented code
@@ -391,6 +403,7 @@ crate/
 **Overall:** ✅ Consistent
 
 **Observed:**
+
 - Crates: `sinex-{component}` (kebab-case) ✅
 - Modules: `snake_case` ✅
 - Types: `PascalCase` ✅
@@ -398,10 +411,12 @@ crate/
 - Constants: `SCREAMING_SNAKE_CASE` ✅
 
 **Minor Issues:**
+
 - Some abbreviations without explanation (`dlq` = dead letter queue)
 - Test file naming has minor inconsistencies
 
 **Recommendation:**
+
 - Add abbreviation glossary to documentation
 - Standardize test file naming convention
 
@@ -410,14 +425,17 @@ crate/
 ### Clone Usage Pattern
 
 **Statistics:**
+
 - **786 `.clone()` calls** across 109 files
 
 **Context:**
+
 - Many clones are on `Arc<T>` (cheap, just reference counting)
 - Some clones on config structs (typically small)
 - String clones present (may have performance impact)
 
 **Recommendation:**
+
 - Audit hot path clones for performance impact
 - Consider `Cow` or borrowing where possible
 - Document intentional clones for clarity
@@ -429,11 +447,13 @@ crate/
 ### 1. Main CLI Help & Discoverability
 
 **Potential Issues:**
+
 - Main binaries are minimal (12-18 lines each)
 - CLI help might be sparse
 - Discoverability of features unclear
 
 **Recommendation:**
+
 - Audit `--help` output for all binaries
 - Add examples to help text
 - Consider adding shell completions
@@ -441,10 +461,12 @@ crate/
 ### 2. Error Messages
 
 **Current State:**
+
 - Error handling architecture is excellent
 - Context-rich errors
 
 **Potential Improvement:**
+
 - Audit user-facing error messages for clarity
 - Add "Did you mean...?" suggestions
 - Include remediation steps in error messages
@@ -452,15 +474,18 @@ crate/
 ### 3. Configuration Documentation
 
 **Observed:**
+
 - 15 config-related files
 - Config validation tests present
 - Environment variable handling
 
 **Gap:**
+
 - Unclear if there's centralized config documentation
 - No schema documentation found
 
 **Recommendation:**
+
 - Generate configuration schema documentation
 - Add examples for each configuration option
 - Document all environment variables in one place
@@ -468,6 +493,7 @@ crate/
 ### 4. Progress Indicators
 
 **Check if services provide:**
+
 - Progress feedback for long-running operations
 - Scanner mode progress indication
 - Batch processing progress
@@ -475,11 +501,13 @@ crate/
 ### 5. Development Setup
 
 **With Justfile Missing:**
+
 - Nix development shell exists (`devenv.nix`, `flake.nix`)
 - Scripts directory has utilities
 - But documented workflow is broken
 
 **Recommendation:**
+
 - Create `CONTRIBUTING.md` with actual working commands
 - Document nix shell setup clearly
 - Add troubleshooting section
@@ -489,9 +517,11 @@ crate/
 ## 🔬 DETAILED ANALYSIS BY PHASE
 
 ### Phase 1: Static Code Analysis
+
 See: `docs/analysis-findings-phase1-static-code.md`
 
 **Key Findings:**
+
 - Missing Justfile (CRITICAL)
 - Unwrap usage (HIGH)
 - println! usage (MEDIUM)
@@ -499,9 +529,11 @@ See: `docs/analysis-findings-phase1-static-code.md`
 - Unsafe usage (EXCELLENT)
 
 ### Phase 2: Architecture & Design
+
 See: `docs/analysis-findings-phase2-architecture.md`
 
 **Key Findings:**
+
 - Duplicate ValidationError types (MEDIUM)
 - Error handling architecture (EXCELLENT)
 - Module organization (GOOD)
@@ -513,10 +545,12 @@ See: `docs/analysis-findings-phase2-architecture.md`
 ### Phase 3: Satellite Implementation Analysis
 
 **File Size Analysis:**
+
 - System satellite: 1,246 lines (needs refactoring)
 - All others: 486-911 lines (acceptable)
 
 **Implementation Patterns:**
+
 - Unified processor pattern across all satellites
 - Consistent configuration approach
 - Scanner/sensor mode support
@@ -602,30 +636,37 @@ See: `docs/analysis-findings-phase2-architecture.md`
 ## 📊 METRICS SUMMARY
 
 **Code Quality:** ⭐⭐⭐⭐ (4/5)
+
 - Excellent testing and architecture
 - Minor unwrap/println issues
 
 **Architecture:** ⭐⭐⭐⭐⭐ (5/5)
+
 - Clean separation of concerns
 - Well-designed patterns
 
 **Security:** ⭐⭐⭐⭐ (4/5)
+
 - Strong practices overall
 - Needs command injection audit
 
 **Documentation:** ⭐⭐⭐⭐ (4/5)
+
 - Excellent code docs
 - Critical justfile issue
 
 **Testing:** ⭐⭐⭐⭐⭐ (5/5)
+
 - Comprehensive, multi-layered
 - Industry-leading
 
 **Performance:** ⭐⭐⭐⭐ (4/5)
+
 - Generally good
 - Clone patterns need review
 
 **UX/DX:** ⭐⭐⭐ (3/5)
+
 - Good foundations
 - Documentation mismatch is critical
 
@@ -647,9 +688,6 @@ Beyond that, the codebase has typical technical debt (TODOs, some large files, u
 
 **Analysis Complete**
 **Total Issues Found:** 45+ items across all categories
-**Critical:** 1
 **High:** 4
 **Medium:** 15+
 **Low/Polish:** 25+
-
-**Recommendation:** Address the Justfile issue immediately, then proceed with incremental improvements according to the priority schedule above.

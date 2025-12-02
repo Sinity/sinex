@@ -7,5 +7,5 @@ relation events into curated knowledge graph updates.
 - Produces derived relations, tags, and narrative insights.
 - Maintains checkpointed state using `sinex-satellite-sdk` helpers.
 
-See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
+See `docs/current/architecture/UserInteraction_And_Query_Architecture.md` and
 `crate/lib/sinex-satellite-sdk/docs/overview.md` for the broader workflow.

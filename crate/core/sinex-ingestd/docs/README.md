@@ -11,5 +11,5 @@ Key responsibilities:
 - Coordinate schema migrations by integrating with `sinex-schema`.
 
 Operational and architectural context lives in
-`docs/architecture/Core_Architecture.md` and
-`docs/architecture/SystemOperations_And_Integrity_Architecture.md`.
+`docs/current/architecture/Core_Architecture.md` and
+`docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.

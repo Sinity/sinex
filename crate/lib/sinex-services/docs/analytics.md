@@ -22,5 +22,5 @@ JSON-RPC responses.
 Errors are surfaced as `SinexError::service(...)` with the originating
 repository operation annotated in the context.
 
-See `docs/architecture/SystemOperations_And_Integrity_Architecture.md` for the
+See `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for the
 dashboards that consume these rollups.

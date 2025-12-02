@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["channel-testing"]
 bench = ["dep:divan", "dep:hostname", "dep:num_cpus", "dep:sysinfo"]
 slow-tests = []
 rstest-preview = []
 internal-tests = []
+channel-testing = []
 
 [dependencies]
 camino = { workspace = true }

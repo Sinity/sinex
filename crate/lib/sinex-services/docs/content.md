@@ -16,4 +16,4 @@ All methods emit `SinexError::service(...)` with the failing annex operation in
 their context, enabling the gateway to forward helpful errors.
 
 For storage topology, replication, and annex configuration details, see
-`docs/architecture/Core_Architecture.md` and `crate/lib/sinex-satellite-sdk/docs/annex.md`.
+`docs/current/architecture/Core_Architecture.md` and `crate/lib/sinex-satellite-sdk/docs/annex.md`.

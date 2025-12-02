@@ -9,4 +9,4 @@ coordinates historical replays across satellites.
 - Provides a transport-friendly API that gateways can embed.
 
 Related architecture context is captured in
-`docs/architecture/UserInteraction_And_Query_Architecture.md`.
+`docs/current/architecture/UserInteraction_And_Query_Architecture.md`.

@@ -142,7 +142,7 @@ path_priority() {
       ;;
   esac
   case $rel in
-    docs/README.md|docs/architecture/*)
+    docs/README.md|docs/current/architecture/*)
       echo 12
       return
       ;;

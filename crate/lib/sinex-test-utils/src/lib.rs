@@ -63,8 +63,11 @@ impl Drop for ProptestCasesGuard {
 
 // Import all the existing modules - all private
 mod builders;
+#[cfg(feature = "channel-testing")]
 mod channel_behavior_utils;
+#[cfg(feature = "channel-testing")]
 mod channel_enhancements;
+#[cfg(feature = "channel-testing")]
 mod channel_helpers;
 mod chaos;
 pub mod constants;
@@ -290,6 +293,7 @@ pub async fn test_context_with_tracing() -> TestContext {
 }
 
 // Re-export main types for direct import - only what should be public
+#[cfg(feature = "channel-testing")]
 pub use channel_enhancements::{
     create_enhanced_event_sender, ChannelDiagnostics, ChannelHealthReport, DiagnosticsReport,
     EnhancedEventSender, PerformanceMetrics as ChannelPerformanceMetrics,

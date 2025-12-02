@@ -1,5 +1,5 @@
 #![doc = include_str!("../docs/README.md")]
-#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! Document ingestor that captures materials directly into JetStream via the

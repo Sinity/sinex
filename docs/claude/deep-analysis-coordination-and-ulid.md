@@ -10,6 +10,7 @@
 ### Design Decision Analysis
 
 **ULID Structure:**
+
 ```
  01AN4Z07BY      79KA1307SR9X4MV3
 |----------|    |----------------|
@@ -18,6 +19,7 @@
 ```
 
 **Properties:**
+
 - Time-ordered (lexicographically sortable)
 - Globally unique (128-bit)
 - Compact representation (26 chars vs UUID's 36)
@@ -27,12 +29,14 @@
 ### Implementation Across System
 
 #### 1. Database-Level Generation
+
 ```sql
 -- From migrations/m20241028_000001_create_canonical_schema.rs
 id ULID PRIMARY KEY DEFAULT gen_ulid()
 ```
 
 **Tables Using ULID Primary Keys:**
+
 - `core.events` (main event table)
 - `core.source_materials`
 - `core.blobs`
@@ -45,12 +49,14 @@ id ULID PRIMARY KEY DEFAULT gen_ulid()
 - `core.annotations`
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Consistent use across all domain tables
 - ✅ Database-generated ULIDs avoid clock sync issues
 - ✅ Time-ordering implicit in primary key
 - ✅ Perfect for TimescaleDB time-series queries
 
 #### 2. Application-Level Generation
+
 ```rust
 // Satellites generate ULIDs before persisting
 use sinex_core::types::Ulid;
@@ -60,6 +66,7 @@ let event_id = Ulid::new();
 **80 ULID conversions** in core lib alone suggests heavy usage.
 
 **Type-Safe ID Wrappers:**
+
 ```rust
 pub struct Event<T>;
 pub type EventId = Id<Event<JsonValue>>;
@@ -72,18 +79,21 @@ fn process_event(event_id: Id<Event>) { ... }
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Type-safe ID system prevents mixing event/material IDs
 - ✅ Phantom types enforce correctness at compile time
 - ✅ Zero runtime cost (newtype pattern)
 - 💡 **INSIGHT:** This is Rust type system at its best
 
 #### 3. ULID in NATS Messages
+
 ```rust
 // Idempotency via ULID
 headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
 ```
 
 **Benefits:**
+
 - NATS deduplication uses ULID
 - Time-ordering preserved in message stream
 - No separate correlation ID needed
@@ -91,9 +101,11 @@ headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
 ### Critical ULID Usage Patterns
 
 #### ✅ **GOOD: Database Default Generation**
+
 ```sql
 id ULID PRIMARY KEY DEFAULT gen_ulid()
 ```
+
 - Ensures consistent timestamp source (DB server)
 - Avoids client clock skew issues
 - Single source of truth
@@ -103,6 +115,7 @@ id ULID PRIMARY KEY DEFAULT gen_ulid()
 **Question:** Are ULIDs sometimes generated client-side?
 
 **Evidence:**
+
 ```rust
 // From satellite code
 let event_id = Ulid::new();  // Client-side generation
@@ -115,11 +128,13 @@ INSERT INTO core.events DEFAULT VALUES RETURNING id;  // DB-side generation
 ```
 
 **Risk:**
+
 - Clock skew between client and DB server
 - Client ULID could have timestamp ahead of DB
 - Could violate time-ordering assumptions
 
 **Recommendation:**
+
 1. Document which generation method is used where
 2. Prefer DB-side generation when possible
 3. If client-side, ensure NTP sync
@@ -201,6 +216,7 @@ pub struct SatelliteCoordination {
 ```
 
 **Key Components:**
+
 - `DistributedCoordination`: Postgres advisory lock wrapper
 - `InstanceMode`: Leader | Standby | Transitioning
 - `WorkTracker`: In-flight operation counter for graceful shutdown
@@ -209,6 +225,7 @@ pub struct SatelliteCoordination {
 #### 2. **Advisory Lock Strategy**
 
 **Underlying Mechanism:**
+
 ```sql
 -- Acquire leadership (non-blocking)
 SELECT pg_try_advisory_lock(hash('service_name'));
@@ -218,12 +235,14 @@ SELECT pg_advisory_unlock(hash('service_name'));
 ```
 
 **Advantages:**
+
 - ✅ Automatic cleanup on connection loss
 - ✅ Fast (in-memory locks)
 - ✅ No separate coordination service needed
 - ✅ Exactly-once leadership guarantee
 
 **Limitations:**
+
 - ⚠️ Requires database connection
 - ⚠️ Lock granularity per-service (not per-shard)
 - ⚠️ No built-in lease expiry (connection timeout only)
@@ -239,12 +258,14 @@ pub struct WorkTracker {
 ```
 
 **Protocol:**
+
 1. `request_shutdown()` - Signal shutdown intent
 2. Wait for `in_flight_operations` → 0
 3. Release advisory lock
 4. Allow standby to take over
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Prevents data loss during shutdown
 - ✅ Tracks in-flight work explicitly
 - ✅ Coordinates with heartbeat emitter
@@ -252,6 +273,7 @@ pub struct WorkTracker {
 - ⚠️ **ISSUE:** What if operation never completes?
 
 **Recommendation:**
+
 ```rust
 pub async fn graceful_shutdown_with_timeout(
     &self,
@@ -287,6 +309,7 @@ pub struct HandoffRequest {
 **Purpose:** Graceful transition when upgrading satellite version
 
 **Protocol:**
+
 1. New version starts in Standby
 2. Detects older version is leader
 3. Sends HandoffRequest
@@ -295,6 +318,7 @@ pub struct HandoffRequest {
 6. New version acquires lock
 
 **Analysis:**
+
 - ✅ Enables zero-downtime upgrades
 - ✅ Explicit version negotiation
 - ✅ Timeout prevents indefinite wait
@@ -311,6 +335,7 @@ pub struct HandoffRequest {
 **File:** `crate/lib/sinex-satellite-sdk/src/coordination.rs:82-99`
 
 **Issue:**
+
 ```rust
 pub fn is_work_complete(&self) -> bool {
     self.in_flight_operations.get() == 0
@@ -318,17 +343,20 @@ pub fn is_work_complete(&self) -> bool {
 ```
 
 **Problem:**
+
 - No timeout on graceful shutdown drain
 - If operation hangs, satellite hangs forever
 - No force-shutdown mechanism
 - Could prevent pod termination in Kubernetes
 
 **Impact:**
+
 - Deployment rollouts could hang
 - Graceful restart impossible if work stuck
 - Manual intervention required
 
 **Recommendation:**
+
 1. Add `graceful_shutdown_with_timeout()`
 2. Return error if timeout exceeded
 3. Add force-shutdown mode (log warning + exit)
@@ -339,6 +367,7 @@ pub fn is_work_complete(&self) -> bool {
 **File:** `crate/lib/sinex-satellite-sdk/src/coordination.rs:28-35`
 
 **Issue:**
+
 - `HandoffRequest` struct defined
 - `handoff_receiver: Option<mpsc::Receiver<HandoffRequest>>` in SatelliteCoordination
 - **But:** No code sends or receives handoff requests
@@ -346,11 +375,13 @@ pub fn is_work_complete(&self) -> bool {
 - **But:** No handoff logic in coordination loop
 
 **Impact:**
+
 - Version upgrades may not be zero-downtime
 - Feature appears incomplete
 - Could cause confusion
 
 **Recommendation:**
+
 1. Either implement handoff protocol
 2. OR remove HandoffRequest if not used
 3. Document intended behavior
@@ -359,11 +390,13 @@ pub fn is_work_complete(&self) -> bool {
 ### 3. **Advisory Lock Lost Detection** (MEDIUM)
 
 **Issue:**
+
 - Advisory locks auto-release on connection loss
 - Satellite may continue processing as "leader" briefly
 - No explicit lock validation in event processing loop
 
 **Race Condition Scenario:**
+
 ```
 Time  Instance A (Leader)    DB Connection    Instance B (Standby)
 ────────────────────────────────────────────────────────────────
@@ -375,11 +408,13 @@ T4    BOTH PROCESSING! ❌    Reconnected      Leader mode
 ```
 
 **Impact:**
+
 - Brief period of dual processing
 - Could violate exactly-once semantics
 - Rare but serious
 
 **Recommendation:**
+
 1. Add periodic lock verification
 2. Re-acquire lock on every event batch
 3. Add connection health checks
@@ -388,11 +423,13 @@ T4    BOTH PROCESSING! ❌    Reconnected      Leader mode
 ### 4. **Clock Skew Between Client and DB ULIDs** (MEDIUM)
 
 **Issue:**
+
 - ULIDs generated client-side have client timestamp
 - ULIDs generated DB-side have server timestamp
 - Client/server clock skew breaks time-ordering
 
 **Scenario:**
+
 ```
 Client time: 2025-01-01 10:00:05 (5 seconds fast)
 Server time: 2025-01-01 10:00:00
@@ -404,11 +441,13 @@ Client ULID sorts AFTER server ULID despite being created earlier!
 ```
 
 **Impact:**
+
 - Event ordering violations
 - Replay could process events out-of-order
 - TimescaleDB time-based queries affected
 
 **Recommendation:**
+
 1. **PREFER:** Always use DB-side generation
 2. **IF CLIENT-SIDE:** Require NTP sync
 3. Add clock skew detection metrics
@@ -423,6 +462,7 @@ Client ULID sorts AFTER server ULID despite being created earlier!
 **File:** `crate/lib/sinex-core/src/types/utils/coordination.rs` (inferred)
 
 **Usage:**
+
 ```rust
 let counter = CoordinationPrimitive::event_counter(0, "in_flight_ops");
 counter.add(1);    // Atomic increment
@@ -434,6 +474,7 @@ signal.signal();   // Set flag
 ```
 
 **Likely Implementation:**
+
 ```rust
 pub struct CoordinationPrimitive {
     value: AtomicUsize,
@@ -442,6 +483,7 @@ pub struct CoordinationPrimitive {
 ```
 
 **Analysis:**
+
 - ✅ Lock-free atomic operations
 - ✅ Named primitives for debugging
 - ✅ Simple, composable
@@ -452,6 +494,7 @@ pub struct CoordinationPrimitive {
 **File:** `crate/lib/sinex-core/src/db/distributed_locking.rs` (from imports)
 
 **Inferred Interface:**
+
 ```rust
 pub struct DistributedCoordination {
     pool: DbPool,
@@ -468,12 +511,14 @@ pub struct LeadershipGuard {
 ```
 
 **Advantages:**
+
 - Automatic cleanup (drop = unlock)
 - Database is already required dependency
 - No separate Zookeeper/etcd/Consul needed
 - Proven reliable
 
 **Trade-offs:**
+
 - Requires database connectivity for coordination
 - Limited scalability (single Postgres instance)
 - No multi-datacenter coordination

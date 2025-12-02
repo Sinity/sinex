@@ -1,8 +1,10 @@
 //! Channel operation helpers for consistent patterns across the codebase
 //!
-//! This module provides extension traits and utilities for working with channels,
-//! particularly focused on event streaming operations. It includes:
+//! This module is compiled only when the `channel-testing` feature is enabled
+//! (default for dev/test builds). It is intended for diagnostics and test
+//! harnesses rather than production pipelines.
 //!
+//! Included helpers:
 //! - Extension traits for senders and receivers with common patterns
 //! - Backpressure handling and monitoring
 //! - Error handling with context

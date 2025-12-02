@@ -9,6 +9,6 @@ analytics.
 - Produces derived events and metrics requested by gateways.
 - Maintains checkpoint state for reliable replay.
 
-Reference `docs/architecture/SystemOperations_And_Integrity_Architecture.md` for
+Reference `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for
 consumer dashboards and `crate/lib/sinex-satellite-sdk/docs/overview.md` for the
 shared processor architecture.

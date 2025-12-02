@@ -8,5 +8,5 @@ repositories.
 - Batches writes to reduce contention.
 - Emits structured logs with ULIDs for provenance tracking.
 
-Refer to `docs/architecture/Core_Architecture.md` for the event flow diagram and
+Refer to `docs/current/architecture/Core_Architecture.md` for the event flow diagram and
 queue interactions.

@@ -4,7 +4,7 @@
 //! wires provenance through source_material records, and emits ingestion/health
 //! events that downstream services can rely on.
 //!
-//! See `docs/architecture/Core_Architecture.md` (blob storage) and the
+//! See `docs/current/architecture/Core_Architecture.md` (blob storage) and the
 //! `m20241028_000001_create_canonical_schema` migration for the canonical design
 //! and schema definition.
 

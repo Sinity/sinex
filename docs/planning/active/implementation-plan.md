@@ -37,8 +37,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 
 ### Tasks
 - [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing.
-- [ ] Annotate helper utilities like `ChannelReceiverExt::drain_all` as test-only, or move them under a testing feature so production code doesn’t rely on them.
-- [ ] Ensure `docs/vision/streaming-architecture.md` explicitly links to the staging-stream implementation and references this policy.
+- [x] Annotate helper utilities like `ChannelReceiverExt::drain_all` as test-only, or move them under a testing feature so production code doesn’t rely on them. (Done: channel helper modules gated behind the `channel-testing` feature in `sinex-test-utils`.)
+- [x] Ensure `docs/vision/streaming-architecture.md` explicitly links to the staging-stream implementation and references this policy.
 
 **Exit criteria:** Production code no longer depends on arbitrary channel caps for flow control; tests/tools are the only consumers of the drain helpers.
 
@@ -77,9 +77,9 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** `HotlogAutomaton` is deprecated—everything must implement `StatefulStreamProcessor`.
 
 ### Tasks
-- [ ] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses.
-- [ ] Port remaining automata (e.g., health aggregator) to `StatefulStreamProcessor` + `processor_main!`.
-- [ ] Remove Hotlog support code from the SDK once no crate depends on it.
+- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.)
+- [x] Port remaining automata to `StatefulStreamProcessor` + `processor_main!`. (Health, content, and PKM automata now have processor_main! binaries; search/analytics already on the unified runner.)
+- [x] Remove legacy Hotlog implementation artifacts once no crate depends on them. (Deleted unused `automaton.rs` in `sinex-health-aggregator`; removed Hotlog shim from `sinex-satellite-sdk`.)
 - [ ] Update docs/tests to reflect the unified processor model.
 
 **Exit criteria:** `rg HotlogAutomaton` returns zero outside deprecated shim files; all automata share one runner path; docs no longer mention Hotlog.
@@ -107,7 +107,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 - [x] Fix tense/temporal markers in `project-target-state.md`.
 - [x] Repair or remove references to deleted files (`docs/plan_v3.txt`, `docs/TARGET_final.md`, etc.).
 - [x] Add current-phase indicators to `way.md` or replace with an explicit “Completed” note.
-- [ ] Add “Last Verified” stamps to canonical docs (only after we have automated verification baked into the workflow).
+- [x] Add “Last Verified” stamps to canonical docs (only after we have automated verification baked into the workflow). (Added to `docs/current/README.md`, architecture set, provenance, and security posture.)
 
 **Exit criteria:** `ANALYSIS_INDEX.md` items are checked off and the file reflects the updated status.
 

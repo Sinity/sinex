@@ -8,5 +8,5 @@ about equivalent command lines.
   environment references).
 - Emits canonical command events with provenance metadata.
 
-See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
+See `docs/current/architecture/UserInteraction_And_Query_Architecture.md` and
 `crate/lib/sinex-satellite-sdk/docs/overview.md` for context.

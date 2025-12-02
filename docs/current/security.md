@@ -1,8 +1,9 @@
 # Security & Privacy Posture
+> Last Verified: 2025-12-02 (manual review)
 
 *Source material: 2025-07-23 security analysis (Redis-era); updated to track
 post-JetStream priorities. Pair this with
-`docs/architecture/security-architecture.md` for the broader threat model.*
+`docs/current/architecture/security-architecture.md` for the broader threat model.*
 
 ## Current Strengths
 

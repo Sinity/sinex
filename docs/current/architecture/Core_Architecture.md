@@ -1,4 +1,5 @@
-Status: canonical
+Status: canonical  
+Last Verified: 2025-12-02 (manual review)  
 > **Purpose:** Canonical reference for the end-to-end system architecture and pointers to deeper component docs.
 # Core Architecture
 
@@ -29,12 +30,12 @@ Streaming & Ingestion
 - See also: `docs/way.md` for the active JetStream ingestion playbook
 
 Security & Operations
-- Security model, threat mitigation: `docs/architecture/security-architecture.md`
-- Ops & integrity: backups, invariants, journald-based observability: `docs/architecture/SystemOperations_And_Integrity_Architecture.md`
+- Security model, threat mitigation: `docs/current/architecture/security-architecture.md`
+- Ops & integrity: backups, invariants, journald-based observability: `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`
 
 Schema & Taxonomy
 - Schema notes: `crate/lib/sinex-schema/docs/overview.md`
-- Event taxonomy: `docs/architecture/event-taxonomy.md`
+- Event taxonomy: `docs/current/architecture/event-taxonomy.md`
 
 Implementation Guides
 - Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/docs/overview.md`

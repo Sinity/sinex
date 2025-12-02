@@ -9,4 +9,4 @@ the shared annex storage helpers from `sinex-satellite-sdk`.
 - Emits provenance-rich events with ULIDs.
 
 See `crate/lib/sinex-satellite-sdk/docs/overview.md` for the automaton pattern
-and `docs/architecture/Core_Architecture.md` for ingestion topology.
+and `docs/current/architecture/Core_Architecture.md` for ingestion topology.

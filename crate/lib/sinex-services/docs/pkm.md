@@ -15,4 +15,4 @@ entities while preserving provenance. It sits directly on top of the
 The service relies on `MetadataBuilder` helpers to keep annotation payloads
 uniform, and returns ULIDs for any newly created records.
 
-For broader UX flows see `docs/architecture/UserInteraction_And_Query_Architecture.md`.
+For broader UX flows see `docs/current/architecture/UserInteraction_And_Query_Architecture.md`.

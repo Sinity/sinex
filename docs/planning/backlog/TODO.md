@@ -6,7 +6,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
 
 > **Fail-first guarantee:** Every open task below cites at least one Nextest case or regression that currently fails. If a listed test turns green without the corresponding fix, update this tracker immediately so we don't lose signal.
 
-## Core Architecture & Control Plane (New Findings 2025-12-02)
+## Core Architecture & Control Plane (starting at 39)
 
 39. **RPC dispatcher is a stub**  
     - **Files:** `crate/core/sinex-rpc-dispatcher/src/lib.rs`.  
@@ -58,7 +58,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
 
 48. **RPC transport security for TCP bindings is missing**  
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, NixOS module defaults, docs/architecture/security-architecture.md.  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, NixOS module defaults, docs/current/architecture/security-architecture.md.  
     - **Steps:** Require TLS/mTLS when the gateway binds to TCP (Unix socket remains default); disallow `SINEX_GATEWAY_ALLOW_INSECURE=1` outside dev; add cert/key options (agenix-delivered) and enforce token + TLS for any non-localhost binding.  
     - **Tests:** Integration test that TCP startup fails without TLS; test that with cert/key the server accepts TLS and rejects unauthenticated clients.
 
@@ -146,7 +146,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
 ## Gateway Hardening
 
 1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/architecture/UserInteraction_And_Query_Architecture.md`, CLI.  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/current/architecture/UserInteraction_And_Query_Architecture.md`, CLI.  
     - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
 
 2. **Enforce rate limiting and payload caps on RPC** — ✅ *Guards wired via tower middleware*  
@@ -258,7 +258,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Status:** `analytics_queries_block_each_other_with_single_connection` (`crate/lib/sinex-services/tests/analytics_service_test.rs`) now fails because two analytics queries against a single-connection pool block each other, demonstrating the lack of workload isolation.
 
 23. **Heartbeat-driven alerting for satellites** — ✅ *Completed via heartbeat alert sink plumbing*  
-    - **Files:** `sinex-satellite-sdk/src/heartbeat.rs`, `docs/architecture/SystemOperations_And_Integrity_Architecture.md`.  
+    - **Files:** `sinex-satellite-sdk/src/heartbeat.rs`, `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.  
     - **Status:** Heartbeat emitter now logs structured `process.degraded` / `process.failed` entries (with deduplicated transitions) and the regression tests `heartbeat_emits_degraded_alert_on_error_spike` / `heartbeat_emits_failed_alert_only_on_transition` (`crate/lib/sinex-satellite-sdk/tests/heartbeat_metrics_regression.rs`) cover the behavior.
 
 24. **Gateway CLI teardown awareness** — ✅ *Completed via RPC error guidance helper*  
@@ -467,7 +467,7 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
 
 79. **Fix missing binaries and dual implementations in satellites**  
     - **Files:** `crate/satellites/sinex-health-aggregator`, `sinex-content-automaton`, `sinex-pkm-automaton`, `sinex-analytics-automaton`, `sinex-search-automaton`.  
-    - **Steps:** Add `[[bin]]` entries for automata with `src/main.rs`, add missing `main.rs` for health/content/pkm automata using `processor_main!`, and remove the legacy `HotlogAutomaton` implementation in health-aggregator. Align binary names with processor_name outputs.  
+    - **Steps:** Add `[[bin]]` entries for automata with `src/main.rs`, add missing `main.rs` for health/content/pkm automata using `processor_main!`, and remove the legacy `HotlogAutomaton` implementation in health-aggregator. Align binary names with processor_name outputs. *(Health/content/PKM now have processor_main! binaries; legacy Hotlog impl removed; Hotlog shim deprecated in SDK.)*  
     - **Tests:** `cargo check`/`nextest` for these crates; ensure devenv/nixos service wiring resolves binaries without missing-target errors.
 
 80. **Standardize satellite/automaton Cargo versions**  

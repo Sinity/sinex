@@ -8,5 +8,5 @@ classifications and metadata. It builds on the shared automaton pattern from
 - Generates derived events with sentiment, keywords, and other features.
 - Uses the shared annex and database adapters for retrieval.
 
-See `docs/architecture/UserInteraction_And_Query_Architecture.md` and
+See `docs/current/architecture/UserInteraction_And_Query_Architecture.md` and
 `crate/lib/sinex-satellite-sdk/docs/overview.md` for higher-level context.
