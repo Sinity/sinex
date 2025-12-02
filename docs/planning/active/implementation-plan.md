@@ -36,7 +36,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Follow the staging-stream guidance: satellites publish immediately to JetStream; local channels remain bounded/test-only.
 
 ### Tasks
-- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing.
+- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing. *(System satellite watchers now emit through bounded channels with a 1024-capacity bridge; desktop/clipboard paths still need the same treatment.)*
 - [x] Annotate helper utilities like `ChannelReceiverExt::drain_all` as test-only, or move them under a testing feature so production code doesn’t rely on them. (Done: channel helper modules gated behind the `channel-testing` feature in `sinex-test-utils`.)
 - [x] Ensure `docs/vision/streaming-architecture.md` explicitly links to the staging-stream implementation and references this policy.
 

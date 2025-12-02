@@ -73,7 +73,7 @@ impl FromStr for DBusType {
 #[derive(Debug, Clone)]
 struct MonitorConfig {
     bus_type: DBusType,
-    tx: mpsc::UnboundedSender<Event<JsonValue>>,
+    tx: mpsc::Sender<Event<JsonValue>>,
     config: DbusConfig,
 }
 
@@ -101,7 +101,7 @@ impl DbusWatcher {
     /// Start monitoring both session and system buses concurrently
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting D-Bus monitoring");
 
@@ -174,7 +174,7 @@ impl DbusWatcher {
     /// Monitor a specific D-Bus bus with real-time signal subscription using tokio-retry
     async fn monitor_bus(
         bus_type: DBusType,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
         config: DbusConfig,
     ) -> SatelliteResult<()> {
         use tokio_retry::{strategy::ExponentialBackoff, Retry};
@@ -211,7 +211,7 @@ impl DbusWatcher {
     /// Inner monitoring loop with proper error handling
     async fn monitor_bus_inner(
         bus_type: DBusType,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         info!("Connecting to D-Bus {} bus", bus_type);
@@ -298,9 +298,7 @@ impl DbusWatcher {
 
                 // Send to worker pool via bounded channel
                 // Try fast-path; if full, drop oldest to avoid unbounded growth
-                if let Err(mpsc::error::TrySendError::Full(_)) =
-                    msg_tx.try_send(msg_data.clone())
-                {
+                if let Err(mpsc::error::TrySendError::Full(_)) = msg_tx.try_send(msg_data.clone()) {
                     // Drop one to make room, then enqueue the newest
                     let _ = msg_tx_clone.try_send(msg_data.clone());
                     if let Err(e) = msg_tx.try_send(msg_data) {
@@ -329,7 +327,7 @@ impl DbusWatcher {
         sender: Option<String>,
         destination: Option<String>,
         args: serde_json::Value,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         let interface = interface.unwrap_or_default();
@@ -381,7 +379,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         // Extract specialized events based on interface
@@ -609,7 +607,7 @@ impl DbusWatcher {
         destination: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
         _config: &DbusConfig,
     ) -> SatelliteResult<()> {
         let system_bootstrap_id = EventId::from_ulid(
@@ -944,12 +942,12 @@ impl DbusWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
         event: Event<JsonValue>,
         context: &str,
     ) -> SatelliteResult<()> {
-        if tx.send(event).is_err() {
-            warn!("Event channel closed while sending {}", context);
+        if let Err(err) = tx.send(event).await {
+            warn!("Event channel closed while sending {}: {}", context, err);
         }
         Ok(())
     }
