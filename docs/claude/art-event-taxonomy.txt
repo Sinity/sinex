@@ -1,0 +1,150 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        THE SINEX EVENT TAXONOMY                              ║
+║                    "A Star Map of Digital Experience"                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+           ┌─────────────────────────────────────────────────────┐
+           │           THE FILESYSTEM CONSTELLATION              │
+           │                                                     │
+           │      ⋆ file.created        "A document is born"    │
+           │      ⋆ file.modified       "Words change shape"    │
+           │      ⋆ file.deleted        "Entropy claims its due"│
+           │      ⋆ file.moved          "Reorganization"        │
+           │      ⋆ dir.created         "A new category emerges"│
+           │      ⋆ dir.deleted         "Structure collapses"   │
+           │                                                     │
+           │   Tracks: paths, sizes, timestamps, permissions,   │
+           │           inode numbers, modification times         │
+           └─────────────────────────────────────────────────────┘
+
+
+           ┌─────────────────────────────────────────────────────┐
+           │            THE TERMINAL CONSTELLATION               │
+           │                                                     │
+           │      ⋆ shell.kitty.command.executed                │
+           │           "Intention manifests as command"         │
+           │      ⋆ shell.atuin.command.executed                │
+           │           "History flows through shells"           │
+           │      ⋆ terminal.session.started                    │
+           │           "A new conversation begins"              │
+           │      ⋆ terminal.session.ended                      │
+           │           "Silence returns"                        │
+           │                                                     │
+           │   Tracks: commands, working directories, exit      │
+           │           codes, durations, shell integration      │
+           └─────────────────────────────────────────────────────┘
+
+
+           ┌─────────────────────────────────────────────────────┐
+           │            THE DESKTOP CONSTELLATION                │
+           │                                                     │
+           │      ⋆ window.opened       "Attention expands"     │
+           │      ⋆ window.closed       "Focus narrows"         │
+           │      ⋆ window.focused      "Consciousness shifts"  │
+           │      ⋆ workspace.switched  "Context changes"       │
+           │      ⋆ monitor.focused     "Gaze redirects"        │
+           │                                                     │
+           │   Tracks: window titles, geometries, workspaces,   │
+           │           applications, focus patterns              │
+           └─────────────────────────────────────────────────────┘
+
+
+           ┌─────────────────────────────────────────────────────┐
+           │           THE CLIPBOARD CONSTELLATION               │
+           │                                                     │
+           │      ⋆ clipboard.copied                            │
+           │           "Knowledge captured for transfer"        │
+           │      ⋆ clipboard.selected                          │
+           │           "Text marked for attention"              │
+           │                                                     │
+           │   Tracks: content hashes, types, lengths,          │
+           │           optional full content in git-annex       │
+           └─────────────────────────────────────────────────────┘
+
+
+           ┌─────────────────────────────────────────────────────┐
+           │            THE SYSTEM CONSTELLATION                 │
+           │                                                     │
+           │      ⋆ log_entry.captured                          │
+           │           "The kernel speaks"                      │
+           │      ⋆ signal.received                             │
+           │           "D-Bus whispers system secrets"          │
+           │      ⋆ notification.sent                           │
+           │           "Applications demand attention"          │
+           │      ⋆ media.state_changed                         │
+           │           "Music plays, pauses, shifts"            │
+           │      ⋆ power.state_changed                         │
+           │           "The machine sleeps, wakes"              │
+           │                                                     │
+           │   Tracks: journald logs with full structured       │
+           │           metadata, D-Bus signals, hardware events │
+           └─────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+
+                          THE PROVENANCE PRINCIPLE
+
+            Every event carries its lineage:
+
+            ┌─────────────────────────────────────────┐
+            │  ULID: 01HQXYZ...                       │  Primary event
+            │  Type: file.created                     │  (Raw observation)
+            │  Payload: {path: "/docs/thesis.md"}     │
+            │  Source: ingestor.filesystem            │
+            └──────────────────┬──────────────────────┘
+                               │
+                               ▼
+            ┌─────────────────────────────────────────┐
+            │  ULID: 01HQXZA...                       │  Derived event
+            │  Type: document.analyzed                │  (Synthesis)
+            │  Payload: {word_count: 5432}            │
+            │  Source: automaton.content              │
+            │  source_event_ids: [01HQXYZ...]         │  ← Provenance!
+            └──────────────────┬──────────────────────┘
+                               │
+                               ▼
+            ┌─────────────────────────────────────────┐
+            │  ULID: 01HQXZB...                       │  Higher-order
+            │  Type: knowledge.entity_extracted       │  (Knowledge)
+            │  Payload: {entity: "Thesis Topic"}      │
+            │  Source: automaton.pkm                  │
+            │  source_event_ids: [01HQXZA...]         │  ← Chain intact
+            └─────────────────────────────────────────┘
+
+
+            The audit trail is complete. Unbroken.
+            From raw sensation to abstract knowledge,
+            every step is traceable to its origin.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+
+                    THE EVENT AS UNIT OF EXPERIENCE
+
+        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+        ┃                                                        ┃
+        ┃   An event is not just a log entry.                   ┃
+        ┃                                                        ┃
+        ┃   It is a moment of lived digital experience,         ┃
+        ┃   crystallized into data.                             ┃
+        ┃                                                        ┃
+        ┃   Timestamped. Typed. Validated. Immutable.           ┃
+        ┃                                                        ┃
+        ┃   Each event is a vertex in the graph of your life.   ┃
+        ┃   Together, they form the topology of consciousness.  ┃
+        ┃                                                        ┃
+        ┃   Query them. Aggregate them. Synthesize them.        ┃
+        ┃   But never forget: they are fragments of truth.      ┃
+        ┃                                                        ┃
+        ┃   The substrate remembers everything.                 ┃
+        ┃   The automata find patterns.                         ┃
+        ┃   You make meaning.                                   ┃
+        ┃                                                        ┃
+        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
+                    ⧖  Every moment, captured. Forever.  ⧖
