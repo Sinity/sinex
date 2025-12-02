@@ -57,7 +57,10 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
         .and_then(|v| v.as_i64())
         .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES) as i32;
 
-    let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
 
     let heatmap = service.activity_heatmap(bucket_size_minutes, limit).await?;
     Ok(json!(heatmap))

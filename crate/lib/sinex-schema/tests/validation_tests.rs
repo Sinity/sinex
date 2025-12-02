@@ -416,9 +416,12 @@ mod constraint_validation_tests {
             material.id.as_uuid()
         ).execute(pool).await;
         if result.is_err() {
-            ctx.ensure_source_material(Id::<SourceMaterial>::from_ulid(material.id), Some("fk-retry"))
-                .await
-                .ok();
+            ctx.ensure_source_material(
+                Id::<SourceMaterial>::from_ulid(material.id),
+                Some("fk-retry"),
+            )
+            .await
+            .ok();
             result = sqlx::query!(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid)",
                 event_id.as_uuid(),
@@ -905,7 +908,10 @@ mod performance_constraint_tests {
         );
 
         // Constraint checking should not significantly slow down inserts
-        assert!(duration.as_millis() < 8000, "Constraint checking should be fast enough to avoid timeouts");
+        assert!(
+            duration.as_millis() < 8000,
+            "Constraint checking should be fast enough to avoid timeouts"
+        );
         finalize_constraint_context(&ctx).await?;
         Ok(())
     }

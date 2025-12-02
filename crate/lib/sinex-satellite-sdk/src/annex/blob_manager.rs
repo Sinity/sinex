@@ -24,22 +24,26 @@ use tracing::{debug, info, warn};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 
 // Re-export Blob type for compatibility
 pub use sinex_core::Blob as BlobMetadata;
+
+/// Default capacity for blob-manager event channels to prevent unbounded buffering.
+pub const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 #[derive(Debug)]
 pub struct BlobManager {
     annex: GitAnnex,
     db_pool: DbPool,
-    event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
+    event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
 }
 
 impl BlobManager {
     pub fn new(
         annex_config: AnnexConfig,
         db_pool: DbPool,
-        event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
+        event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     ) -> Result<Self> {
         let annex = GitAnnex::new(annex_config)?;
         Ok(BlobManager {
@@ -128,9 +132,20 @@ impl BlobManager {
             let material_id = self.ensure_material_for_blob(blob).await?;
             let event = Self::create_blob_event(event_type, payload, material_id);
 
-            sender
-                .send(event)
-                .map_err(|_| eyre!("Failed to emit {event_type} event: event channel closed"))?;
+            match sender.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    warn!(
+                        channel_capacity = BLOB_EVENT_CHANNEL_CAPACITY,
+                        "BlobManager event channel full; dropping {} event", event_type
+                    );
+                }
+                Err(TrySendError::Closed(_)) => {
+                    return Err(eyre!(
+                        "Failed to emit {event_type} event: event channel closed"
+                    ))
+                }
+            }
         } else {
             debug!(
                 "BlobManager event emission disabled; skipping {} notification",
@@ -403,7 +418,9 @@ impl BlobManager {
 
             if !expected.is_empty() && computed != expected {
                 // Mark as corrupted and bail.
-                let _ = self.update_verification_status(annex_key, "corrupted").await;
+                let _ = self
+                    .update_verification_status(annex_key, "corrupted")
+                    .await;
                 bail!(
                     "Blob content hash mismatch for {} (expected {}, got {})",
                     annex_key,
@@ -620,9 +637,21 @@ impl BlobManager {
         );
 
         if let Some(sender) = &self.event_sender {
-            sender.send(new_event).map_err(|_| {
-                eyre!("Failed to emit blob storage statistics: event channel closed")
-            })?;
+            match sender.try_send(new_event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    warn!(
+                        channel_capacity = BLOB_EVENT_CHANNEL_CAPACITY,
+                        "BlobManager event channel full; dropping storage.statistics event"
+                    );
+                    return Ok(());
+                }
+                Err(TrySendError::Closed(_)) => {
+                    return Err(eyre!(
+                        "Failed to emit blob storage statistics: event channel closed"
+                    ))
+                }
+            }
         } else {
             debug!("BlobManager event emission disabled; skipping storage.statistics event");
         }

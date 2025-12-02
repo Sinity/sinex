@@ -11,6 +11,7 @@
 ### Design Philosophy: Source Material First
 
 **Core Concept:**
+
 ```
 Desktop Activity (clipboard/windows)
       ↓
@@ -22,12 +23,14 @@ Automata process source materials later
 ```
 
 **Benefits:**
+
 - ✅ Separation of capture from processing
 - ✅ Complete audit trail
 - ✅ Reprocessable source materials
 - ✅ No event loss if processing fails
 
 **Components:**
+
 1. **ClipboardWatcher** - Polling-based clipboard monitoring
 2. **WindowManagerWatcher** - Event-driven window manager integration (Hyprland only)
 3. **DesktopProcessor** - Unified processor (mostly stub)
@@ -79,6 +82,7 @@ copypasta::ClipboardContext
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Multi-tier fallback ensures compatibility
 - ✅ Tries native tools first (wl-paste, xclip) before library
 - ✅ Handles both Wayland and X11
@@ -114,6 +118,7 @@ fn analyze_content(&self, content: &str) -> (String, Option<String>, Option<Vec<
 ```
 
 **Analysis:**
+
 - ✅ Simple, clear heuristics
 - ✅ Preview generation for large text
 - ⚠️ **ISSUE:** Image detection is primitive (only ASCII check)
@@ -148,6 +153,7 @@ fn update_history(&mut self, content_hash: String, content_type: String) {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** BLAKE3 is 10-15× faster than SHA256
 - ✅ Tracks copy count (usage frequency)
 - ✅ Bounded history (max 1000 entries prevents memory bloat)
@@ -184,6 +190,7 @@ async fn ingest_large_clipboard_content(&self, content: &ClipboardContent) -> Re
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** 10MB threshold is reasonable
 - ✅ Graceful degradation if blob manager unavailable
 - ✅ Content-addressed storage via git-annex
@@ -219,6 +226,7 @@ async fn get_active_window_title(&self) -> Option<String> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Captures context (which app user copied from)
 - ✅ Supports both Wayland (Hyprland) and X11 (xdotool)
 - ✅ Graceful fallback (returns None if unavailable)
@@ -251,6 +259,7 @@ async fn check_clipboard_changes(&mut self) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Linux primary selection support (text selection = copy)
 - ✅ Separate tracking for clipboard vs primary
 - ✅ Configurable (can disable if unwanted)
@@ -279,6 +288,7 @@ pub async fn start_monitoring(&mut self) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ Simple, reliable polling loop
 - ✅ Continues polling on errors (resilient)
 - ✅ Uses `tokio::time::interval` for consistent timing
@@ -340,6 +350,7 @@ async fn discover_hyprland_sockets(&mut self) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Environment variable-based discovery (no hardcoded paths)
 - ✅ Tests socket connectivity before proceeding
 - ✅ Command socket is optional (degrades gracefully)
@@ -409,6 +420,7 @@ async fn stream_hyprland_events(&mut self) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Event-driven (real-time, no polling)
 - ✅ **EXCELLENT:** Exponential backoff reconnection
 - ✅ **EXCELLENT:** Automatic reconnection on connection loss
@@ -441,12 +453,14 @@ fn next_backoff(backoff: &mut BackoffStrategy) -> Duration {
 ```
 
 **Backoff Sequence:**
+
 ```
 500ms → 1s → 2s → 4s → 8s → 16s → 32s → 60s (cap)
 + jitter for thundering herd prevention
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Well-tuned backoff parameters
 - ✅ Jitter prevents thundering herd on mass restarts
 - ✅ 60-second cap prevents excessive delays
@@ -497,6 +511,7 @@ async fn process_hyprland_event(&mut self, line: &str) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ Simple, clear parsing logic
 - ✅ Handles 6 major event types
 - ✅ **EXCELLENT:** Unhandled events still stored (no data loss!)
@@ -530,6 +545,7 @@ async fn handle_window_focused(&mut self, data: &str) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ Captures window class and title
 - ✅ Tracks previous focused window (provenance)
 - ❌ **CRITICAL ISSUE:** `format!("0x{:x}", data.len())` is completely wrong!
@@ -569,6 +585,7 @@ async fn handle_window_opened(&mut self, data: &str) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Handles commas in window title
 - ✅ Tracks window state in HashMap
 - ✅ Records last_seen timestamp
@@ -603,6 +620,7 @@ async fn capture_state_snapshot(&mut self) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ Periodic snapshots for state reconstruction
 - ✅ Captures all tracked windows and workspaces
 - ⚠️ **ISSUE:** 300-second interval is expensive
@@ -619,21 +637,25 @@ async fn capture_state_snapshot(&mut self) -> Result<()> {
 **File:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs:116`
 
 **Issue:**
+
 ```rust
 self.poll_interval = Duration::from_secs(poll_interval_secs);  // Default: 2 seconds
 ```
 
 **Problem:**
+
 - 2-second polling interval = up to 2s capture latency
 - User copies text → waits 0-2s before captured
 - Poor UX for fast workflows
 
 **Impact:**
+
 - Clipboard changes not captured immediately
 - Time-sensitive copies might be overwritten before captured
 - Users perceive system as "laggy"
 
 **Recommendation:**
+
 ```rust
 const DEFAULT_CLIPBOARD_POLL_INTERVAL_MS: u64 = 500;  // 500ms = better responsiveness
 
@@ -647,6 +669,7 @@ const DEFAULT_CLIPBOARD_POLL_INTERVAL_MS: u64 = 500;  // 500ms = better responsi
 **File:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs:510-518`
 
 **Issue:**
+
 ```rust
 let wl_result = Command::new("wl-paste")
     .arg("--no-newline")
@@ -655,11 +678,13 @@ let wl_result = Command::new("wl-paste")
 ```
 
 **Problem:**
+
 - `wl-paste` or `xclip` could hang indefinitely
 - No timeout on command execution
 - Clipboard polling blocked until command completes
 
 **Scenario:**
+
 ```
 1. Clipboard contains large binary data
 2. wl-paste tries to read it, hangs
@@ -668,11 +693,13 @@ let wl_result = Command::new("wl-paste")
 ```
 
 **Impact:**
+
 - Single hang blocks all clipboard monitoring
 - No recovery mechanism
 - Manual restart required
 
 **Recommendation:**
+
 ```rust
 use tokio::time::timeout;
 
@@ -694,28 +721,33 @@ match wl_result {
 **File:** `crate/satellites/sinex-desktop-satellite/src/window_manager.rs:350`
 
 **Issue:**
+
 ```rust
 let window_address = format!("0x{:x}", data.len());  // ❌ COMPLETELY WRONG!
 ```
 
 **Problem:**
+
 - Uses string length as window address
 - Not a real window address
 - Collisions: Same-length strings → same "address"
 - Breaks window tracking
 
 **Example:**
+
 ```
 "firefox,Home" (12 chars) → 0xc
 "terminal,Vim" (12 chars) → 0xc  ← COLLISION!
 ```
 
 **Impact:**
+
 - Window identity lost
 - Cannot correlate focus changes with window opens/closes
 - Provenance tracking broken
 
 **Recommendation:**
+
 ```rust
 // Option 1: Remove window_address (not in focusedwindow event)
 let metadata = json!({
@@ -733,21 +765,25 @@ let metadata = json!({
 **File:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs:48`
 
 **Issue:**
+
 ```rust
 clipboard_history: VecDeque<ClipboardHistoryEntry>,  // In-memory only!
 ```
 
 **Problem:**
+
 - History lost on restart
 - No cross-session deduplication
 - Cannot track "first seen" across restarts
 
 **Impact:**
+
 - Same content copied after restart = treated as new
 - Loses "original_hash" provenance
 - Cannot answer "when did I first copy this?"
 
 **Recommendation:**
+
 ```rust
 // Persist history to SQLite or source_material_registry
 async fn load_clipboard_history(&mut self) -> Result<()> {
@@ -773,6 +809,7 @@ async fn load_clipboard_history(&mut self) -> Result<()> {
 **File:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs:466-498`
 
 **Issue:**
+
 ```rust
 let text = self.get_clipboard_content_external("clipboard").await
     .or_else(|| self.get_clipboard_content_fallback());
@@ -784,17 +821,20 @@ if let Some(text) = text {
 ```
 
 **Problem:**
+
 - No UTF-8 validation
 - Binary data processed as text
 - Null bytes could corrupt database
 - No size check before reading
 
 **Impact:**
+
 - Database insertion failures on binary data
 - Invalid UTF-8 sequences
 - Potential data corruption
 
 **Recommendation:**
+
 ```rust
 fn validate_clipboard_content(text: &str) -> Result<(), ClipboardError> {
     // 1. Check size before processing
@@ -821,6 +861,7 @@ fn validate_clipboard_content(text: &str) -> Result<(), ClipboardError> {
 **File:** `crate/satellites/sinex-desktop-satellite/src/window_manager.rs:16-19`
 
 **Issue:**
+
 ```rust
 pub enum WindowManagerType {
     Hyprland,  // Only one variant!
@@ -828,17 +869,20 @@ pub enum WindowManagerType {
 ```
 
 **Problem:**
+
 - Only Hyprland supported
 - No X11/GNOME/KDE/i3/Sway support
 - Unusable for most Linux users
 - Desktop satellite non-functional without Hyprland
 
 **Impact:**
+
 - Limited user base
 - Cannot capture window events on non-Hyprland systems
 - Users on GNOME/KDE get no window context in clipboard events
 
 **Recommendation:**
+
 ```rust
 pub enum WindowManagerType {
     Hyprland,   // Wayland compositor
@@ -861,6 +905,7 @@ trait WindowManagerAdapter {
 **File:** `crate/satellites/sinex-desktop-satellite/src/window_manager.rs:524`
 
 **Issue:**
+
 ```rust
 line_result = lines.next_line() => {
     // No timeout! Could block indefinitely
@@ -869,18 +914,21 @@ line_result = lines.next_line() => {
 ```
 
 **Problem:**
+
 - `next_line()` can block indefinitely
 - If Hyprland hangs, watcher hangs
 - No heartbeat mechanism
 - No deadlock detection
 
 **Impact:**
+
 - Window manager monitoring silently stops
 - No events captured
 - No error indication
 - Manual restart required
 
 **Recommendation:**
+
 ```rust
 tokio::select! {
     line_result = lines.next_line() => { ... }
@@ -898,18 +946,21 @@ tokio::select! {
 **File:** `crate/satellites/sinex-desktop-satellite/src/window_manager.rs:81-82`
 
 **Issue:**
+
 ```rust
 windows: HashMap<String, WindowInfo>,      // No size limit!
 workspaces: HashMap<String, WorkspaceInfo>, // No size limit!
 ```
 
 **Problem:**
+
 - Windows added on `openwindow` events
 - Windows removed on `closewindow` events
 - But if closewindow missed: window tracked forever
 - Long-running sessions accumulate thousands of entries
 
 **Scenario:**
+
 ```
 System runs for 30 days
 User opens/closes 1000 windows per day
@@ -919,11 +970,13 @@ Missed 1% of closewindow events
 ```
 
 **Impact:**
+
 - Memory leak (slow)
 - Periodic snapshot serialization gets expensive
 - HashMap lookup performance degrades
 
 **Recommendation:**
+
 ```rust
 const MAX_TRACKED_WINDOWS: usize = 100;
 const WINDOW_TTL: Duration = Duration::from_secs(24 * 3600);  // 24 hours
@@ -949,6 +1002,7 @@ fn prune_stale_windows(&mut self) {
 **File:** `crate/satellites/sinex-desktop-satellite/src/window_manager.rs:543`
 
 **Issue:**
+
 ```rust
 _ = sleep(Duration::from_secs(300)) => {
     // Full state dump every 5 minutes!
@@ -957,17 +1011,20 @@ _ = sleep(Duration::from_secs(300)) => {
 ```
 
 **Problem:**
+
 - Full state serialization every 300 seconds
 - All windows + workspaces serialized to JSON
 - Database insertion overhead
 - Not incremental (duplicates data)
 
 **Impact:**
+
 - Unnecessary database writes
 - JSON serialization CPU cost
 - Storage bloat (90% duplicate data)
 
 **Recommendation:**
+
 ```rust
 // Option 1: Longer interval (30 minutes)
 _ = sleep(Duration::from_secs(1800)) => { ... }
@@ -990,6 +1047,7 @@ _ = sleep(Duration::from_secs(1800)) => { ... }
 **Missing Metrics:**
 
 **Clipboard:**
+
 - `desktop_clipboard_polls_total` - Poll attempts
 - `desktop_clipboard_changes_total{selection="clipboard|primary"}` - Content changes
 - `desktop_clipboard_size_bytes{content_type}` - Content sizes
@@ -998,6 +1056,7 @@ _ = sleep(Duration::from_secs(1800)) => { ... }
 - `desktop_clipboard_annex_ingestions_total` - Large content ingestions
 
 **Window Manager:**
+
 - `desktop_wm_events_total{event_type}` - Event counts by type
 - `desktop_wm_connection_failures_total` - Connection failures
 - `desktop_wm_reconnect_duration_seconds` - Reconnection backoff duration
@@ -1012,48 +1071,56 @@ Add comprehensive metrics using `metrics` crate.
 ## ✅ Architectural Strengths
 
 ### 1. BLAKE3 Clipboard Deduplication (⭐⭐⭐⭐⭐)
+
 - 10-15× faster than SHA256
 - Copy count tracking
 - Provenance via original_hash
 - Bounded history (1000 entries)
 
 ### 2. Multi-Tier Clipboard Access (⭐⭐⭐⭐⭐)
+
 - External tools first (best compatibility)
 - Wayland (wl-paste) + X11 (xclip)
 - Library fallback (copypasta)
 - Graceful degradation
 
 ### 3. Exponential Backoff Reconnection (⭐⭐⭐⭐⭐)
+
 - Well-tuned parameters (500ms → 60s)
 - Jitter prevents thundering herd
 - Resets on successful connection
 - Comprehensive unit tests
 
 ### 4. Event-Driven Window Monitoring (⭐⭐⭐⭐⭐)
+
 - Real-time (no polling!)
 - Automatic reconnection
 - Handles connection loss gracefully
 - Uses Unix domain sockets
 
 ### 5. Window Context Enrichment (⭐⭐⭐⭐)
+
 - Captures active window app + title
 - Clipboard events include provenance
 - Supports Wayland (hyprctl) + X11 (xdotool)
 - Graceful fallback if unavailable
 
 ### 6. Primary Selection Support (⭐⭐⭐⭐)
+
 - Linux primary selection (text selection = copy)
 - Separate tracking from main clipboard
 - Configurable (can disable)
 - Valuable for Linux workflows
 
 ### 7. Large Content via git-annex (⭐⭐⭐⭐)
+
 - 10MB threshold
 - BLAKE3 deduplication at blob level
 - Content-addressed storage
 - Graceful degradation if unavailable
 
 ### 8. Source Material First (⭐⭐⭐⭐⭐)
+
 - Direct SQL to source_material_registry
 - Complete audit trail
 - Reprocessable
@@ -1117,31 +1184,37 @@ Add comprehensive metrics using `metrics` crate.
 ## 📊 Desktop Satellite Summary
 
 **Code Quality:** ⭐⭐⭐⭐ (4/5)
+
 - Well-structured, clear code
 - Good separation of concerns
 - Some critical bugs (window address)
 
 **Architecture:** ⭐⭐⭐⭐ (4/5)
+
 - Source material first pattern
 - Event-driven window monitoring
 - Polling-based clipboard (acceptable)
 
 **Security:** ⭐⭐⭐ (3/5)
+
 - External command execution needs sanitization
 - No timeouts on external commands
 - Content validation missing
 
 **Performance:** ⭐⭐⭐⭐ (4/5)
+
 - BLAKE3 deduplication
 - Efficient event-driven window monitoring
 - Clipboard polling could be more responsive
 
 **Reliability:** ⭐⭐⭐⭐ (4/5)
+
 - Excellent reconnection logic
 - Multi-tier fallbacks
 - Needs timeout handling
 
 **Platform Support:** ⭐⭐ (2/5)
+
 - Hyprland only (window manager)
 - Good Wayland/X11 clipboard support
 - Limited user base

@@ -52,7 +52,8 @@ impl BlobManagerTest {
         };
 
         // Drain emitted events so the channel never backs up during tests.
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<Event<JsonValue>>(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 debug!(?event, "blob manager test event");
@@ -471,7 +472,8 @@ async fn test_blob_manager_creation_without_git_annex(ctx: TestContext) -> color
         large_files: None,
     };
 
-    let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    let (event_tx, _rx) =
+        mpsc::channel::<Event<JsonValue>>(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
 
     let result = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx));
     let error_msg = result.unwrap_err().to_string();
@@ -490,7 +492,8 @@ async fn test_invalid_repository_path(ctx: TestContext) -> color_eyre::Result<()
         large_files: None,
     };
 
-    let (event_tx, _rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    let (event_tx, _rx) =
+        mpsc::channel::<Event<JsonValue>>(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
 
     let result = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx));
     let error_msg = result.unwrap_err().to_string();

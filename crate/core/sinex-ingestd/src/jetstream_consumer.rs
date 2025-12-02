@@ -331,7 +331,7 @@ impl JetStreamConsumer {
         }
     }
 
-    #[tracing::instrument(skip(self, consumer), fields(consumer_name = %self.config.consumer_name))]
+    #[tracing::instrument(skip(self, consumer), fields(consumer_name = %self.topology.consumer_durable))]
     async fn process_batch(
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,

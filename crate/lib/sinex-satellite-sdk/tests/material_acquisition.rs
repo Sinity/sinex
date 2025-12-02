@@ -173,8 +173,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         let mut headers = async_nats::HeaderMap::new();
         let offset_str = offset.to_string();
         let chunk_hash = blake3::hash(&data).to_hex();
-        headers.insert("Offset", &offset_str);
-        headers.insert("Chunk-Hash", &chunk_hash);
+        headers.insert("Offset", offset_str.as_str());
+        headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
             env.nats_subject(&format!("source_material.slices.{}", material_id)),
@@ -191,8 +191,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     hasher.update(b"slice 2 data");
     hasher.update(b"slice 3 data");
     let content_hash = hasher.finalize().to_hex();
-    let expected_size: i64 = (b"slice 0 data".len() + b"slice 2 data".len() + b"slice 3 data".len())
-        as i64;
+    let expected_size: i64 =
+        (b"slice 0 data".len() + b"slice 2 data".len() + b"slice 3 data".len()) as i64;
 
     // Publish end message
     let end_msg = serde_json::json!({

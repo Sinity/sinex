@@ -114,7 +114,8 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre
         large_files: Some("anything".to_string()),
     };
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    let (event_tx, mut event_rx) =
+        mpsc::channel::<Event<JsonValue>>(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
     tokio::spawn(async move {
         while event_rx.recv().await.is_some() {}
     });
@@ -152,7 +153,8 @@ async fn blob_manager_rejects_percent_encoded_traversal(
     let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
         .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+    let (event_tx, mut event_rx) =
+        mpsc::channel::<Event<JsonValue>>(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
     tokio::spawn(async move {
         while event_rx.recv().await.is_some() {}
     });

@@ -3,6 +3,7 @@ name = "sinex-system-satellite"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+build = "build.rs"
 
 [[bin]]
 name = "sinex-system-satellite"

@@ -164,10 +164,7 @@ impl UdevWatcher {
     }
 
     /// Monitor udev events using netlink socket (fallback implementation)
-    async fn monitor_udev_events(
-        &self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
-    ) -> SatelliteResult<()> {
+    async fn monitor_udev_events(&self, tx: mpsc::Sender<Event<JsonValue>>) -> SatelliteResult<()> {
         info!("Starting udev event monitoring via filesystem polling");
 
         // Since libudev is disabled, we'll do periodic scanning of /sys/class
@@ -220,7 +217,7 @@ impl UdevWatcher {
                                     properties,
                                 )?;
 
-                                if tx.send(raw_event).is_err() {
+                                if tx.send(raw_event).await.is_err() {
                                     warn!("Event channel closed");
                                     break;
                                 }
@@ -254,8 +251,8 @@ impl UdevWatcher {
                     let raw_event =
                         self.create_device_event("remove", &device_path, device_type, properties)?;
 
-                    if tx.send(raw_event).is_err() {
-                        warn!("Event channel closed");
+                    if let Err(e) = tx.send(raw_event).await {
+                        warn!("Event channel closed: {}", e);
                         break;
                     }
 
@@ -271,7 +268,7 @@ impl UdevWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting udev event streaming");
 

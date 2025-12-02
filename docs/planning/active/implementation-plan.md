@@ -36,7 +36,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Follow the staging-stream guidance: satellites publish immediately to JetStream; local channels remain bounded/test-only.
 
 ### Tasks
-- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing.
+- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing. *(System satellite watchers and BlobManager emissions now use bounded 1024-capacity channels; desktop/window watchers still need direct JetStream or bounded adapters.)*
 - [x] Annotate helper utilities like `ChannelReceiverExt::drain_all` as test-only, or move them under a testing feature so production code doesn’t rely on them. (Done: channel helper modules gated behind the `channel-testing` feature in `sinex-test-utils`.)
 - [x] Ensure `docs/vision/streaming-architecture.md` explicitly links to the staging-stream implementation and references this policy.
 
@@ -77,10 +77,10 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** `HotlogAutomaton` is deprecated—everything must implement `StatefulStreamProcessor`.
 
 ### Tasks
-- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.)
+- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.) *(Shim since removed after migration completed.)*
 - [x] Port remaining automata to `StatefulStreamProcessor` + `processor_main!`. (Health, content, and PKM automata now have processor_main! binaries; search/analytics already on the unified runner.)
 - [x] Remove legacy Hotlog implementation artifacts once no crate depends on them. (Deleted unused `automaton.rs` in `sinex-health-aggregator`; removed Hotlog shim from `sinex-satellite-sdk`.)
-- [ ] Update docs/tests to reflect the unified processor model.
+- [x] Update docs/tests to reflect the unified processor model. (Health/content/PKM automaton docs now note processor_main! and SSP entrypoints.)
 
 **Exit criteria:** `rg HotlogAutomaton` returns zero outside deprecated shim files; all automata share one runner path; docs no longer mention Hotlog.
 

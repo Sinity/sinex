@@ -53,6 +53,7 @@ use tokio::task::JoinHandle;
 const MAX_ANALYTICS_EVENTS: usize = 768;
 const DEFAULT_BATCH_SIZE: usize = 128;
 const MAX_PROVENANCE_IDS: usize = 8;
+const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
 
 /// Configuration for Analytics Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,8 +96,8 @@ pub struct AnalyticsAutomaton {
     event_sender: Option<mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     state: AnalyticsState,
-    incoming_tx: Option<mpsc::UnboundedSender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::UnboundedReceiver<ProvisionalEvent>>,
+    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
+    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
     consumer: Option<Arc<JetStreamEventConsumer>>,
     consumer_handle: Option<JoinHandle<()>>,
 }
@@ -148,7 +149,7 @@ impl AnalyticsAutomaton {
 
     fn ensure_event_channel(&mut self) {
         if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::unbounded_channel();
+            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
             self.incoming_tx = Some(tx);
             self.incoming_rx = Some(rx);
         }
@@ -868,11 +869,11 @@ impl AnalyticsAutomaton {
 
 #[derive(Clone)]
 struct ChannelConfirmedEventHandler {
-    sender: mpsc::UnboundedSender<ProvisionalEvent>,
+    sender: mpsc::Sender<ProvisionalEvent>,
 }
 
 impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::UnboundedSender<ProvisionalEvent>) -> Self {
+    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
         Self { sender }
     }
 }
@@ -880,11 +881,16 @@ impl ChannelConfirmedEventHandler {
 #[async_trait]
 impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> SatelliteResult<()> {
-        self.sender.send(event.clone()).map_err(|err| {
-            SatelliteError::Processing(format!(
-                "Failed to forward confirmed analytics event: {err}"
-            ))
-        })
+        match self.sender.try_send(event.clone()) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("Analytics confirmed event channel full; dropping event");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(SatelliteError::Processing(
+                "Failed to forward confirmed analytics event: channel closed".into(),
+            )),
+        }
     }
 }
 

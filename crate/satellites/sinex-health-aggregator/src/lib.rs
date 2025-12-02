@@ -51,6 +51,7 @@ use std::sync::Arc;
 
 // Default batch size for health event processing
 const DEFAULT_HEALTH_BATCH_SIZE: usize = 128;
+const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
 use tokio::sync::mpsc;
 
 /// Configuration for Health Aggregator
@@ -118,8 +119,8 @@ pub struct HealthAggregator {
     event_sender: Option<tokio::sync::mpsc::UnboundedSender<Event<JsonValue>>>,
     db_pool: Option<PgPool>,
     component_health: HashMap<String, ComponentHealth>,
-    incoming_tx: Option<mpsc::UnboundedSender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::UnboundedReceiver<ProvisionalEvent>>,
+    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
+    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
     consumer: Option<Arc<JetStreamEventConsumer>>,
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -148,7 +149,7 @@ impl HealthAggregator {
     /// Initialize the confirmed event channel if needed.
     fn ensure_event_channel(&mut self) {
         if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::unbounded_channel();
+            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
             self.incoming_tx = Some(tx);
             self.incoming_rx = Some(rx);
         }
@@ -725,11 +726,11 @@ struct ComponentHealthInfo {
 
 #[derive(Clone)]
 struct ChannelConfirmedEventHandler {
-    sender: mpsc::UnboundedSender<ProvisionalEvent>,
+    sender: mpsc::Sender<ProvisionalEvent>,
 }
 
 impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::UnboundedSender<ProvisionalEvent>) -> Self {
+    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
         Self { sender }
     }
 }
@@ -737,10 +738,16 @@ impl ChannelConfirmedEventHandler {
 #[async_trait]
 impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> SatelliteResult<()> {
-        self.sender.send(event.clone()).map_err(|err| {
-            SatelliteError::Processing(format!("Failed to forward confirmed event: {}", err))
-        })?;
-        Ok(())
+        match self.sender.try_send(event.clone()) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("Health aggregator confirmed event channel full; dropping event");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(SatelliteError::Processing(
+                "Failed to forward confirmed event: channel closed".into(),
+            )),
+        }
     }
 }
 

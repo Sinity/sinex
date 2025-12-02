@@ -9,8 +9,8 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use sinex_core::types::Ulid;
-use sinex_services::AnalyticsService;
 use sinex_schema::{sea_orm::Database, Migrator, MigratorTrait};
+use sinex_services::AnalyticsService;
 use sinex_test_utils::acquire_pool_test_guard;
 use sinex_test_utils::prelude::*;
 use sqlx::postgres::PgPoolOptions;
@@ -269,11 +269,16 @@ async fn ensure_expected_source_counts(
     }
 
     if mismatched {
-        tracing::warn!(?counts, "Analytics source counts mismatched, forcing rebuild of dataset");
+        tracing::warn!(
+            ?counts,
+            "Analytics source counts mismatched, forcing rebuild of dataset"
+        );
         ctx.force_cleanup().await?;
         let _ = truncate_analytics_tables(ctx).await;
         sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await.ok();
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool)
+            .await
+            .ok();
         seed_analytics_dataset(ctx, reference_time).await?;
         counts = fetch_source_counts(ctx).await?;
     }
@@ -558,7 +563,10 @@ async fn test_get_event_count_by_source_no_time_filter(
                         "boot.completed",
                         json!({"uptime_seconds": i as i64, "kernel_version": "6.1.0"}),
                     ),
-                    _ => ("analytics.backfill", json!({"note": "source count backfill", "idx": i})),
+                    _ => (
+                        "analytics.backfill",
+                        json!({"note": "source count backfill", "idx": i}),
+                    ),
                 };
                 create_analytics_test_event(&ctx, source, event_type, payload, None).await?;
             }
@@ -771,7 +779,11 @@ async fn test_get_event_count_by_type_no_time_filter(
     let mut counts = service.get_event_count_by_type(None, None).await?;
     let mut total: i64 = counts.values().sum();
     if total > EXPECTED_ANALYTICS_TOTAL {
-        tracing::warn!(total, expected = EXPECTED_ANALYTICS_TOTAL, "Trimming surplus analytics events before assertions");
+        tracing::warn!(
+            total,
+            expected = EXPECTED_ANALYTICS_TOTAL,
+            "Trimming surplus analytics events before assertions"
+        );
         for (event_type, min_count) in expected_counts.iter() {
             let actual = counts.get(*event_type).copied().unwrap_or(0);
             if actual > *min_count {
@@ -885,7 +897,12 @@ async fn test_get_event_count_by_type_with_time_filter(
     let mut total = ctx.pool.events().count_all().await?;
     if total < EXPECTED_ANALYTICS_TOTAL {
         let deficit = (EXPECTED_ANALYTICS_TOTAL - total) as usize;
-        tracing::warn!(deficit, total, expected = EXPECTED_ANALYTICS_TOTAL, "Backfilling missing analytics events for type/time filter test");
+        tracing::warn!(
+            deficit,
+            total,
+            expected = EXPECTED_ANALYTICS_TOTAL,
+            "Backfilling missing analytics events for type/time filter test"
+        );
         for i in 0..deficit {
             create_analytics_test_event(
                 &ctx,
@@ -898,7 +915,11 @@ async fn test_get_event_count_by_type_with_time_filter(
         }
         total = ctx.pool.events().count_all().await?;
     } else if total > EXPECTED_ANALYTICS_TOTAL {
-        tracing::warn!(total, expected = EXPECTED_ANALYTICS_TOTAL, "Trimming surplus analytics events before time-filter assertions");
+        tracing::warn!(
+            total,
+            expected = EXPECTED_ANALYTICS_TOTAL,
+            "Trimming surplus analytics events before time-filter assertions"
+        );
         sqlx::query(
             r#"
             DELETE FROM core.events
@@ -1729,16 +1750,14 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> color_eyre::ey
     let mut source_counts = service.get_event_count_by_source(None, None).await?;
     let mut type_counts = service.get_event_count_by_type(None, None).await?;
 
-    let dataset_matches = |source_counts: &HashMap<String, i64>,
-                           type_counts: &HashMap<String, i64>|
-     -> bool {
-        expected_source_counts
-            .iter()
-            .all(|(source, expected)| source_counts.get(source).copied().unwrap_or_default() == *expected)
-            && expected_type_counts
-                .iter()
-                .all(|(event_type, expected)| type_counts.get(event_type).copied().unwrap_or_default() == *expected)
-    };
+    let dataset_matches =
+        |source_counts: &HashMap<String, i64>, type_counts: &HashMap<String, i64>| -> bool {
+            expected_source_counts.iter().all(|(source, expected)| {
+                source_counts.get(source).copied().unwrap_or_default() == *expected
+            }) && expected_type_counts.iter().all(|(event_type, expected)| {
+                type_counts.get(event_type).copied().unwrap_or_default() == *expected
+            })
+        };
 
     // If the distribution drifts (e.g., due to earlier retries), rebuild once deterministically.
     if !dataset_matches(&source_counts, &type_counts) {

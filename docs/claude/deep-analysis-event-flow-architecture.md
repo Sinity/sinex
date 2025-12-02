@@ -34,6 +34,7 @@ Secondary Processing, Indexing, Analysis
 ### Stream Configuration Analysis
 
 #### 1. **Events Stream** (`SINEX_EVENTS`)
+
 ```rust
 max_messages: 10_000_000
 max_age: Duration::from_secs(90 * 24 * 60 * 60) // 90 days
@@ -47,6 +48,7 @@ subjects: ["events.raw.>"]
 **Storage:** File-based (persistent across restarts)
 
 **Analysis:**
+
 - ✅ 90-day retention supports full operational history replay
 - ✅ 10M message cap prevents unbounded growth
 - ⚠️ **ISSUE:** No monitoring for approaching message limits
@@ -56,6 +58,7 @@ subjects: ["events.raw.>"]
 - 💡 **RECOMMENDATION:** Document expected event volume vs limits
 
 #### 2. **Confirmations Stream** (`SINEX_EVENTS_CONFIRMATIONS`)
+
 ```rust
 max_messages_per_subject: 1  // COMPACTION
 max_age: Duration::from_secs(7 * 24 * 60 * 60) // 7 days
@@ -67,6 +70,7 @@ subjects: ["events.confirmations.>"]
 **Retention:** 7 days
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Stream compaction prevents confirmation accumulation
 - ✅ Confirmations are per-event-id subjects (enables compaction)
 - ✅ Short retention (7d) appropriate for ephemeral operational state
@@ -75,6 +79,7 @@ subjects: ["events.confirmations.>"]
 - ⚠️ **QUESTION:** What happens if automaton is down >7 days? Missed confirmations?
 
 #### 3. **Dead Letter Queue** (`SINEX_EVENTS_DLQ`)
+
 ```rust
 max_messages: 1_000_000
 max_age: Duration::from_secs(30 * 24 * 60 * 60) // 30 days
@@ -85,6 +90,7 @@ subjects: ["events.dlq.>"]
 **Retention:** 30 days or 1M messages
 
 **Analysis:**
+
 - ✅ Separate DLQ prevents failed events from blocking pipeline
 - ✅ 30-day retention longer than confirmations (good for investigation)
 - ⚠️ **ISSUE:** No documented DLQ reprocessing strategy
@@ -100,6 +106,7 @@ subjects: ["events.dlq.>"]
 ### 1. NATS-Level Idempotency
 
 **Implementation:**
+
 ```rust
 // sinex-satellite-sdk/src/nats_publisher.rs:48-49
 let mut headers = async_nats::HeaderMap::new();
@@ -107,11 +114,13 @@ headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
 ```
 
 **Guarantees:**
+
 - NATS JetStream uses `Nats-Msg-Id` for deduplication
 - Duplicate publishes with same ID are ignored
 - Window: configurable per stream (default: recent history)
 
 **Analysis:**
+
 - ✅ Protects against network retries at satellite level
 - ✅ ULID as message ID provides temporal ordering + uniqueness
 - ⚠️ **QUESTION:** What is the actual deduplication window?
@@ -122,6 +131,7 @@ headers.insert("Nats-Msg-Id", event_id.to_string().as_str());
 ### 2. Double-Await Pattern
 
 **Implementation:**
+
 ```rust
 // sinex-satellite-sdk/src/nats_publisher.rs:54-57
 let ack = js
@@ -131,10 +141,12 @@ let ack = js
 ```
 
 **Purpose:**
+
 - First await: network send completes
 - Second await: JetStream confirms persistence
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Ensures event is durable before returning success
 - ✅ Prevents "fire and forget" data loss
 - ⚠️ **ISSUE:** No timeout on second await (could hang indefinitely)
@@ -149,6 +161,7 @@ let ack = js
 ### Design Pattern Analysis
 
 #### Provisional Event Phase
+
 ```rust
 pub struct ProvisionalEvent {
     pub event_id: Ulid,
@@ -164,6 +177,7 @@ pub struct ProvisionalEvent {
 **State:** Pending confirmation or DLQ routing
 
 #### Confirmation Phase
+
 ```rust
 pub struct EventConfirmation {
     pub event_id: Ulid,
@@ -178,34 +192,41 @@ pub struct EventConfirmation {
 ### Automaton Processing Models
 
 #### Model 1: Confirmed-Only (Stateless Worker)
+
 ```rust
 ProcessingModel::StatelessWorker
 ```
+
 - Only processes confirmed events
 - Can run multiple instances in parallel
 - No provisional state to manage
 - Simpler, more reliable
 
 **Use Cases:**
+
 - Analytics automaton (batch processing)
 - Search indexing (eventual consistency ok)
 - Health aggregation (periodic snapshots)
 
 #### Model 2: Provisional + Confirmed (Leader/Standby)
+
 ```rust
 ProcessingModel::LeaderStandby
 ```
+
 - Processes provisional events immediately
 - Requires rollback capability if event fails
 - Uses NATS KV leases for coordination
 - Only one active processor (leader)
 
 **Use Cases:**
+
 - Real-time alerting (need immediate response)
 - Live dashboards (can't wait for confirmation)
 - Stream processing with rollback
 
 **Implementation Requirements:**
+
 ```rust
 trait ProvisionalEventHandler {
     async fn handle_provisional(&self, event: &ProvisionalEvent) -> Result<()>;
@@ -216,6 +237,7 @@ trait ProvisionalEventHandler {
 ### Confirmation Buffer
 
 **Implementation:**
+
 ```rust
 pub struct ConfirmationBuffer {
     pending: Arc<RwLock<HashMap<Ulid, ProvisionalEvent>>>,
@@ -224,12 +246,14 @@ pub struct ConfirmationBuffer {
 ```
 
 **Features:**
+
 - In-memory buffer of provisional events awaiting confirmation
 - Configurable timeout (default appears to be service-specific)
 - Periodic timeout checking
 - Auto-cleanup of timed-out events
 
 **Analysis:**
+
 - ✅ Clean separation of concerns
 - ✅ Timeout prevents unbounded memory growth
 - ⚠️ **ISSUE:** Buffer is in-memory only (lost on restart)
@@ -246,6 +270,7 @@ pub struct ConfirmationBuffer {
 ### 1. **Confirmation Timeout Handling** (MEDIUM)
 
 **File:** `crate/lib/sinex-satellite-sdk/src/confirmation_handler.rs:108`
+
 ```rust
 if age.to_std().unwrap_or_default() > self.timeout {
     timed_out.push(*event_id);
@@ -253,16 +278,19 @@ if age.to_std().unwrap_or_default() > self.timeout {
 ```
 
 **Issues:**
+
 - Uses `unwrap_or_default()` which silently treats duration conversion errors as 0
 - A negative duration (clock skew) would be treated as timed out immediately
 - No logging of timeout events
 
 **Impact:**
+
 - Clock skew could cause false timeouts
 - Silent failure mode (no warning)
 - Hard to debug timeout issues
 
 **Recommendation:**
+
 ```rust
 let age = now.signed_duration_since(event.received_at);
 match age.to_std() {
@@ -284,17 +312,20 @@ match age.to_std() {
 **File:** `crate/lib/sinex-satellite-sdk/src/nats_publisher.rs:54`
 
 **Issue:**
+
 - `publish_with_headers` returns Future that must be awaited twice
 - No timeout on second await (JetStream ack)
 - If JetStream is slow/down, satellite blocks indefinitely
 - No queue depth limit on pending publishes
 
 **Impact:**
+
 - Satellite can hang if NATS is slow
 - No graceful degradation under backpressure
 - Memory can grow unbounded with pending futures
 
 **Recommendation:**
+
 1. Add timeout to second await
 2. Implement bounded channel for publish queue
 3. Add backpressure metrics
@@ -305,17 +336,20 @@ match age.to_std() {
 **File:** `crate/core/sinex-ingestd/src/jetstream_consumer.rs:138-150`
 
 **Issue:**
+
 - No monitoring of stream message count vs `max_messages`
 - No alerting when approaching capacity
 - Hitting limit could cause silent message loss
 - No visibility into stream health
 
 **Impact:**
+
 - Events could be dropped silently when streams fill
 - No early warning before capacity issues
 - Difficult to capacity plan
 
 **Recommendation:**
+
 1. Add periodic stream info queries
 2. Emit metrics: current_messages, max_messages, utilization%
 3. Alert at 80% capacity
@@ -328,6 +362,7 @@ match age.to_std() {
 **Gap:** Need to read and analyze the MaterialAssembler implementation
 
 **Questions:**
+
 - How are blob chunks assembled?
 - What happens if chunks arrive out of order?
 - Is there a timeout for incomplete materials?
@@ -340,28 +375,33 @@ match age.to_std() {
 ## 🎨 Architectural Patterns Observed
 
 ### 1. **Event Sourcing Pattern** ✅
+
 - All events are immutable
 - Full event history retained (90 days)
 - Replay capability for automata
 - Provenance tracking
 
 ### 2. **CQRS Pattern** ✅
+
 - Write path: Satellites → NATS → Ingestd → Postgres
 - Read path: Gateway RPC, Automata queries
 - Separation of concerns
 
 ### 3. **Saga Pattern** (Provisional/Confirmed)
+
 - Two-phase processing
 - Rollback capability
 - Eventual consistency
 - State transitions: Provisional → Confirmed | DLQ
 
 ### 4. **Dead Letter Queue Pattern** ✅
+
 - Failed events isolated
 - Prevents poison pill blocking
 - Enables investigation and replay
 
 ### 5. **Compaction/Log Cleanup Pattern** ✅
+
 - Confirmations stream uses compaction
 - Only latest confirmation per event retained
 - Automatic cleanup
@@ -373,37 +413,44 @@ match age.to_std() {
 ### Bottleneck Analysis
 
 #### 1. JetStream Consumer Throughput
+
 - Single consumer per ingestd instance
 - Database writes are batch-friendly
 - Confirmation publishing is per-event
 
 **Potential Bottleneck:**
+
 - If confirmation publishing is slow, could back up processing
 - Each event requires: DB write + confirmation publish
 
 **Measurement Needed:**
+
 - Events/second processed
 - Confirmation publish latency
 - Database write latency
 - Consumer lag
 
 #### 2. Confirmation Buffer Memory
+
 - In-memory hashmap of pending events
 - Grows with confirmation lag
 - Could be significant with high event rate + slow confirmations
 
 **Calculation:**
+
 - Event size: ~1KB average?
 - At 1000 events/sec with 10s confirmation lag: 10K events × 1KB = 10MB
 - At 1000 events/sec with 60s confirmation lag: 60K events × 1KB = 60MB
 - Reasonable, but needs monitoring
 
 #### 3. NATS Message Size
+
 - Events include full payload
 - Large payloads could impact NATS throughput
 - Material chunks are separate (good!)
 
 **Observed:**
+
 - No max message size configured
 - Could cause issues with very large events
 

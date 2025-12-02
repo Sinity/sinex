@@ -281,10 +281,7 @@ impl SystemdWatcher {
     }
 
     /// Get current systemd unit status
-    async fn get_unit_status(
-        &self,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
-    ) -> SatelliteResult<()> {
+    async fn get_unit_status(&self, tx: &mpsc::Sender<Event<JsonValue>>) -> SatelliteResult<()> {
         info!("Checking systemd unit status");
 
         let mut args = vec!["status"];
@@ -327,7 +324,7 @@ impl SystemdWatcher {
         .await
         {
             if let Some(event) = self.parse_unit_status(&line) {
-                if tx.send(event).is_err() {
+                if tx.send(event).await.is_err() {
                     warn!("Event channel closed");
                     break;
                 }
@@ -345,9 +342,24 @@ impl SystemdWatcher {
     /// Monitor systemd journal for unit state changes
     async fn monitor_systemd_journal(
         &self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd journal monitoring for unit changes");
+
+        const SYSTEMD_FOLLOW_CHANNEL_CAPACITY: usize = 1024;
+        let (bounded_tx, mut bounded_rx) =
+            mpsc::channel::<Event<JsonValue>>(SYSTEMD_FOLLOW_CHANNEL_CAPACITY);
+
+        // Forwarder to the original sender keeps memory bounded while avoiding unbounded buffering.
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = bounded_rx.recv().await {
+                if let Err(err) = tx_clone.send(event).await {
+                    warn!("Systemd watcher: event channel closed: {}", err);
+                    break;
+                }
+            }
+        });
 
         loop {
             // Start journalctl to follow systemd messages
@@ -390,9 +402,10 @@ impl SystemdWatcher {
                 {
                     Ok(Ok(Some(line))) => {
                         if let Some(event) = self.parse_systemd_journal_entry(&line) {
-                            if tx.send(event).is_err() {
-                                warn!("Event channel closed");
-                                break;
+                            if let Err(mpsc::error::TrySendError::Full(_)) =
+                                bounded_tx.try_send(event)
+                            {
+                                debug!("Systemd watcher channel full; dropping oldest event");
                             }
                         }
                     }
@@ -563,7 +576,7 @@ impl SystemdWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd event streaming");
 
