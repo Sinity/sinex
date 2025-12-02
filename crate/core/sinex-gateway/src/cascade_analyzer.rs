@@ -10,6 +10,11 @@ use std::collections::{HashMap, VecDeque};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+// Default cascade analyzer configuration values
+const DEFAULT_CASCADE_BATCH_SIZE: usize = 1000;
+const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
+const DEFAULT_CASCADE_MEMORY_LIMIT: usize = 1024 * 1024 * 1024; // 1GB
+
 /// Analysis of cascade effects for a replay operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CascadeAnalysis {
@@ -84,10 +89,10 @@ pub struct CascadeAnalyzerConfig {
 impl Default for CascadeAnalyzerConfig {
     fn default() -> Self {
         Self {
-            batch_size: 1000,
-            max_depth: 100,
+            batch_size: DEFAULT_CASCADE_BATCH_SIZE,
+            max_depth: DEFAULT_CASCADE_MAX_DEPTH,
             include_weak_dependencies: false,
-            memory_limit_bytes: Some(1024 * 1024 * 1024), // 1GB default
+            memory_limit_bytes: Some(DEFAULT_CASCADE_MEMORY_LIMIT),
         }
     }
 }

@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
+// Default configuration values for systemd journal monitoring
+const DEFAULT_JOURNAL_BATCH_SIZE: usize = 1000;
+
 // ============================================================================
 // D-Bus Event Payloads
 // ============================================================================
@@ -303,7 +306,7 @@ impl Default for JournalConfig {
                 "_TRANSPORT".to_string(),
             ],
             cursor_file: Some("/var/lib/sinex/journal.cursor".to_string()),
-            batch_size: 1000,
+            batch_size: DEFAULT_JOURNAL_BATCH_SIZE,
         }
     }
 }
