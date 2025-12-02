@@ -9,6 +9,12 @@ use std::collections::HashSet;
 
 // ===== File Watching Security Module =====
 
+// Default security policy values
+const DEFAULT_MAX_WATCH_DEPTH: usize = 10;
+const DEFAULT_MAX_WATCHED_FILES: usize = 100_000;
+const RESTRICTIVE_MAX_WATCH_DEPTH: usize = 5;
+const RESTRICTIVE_MAX_WATCHED_FILES: usize = 10_000;
+
 /// Security policy for file watching operations
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileWatchingSecurityPolicy {
@@ -44,11 +50,11 @@ impl Default for FileWatchingSecurityPolicy {
         forbidden_prefixes.insert(PathBuf::from("/etc"));
 
         Self {
-            max_watch_depth: Some(10),
+            max_watch_depth: Some(DEFAULT_MAX_WATCH_DEPTH),
             forbidden_paths,
             forbidden_prefixes,
             follow_symlinks: false,
-            max_watched_files: Some(100_000),
+            max_watched_files: Some(DEFAULT_MAX_WATCHED_FILES),
             allow_system_directories: true,
         }
     }
@@ -70,8 +76,8 @@ impl FileWatchingSecurityPolicy {
     /// Create a restrictive policy for production
     pub fn restrictive() -> Self {
         Self {
-            max_watch_depth: Some(5),
-            max_watched_files: Some(10_000),
+            max_watch_depth: Some(RESTRICTIVE_MAX_WATCH_DEPTH),
+            max_watched_files: Some(RESTRICTIVE_MAX_WATCHED_FILES),
             ..Self::default()
         }
     }
