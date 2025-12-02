@@ -489,3 +489,98 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Files:** Satellite test trees (`crate/satellites/*/tests`), inline `#[cfg(test)]` modules.  
     - **Steps:** Prefer categorized directories where practical, use `TestContext` injection (`#[sinex_test]` style) instead of manual setup, settle on one return type (`TestResult<()>`), and normalize file naming (`*_test.rs`). Add guidance to testing docs.  
     - **Tests:** Ensure reorganized tests still pass; no behavioral changes expected.
+
+84. **Harden transaction isolation for critical paths**  
+    - **Files:** Critical DB mutators in `crate/lib/sinex-core/src/db/repositories` and ingestd.  
+    - **Steps:** Identify transactions that require repeatable reads (e.g., checkpoint updates, claims) and set explicit isolation (SERIALIZABLE or SELECT FOR UPDATE where appropriate); ensure retry/backoff remains in place.  
+    - **Tests:** Existing concurrency/deadlock tests plus new coverage to confirm no lost updates and expected retries under contention.
+
+85. **Instrument advisory lock/lease acquisition failures**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/coordination.rs`, `lease_manager.rs`.  
+    - **Steps:** Add metrics/log counters for failed advisory lock or NATS lease acquisition/renewal to detect coordination issues in production; expose via existing metrics pipeline.  
+    - **Tests:** Unit/integration test that increments on failure paths; ensure normal paths unchanged.
+
+86. **Monitor DB pool contention**  
+    - **Files:** `crate/lib/sinex-core/src/db/pool.rs` or service entrypoints.  
+    - **Steps:** Add lightweight telemetry for pool acquire latency and warn/metric when thresholds are exceeded; document tuning knobs.  
+    - **Tests:** Smoke test that instrumentation does not alter behavior; optional benchmark to assert minimal overhead.
+
+87. **Serialize checkpoint updates**  
+    - **Files:** Checkpoint/state repositories (`crate/lib/sinex-core/src/db/repositories/state.rs` and related).  
+    - **Steps:** Ensure checkpoint updates use `SELECT ... FOR UPDATE` (or equivalent) to avoid concurrent clobbering when multiple workers write the same key; align with retry/backoff strategy.  
+    - **Tests:** Concurrency test to assert single-writer semantics on the same checkpoint key under concurrent updates.
+
+88. **Finish single-writer enforcement for material ingest**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`, ingestd material assembler.  
+    - **Steps:** Remove satellite DB writes for ledger/material rows (JetStream-only), ensure ingestd is the sole writer; adjust schema/doc to reflect single-writer model.  
+    - **Tests:** Existing duplicate-ledger tests plus new regression ensuring no duplicate key errors when ingestd replays slices; satellite runs without DATABASE_URL.
+
+89. **Instrument advisory lock / NATS lease failures**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/coordination.rs`, `lease_manager.rs`.  
+    - **Steps:** Emit metrics/log counters on failed advisory lock or KV lease acquire/renew; surface via existing metrics pipeline.  
+    - **Tests:** Unit/integration tests asserting counters increment on simulated failures.
+
+90. **Audit JetStream stream configs vs docs**  
+    - **Files:** Stream setup (ingestd/nats bootstrap), docs describing retention/compaction.  
+    - **Steps:** Verify actual stream subjects/retention/compaction align with documented expectations; update code or docs; ensure bootstrap creates the intended config.  
+    - **Tests:** Integration test that inspects stream config (via nats CLI/API) matches expected settings.
+
+91. **Restore async benchmarks support**  
+    - **Files:** `crate/lib/sinex-test-utils/src/standard_fixtures.rs`, `crate/lib/sinex-test-utils/src/db_common.rs`, benchmarking macros.  
+    - **Steps:** Extend `sinex_bench` (or switch to criterion) to support async benchmarks and re-enable the commented fixture benchmarks.  
+    - **Tests:** Bench builds succeed; re-enabled benchmarks compile/run; no impact on regular test suite.
+
+92. **Implement schema validation fixtures**  
+    - **Files:** `crate/lib/sinex-test-utils/src/fixtures.rs`.  
+    - **Steps:** Fill the schema validation fixture TODO once schema management API is stable; add helpers to generate/register schemas for tests.  
+    - **Tests:** New fixture tests verifying schema registration/validation; integration tests consuming the fixtures.
+
+93. **Resolve circular test helper dependency**  
+    - **Files:** `crate/lib/sinex-core/src/types/events/test_helpers.rs`.  
+    - **Steps:** Move/adjust `test_event_with_version` (and related) to avoid circular deps between `sinex-events` and `sinex-core`—consider relocating to a shared test-utils crate.  
+    - **Tests:** Ensure helper restored without circular deps; dependent tests compile.
+
+94. **Decide on deprecated metadata field**  
+    - **Files:** `crate/lib/sinex-core/src/db/models/event.rs` (deprecated metadata/machine_id field).  
+    - **Steps:** Decide to keep or remove; if removing, update schema/docs and adjust callers; if keeping, document rationale.  
+    - **Tests:** Schema/model tests updated; migrations/schema squashed if field removed.
+
+95. **Make confirmation publishing retryable**  
+    - **Files:** `crate/core/sinex-ingestd/src/jetstream_consumer.rs` (confirmation publish loop).  
+    - **Steps:** Add retry/backoff around confirmation publishing; if confirmations repeatedly fail, avoid ACKing the batch (NACK or DLQ) to prevent silent loss; surface metrics for failures.  
+    - **Tests:** Integration test that forces confirmation publish failure and asserts we do not ACK the batch without a successful confirmation (or we retry/NACK as designed).
+
+96. **Fail-safe DLQ writes in satellites**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/event_processor.rs` (local DLQ write path).  
+    - **Steps:** If local DLQ write fails (disk/permissions), propagate the error instead of clearing events; optionally retry or NACK upstream to avoid data loss. Add metrics/logging for DLQ write failures.  
+    - **Tests:** Unit/integration test simulating DLQ write failure to ensure events aren’t silently dropped.
+
+97. **Handle NACK/DLQ publish failures explicitly**  
+    - **Files:** `crate/core/sinex-ingestd/src/jetstream_consumer.rs` (NACK error handling, DLQ publish ack handling).  
+    - **Steps:** Stop ignoring NACK errors; log+retry or abort batch on repeated NACK failures. For DLQ routing, add fallback/metrics when publish/ack fails to avoid silent loss.  
+    - **Tests:** Integration test that simulates NACK/DLQ publish failure and asserts non-silent handling (no lost messages, retries or error surfaced).
+
+98. **Add metrics/alerting for silent failure paths**  
+    - **Files:** ingestd confirmation/DLQ paths; satellite DLQ writer.  
+    - **Steps:** Emit counters for confirmation publish failures, DLQ write failures, NACK failures; integrate with existing observability pipeline.  
+    - **Tests:** Metric emission tests or harness that forces failures and asserts counters increment.
+
+99. **Crash-recovery tests for material acquisition**  
+    - **Files:** `crate/lib/sinex-satellite-sdk` acquisition path, material assembler.  
+    - **Steps:** Add adversarial tests simulating satellite crashes at stages (early, mid, finalization) and concurrent acquisition, verifying registry/ledger state and checkpoint recovery; ensure tests are compatible with the JetStream-only single-writer model.  
+    - **Tests:** New crash-recovery suite covering early/mid/finalization crashes, orphan detection, checkpoint recovery, and concurrent acquisition.
+
+100. **Refactor events batch_insert_many to UNNEST**  
+     - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs` (batch_insert_many).  
+     - **Steps:** Replace per-row INSERT loop with UNNEST-based bulk insert (pattern from ingestd’s jetstream_consumer) for 10–100x throughput improvement; keep idempotency/ON CONFLICT semantics.  
+     - **Tests:** Existing batch ingestion tests plus a benchmark/comparison for 100–1000 events to confirm speedup.
+
+101. **Add trigram indexes for entity name search**  
+     - **Files:** `crate/lib/sinex-schema/src/schema/entities.rs` (+ migration).  
+     - **Steps:** Enable `pg_trgm` and add GIN trigram indexes on `LOWER(name)` and `LOWER(canonical_name)` to speed LIKE searches; update schema generation/migrations accordingly.  
+     - **Tests:** Migration/sqlx prepare; optional EXPLAIN/benchmark showing reduced cost for partial-name queries.
+
+102. **Evaluate payload text search indexing**  
+     - **Files:** `crate/lib/sinex-schema/src/schema/events.rs` (+ migration).  
+     - **Steps:** Consider adding a trigram or FTS index on `payload::text` for ILIKE/text search; weigh disk/maintenance cost vs. observed query patterns and adjust query to use FTS if chosen.  
+     - **Tests:** Migration/sqlx prepare; EXPLAIN/benchmark for representative text searches.
