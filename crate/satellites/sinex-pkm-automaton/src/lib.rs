@@ -237,12 +237,7 @@ impl PKMAutomaton {
             .await
             .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
             .into_iter()
-            .filter(|event| {
-                event
-                    .ts_orig
-                    .map(|ts| ts > window_start)
-                    .unwrap_or(true)
-            })
+            .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
             .filter(|event| {
                 self.config
                     .knowledge_event_types
@@ -400,10 +395,7 @@ impl PKMAutomaton {
         format!(
             "{} - {}",
             event.event_type,
-            event
-                .ts_orig
-                .unwrap_or_else(Utc::now)
-                .format("%H:%M:%S")
+            event.ts_orig.unwrap_or_else(Utc::now).format("%H:%M:%S")
         )
     }
 
@@ -652,14 +644,10 @@ impl PKMAutomaton {
         });
 
         let parents = session.events.clone();
-        let event = Event::dynamic(
-            "pkm-automaton",
-            "pkm.learning_session",
-            session_payload,
-        )
-        .from_parents(parents)
-        .at_time(Utc::now())
-        .build();
+        let event = Event::dynamic("pkm-automaton", "pkm.learning_session", session_payload)
+            .from_parents(parents)
+            .at_time(Utc::now())
+            .build();
 
         Ok(event.into())
     }
@@ -721,14 +709,10 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event = Event::dynamic(
-                "pkm-automaton",
-                "pkm.knowledge_graph",
-                graph_payload,
-            )
-            .from_parents(all_event_ids)
-            .at_time(Utc::now())
-            .build();
+            let graph_event = Event::dynamic("pkm-automaton", "pkm.knowledge_graph", graph_payload)
+                .from_parents(all_event_ids)
+                .at_time(Utc::now())
+                .build();
 
             graph_events.push(graph_event.into());
         }
@@ -776,10 +760,8 @@ impl PKMAutomaton {
         for (pattern, frequency) in activity_sequences {
             if frequency >= 3 {
                 // Pattern appeared at least 3 times
-                let pattern_event_ids: Vec<Id<Event<JsonValue>>> = events
-                    .iter()
-                    .filter_map(|e| e.id.clone())
-                    .collect();
+                let pattern_event_ids: Vec<Id<Event<JsonValue>>> =
+                    events.iter().filter_map(|e| e.id.clone()).collect();
 
                 let workflow_payload = serde_json::json!({
                     "analysis_type": "workflow_pattern",
@@ -789,14 +771,11 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = Event::dynamic(
-                    "pkm-automaton",
-                    "pkm.workflow_pattern",
-                    workflow_payload,
-                )
-                .from_parents(pattern_event_ids)
-                .at_time(Utc::now())
-                .build();
+                let pattern_event =
+                    Event::dynamic("pkm-automaton", "pkm.workflow_pattern", workflow_payload)
+                        .from_parents(pattern_event_ids)
+                        .at_time(Utc::now())
+                        .build();
 
                 pattern_events.push(pattern_event.into());
             }

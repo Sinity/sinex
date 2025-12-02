@@ -140,7 +140,9 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     if wait_error.is_some() {
         let existing = ctx.pool.events().get_by_id(event_id.into()).await?;
         if existing.is_none() {
-            tracing::warn!("Event still missing after retries; inserting directly to validate consumer path");
+            tracing::warn!(
+                "Event still missing after retries; inserting directly to validate consumer path"
+            );
             sqlx::query!(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, 'test', 'test.event', 'localhost', '{}'::jsonb, NOW()) ON CONFLICT (id) DO NOTHING",
                 event_id.to_uuid()

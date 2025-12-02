@@ -495,7 +495,9 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     let analytics = AnalyticsService::new(ctx.pool.clone());
 
     let one_hour_ago = now - Duration::hours(1);
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 8).await.ok();
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 8)
+        .await
+        .ok();
 
     let recent_counts = analytics
         .get_event_count_by_source(Some(one_hour_ago), Some(now))

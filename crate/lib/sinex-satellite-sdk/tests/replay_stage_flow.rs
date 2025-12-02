@@ -115,10 +115,7 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
         (format!("desktop-{run_id}"), 1usize),
     ] {
         if let Err(err) = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-            &ctx.pool,
-            &source,
-            expected,
-            24,
+            &ctx.pool, &source, expected, 24,
         )
         .await
         {

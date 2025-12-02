@@ -16,15 +16,15 @@ mod common {
     };
 
     // SDK facade for common processor types
+    pub use sinex_processor_runtime::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    };
     pub use sinex_satellite_sdk::{
         stream_processor::{
             Checkpoint, ProcessorInitContext, ProcessorRuntimeState, ProcessorType, ScanArgs,
             ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
         SatelliteResult,
-    };
-    pub use sinex_processor_runtime::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     };
 
     // External dependencies
@@ -213,12 +213,7 @@ impl ContentAutomaton {
             .await
             .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
             .into_iter()
-            .filter(|event| {
-                event
-                    .ts_orig
-                    .map(|ts| ts > window_start)
-                    .unwrap_or(true)
-            })
+            .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
             .filter(|event| {
                 self.config
                     .target_event_types
@@ -304,11 +299,7 @@ impl ContentAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let parents = source_event
-            .id
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
         let event = Event::dynamic("content-automaton", "content.analyzed", analysis_payload)
@@ -371,11 +362,7 @@ impl ContentAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let parents = source_event
-            .id
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
         let event = Event::dynamic(
@@ -401,10 +388,9 @@ impl ContentAutomaton {
         let mut content_map: HashMap<String, Vec<Id<Event<JsonValue>>>> = HashMap::new();
 
         for event in events {
-            if let (Some(content), Some(id)) = (
-                self.extract_content_from_event(event),
-                event.id.clone(),
-            ) {
+            if let (Some(content), Some(id)) =
+                (self.extract_content_from_event(event), event.id.clone())
+            {
                 // Simple content fingerprint (first 100 chars)
                 let fingerprint = content.chars().take(100).collect::<String>();
                 content_map.entry(fingerprint).or_default().push(id);
@@ -501,10 +487,7 @@ impl StatefulStreamProcessor for ContentAutomaton {
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
-                (
-                    "content_events_processed".to_string(),
-                    events_processed,
-                ),
+                ("content_events_processed".to_string(), events_processed),
                 (
                     "max_content_size_bytes".to_string(),
                     self.config.max_content_size_bytes as u64,

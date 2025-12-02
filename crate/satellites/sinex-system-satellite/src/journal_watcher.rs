@@ -71,7 +71,7 @@ impl JournalWatcher {
     /// Start streaming events with optional historical import
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting journal monitoring");
 
@@ -93,7 +93,7 @@ impl JournalWatcher {
     /// Import historical journal entries with cursor tracking
     async fn import_historical(
         &mut self,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
@@ -255,10 +255,7 @@ impl JournalWatcher {
     }
 
     /// Follow journal in real-time with cursor tracking and exponential backoff
-    async fn follow_journal(
-        &mut self,
-        tx: mpsc::UnboundedSender<Event<JsonValue>>,
-    ) -> SatelliteResult<()> {
+    async fn follow_journal(&mut self, tx: mpsc::Sender<Event<JsonValue>>) -> SatelliteResult<()> {
         // Follow journal (simplified, without retry helper to avoid borrow issues)
         self.follow_journal_inner(&tx).await?;
 
@@ -268,7 +265,7 @@ impl JournalWatcher {
     /// Inner journal following loop with proper error handling
     async fn follow_journal_inner(
         &mut self,
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
@@ -584,12 +581,15 @@ impl JournalWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<Event<JsonValue>>,
+        tx: &mpsc::Sender<Event<JsonValue>>,
         event: Event<JsonValue>,
         context: &str,
     ) -> SatelliteResult<()> {
-        if tx.send(event).is_err() {
-            warn!("Event channel closed while sending {}", context);
+        if let Err(err) = tx.send(event).await {
+            warn!(
+                "Event channel unavailable while sending {}: {}",
+                context, err
+            );
         }
         Ok(())
     }

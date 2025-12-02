@@ -99,6 +99,9 @@ const SYSTEM_WATCHER_BOOTSTRAP_BYTES: [u8; 16] = [
     0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// Capacity for watcher → emitter channels; we prefer bounded buffers to avoid unbounded growth.
+const WATCHER_CHANNEL_CAPACITY: usize = 1024;
+
 #[derive(Debug)]
 enum WatcherState {
     Initialized,
@@ -574,7 +577,7 @@ impl SystemProcessor {
 
     async fn spawn_dbus_task(&self) -> SatelliteResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.dbus.signal", rx, emitter);
         let mut watcher = DbusWatcher::new(self.config.dbus_config.clone()).await?;
         let task = tokio::spawn(async move {
@@ -587,7 +590,7 @@ impl SystemProcessor {
 
     async fn spawn_journal_task(&self) -> SatelliteResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.journal.entry", rx, emitter);
         let mut watcher = JournalWatcher::new(self.config.journal_config.clone()).await?;
         let task = tokio::spawn(async move {
@@ -600,7 +603,7 @@ impl SystemProcessor {
 
     async fn spawn_udev_task(&self) -> SatelliteResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
         let mut watcher = UdevWatcher::new(true).await?;
         let task = tokio::spawn(async move {
@@ -613,7 +616,7 @@ impl SystemProcessor {
 
     async fn spawn_systemd_task(&self) -> SatelliteResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.systemd.unit_state", rx, emitter);
         let mut watcher = SystemdWatcher::new(self.config.systemd_config.clone()).await?;
         let task = tokio::spawn(async move {
@@ -1184,7 +1187,7 @@ fn synthetic_system_event(
 
 fn spawn_forwarder(
     watcher: &'static str,
-    mut rx: mpsc::UnboundedReceiver<Event<JsonValue>>,
+    mut rx: mpsc::Receiver<Event<JsonValue>>,
     emitter: EventEmitter,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
