@@ -19,6 +19,16 @@ const DEFAULT_CREATOR_HOST: &str = "sinex-host";
 const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
 const DEFAULT_CREATOR_CLI: &str = "sinex-cli";
 
+// Default values for analytics parameters
+const DEFAULT_ANALYTICS_DAYS_BACK: i64 = 7;
+const DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 60;
+const DEFAULT_HEATMAP_LIMIT: i64 = 100;
+
+// Default values for content/blob handling
+const DEFAULT_BLOB_FILENAME: &str = "content.txt";
+const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
+const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
+
 // Analytics handlers
 
 pub async fn handle_event_count_by_source(
@@ -30,7 +40,7 @@ pub async fn handle_event_count_by_source(
     let days_back = params
         .get("days_back")
         .and_then(|v| v.as_i64())
-        .unwrap_or(7);
+        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
     let end_time = Utc::now();
     let start_time = end_time - Duration::days(days_back);
@@ -45,9 +55,9 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
     let bucket_size_minutes = params
         .get("bucket_size_minutes")
         .and_then(|v| v.as_i64())
-        .unwrap_or(60) as i32;
+        .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES) as i32;
 
-    let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
 
     let heatmap = service.activity_heatmap(bucket_size_minutes, limit).await?;
     Ok(json!(heatmap))
@@ -208,12 +218,12 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
     let filename = params
         .get("filename")
         .and_then(|v| v.as_str())
-        .unwrap_or("content.txt");
+        .unwrap_or(DEFAULT_BLOB_FILENAME);
 
     let content_type = params
         .get("content_type")
         .and_then(|v| v.as_str())
-        .unwrap_or("text/plain");
+        .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
 
     let source = params
         .get("source")
@@ -420,7 +430,7 @@ fn blob_size_limit_bytes() -> usize {
         std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(5 * 1024 * 1024)
+            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
     })
 }
 
