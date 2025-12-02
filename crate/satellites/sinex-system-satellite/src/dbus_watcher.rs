@@ -37,6 +37,7 @@ pub enum DBusType {
 }
 
 /// D-Bus message data for worker pool processing
+#[derive(Clone)]
 struct DbusMessageData {
     msg_type: MessageType,
     interface: Option<String>,
@@ -244,13 +245,15 @@ impl DbusWatcher {
         info!("D-Bus {} bus monitoring started", bus_type);
 
         // Create bounded channel for D-Bus messages to prevent task explosion
-        let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
+        let (msg_tx, msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
+        let msg_tx_clone = msg_tx.clone();
 
         // Spawn a single worker to process messages (Receiver is not clonable)
         {
             let tx = tx.clone();
             let config = config.clone();
             let bus_type_str = bus_type.to_string();
+            let mut msg_rx = msg_rx;
 
             tokio::spawn(async move {
                 debug!("D-Bus worker started for {} bus", bus_type_str);
@@ -294,9 +297,15 @@ impl DbusWatcher {
                 };
 
                 // Send to worker pool via bounded channel
-                // Use try_send to avoid blocking, drop message if channel is full
-                if let Err(e) = msg_tx.try_send(msg_data) {
-                    debug!("D-Bus message dropped, channel full: {}", e);
+                // Try fast-path; if full, drop oldest to avoid unbounded growth
+                if let Err(mpsc::error::TrySendError::Full(_)) =
+                    msg_tx.try_send(msg_data.clone())
+                {
+                    // Drop one to make room, then enqueue the newest
+                    let _ = msg_tx_clone.try_send(msg_data.clone());
+                    if let Err(e) = msg_tx.try_send(msg_data) {
+                        debug!("D-Bus message dropped after backpressure: {}", e);
+                    }
                 }
 
                 true

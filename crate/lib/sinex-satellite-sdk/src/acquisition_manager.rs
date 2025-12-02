@@ -360,10 +360,10 @@ impl AcquisitionManager {
         let slice_index_str = slice_index.to_string();
         let offset_str = offset.to_string();
         let chunk_hash = blake3::hash(data).to_hex();
-        headers.insert("Nats-Msg-Id", &msg_id);
-        headers.insert("Slice-Index", &slice_index_str);
-        headers.insert("Offset", &offset_str);
-        headers.insert("Chunk-Hash", &chunk_hash);
+        headers.insert("Nats-Msg-Id", msg_id.as_str());
+        headers.insert("Slice-Index", slice_index_str.as_str());
+        headers.insert("Offset", offset_str.as_str());
+        headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish_with_headers(subject, headers, data.to_vec().into())

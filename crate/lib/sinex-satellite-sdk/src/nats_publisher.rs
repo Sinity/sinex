@@ -100,7 +100,7 @@ impl NatsPublisher {
         // Add idempotency header
         let mut headers = async_nats::HeaderMap::new();
         let event_id_str = event_id.to_string();
-        headers.insert("Nats-Msg-Id", &event_id_str);
+        headers.insert("Nats-Msg-Id", event_id_str.as_str());
 
         // Publish to JetStream and wait for acknowledgment
         // First await: send the publish request
