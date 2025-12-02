@@ -10,6 +10,10 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+// Default lease configuration values
+const DEFAULT_LEASE_TTL_SECS: u64 = 30;
+const DEFAULT_LEASE_RENEWAL_INTERVAL_SECS: u64 = 10;
+
 /// Lease status for a processor instance
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaseStatus {
@@ -39,8 +43,8 @@ impl Default for LeaseManagerConfig {
         Self {
             processor_name: "automaton".to_string(),
             instance_id: uuid::Uuid::new_v4().to_string(),
-            lease_ttl: Duration::from_secs(30),
-            renewal_interval: Duration::from_secs(10),
+            lease_ttl: Duration::from_secs(DEFAULT_LEASE_TTL_SECS),
+            renewal_interval: Duration::from_secs(DEFAULT_LEASE_RENEWAL_INTERVAL_SECS),
         }
     }
 }
