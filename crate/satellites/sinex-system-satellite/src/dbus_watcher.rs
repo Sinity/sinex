@@ -26,6 +26,9 @@ use std::{collections::HashMap, fmt, str::FromStr, time::Duration};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+// Channel buffer size for D-Bus message processing
+const DBUS_MESSAGE_CHANNEL_SIZE: usize = 1000;
+
 /// D-Bus bus type enumeration
 #[derive(Debug, Clone, PartialEq)]
 pub enum DBusType {
@@ -241,7 +244,7 @@ impl DbusWatcher {
         info!("D-Bus {} bus monitoring started", bus_type);
 
         // Create bounded channel for D-Bus messages to prevent task explosion
-        let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(1000);
+        let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
 
         // Spawn a single worker to process messages (Receiver is not clonable)
         {

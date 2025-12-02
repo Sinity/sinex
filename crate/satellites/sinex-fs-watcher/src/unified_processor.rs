@@ -45,6 +45,7 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
+const FS_WATCH_CHANNEL_SIZE: usize = 256; // Buffer size for filesystem event channel
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -490,7 +491,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> SatelliteResult<()> {
 
     info!("Watching path: {}", normalized.as_str());
 
-    let (tx, mut rx) = mpsc::channel::<Event>(256);
+    let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
