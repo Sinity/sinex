@@ -10,6 +10,7 @@
 ### Design Philosophy: Journald-First Monitoring
 
 **Core Concept:**
+
 ```
 Satellite emits JSON to stdout
       ↓
@@ -23,6 +24,7 @@ System health dashboard
 ```
 
 **Benefits:**
+
 - ✅ No separate monitoring infrastructure
 - ✅ Heartbeats are regular events (queryable)
 - ✅ Historical health data in event database
@@ -62,6 +64,7 @@ fn determine_status(recent_errors: usize) -> ProcessStatus {
 ```
 
 **Analysis:**
+
 - ✅ Simple, clear thresholds
 - ✅ Based on error rate, not error percentage
 - ⚠️ **ISSUE:** Thresholds are hardcoded (not configurable)
@@ -69,6 +72,7 @@ fn determine_status(recent_errors: usize) -> ProcessStatus {
 - ⚠️ **ISSUE:** Error counter resets after each heartbeat (loses context)
 
 **Scenario Analysis:**
+
 ```
 Heartbeat interval: 60 seconds
 Error burst: 55 errors in first 10 seconds
@@ -81,6 +85,7 @@ Problem: No memory of recent failure, appears healthy immediately
 ```
 
 **Recommendation:**
+
 ```rust
 // Use sliding window approach
 struct ErrorWindow {
@@ -113,6 +118,7 @@ impl ErrorWindow {
 #### Memory Usage
 
 **Implementation:**
+
 ```rust
 fn get_memory_usage_mb(&self) -> u32 {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
@@ -131,6 +137,7 @@ fn get_memory_usage_mb(&self) -> u32 {
 ```
 
 **Analysis:**
+
 - ✅ Uses VmRSS (Resident Set Size) - correct metric
 - ✅ Simple, no external dependencies
 - ⚠️ **ISSUE:** Returns 0 on failure (indistinguishable from "no memory")
@@ -138,6 +145,7 @@ fn get_memory_usage_mb(&self) -> u32 {
 - ⚠️ **ISSUE:** Silent fallback (no logging of parse failures)
 
 **Recommendation:**
+
 ```rust
 fn get_memory_usage_mb(&self) -> Option<u32> {
     let status = std::fs::read_to_string("/proc/self/status")
@@ -166,6 +174,7 @@ fn get_memory_usage_mb(&self) -> Option<u32> {
 #### CPU Usage
 
 **Implementation:**
+
 ```rust
 // Uses unsafe libc::getrusage
 fn read_process_cpu_seconds() -> Option<f64> {
@@ -185,6 +194,7 @@ fn read_process_cpu_seconds() -> Option<f64> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Proper `MaybeUninit` usage (safe unsafe code)
 - ✅ Checks `getrusage` return value
 - ✅ Sums user + system time (correct)
@@ -192,6 +202,7 @@ fn read_process_cpu_seconds() -> Option<f64> {
 - ✅ This is one of the 2 unsafe blocks found in entire codebase
 
 **CPU Percentage Calculation:**
+
 ```rust
 fn get_cpu_usage_percent(&self) -> f32 {
     let current_cpu = Self::read_process_cpu_seconds()?;
@@ -215,6 +226,7 @@ fn get_cpu_usage_percent(&self) -> f32 {
 ```
 
 **Analysis:**
+
 - ✅ Delta-based calculation (correct)
 - ✅ Normalizes by CPU count
 - ✅ Clamps to [0, 100]
@@ -226,6 +238,7 @@ fn get_cpu_usage_percent(&self) -> f32 {
 ### Heartbeat Emission
 
 **Structured Log Format:**
+
 ```rust
 let log_entry = json!({
     "level": "INFO",
@@ -245,6 +258,7 @@ println!("{}", log_entry); // → journald
 ```
 
 **Analysis:**
+
 - ✅ Structured JSON for easy parsing
 - ✅ journald captures stdout automatically
 - ✅ No external dependencies
@@ -288,6 +302,7 @@ pub enum Checkpoint {
 ```
 
 **Design Analysis:**
+
 - ✅ **EXCELLENT:** Unified enum for all checkpoint types
 - ✅ Type-safe variants prevent mixing checkpoint kinds
 - ✅ Flexible `External` variant for custom state
@@ -307,6 +322,7 @@ pub struct CheckpointState {
 ```
 
 **Features:**
+
 - Version field enables schema migration (currently v2)
 - Processor-specific `data` field for custom state
 - `last_activity` for staleness detection
@@ -317,6 +333,7 @@ pub struct CheckpointState {
 **Table:** `core.processor_checkpoints`
 
 **Columns:**
+
 - `id`: ULID (primary key)
 - `processor_name`: Satellite/automaton identifier
 - `consumer_group`: Logical grouping
@@ -328,12 +345,14 @@ pub struct CheckpointState {
 - Timestamps: `created_at`, `last_activity`, `updated_at`
 
 **Indexing:** (Need to verify)
+
 - Primary key on `id`
 - Likely index on `(processor_name, consumer_group, consumer_name)`
 
 ### Atomic Checkpoint Updates
 
 **Upsert Pattern:**
+
 ```sql
 INSERT INTO core.processor_checkpoints (
     processor_name,
@@ -356,6 +375,7 @@ DO UPDATE SET
 ```
 
 **Analysis:**
+
 - ✅ Atomic upsert prevents race conditions
 - ✅ Updates `last_activity` automatically
 - ✅ Denormalizes frequently-queried fields
@@ -365,6 +385,7 @@ DO UPDATE SET
 ### Schema Evolution & Migration
 
 **Version 1 → Version 2:**
+
 ```rust
 impl From<LegacyCheckpointState> for CheckpointState {
     fn from(legacy: LegacyCheckpointState) -> Self {
@@ -397,6 +418,7 @@ impl From<LegacyCheckpointState> for CheckpointState {
 ```
 
 **Analysis:**
+
 - ✅ Automatic migration from v1 to v2
 - ✅ Preserves all data during migration
 - ✅ Graceful fallback for parse failures
@@ -405,6 +427,7 @@ impl From<LegacyCheckpointState> for CheckpointState {
 ### Critical Checkpoint Logic
 
 **Auto-Detection of Checkpoint Type:**
+
 ```rust
 pub fn set_last_processed_id(&mut self, id: Option<String>) {
     self.checkpoint = match id {
@@ -429,6 +452,7 @@ pub fn set_last_processed_id(&mut self, id: Option<String>) {
 ```
 
 **Analysis:**
+
 - ✅ Automatic type detection (smart)
 - ✅ Graceful fallback
 - ⚠️ **ISSUE:** What if a stream ID happens to be valid ULID format?
@@ -444,6 +468,7 @@ pub fn set_last_processed_id(&mut self, id: Option<String>) {
 **Issue:** Error counters reset after each heartbeat, losing historical context
 
 **Impact:**
+
 - Brief error bursts appear fine 60 seconds later
 - No detection of recurring issues
 - Status can flip rapidly: Failed → Healthy → Failed
@@ -456,11 +481,13 @@ Implement sliding window error tracking (5-minute window)
 **Issue:** Error thresholds (10, 50) are hardcoded
 
 **Impact:**
+
 - Can't tune per-service
 - High-volume services trigger false alarms
 - Low-volume services hide problems
 
 **Recommendation:**
+
 ```rust
 pub struct HealthThresholds {
     pub degraded_errors_per_minute: u32,
@@ -473,6 +500,7 @@ pub struct HealthThresholds {
 **Issue:** Memory/CPU monitoring returns 0 on failure without logging
 
 **Impact:**
+
 - Can't distinguish "no resource usage" from "monitoring broken"
 - Silent degradation of monitoring capability
 
@@ -484,6 +512,7 @@ Return `Option<T>` and log failures
 **Issue:** Auto-detecting checkpoint type from string format
 
 **Scenario:**
+
 ```
 Stream ID: "01AN4Z07BY79KA1307SR9X4MV3" (happens to be valid ULID)
 Auto-detected as: Checkpoint::Internal (wrong!)
@@ -491,6 +520,7 @@ Expected: Checkpoint::Stream
 ```
 
 **Impact:**
+
 - Incorrect checkpoint type
 - Confusion in queries/debugging
 - Potential replay errors
@@ -503,16 +533,19 @@ Explicit checkpoint type rather than auto-detection
 **Issue:** No automatic cleanup of old checkpoints
 
 **Observation:**
+
 - Checkpoints accumulate indefinitely
 - Inactive processors leave stale data
 - No TTL or retention policy
 
 **Impact:**
+
 - Table bloat over time
 - Stale data confusion
 - Query performance degradation
 
 **Recommendation:**
+
 ```sql
 -- Periodic cleanup of inactive checkpoints
 DELETE FROM core.processor_checkpoints

@@ -1105,9 +1105,9 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
     // Generate events with varying resource requirements
     let resource_patterns = vec![
-        ("small_payload", 100),   // 100 byte payloads
-        ("medium_payload", 800),  // ~1KB payloads
-        ("large_payload", 2500),  // 2.5KB payloads to keep test lightweight
+        ("small_payload", 100),  // 100 byte payloads
+        ("medium_payload", 800), // ~1KB payloads
+        ("large_payload", 2500), // 2.5KB payloads to keep test lightweight
     ];
 
     let events_per_pattern = 5;
@@ -1160,12 +1160,14 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
             let pool = ctx.pool.clone();
             let source = source.clone();
             async move {
-                let observed: Option<i64> =
-                    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", source)
-                        .fetch_one(&pool)
-                        .await?;
+                let observed: Option<i64> = sqlx::query_scalar!(
+                    "SELECT COUNT(*) FROM core.events WHERE source = $1",
+                    source
+                )
+                .fetch_one(&pool)
+                .await?;
                 Ok::<bool, sinex_test_utils::SinexError>(
-                    observed.unwrap_or(0) as usize >= expected_events
+                    observed.unwrap_or(0) as usize >= expected_events,
                 )
             }
         },

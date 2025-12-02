@@ -893,7 +893,10 @@ pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
 /// ```
 pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
     async fn safe_count(pool: &DbPool, sql: &str) -> Result<i64> {
-        match sqlx::query_scalar::<_, Option<i64>>(sql).fetch_one(pool).await {
+        match sqlx::query_scalar::<_, Option<i64>>(sql)
+            .fetch_one(pool)
+            .await
+        {
             Ok(opt) => Ok(opt.unwrap_or(0)),
             Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P01") => {
                 Ok(0)

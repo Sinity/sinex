@@ -5,8 +5,8 @@ use async_nats::jetstream;
 use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::query_helpers::ulid_to_uuid;
-use sinex_core::DbPool;
 use sinex_core::types::Ulid;
+use sinex_core::DbPool;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::{
@@ -117,11 +117,10 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
     async fn ensure_events(label: &str, pool: &DbPool, ids: &[Ulid]) -> Result<()> {
         let expected = ids.len() as i64;
-        let current: Option<i64> = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
-        )
-        .fetch_one(pool)
-        .await?;
+        let current: Option<i64> =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'")
+                .fetch_one(pool)
+                .await?;
         let have = current.unwrap_or(0);
         if have < expected {
             let deficit = (expected - have) as usize;

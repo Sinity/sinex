@@ -11,6 +11,7 @@
 ### Design Philosophy: Multi-Watcher System Monitoring
 
 **Core Concept:**
+
 ```
 System Satellite
     ├─ JournalWatcher (journald logs)
@@ -24,12 +25,14 @@ Event emitter → NATS JetStream
 ```
 
 **Benefits:**
+
 - ✅ Comprehensive system-level event capture
 - ✅ Each watcher specialized for its domain
 - ✅ Independent operation (one failure doesn't stop others)
 - ✅ Unified event channel for consistency
 
 **Components:**
+
 1. **JournalWatcher** - systemd journal monitoring with cursor tracking
 2. **SystemdWatcher** - systemd unit state change monitoring
 3. **DbusWatcher** - D-Bus message bus monitoring (session + system)
@@ -103,6 +106,7 @@ async fn import_historical(&mut self, tx: &mpsc::UnboundedSender<Event<JsonValue
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Cursor-based resume (no duplicate events after restart)
 - ✅ Batch processing (100 events/batch reduces channel overhead)
 - ✅ Configurable historical depth (import last N hours)
@@ -156,6 +160,7 @@ async fn follow_journal_inner(&mut self, tx: &mpsc::UnboundedSender<Event<JsonVa
 ```
 
 **Analysis:**
+
 - ✅ Streaming via `--follow`
 - ✅ Cursor updated on every event (crash-safe)
 - ✅ Graceful channel closure handling
@@ -178,10 +183,12 @@ async fn save_cursor(&self, cursor: &str) -> Result<()> {
 ```
 
 **Analysis:**
+
 - ✅ Simple, effective persistence
 - ⚠️ **ISSUE:** No atomic write (crash during write = corrupted cursor)
 - ⚠️ **ISSUE:** Called on every event (unnecessary I/O)
 - 💡 **RECOMMENDATION:**
+
   ```rust
   async fn save_cursor_atomic(&self, cursor: &str) -> Result<()> {
       let temp_file = format!("{}.tmp", cursor_file);
@@ -193,6 +200,7 @@ async fn save_cursor(&self, cursor: &str) -> Result<()> {
 ### Journal Entry Parsing
 
 **Format:**
+
 ```json
 {
   "__CURSOR": "s=abc123...",
@@ -206,6 +214,7 @@ async fn save_cursor(&self, cursor: &str) -> Result<()> {
 ```
 
 **Parsing Logic:**
+
 ```rust
 fn parse_journal_entry(&self, entry: &serde_json::Value) -> Option<Event<JsonValue>> {
     let message = entry["MESSAGE"].as_str()?;
@@ -227,6 +236,7 @@ fn parse_journal_entry(&self, entry: &serde_json::Value) -> Option<Event<JsonVal
 ```
 
 **Analysis:**
+
 - ✅ Structured JSON parsing
 - ✅ Extracts key metadata (cursor, unit, priority, PID)
 - ⚠️ **ISSUE:** No validation of entry structure (malformed entries silently skipped)
@@ -295,6 +305,7 @@ async fn get_unit_status(&self, tx: &mpsc::UnboundedSender<Event<JsonValue>>) ->
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Timeout on each line read (prevents hangs)
 - ✅ Explicit child process cleanup
 - ✅ Configurable unit type filtering
@@ -305,6 +316,7 @@ async fn get_unit_status(&self, tx: &mpsc::UnboundedSender<Event<JsonValue>>) ->
 ### Status Line Parsing
 
 **Format:**
+
 ```
 ● nginx.service - A high performance web server
   Loaded: loaded (/lib/systemd/system/nginx.service; enabled)
@@ -352,6 +364,7 @@ fn parse_unit_status(&self, line: &str) -> Option<Event<JsonValue>> {
 ```
 
 **Analysis:**
+
 - ✅ Clear parsing logic
 - ✅ Handles multiple unit states
 - ⚠️ **CRITICAL ISSUE:** unit_name = "unknown" for Active: line parsing!
@@ -418,6 +431,7 @@ async fn monitor_systemd_journal(&self, tx: mpsc::UnboundedSender<Event<JsonValu
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Automatic reconnection with exponential backoff
 - ✅ Timeout on line reads (5 second default)
 - ✅ Explicit child cleanup
@@ -454,6 +468,7 @@ fn parse_systemd_journal_entry(&self, line: &str) -> Option<Event<JsonValue>> {
 ```
 
 **Analysis:**
+
 - ✅ Simple string matching for state changes
 - ✅ Extracts PID from journal metadata
 - ⚠️ **ISSUE:** String matching ("Started ", "Stopped ") is fragile
@@ -515,6 +530,7 @@ pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<Event<JsonValu
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Concurrent session + system bus monitoring
 - ✅ Automatic task cleanup on failure
 - ⚠️ **ISSUE:** If one bus fails, all monitoring stops
@@ -571,6 +587,7 @@ async fn monitor_bus_inner(
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** MatchRule for efficient filtering (kernel-side)
 - ✅ **EXCELLENT:** Bounded channel (1000) prevents memory bloat
 - ✅ Separate worker task for processing (non-blocking)
@@ -612,6 +629,7 @@ fn extract_message_data(msg: &Message) -> Result<DbusMessageData> {
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Comprehensive metadata extraction
 - ✅ Serializes D-Bus arguments to JSON
 - ✅ Captures interface, path, member (full message context)
@@ -662,6 +680,7 @@ fn process_dbus_message(msg_data: DbusMessageData, bus_type: DBusType, config: &
 ```
 
 **Analysis:**
+
 - ✅ **EXCELLENT:** Specialized payloads for common interfaces
 - ✅ Generic fallback for unknown messages
 - ✅ Covers major desktop services (NetworkManager, UPower, Bluez, etc.)
@@ -682,6 +701,7 @@ pub struct UdevWatcher {
 ### Polling-Based Monitoring (Fallback Implementation)
 
 **Why Polling?**
+
 - `libudev` crate disabled (external dependency)
 - Falls back to filesystem polling
 - Monitors `/sys/class/` for device changes
@@ -733,6 +753,7 @@ async fn monitor_udev_events(&self, tx: mpsc::UnboundedSender<Event<JsonValue>>)
 ```
 
 **Analysis:**
+
 - ✅ Works without external dependencies
 - ✅ Detects both additions and removals
 - ✅ Focuses on relevant device classes (net, block, USB, etc.)
@@ -781,6 +802,7 @@ let serial = properties.get("ID_SERIAL_SHORT")
 ```
 
 **Analysis:**
+
 - ✅ Comprehensive event types (add, remove, change, bind/unbind)
 - ✅ Fallback chains for vendor/model (database → raw)
 - ⚠️ **CRITICAL ISSUE:** Properties HashMap is **empty** in polling implementation!
@@ -796,20 +818,24 @@ let serial = properties.get("ID_SERIAL_SHORT")
 ### Issue 1: Duplicate journalctl Processes (MEDIUM)
 
 **Files:**
+
 - `journal_watcher.rs:273`
 - `systemd_watcher.rs:354`
 
 **Issue:**
+
 - JournalWatcher runs `journalctl --follow`
 - SystemdWatcher runs `journalctl --follow _SYSTEMD_UNIT=*`
 - Two separate processes doing nearly identical work
 
 **Impact:**
+
 - Double resource usage (2× memory, CPU, disk I/O)
 - Duplicate events for systemd unit messages
 - Complexity in event deduplication downstream
 
 **Recommendation:**
+
 ```rust
 // Consolidate into single JournalWatcher
 // Post-process events to route systemd-specific ones to SystemdWatcher handler
@@ -827,16 +853,19 @@ fn route_journal_event(entry: &JournalEntry) -> EventType {
 **File:** `udev_watcher.rs:177`
 
 **Issue:**
+
 ```rust
 let mut poll_interval = tokio::time::interval(Duration::from_secs(5));
 ```
 
 **Problem:**
+
 - 5-second polling = 0-5s latency to detect devices
 - Transient devices (USB drive quickly unplugged) missed entirely
 - Inefficient (checks filesystem even when no changes)
 
 **Scenario:**
+
 ```
 User plugs in USB drive
   → Waits 2.3s for next poll
@@ -848,11 +877,13 @@ User plugs in USB drive
 ```
 
 **Impact:**
+
 - High latency device detection
 - Missed transient events
 - Poor user experience
 
 **Recommendation:**
+
 ```rust
 // Use inotify to watch /sys/class for real-time events
 use tokio::fs::File;
@@ -878,21 +909,25 @@ loop {
 **File:** `udev_watcher.rs:207`
 
 **Issue:**
+
 ```rust
 let properties = std::collections::HashMap::with_capacity(8);  // Empty!
 ```
 
 **Problem:**
+
 - Properties HashMap created but never populated
 - All device metadata (vendor, model, serial) = None
 - Makes device events nearly useless
 
 **Impact:**
+
 - Cannot identify devices ("USB device connected" without vendor/model)
 - Cannot correlate device identity across add/remove
 - No way to filter by device type downstream
 
 **Recommendation:**
+
 ```rust
 async fn read_device_properties(device_path: &Path) -> HashMap<String, String> {
     let mut properties = HashMap::new();
@@ -924,6 +959,7 @@ async fn read_device_properties(device_path: &Path) -> HashMap<String, String> {
 **File:** `systemd_watcher.rs:200-220`
 
 **Issue:**
+
 ```rust
 // Parse unit header
 if line.starts_with("● ") {
@@ -940,17 +976,20 @@ if line.trim().starts_with("Active: ") {
 ```
 
 **Problem:**
+
 - Unit name extracted from header line
 - Active status parsed on separate line
 - No state maintained between lines
 - All status events have `unit_name: "unknown"`
 
 **Impact:**
+
 - Cannot correlate unit status with unit identity
 - All events essentially useless (which unit failed/started?)
 - Makes systemd monitoring broken
 
 **Recommendation:**
+
 ```rust
 struct UnitParser {
     current_unit: Option<String>,
@@ -983,6 +1022,7 @@ impl UnitParser {
 **File:** `dbus_watcher.rs:line ~241` (inferred from monitor loop)
 
 **Issue:**
+
 ```rust
 loop {
     let msg = conn.next_msg().await?;  // No timeout!
@@ -990,16 +1030,19 @@ loop {
 ```
 
 **Problem:**
+
 - `next_msg()` can block indefinitely
 - If D-Bus daemon hangs, watcher hangs
 - No heartbeat/liveness check
 
 **Impact:**
+
 - Silent monitoring failure
 - No automatic recovery
 - Manual restart required
 
 **Recommendation:**
+
 ```rust
 loop {
     let msg = tokio::time::timeout(
@@ -1026,6 +1069,7 @@ loop {
 **File:** `journal_watcher.rs:follow_journal_inner` (line ~350 inferred)
 
 **Issue:**
+
 ```rust
 for event in events {
     // ... process event
@@ -1037,17 +1081,20 @@ for event in events {
 ```
 
 **Problem:**
+
 - Cursor saved to file on *every* journal event
 - High-volume systems: 100+ events/second
 - Unnecessary filesystem I/O (sync writes)
 - Wear on SSDs
 
 **Impact:**
+
 - Performance degradation
 - Unnecessary disk wear
 - Latency spikes
 
 **Recommendation:**
+
 ```rust
 // Batch cursor saves
 let mut cursor_save_interval = tokio::time::interval(Duration::from_secs(10));
@@ -1075,17 +1122,20 @@ loop {
 **File:** `dbus_watcher.rs:244`
 
 **Issue:**
+
 ```rust
 let (msg_tx, mut msg_rx) = mpsc::channel::<DbusMessageData>(1000);
 ```
 
 **Problem:**
+
 - Fixed 1000-message buffer
 - On busy systems (desktop with many apps), buffer fills
 - Once full, `msg_tx.send()` blocks main message loop
 - Messages lost or delayed
 
 **Scenario:**
+
 ```
 Desktop system with:
 - 50 applications
@@ -1099,11 +1149,13 @@ Main loop blocks
 ```
 
 **Impact:**
+
 - Message loss on busy systems
 - Blocking cascades to D-Bus daemon
 - Monitoring stops working
 
 **Recommendation:**
+
 ```rust
 const DBUS_BUFFER_SIZE: usize = 10_000;  // Larger buffer
 const DBUS_BUFFER_OVERFLOW_THRESHOLD: usize = 9_000;  // 90% full
@@ -1123,6 +1175,7 @@ if msg_tx.capacity() < DBUS_BUFFER_OVERFLOW_THRESHOLD {
 **Files:** All watchers (journal, systemd, dbus, udev)
 
 **Issue:**
+
 ```rust
 let system_bootstrap_id = EventId::from_ulid(
     Ulid::from_bytes([0x01, 0x80, 0x00, ...])  // Same hardcoded ID everywhere
@@ -1131,16 +1184,19 @@ let provenance = Provenance::from_synthesis_safe(system_bootstrap_id, vec![]);
 ```
 
 **Problem:**
+
 - All system events share same bootstrap ID
 - Cannot distinguish provenance by watcher
 - Loses information about event source
 
 **Impact:**
+
 - All system events appear to come from same source
 - Cannot query "all D-Bus events" vs "all journal events"
 - Provenance tracking less useful
 
 **Recommendation:**
+
 ```rust
 // Unique bootstrap ID per watcher
 const JOURNAL_BOOTSTRAP_ID: [u8; 16] = [0x01, 0x80, 0x01, ...];
@@ -1154,6 +1210,7 @@ const UDEV_BOOTSTRAP_ID: [u8; 16] = [0x01, 0x80, 0x04, ...];
 **File:** `journal_watcher.rs:save_cursor`
 
 **Issue:**
+
 ```rust
 async fn save_cursor(&self, cursor: &str) -> Result<()> {
     if let Some(ref cursor_file) = self.config.cursor_file {
@@ -1164,16 +1221,19 @@ async fn save_cursor(&self, cursor: &str) -> Result<()> {
 ```
 
 **Problem:**
+
 - `write()` is not atomic
 - Crash during write = corrupted cursor file
 - Empty/partial file on restart = full journal replay
 
 **Impact:**
+
 - Data loss on crash
 - Potentially thousands of duplicate events
 - Hours of reprocessing
 
 **Recommendation:**
+
 ```rust
 async fn save_cursor_atomic(&self, cursor: &str) -> Result<()> {
     if let Some(ref cursor_file) = self.config.cursor_file {
@@ -1193,22 +1253,26 @@ async fn save_cursor_atomic(&self, cursor: &str) -> Result<()> {
 **Missing Metrics:**
 
 **Journal:**
+
 - `system_journal_entries_total` - Total entries processed
 - `system_journal_cursor_saves_total` - Cursor save operations
 - `system_journal_reconnects_total` - Reconnection count
 - `system_journal_import_duration_seconds` - Historical import time
 
 **Systemd:**
+
 - `system_systemd_units_monitored` - Units being tracked
 - `system_systemd_state_changes_total{unit, from_state, to_state}` - State transitions
 - `system_systemd_reconnects_total` - Journal reconnections
 
 **D-Bus:**
+
 - `system_dbus_messages_total{bus_type, msg_type}` - Message counts
 - `system_dbus_buffer_fill_ratio` - Buffer utilization (0-1)
 - `system_dbus_reconnects_total{bus_type}` - Connection failures
 
 **Udev:**
+
 - `system_udev_devices_total{action, device_type}` - Device events
 - `system_udev_poll_duration_seconds` - Filesystem scan time
 - `system_udev_devices_tracked` - Current device count
@@ -1221,42 +1285,49 @@ Add comprehensive metrics using `metrics` crate.
 ## ✅ Architectural Strengths
 
 ### 1. Cursor-Based Journal Resume (⭐⭐⭐⭐⭐)
+
 - Resume from last position after restart
 - No duplicate events
 - File-based persistence
 - Crash-safe (with atomic writes)
 
 ### 2. Batch Processing (⭐⭐⭐⭐⭐)
+
 - 100-event batches reduce channel overhead
 - Efficient memory usage
 - Configurable batch size
 - Amortizes synchronization cost
 
 ### 3. Multi-Watcher Architecture (⭐⭐⭐⭐)
+
 - Independent operation (one failure doesn't stop others)
 - Specialized for each domain
 - Unified event channel
 - Clean separation of concerns
 
 ### 4. D-Bus Match Rules (⭐⭐⭐⭐⭐)
+
 - Kernel-side filtering (efficient)
 - Captures signals + method calls
 - Interface-based routing
 - Minimal overhead
 
 ### 5. Exponential Backoff Reconnection (⭐⭐⭐⭐)
+
 - Automatic recovery from failures
 - Prevents thundering herd
 - Configurable retry limits
 - Used in systemd + D-Bus watchers
 
 ### 6. Timeout on External Commands (⭐⭐⭐⭐)
+
 - Prevents indefinite hangs
 - Configurable timeout (5s default)
 - Explicit child cleanup
 - Used in systemd watcher
 
 ### 7. Comprehensive Event Types (⭐⭐⭐⭐)
+
 - Specialized payloads (NetworkManager, UPower, Bluez, etc.)
 - Generic fallback for unknown messages
 - Rich metadata extraction
@@ -1332,26 +1403,31 @@ Add comprehensive metrics using `metrics` crate.
 ## 📊 System Satellite Summary
 
 **Code Quality:** ⭐⭐⭐⭐ (4/5)
+
 - Well-structured multi-watcher design
 - Some critical bugs (udev properties, systemd parser state)
 - Good use of async/await
 
 **Architecture:** ⭐⭐⭐⭐ (4/5)
+
 - Clean separation of watchers
 - Unified event channel
 - Independent operation
 
 **Reliability:** ⭐⭐⭐ (3/5)
+
 - Good reconnection logic
 - Missing timeouts in critical paths
 - Non-atomic cursor persistence
 
 **Performance:** ⭐⭐⭐ (3/5)
+
 - Batch processing excellent
 - Cursor saved too frequently
 - Udev polling very inefficient
 
 **Completeness:** ⭐⭐⭐ (3/5)
+
 - Journal: Complete
 - Systemd: Functional but buggy
 - D-Bus: Excellent

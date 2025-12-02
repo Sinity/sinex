@@ -42,6 +42,7 @@ define_string_type!(SchemaVersion);    // Semantic versions
 **Invariant Enforced**: The compiler prevents using an `EventSource` where an `EventType` is expected. This catches configuration bugs, routing errors, and semantic confusion at compile time.
 
 **Example Bug Prevented**:
+
 ```rust
 // COMPILE ERROR - types don't match!
 let source = EventSource::from("fs-watcher");
@@ -201,6 +202,7 @@ impl<T> NonEmptyVec<T> {
 ```
 
 **Usage in Provenance**:
+
 ```rust
 pub enum Provenance {
     Synthesis {
@@ -243,12 +245,14 @@ pub enum Provenance {
 ```
 
 **Invariants Enforced**:
+
 1. **XOR Constraint**: Every event has **exactly one** provenance type (Material OR Synthesis, never both, never neither)
 2. **Material events MUST have anchor_byte** - it's a required field, not `Option<i64>`
 3. **Synthesis events MUST have source_event_ids** - encoded in struct
 4. **Synthesis source_event_ids MUST be non-empty** - enforced by `NonEmptyVec`
 
 **Impossible States**:
+
 - ❌ Event with both Material AND Synthesis provenance
 - ❌ Event with neither provenance type
 - ❌ Material event without anchor_byte
@@ -310,6 +314,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 **Illegal State Made Impossible**: Cannot call `.build()` without first calling `.with_provenance()`.
 
 **Example**:
+
 ```rust
 let builder = Event::builder(payload);
 
@@ -378,11 +383,13 @@ impl ReplayState {
 ```
 
 **Invariants Enforced**:
+
 1. **Validated State Transitions**: Runtime check validates all state changes
 2. **Exhaustive Matching**: Enum forces handling all states in match expressions
 3. **Terminal State Detection**: Cannot progress from terminal states
 
 **State Machine Validation**: `state_machine.rs:349`
+
 ```rust
 if !meta.state.can_transition_to(new_state) {
     return Err(eyre!(
@@ -504,6 +511,7 @@ pub enum InstanceMode {
 **Invariant**: A satellite instance is in exactly one mode at a time. The enum prevents mixed states.
 
 **Usage Pattern**: `coordination.rs:167-220`
+
 ```rust
 match self.determine_desired_mode().await? {
     InstanceMode::Leader => {
@@ -529,6 +537,7 @@ match self.determine_desired_mode().await? {
 ### 3.1 Empty String Validation → Validated NewType
 
 **Current**: `validation.rs:328-339`
+
 ```rust
 fn validate_envelope(&self, source: &str, event_type: &str) -> ValidationResult {
     if source.trim().is_empty() {
@@ -578,6 +587,7 @@ define_string_type_validated!(EventType, NonEmptyString);
 ### 3.2 Payload Size Limits → Bounded Types
 
 **Current**: `validation.rs:341-352`
+
 ```rust
 fn check_payload_size(&self, payload: &JsonValue) -> ValidationResult {
     let payload_bytes = serde_json::to_vec(payload)
@@ -629,6 +639,7 @@ type EventPayload = BoundedJson<524_288>; // 512 KiB max
 ### 3.3 Duplicate Parent ID Detection → Unique Collection
 
 **Current**: `validation.rs:309-327`
+
 ```rust
 fn validate_provenance(&self, provenance: &Provenance) -> ValidationResult {
     match provenance {
@@ -700,6 +711,7 @@ pub enum Provenance {
 ### 3.4 State Transition Validation → Type-State State Machine
 
 **Current**: `state_machine.rs:349-355`
+
 ```rust
 if !meta.state.can_transition_to(new_state) {
     return Err(eyre!(
@@ -772,6 +784,7 @@ impl ReplayOperation<Previewed> {
 ### 3.5 ULID Timestamp Drift → Validated ULID Type
 
 **Current**: `validation.rs:297-308`
+
 ```rust
 fn validate_ulid_timestamp(&self, event: &Event<JsonValue>) -> ValidationResult {
     if let (Some(id), Some(ts_orig)) = (&event.id, event.ts_orig) {
@@ -816,6 +829,7 @@ impl ValidatedUlid {
 ### 3.6 Null Byte Detection → ValidatedString
 
 **Current**: `integrity.rs:166-168`
+
 ```rust
 if source.contains('\0') {
     anomalies.push("event source contains null bytes".to_string());
@@ -853,6 +867,7 @@ define_string_type_validated!(EventSource, NullFreeString);
 ### 3.7 Object Payload Validation → Typed Payload
 
 **Current**: `validation.rs:353-362`
+
 ```rust
 fn ensure_object_payload(&self, payload: &JsonValue) -> ValidationResult {
     if !payload.is_object() {
@@ -887,6 +902,7 @@ pub struct Event<T = serde_json::Map<String, JsonValue>> {
 ### 3.8 Work Completion Checks → Phantom-Type Counter
 
 **Current**: `coordination.rs:697-709`
+
 ```rust
 async fn check_work_complete(&self) -> Result<bool> {
     let tracker = self.work_tracker.read().await;
@@ -966,6 +982,7 @@ The codebase uses a **three-tier validation approach**:
 ### 2. **Zero-Cost Abstractions**
 
 Heavy use of:
+
 - **Phantom types** (no runtime overhead)
 - **Transparent serialization** (`#[serde(transparent)]`)
 - **Newtypes** (compiled away to raw representation)
@@ -977,6 +994,7 @@ Heavy use of:
 ### 3. **Impossible States Design**
 
 The codebase makes extensive use of:
+
 - **NonEmptyVec** for required collections
 - **Type-state patterns** for builder validation
 - **Enum-based XOR constraints** (Material vs Synthesis provenance)

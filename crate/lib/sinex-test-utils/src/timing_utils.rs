@@ -758,15 +758,13 @@ mod tests {
         }
 
         // Use timing utils to wait
-        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 3, 15).await.unwrap_or(0);
+        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 3, 15)
+            .await
+            .unwrap_or(0);
         if count < 3 {
             for j in 0..(3 - count) {
-                ctx.create_test_event(
-                    "timing-test",
-                    "integration",
-                    json!({"topup": j}),
-                )
-                .await?;
+                ctx.create_test_event("timing-test", "integration", json!({"topup": j}))
+                    .await?;
             }
         }
 

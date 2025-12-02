@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 
-use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
 use crate::annex::blob_manager::BLOB_EVENT_CHANNEL_CAPACITY;
+use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
 use crate::{
     annex::{AnnexConfig, BlobManager, BlobMetadata},
     SatelliteError, SatelliteResult,

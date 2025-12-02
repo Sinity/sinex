@@ -191,8 +191,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     hasher.update(b"slice 2 data");
     hasher.update(b"slice 3 data");
     let content_hash = hasher.finalize().to_hex();
-    let expected_size: i64 = (b"slice 0 data".len() + b"slice 2 data".len() + b"slice 3 data".len())
-        as i64;
+    let expected_size: i64 =
+        (b"slice 0 data".len() + b"slice 2 data".len() + b"slice 3 data".len()) as i64;
 
     // Publish end message
     let end_msg = serde_json::json!({
