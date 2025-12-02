@@ -1,3 +1,5 @@
+> **Historical note:** Pre–JetStream brainstorming that still mentions sensd/gRPC-era boundaries. Keep for ideation only; current architecture is JetStream-only (`docs/way.md`).
+
 > Senses (Staging Agents): Declaratively configured, continuously running file/stream watchers that acquire raw data from the external world.
 
 > Perception (Ingestors): The first layer of processing. An ingestor is a processor that interprets a raw Source Material blob and translates it into a stream of structured, raw core.events.

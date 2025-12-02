@@ -963,8 +963,14 @@ in
         options = {
           enableAgenix = mkOption {
             type = bool;
-            default = false;
-            description = "Enable agenix integration for secret management (planned).";
+            default = true;
+            description = "Enable agenix integration for secret management.";
+          };
+
+          gatewayAdminTokenFile = mkOption {
+            type = nullOr str;
+            default = null;
+            description = "Path to the gateway admin token file (typically under /run/agenix/...). If unset while the gateway is enabled, the unit will refuse to start.";
           };
         };
       };
@@ -988,6 +994,11 @@ in
       dbUser = cfg.database.user;
       dbCfg = cfg.database;
       databaseUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
+      secretPaths = config.sinex.secrets.paths or {};
+      gatewayAdminTokenFile =
+        if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
+        else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
+        else null;
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
@@ -1032,6 +1043,10 @@ in
           {
             assertion = cfg.package != null;
             message = "services.sinex.package must be set when services.sinex.enable = true.";
+          }
+          {
+            assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || gatewayAdminTokenFile != null;
+            message = "Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile or provide an agenix secret named sinex-gateway-admin-token.";
           }
         ];
         environment.systemPackages = mkAfter (

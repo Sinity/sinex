@@ -1,3 +1,5 @@
+> **Historical note:** Pre–JetStream draft that predates the sensd/gRPC deprecation. Retain for archival ideas only—implementation guidance now lives in `docs/way.md` and `docs/vision/project-target-state.md`.
+
 This is the perfect time to consolidate our extensive discussions into a single, comprehensive architectural document. The process of writing it will solidify the principles and provide a canonical reference for all future development.
 
 This document will synthesize everything we've talked about: the "Deep Oneness," the declarative flow engine, the active inference loop, the role of the knowledge graph, and the refined data lifecycle. It is the blueprint for the Sinex exocortex.

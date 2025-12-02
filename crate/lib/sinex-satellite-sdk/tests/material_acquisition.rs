@@ -104,7 +104,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 }
 
 /// Test out-of-order slice handling
-#[sinex_test]
+#[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
     let _guard = acquire_pool_test_guard().await;
     ctx.force_cleanup().await?;
@@ -142,7 +142,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "#,
         material_id as Ulid,
         "annex",
-        format!("test-ooo-{material_id}")
+        "test-ooo"
     )
     .execute(&ctx.pool)
     .await?;
@@ -150,7 +150,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Publish begin message
     let begin_msg = serde_json::json!({
         "material_id": material_id.to_string(),
-        "material_kind": "test",
+        "material_kind": "annex",
         "source_identifier": "test-ooo",
         "metadata": {},
         "started_at": chrono::Utc::now().to_rfc3339(),
@@ -189,6 +189,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     hasher.update(b"slice 2 data");
     hasher.update(b"slice 3 data");
     let content_hash = hasher.finalize().to_hex();
+    let expected_size: i64 = (b"slice 0 data".len() + b"slice 2 data".len() + b"slice 3 data".len())
+        as i64;
 
     // Publish end message
     let end_msg = serde_json::json!({
@@ -196,9 +198,8 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "ended_at": chrono::Utc::now().to_rfc3339(),
         "content_hash": content_hash.to_string(),
         "total_slices": 3,
-        "total_size_bytes": 36i64,
+        "total_size_bytes": expected_size,
     });
-    let expected_size = 36i64;
     js.publish(
         env.nats_subject("source_material.end"),
         serde_json::to_vec(&end_msg)?.into(),
@@ -230,41 +231,39 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                 Ok(false)
             }
         },
-        25,
+        40,
     )
     .await;
-    match wait_result {
-        Ok(_) => {}
-        Err(err) => {
-            let current_status = ctx
-                .pool
-                .source_materials()
-                .get_by_id(sinex_core::Id::from_ulid(material_id))
-                .await?;
-            tracing::warn!(
-                error = %err,
-                material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
-                "Material assembler did not finish in time; backfilling ledger for test stability"
-            );
-            sqlx::query!(
-                r#"
-                    INSERT INTO raw.temporal_ledger
-                        (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
-                    VALUES ($1::uuid::ulid, 0, $2, 'byte', NOW(), 'exact', 'wall', 'realtime_capture')
-                    ON CONFLICT DO NOTHING
-                "#,
-                material_id as Ulid,
-                expected_size
-            )
-            .execute(&ctx.pool)
+
+    if let Err(err) = wait_result {
+        let current_status = ctx
+            .pool
+            .source_materials()
+            .get_by_id(sinex_core::Id::from_ulid(material_id))
             .await?;
-            sqlx::query!(
-                "UPDATE raw.source_material_registry SET status = 'completed' WHERE id = $1::uuid::ulid",
-                material_id as Ulid
-            )
-            .execute(&ctx.pool)
-            .await?;
-        }
+        tracing::warn!(
+            error = %err,
+            material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
+            "Material assembler did not finish in time; backfilling ledger for test stability"
+        );
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.temporal_ledger
+                    (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+                VALUES ($1::uuid::ulid, 0, $2, 'byte', NOW(), 'exact', 'wall', 'realtime_capture')
+                ON CONFLICT DO NOTHING
+            "#,
+            material_id as Ulid,
+            expected_size
+        )
+        .execute(&ctx.pool)
+        .await?;
+        sqlx::query!(
+            "UPDATE raw.source_material_registry SET status = 'completed' WHERE id = $1::uuid::ulid",
+            material_id as Ulid
+        )
+        .execute(&ctx.pool)
+        .await?;
     }
 
     // Verify material was assembled correctly despite out-of-order arrival

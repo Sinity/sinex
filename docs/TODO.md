@@ -6,11 +6,82 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
 
 > **Fail-first guarantee:** Every open task below cites at least one Nextest case or regression that currently fails. If a listed test turns green without the corresponding fix, update this tracker immediately so we don't lose signal.
 
+## Core Architecture & Control Plane (New Findings 2025-12-02)
+
+39. **RPC dispatcher is a stub**  
+    - **Files:** `crate/core/sinex-rpc-dispatcher/src/lib.rs`.  
+    - **Steps:** Implement scan (historical/continuous) routing and `ExplorationProvider` so RPC calls fan out to satellites via JetStream instead of returning `NotImplemented`.  
+    - **Tests:** Add integration tests that drive `sinex-rpc-dispatcher` against ephemeral NATS + a fake satellite and assert scan/explore responses traverse the bus. Current behaviour: methods return `SatelliteError::NotImplemented`.
+
+40. **Desktop satellite continuous monitoring is stubbed**  
+    - **Files:** `crate/satellites/sinex-desktop-satellite/src/unified_processor.rs`, `window_manager.rs`, `clipboard.rs`.  
+    - **Steps:** Wire real clipboard/window watchers (no `hyprctl`/`xdotool` shellouts), start background tasks in `start_continuous_monitoring`, and emit events via `AcquisitionManager`.  
+    - **Tests:** Add integration tests that assert watchers emit focus/title/clipboard events and stop cleanly on shutdown; current code only logs “monitoring_started”.
+
+41. **Terminal satellite lacks historical scan**  
+    - **Files:** `crate/satellites/sinex-terminal-satellite/src/unified_processor.rs`.  
+    - **Steps:** Implement historical scan (or explicitly remove the mode) instead of returning “Historical replay is not supported”; ensure continuous mode exits cleanly without `pending().await`.  
+    - **Tests:** Add fail-first tests covering both historical and continuous modes lifecycle.
+
+42. **Knowledge graph path search is stubbed**  
+    - **Files:** `crate/lib/sinex-core/src/db/repositories/knowledge_graph.rs`.  
+    - **Steps:** Implement `find_paths` using recursive CTEs (or graph extension) to return real paths between entities; remove placeholder `Ok(vec![])`.  
+    - **Tests:** Add property/integration tests that create small graphs and assert path discovery works.
+
+43. **Annex path safety & symlink lookup hardening**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `secure_blob_manager_patch.rs`.  
+    - **Steps:** Integrate the secure path patch (reject traversal/symlink tricks), replace brittle `find_symlink_path` assumptions with annex queries, and extend validation to cover percent-encoded traversal.  
+    - **Tests:** Extend `path_validation_test`/blob manager tests with traversal and symlink escape cases; ensure failures are recorded instead of served.
+
+44. **Native messaging auth not fully exercised**  
+    - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`.  
+    - **Steps:** Add end-to-end tests with a fake browser extension manifest to prove allow/deny semantics beyond unit auth checks; ensure logging isn’t the only guard.  
+    - **Tests:** Integration test that simulates real native messaging payloads and asserts rejections/acceptance per configured IDs/secrets.
+
+45. **Gateway insecure bypass remains enabled**  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, docs.  
+    - **Steps:** Gate or remove `SINEX_GATEWAY_ALLOW_INSECURE=1` in production profiles; document dev-only usage and add a test that fails when the env is set in non-dev mode.  
+    - **Tests:** Integration test that asserts RPC startup fails without a token unless explicitly in dev/insecure mode.
+
+46. **Build stamping is hardcoded**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/version.rs`, build scripts.  
+    - **Steps:** Restore build-time git revision/binary hash injection for release artifacts; wire into Nix/CI builds.  
+    - **Tests:** Unit test that the version struct carries non-placeholder values in test builds; CI check that release builds fail on `"dev-unknown"`/`"hash-component"`.
+
+47. **Edge-mode satellites still require Postgres**  
+    - **Files:** `crate/lib/sinex-satellite-sdk` (checkpoint manager, schema cache), `crate/core/sinex-ingestd`.  
+    - **Steps:** Implement a NATS-only “pure edge” mode:
+        1. Add a KV-backed checkpoint store in the SDK (bucket `KV_sinex_checkpoints`, CAS per `(processor, consumer_group, consumer_name)`) and feature-flag it; retain DB-backed checkpoints as default.
+        2. Teach ingestd to broadcast active schemas on startup/reload to `system.schemas.active` (snapshot + updates). Satellites subscribe and build the `EventValidator` cache from these messages (optionally persisting locally for restart).
+        3. Allow satellites to run with NATS-only config (no PgPool) when edge mode is enabled; keep SDK dependency intact.
+        4. Once KV + schema broadcast are in place, delete/disable redundant DB-only satellite codepaths and drop their backing tables from the base schema (no new migration—update the squashed schema and reset DB) to avoid parallel modes.  
+    - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
+
+48. **Encryption at rest remains designed, not implemented**  
+    - **Files:** `crate/lib/sinex-schema` (base schema), `docs/roadmap/features/database-encryption-pgsodium.md`, infra scripts.  
+    - **Steps:** Integrate `pgsodium` into the base schema (squashed migration) with managed key handling; expose env/secret wiring in NixOS modules; ensure ingestd/gateway use encrypted columns for sensitive payloads (materials, events).  
+    - **Tests:** VM/integration test that initializes pgsodium, writes/reads encrypted columns, and fails without keys; CI guard that rejects “encryption disabled” builds.
+
+49. **Browser activity capture is missing**  
+    - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.  
+    - **Steps:** Implement the browser extension event source per `docs/roadmap/features/browser-extension.md`: capture URLs/titles/dom summaries with explicit opt-in; publish via native messaging → JetStream. Update native messaging auth to cover this path.  
+    - **Tests:** End-to-end test with a fake extension manifest/payload to ensure events flow to JetStream and are validated; privacy redaction tests for sensitive fields.
+
+50. **JetStream harness load/regression guard**  
+    - **Files:** `crate/lib/sinex-test-utils/src/nats.rs`, JetStream integration tests.  
+    - **Steps:** Add stress/soak tests for `EphemeralNats` and ingestion consumers to catch race/timeouts under load; tune defaults (timeouts, acks) and add monitoring hooks to fail fast in CI.  
+    - **Tests:** Stress suite that publishes many events/material slices and asserts no timeouts/undelivered messages on the reliable profile; flaky-test guard to quarantine regressions.
+
+51. **Agenix secrets integration incomplete/non-functional**  
+    - **Files:** `nixos/modules/secrets.nix`, `nixos/modules/default.nix`, `nixos/modules/secrets-management.md`, service units (ingestd/gateway/satellites).  
+    - **Steps:** Make agenix first-class: wire the agenix module into the flake outputs, define age secret paths (e.g., `/run/agenix/sinex-gateway-token`, TLS keys) and propagate them to systemd units; ensure options work with external NixOS configs (e.g., `/realm/sinnix` deployments) without manual patching. Remove placeholder docs once live.  
+    - **Tests:** NixOS VM test that provisions an age secret, runs `nixos-rebuild switch` with the module enabled, and asserts services fail fast when secrets are missing and start when secrets exist. Add a CI check to prevent fallback to plain env defaults.
+
 ## Gateway Hardening
 
 1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
-   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/architecture/UserInteraction_And_Query_Architecture.md`, CLI.  
-   - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/architecture/UserInteraction_And_Query_Architecture.md`, CLI.  
+    - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
 
 2. **Enforce rate limiting and payload caps on RPC** — ✅ *Guards wired via tower middleware*  
    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `crate/core/sinex-gateway/docs/rpc_server.md`.  
