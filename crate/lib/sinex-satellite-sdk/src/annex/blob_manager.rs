@@ -28,6 +28,8 @@ use tokio::sync::mpsc;
 // Re-export Blob type for compatibility
 pub use sinex_core::Blob as BlobMetadata;
 
+const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
+
 #[derive(Debug)]
 pub struct BlobManager {
     annex: GitAnnex,
@@ -127,6 +129,15 @@ impl BlobManager {
         if let Some(sender) = &self.event_sender {
             let material_id = self.ensure_material_for_blob(blob).await?;
             let event = Self::create_blob_event(event_type, payload, material_id);
+
+            if sender.len() >= BLOB_EVENT_CHANNEL_CAPACITY {
+                warn!(
+                    channel_depth = sender.len(),
+                    "BlobManager event channel full; dropping {} event",
+                    event_type
+                );
+                return Ok(());
+            }
 
             sender
                 .send(event)
@@ -403,7 +414,9 @@ impl BlobManager {
 
             if !expected.is_empty() && computed != expected {
                 // Mark as corrupted and bail.
-                let _ = self.update_verification_status(annex_key, "corrupted").await;
+                let _ = self
+                    .update_verification_status(annex_key, "corrupted")
+                    .await;
                 bail!(
                     "Blob content hash mismatch for {} (expected {}, got {})",
                     annex_key,
@@ -620,6 +633,14 @@ impl BlobManager {
         );
 
         if let Some(sender) = &self.event_sender {
+            if sender.len() >= BLOB_EVENT_CHANNEL_CAPACITY {
+                warn!(
+                    channel_depth = sender.len(),
+                    "BlobManager event channel full; dropping storage.statistics event"
+                );
+                return Ok(());
+            }
+
             sender.send(new_event).map_err(|_| {
                 eyre!("Failed to emit blob storage statistics: event channel closed")
             })?;
