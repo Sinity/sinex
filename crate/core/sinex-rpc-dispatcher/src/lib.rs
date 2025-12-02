@@ -139,20 +139,17 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
             }
             TimeHorizon::Historical { .. } => {
                 info!("RPC dispatcher scanning historical RPC invocations");
-                // In a real implementation, this would scan logs or databases for
-                // historical RPC calls, their responses, and performance metrics
-                return Err(SatelliteError::NotImplemented(
-                    "RPC dispatcher historical scan requires log database access".to_string(),
-                ));
+                warnings.push(
+                    "Historical scan not yet implemented (would pull RPC call history/logs)"
+                        .to_string(),
+                );
             }
             TimeHorizon::Continuous => {
                 info!("RPC dispatcher starting continuous RPC monitoring");
-                // In a real implementation, this would start monitoring RPC calls
-                // in real-time, capturing requests, responses, and metrics
-                return Err(SatelliteError::NotImplemented(
-                    "RPC dispatcher continuous monitoring requires RPC server infrastructure"
+                warnings.push(
+                    "Continuous monitoring not yet implemented (would stream RPC call metrics)"
                         .to_string(),
-                ));
+                );
             }
         }
 
@@ -161,7 +158,7 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
             duration: std::time::Duration::from_millis(
                 (Utc::now() - start_time).num_milliseconds() as u64,
             ),
-            final_checkpoint: from,
+            final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
                 ("rpc_handlers_registered".to_string(), 0),
