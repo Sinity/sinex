@@ -1,10 +1,10 @@
 //! JetStream idempotency scenarios.
 
-use async_nats::{jetstream, Client};
+use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, EphemeralNats, EventOverrides, TestSatellitePublisher};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -21,8 +21,9 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
 
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -49,18 +50,17 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
 
     for _ in 0..event_count {
         let event_id = Ulid::new();
-        let payload = json!({
-            "id": event_id.to_string(),
-            "source": "test",
-            "event_type": "test.idempotency",
-            "ts_orig": "2024-01-01T00:00:00Z",
-            "host": "test-host",
-            "payload": {"iteration": "first"}
-        });
+        let overrides = EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        };
 
-        let subject = env.nats_subject("events.raw.test");
-        js.publish(subject.clone(), payload.to_string().into())
-            .await?
+        publisher
+            .publish_event_with_overrides(
+                "test.idempotency",
+                json!({"iteration": "first"}),
+                overrides.clone(),
+            )
             .await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -76,17 +76,12 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
 
         assert!(event.is_some(), "First publish should succeed");
 
-        let duplicate_payload = json!({
-            "id": event_id.to_string(),
-            "source": "test",
-            "event_type": "test.idempotency",
-            "ts_orig": "2024-01-01T00:00:00Z",
-            "host": "test-host",
-            "payload": {"iteration": "duplicate"}
-        });
-
-        js.publish(subject, duplicate_payload.to_string().into())
-            .await?
+        publisher
+            .publish_event_with_overrides(
+                "test.idempotency",
+                json!({"iteration": "duplicate"}),
+                overrides,
+            )
             .await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -117,8 +112,9 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
 
-    let js = jetstream::new(nats_client.clone());
+    let js = ctx.jetstream().await?;
     let env = ctx.env();
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
 
     let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
@@ -143,28 +139,19 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     let event_id = Ulid::new();
-    let subject = env.nats_subject("events.raw.test");
+    let overrides = EventOverrides {
+        id: Some(event_id),
+        ..Default::default()
+    };
 
     let mut handles = vec![];
     for i in 0..5 {
-        let js_clone = js.clone();
-        let subject_clone = subject.clone();
-        let event_id_clone = event_id;
+        let publisher = publisher.clone();
+        let overrides = overrides.clone();
 
         let handle = tokio::spawn(async move {
-            let payload = json!({
-                "id": event_id_clone.to_string(),
-                "source": "test",
-                "event_type": "test.concurrent",
-                "ts_orig": "2024-01-01T00:00:00Z",
-                "host": "test-host",
-                "payload": {"attempt": i}
-            });
-
-            js_clone
-                .publish(subject_clone, payload.to_string().into())
-                .await
-                .unwrap()
+            publisher
+                .publish_event_with_overrides("test.concurrent", json!({"attempt": i}), overrides)
                 .await
                 .unwrap();
         });

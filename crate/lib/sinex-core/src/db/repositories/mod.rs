@@ -1,5 +1,5 @@
-#![doc = include_str!("../../../doc/db_repositories.md")]
-//! See `doc/db_repositories.md` for the repository architecture overview.
+#![doc = include_str!("../../../docs/db_repositories.md")]
+//! See `docs/db_repositories.md` for the repository architecture overview.
 pub mod blobs;
 pub mod checkpoints;
 pub mod common;

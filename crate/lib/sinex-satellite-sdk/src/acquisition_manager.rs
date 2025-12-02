@@ -356,13 +356,14 @@ impl AcquisitionManager {
 
         // Add headers
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert(
-            "Nats-Msg-Id",
-            format!("{}-{}", material_id, slice_index).as_str(),
-        );
-        headers.insert("Slice-Index", slice_index.to_string().as_str());
-        headers.insert("Offset", offset.to_string().as_str());
-        headers.insert("Chunk-Hash", blake3::hash(data).to_hex().as_str());
+        let msg_id = format!("{}-{}", material_id, slice_index);
+        let slice_index_str = slice_index.to_string();
+        let offset_str = offset.to_string();
+        let chunk_hash = blake3::hash(data).to_hex();
+        headers.insert("Nats-Msg-Id", &msg_id);
+        headers.insert("Slice-Index", &slice_index_str);
+        headers.insert("Offset", &offset_str);
+        headers.insert("Chunk-Hash", &chunk_hash);
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish_with_headers(subject, headers, data.to_vec().into())

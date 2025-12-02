@@ -26,7 +26,7 @@ async fn nats_connect_failure_is_surfaceable() {
 async fn publish_fails_when_nats_is_stopped() {
     let mut nats = EphemeralNats::start().await.expect("nats should start");
     let client = nats.connect().await.expect("connect should succeed");
-    let js = async_nats::jetstream::new(client);
+    let js = nats.jetstream_with_client(client);
 
     // Kill the server process to simulate a hard partition/outage.
     if let Some(mut child) = nats.process.take() {

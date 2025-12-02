@@ -39,3 +39,4 @@ sha2 = "0.10"
 
 [dev-dependencies]
 sinex-test-utils = { path = "../sinex-test-utils" }
+sinex-schema = { path = "../sinex-schema" }

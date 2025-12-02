@@ -42,6 +42,11 @@ streams:
     discard: old        # drop oldest if truly saturated
 ```
 
+Implementation pointers:
+- Satellite producers use the Stage-as-You-Go staging path (`crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs::process_with_staging`) to publish immediately to JetStream instead of buffering in local channels.
+- Ingestd consumes staging subjects via the JetStream consumer (`crate/core/sinex-ingestd/src/jetstream_consumer.rs`) and persists slices before emitting confirmations/DLQ.
+- Channel drain helpers live behind the `channel-testing` feature in `sinex-test-utils`; production code should prefer streaming publishes over draining in-memory queues.
+
 Purpose:
 - Replace brittle in‑process channels (e.g., fixed capacity mpsc).
 - Absorb bursts while preserving order.
@@ -84,4 +89,4 @@ streams:
 ## See Also
 - docs/way.md (authoritative JetStream blueprint)
 - docs/vision/project-target-state.md (historical snapshot; see banner)
-- docs/architecture/security-architecture.md (reliability/attack surface)
+- docs/current/architecture/security-architecture.md (reliability/attack surface)

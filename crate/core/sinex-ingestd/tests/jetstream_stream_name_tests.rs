@@ -1,5 +1,4 @@
 use async_nats::jetstream;
-use color_eyre::eyre::eyre;
 use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
 use std::time::Duration;
 
@@ -8,7 +7,7 @@ async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<(
     let ctx = TestContext::new().await?.with_nats().await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
-    let js = jetstream::new(nats_client);
+    let js = nats.jetstream_with_client(nats_client);
     let env = ctx.env();
 
     let stream_name = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
@@ -23,26 +22,8 @@ async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<(
     })
     .await?;
 
-    wait_for_stream(&js, &stream_name, Duration::from_secs(5)).await?;
+    nats.wait_for_stream(&js, &stream_name, Duration::from_secs(5))
+        .await?;
 
     Ok(())
-}
-
-async fn wait_for_stream(
-    js: &jetstream::Context,
-    name: &str,
-    timeout: Duration,
-) -> color_eyre::Result<()> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        match js.get_stream(name).await {
-            Ok(_) => return Ok(()),
-            Err(err) => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(eyre!("stream {name} not ready: {err}"));
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        }
-    }
 }

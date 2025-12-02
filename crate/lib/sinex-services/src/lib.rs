@@ -1,7 +1,7 @@
-#![doc = include_str!("../doc/README.md")]
-#![doc = include_str!("../../../../docs/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../../../../docs/architecture/security-architecture.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
+#![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../../../../docs/current/architecture/security-architecture.md")]
 
 //! Thin facade that re-exports high-level services used by gateways and satellites.
 

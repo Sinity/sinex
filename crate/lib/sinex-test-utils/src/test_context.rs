@@ -43,7 +43,8 @@ use crate::db_common::verify_clean_state;
 use crate::nats::EphemeralNats;
 use crate::timing_utils::TimingUtils;
 use crate::TestResult;
-use async_nats::Client as NatsClient;
+use async_nats::{jetstream, Client as NatsClient};
+use color_eyre::eyre::eyre;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
@@ -287,6 +288,23 @@ impl TestContext {
         self.nats_client
             .clone()
             .expect("NATS not initialized - call with_nats() first")
+    }
+
+    /// Access the underlying EphemeralNats handle (lifetime-managed by the context).
+    pub fn nats_handle(&self) -> TestResult<Arc<EphemeralNats>> {
+        self.nats
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() first"))
+    }
+
+    /// Get a JetStream context bound to this test's NATS instance.
+    pub async fn jetstream(&self) -> TestResult<jetstream::Context> {
+        let nats = self
+            .nats
+            .as_ref()
+            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() first"))?;
+        nats.jetstream().await
     }
 
     /// Get the Sinex environment for this test context
@@ -585,21 +603,37 @@ impl TestContext {
         &self,
         event: Event<JsonValue>,
     ) -> TestResult<Event<JsonValue>> {
-        if let Provenance::Material { id, .. } = &event.provenance {
-            self.ensure_material_entry(id).await?;
-        }
+        let mut last_err: Option<sinex_core::types::error::SinexError> = None;
 
-        match self.pool.events().insert(event.clone()).await {
-            Ok(inserted) => Ok(inserted),
-            Err(err) => {
-                if let Provenance::Material { id, .. } = &event.provenance {
-                    self.ensure_material_entry(id).await?;
-                    self.pool.events().insert(event).await.map_err(Into::into)
-                } else {
-                    Err(err.into())
+        for attempt in 0..5 {
+            if let Provenance::Material { id, .. } = &event.provenance {
+                self.ensure_material_entry(id).await?;
+            }
+
+            match self.pool.events().insert(event.clone()).await {
+                Ok(inserted) => return Ok(inserted),
+                Err(err) => {
+                    let is_deadlock = err.to_string().to_lowercase().contains("deadlock");
+
+                    if is_deadlock {
+                        tracing::warn!(
+                            attempt,
+                            "Deadlock during insert_with_provenance; retrying after cleanup"
+                        );
+                        self.force_cleanup().await?;
+                    }
+
+                    last_err = Some(err.into());
+                    tokio::time::sleep(Duration::from_millis(50 * (attempt + 1) as u64)).await;
                 }
             }
         }
+
+        if let Some(err) = last_err {
+            return Err(err.into());
+        }
+
+        Err(eyre!("Event insert failed after retries"))
     }
 
     /// Insert multiple events (batch operation)

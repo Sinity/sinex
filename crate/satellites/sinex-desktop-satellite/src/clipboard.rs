@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/clipboard.md")]
+#![doc = include_str!("../docs/clipboard.md")]
 
 // Use local facade for common types
 use crate::common::*;

@@ -10,14 +10,16 @@
 
 use async_nats::{jetstream, Client};
 use serde_json::json;
+use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_satellite_sdk::{
-    AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NatsPublisher,
-    ProcessingModel,
+    AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
 };
-use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
+use sinex_test_utils::{
+    sinex_test, EphemeralNats, EventOverrides, TestContext, TestSatellitePublisher,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -36,7 +38,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     let env = ctx.env();
 
     // Create JetStream context
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
 
     // Bootstrap events_raw stream
     let events_raw_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -101,12 +103,10 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("✅ Automaton JetStream consumer started");
 
-    // Step 3: Publish event using NatsPublisher (satellite simulation)
-    let publisher = NatsPublisher::new(nats_client.clone());
-
-    let test_event = ctx
-        .create_test_event(
-            "test-satellite",
+    // Step 3: Publish event using TestSatellitePublisher (satellite simulation)
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test-satellite");
+    let event_id = publisher
+        .publish_event(
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
@@ -114,19 +114,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
             }),
         )
         .await?;
-
-    let event_id = test_event
-        .id
-        .as_ref()
-        .expect("Event should have ID")
-        .clone();
-
-    // Publish to JetStream using the SDK publisher
-    publisher
-        .publish(&test_event)
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("Publish failed: {}", e))?;
-    info!(event_id = %event_id, "✅ Event published to JetStream via NatsPublisher");
+    info!(event_id = %event_id, "✅ Event published to JetStream via TestSatellitePublisher");
 
     // Step 4: Wait for event to flow through the pipeline
     // Event flow: JetStream → ingestd → DB → confirmation → automaton
@@ -136,7 +124,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     for attempt in 0..30 {
         // Check if event persisted to database
         if !event_persisted {
-            if let Some(event_from_db) = pool.events().get_by_id(event_id.clone()).await? {
+            if let Some(event_from_db) = pool.events().get_by_id(event_id.into()).await? {
                 info!(
                     attempt,
                     event_id = %event_id,
@@ -151,7 +139,7 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
         // Check if automaton received confirmation
         if !confirmation_received {
             let processed_ids = automaton_handler.processed_event_ids().await;
-            if processed_ids.contains(&event_id.as_ulid()) {
+            if processed_ids.contains(&event_id) {
                 info!(
                     attempt,
                     event_id = %event_id,
@@ -210,7 +198,7 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
     let env = ctx.env();
 
     // Create JetStream context and bootstrap streams
-    let js = jetstream::new(nats_client.clone());
+    let js = ctx.jetstream().await?;
     let events_raw_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: events_raw_stream.clone(),
@@ -235,27 +223,20 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // Publish same event 3 times with same event_id (idempotency header)
-    let publisher = NatsPublisher::new(nats_client.clone());
-    let test_event = ctx
-        .create_test_event(
-            "idempotency-test",
-            "test.duplicate",
-            json!({"test": "idempotency"}),
-        )
-        .await?;
-
-    let event_id = test_event
-        .id
-        .as_ref()
-        .expect("Event should have ID")
-        .clone();
-
-    // Publish 3 times
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "idempotency-test");
+    let event_id = Ulid::new();
+    let overrides = EventOverrides {
+        id: Some(event_id),
+        ..Default::default()
+    };
     for i in 1..=3 {
         publisher
-            .publish(&test_event)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Publish failed: {}", e))?;
+            .publish_event_with_overrides(
+                "test.duplicate",
+                json!({"test": "idempotency"}),
+                overrides.clone(),
+            )
+            .await?;
         info!(iteration = i, event_id = %event_id, "Published event");
     }
 
@@ -277,7 +258,11 @@ async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
         "Should have exactly 1 event despite 3 publishes (idempotency)"
     );
     assert_eq!(
-        events[0].id.as_ref().expect("Event should have ID"),
+        events[0]
+            .id
+            .as_ref()
+            .expect("Event should have ID")
+            .as_ulid(),
         &event_id
     );
 

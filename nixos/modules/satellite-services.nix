@@ -24,6 +24,11 @@ let
   databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
 
   natsUrl = concatStringsSep "," satellitesCfg.nats.servers;
+  secretPaths = config.sinex.secrets.paths or {};
+  gatewayAdminTokenFile =
+    if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
+    else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
+    else null;
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
 
@@ -89,6 +94,10 @@ let
         "--database-url ${databaseUrl}"
         "--log-level ${coreCfg.gateway.logLevel}"
       ] ++ coreCfg.gateway.extraArgs);
+      gatewayEnv = mkServiceEnv (
+        [ "RUST_LOG=${coreCfg.gateway.logLevel}" ]
+        ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
+      );
       commonAfter = [ "postgresql.service" ];
     in
     if !coreEnabled then {} else {
@@ -110,13 +119,14 @@ let
         wantedBy = [ "multi-user.target" ];
         after = [ "postgresql.service" ];
         requires = [ "postgresql.service" ];
-        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources (
-          mkServiceEnv [
-            "RUST_LOG=${coreCfg.gateway.logLevel}"
-          ]
-        ) {
-          ExecStart = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
-        };
+        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
+          {
+            ExecStart = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
+          }
+          // optionalAttrs (gatewayAdminTokenFile != null) {
+            ConditionPathReadable = gatewayAdminTokenFile;
+          }
+        );
       };
     };
 

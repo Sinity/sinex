@@ -14,6 +14,21 @@ use sinex_core::{
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
 
+// Default values for created_by fields when not provided by caller
+const DEFAULT_CREATOR_HOST: &str = "sinex-host";
+const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
+const DEFAULT_CREATOR_CLI: &str = "sinex-cli";
+
+// Default values for analytics parameters
+const DEFAULT_ANALYTICS_DAYS_BACK: i64 = 7;
+const DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 60;
+const DEFAULT_HEATMAP_LIMIT: i64 = 100;
+
+// Default values for content/blob handling
+const DEFAULT_BLOB_FILENAME: &str = "content.txt";
+const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
+const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
+
 // Analytics handlers
 
 pub async fn handle_event_count_by_source(
@@ -25,7 +40,7 @@ pub async fn handle_event_count_by_source(
     let days_back = params
         .get("days_back")
         .and_then(|v| v.as_i64())
-        .unwrap_or(7);
+        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
     let end_time = Utc::now();
     let start_time = end_time - Duration::days(days_back);
@@ -40,9 +55,9 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
     let bucket_size_minutes = params
         .get("bucket_size_minutes")
         .and_then(|v| v.as_i64())
-        .unwrap_or(60) as i32;
+        .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES) as i32;
 
-    let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(100) as i32;
+    let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
 
     let heatmap = service.activity_heatmap(bucket_size_minutes, limit).await?;
     Ok(json!(heatmap))
@@ -83,7 +98,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
     let created_by = params
         .get("created_by")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-host");
+        .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annotation_id = service
         .create_note(event_id, &content, tags, created_by, None)
@@ -115,7 +130,7 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
     let created_by = params
         .get("created_by")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-gateway");
+        .unwrap_or(DEFAULT_CREATOR_GATEWAY);
 
     let entity_ids = service
         .create_entities_from_source_material(source_material_id, entities, created_by)
@@ -203,17 +218,17 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
     let filename = params
         .get("filename")
         .and_then(|v| v.as_str())
-        .unwrap_or("content.txt");
+        .unwrap_or(DEFAULT_BLOB_FILENAME);
 
     let content_type = params
         .get("content_type")
         .and_then(|v| v.as_str())
-        .unwrap_or("text/plain");
+        .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
 
     let source = params
         .get("source")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-host");
+        .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annex_key = service
         .store_content(&content, filename, content_type, source)
@@ -231,7 +246,7 @@ pub async fn handle_replay_create_operation(
     let actor = params
         .get("actor")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
 
     let scope_val = params
@@ -262,7 +277,7 @@ pub async fn handle_replay_approve_operation(
     let approver = params
         .get("approver")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
     let operation = client.approve(operation_id, approver).await?;
     Ok(json!({ "operation": operation }))
@@ -276,7 +291,7 @@ pub async fn handle_replay_execute_operation(
     let executor = params
         .get("executor")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
     let operation = client.execute(operation_id, executor).await?;
     Ok(json!({ "operation": operation }))
@@ -415,7 +430,7 @@ fn blob_size_limit_bytes() -> usize {
         std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(5 * 1024 * 1024)
+            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
     })
 }
 

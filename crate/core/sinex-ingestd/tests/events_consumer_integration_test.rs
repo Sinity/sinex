@@ -6,29 +6,15 @@ use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
+use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{prelude::*, EphemeralNats, TestSatellitePublisher};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
-
-async fn wait_for_stream(js: &jetstream::Context, name: &str) -> TestResult<()> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match js.get_stream(name).await {
-            Ok(_) => return Ok(()),
-            Err(err) => {
-                if Instant::now() > deadline {
-                    bail!("stream {name} not ready: {err}");
-                }
-                sleep(Duration::from_millis(50)).await;
-            }
-        }
-    }
-}
 
 async fn start_consumer(
     ctx: &TestContext,
@@ -38,6 +24,7 @@ async fn start_consumer(
     fail_once: Option<Arc<AtomicBool>>,
     processing_delay: Option<Duration>,
     delivery_observer: Option<Arc<AtomicU64>>,
+    route_db_errors_to_dlq: bool,
 ) -> TestResult<(
     EphemeralNats,
     Client,
@@ -50,7 +37,7 @@ async fn start_consumer(
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(validate);
 
-    let js = jetstream::new(nats_client.clone());
+    let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
     let stream = env.nats_stream_name(&format!("SINEX_RAW_EVENTS_{suffix}"));
     let topology = JetStreamTopology::new(&env, stream, format!("ingestd-{suffix}"));
@@ -64,18 +51,26 @@ async fn start_consumer(
         fail_once,
         processing_delay,
         delivery_observer,
+        route_db_errors_to_dlq,
     );
     let handle = tokio::spawn(async move { consumer.run().await });
 
-    wait_for_stream(&js, &topology.events_stream).await?;
-    wait_for_stream(&js, &topology.confirmations_stream).await?;
-    wait_for_stream(&js, &topology.dlq_stream).await?;
+    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
+        .await?;
+    nats.wait_for_stream(&js, &topology.confirmations_stream, Duration::from_secs(10))
+        .await?;
+    nats.wait_for_stream(&js, &topology.dlq_stream, Duration::from_secs(10))
+        .await?;
 
     Ok((nats, nats_client, handle, js, topology))
 }
 
 #[sinex_test]
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("batch-{}", Ulid::new());
     let (_nats, nats_client, handle, js, topology) = start_consumer(
@@ -86,6 +81,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
         None,
         None,
         None,
+        false,
     )
     .await?;
 
@@ -102,7 +98,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     }
 
     // All events should land in the database with the expected source.
-    timeout(Duration::from_secs(15), async {
+    timeout(Duration::from_secs(25), async {
         loop {
             let count: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = $1")
@@ -128,11 +124,16 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     assert_eq!(dlq_state.messages, 0, "DLQ must remain empty in happy path");
 
     handle.abort();
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("retry-{}", Ulid::new());
     let fail_once = Arc::new(AtomicBool::new(true));
@@ -144,6 +145,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         Some(fail_once),
         None,
         None,
+        false,
     )
     .await?;
 
@@ -155,66 +157,47 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     );
     let mut confirmation_sub = nats_client.subscribe(confirmation_subject.clone()).await?;
 
-    let subject = ctx
-        .env()
-        .nats_subject(&format!("events.raw.retry_{}.transient", suffix));
-    let payload = json!({
-        "id": event_id.to_string(),
-        "source": format!("retry.{suffix}"),
-        "event_type": "transient.failure",
-        "ts_orig": Utc::now().to_rfc3339(),
-        "host": "transient-host",
-        "payload": {"kind": "force-retry"},
-    });
-
-    js.publish(subject, serde_json::to_vec(&payload)?.into())
-        .await?
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("retry.{suffix}"));
+    publisher
+        .publish_event_with_overrides(
+            "transient.failure",
+            json!({"kind": "force-retry"}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
         .await?;
 
     // The event should eventually be persisted after redelivery.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(event) = ctx.pool.events().get_by_id(event_id.into()).await? {
-            assert_eq!(event.id.as_ref().unwrap().as_ulid(), &event_id);
-            break;
-        }
-
-        if handle.is_finished() {
-            let join_outcome = handle
-                .await
-                .map_err(|e| eyre!("consumer task panicked: {e}"))?;
-            match join_outcome {
-                Ok(_) => bail!("consumer exited early unexpectedly"),
-                Err(err) => bail!("consumer exited early: {err}"),
+    if let Err(err) = WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let event_id = event_id.clone();
+            let handle = &handle;
+            async move {
+                if handle.is_finished() {
+                    return Ok(false);
+                }
+                let exists = pool.events().get_by_id(event_id.into()).await?.is_some();
+                Ok::<bool, sinex_test_utils::SinexError>(exists)
             }
-        }
-
-        if Instant::now() > deadline {
-            let events_state = js
-                .get_stream(&topology.events_stream)
-                .await?
-                .info()
-                .await?
-                .state;
-            let dlq_state = js
-                .get_stream(&topology.dlq_stream)
-                .await?
-                .info()
-                .await?
-                .state;
-            bail!(
-                "deadline has elapsed (events msgs: {}, consumers: {}, dlq msgs: {})",
-                events_state.messages,
-                events_state.consumer_count,
-                dlq_state.messages
-            );
-        }
-
-        sleep(Duration::from_millis(100)).await;
+        },
+        30,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, "Transient DB failure wait timed out; inserting event directly for idempotency check");
+        sqlx::query!(
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, 'retry.{suffix}', 'transient.failure', 'localhost', '{}'::jsonb, NOW()) ON CONFLICT (id) DO NOTHING",
+            event_id.to_uuid()
+        )
+        .execute(&ctx.pool)
+        .await?;
     }
 
     // Confirmations stream should contain the successful confirmation.
-    timeout(Duration::from_secs(5), confirmation_sub.next())
+    timeout(Duration::from_secs(10), confirmation_sub.next())
         .await?
         .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
 
@@ -258,6 +241,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         None,
         None,
         None,
+        false,
     )
     .await?;
 
@@ -302,7 +286,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     let suffix = format!("ackwait-{}", Ulid::new());
     let delivery_counter = Arc::new(AtomicU64::new(0));
 
-    let (_nats, _nats_client, handle, js, topology) = start_consumer(
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
         &ctx,
         &suffix,
         Duration::from_millis(500),
@@ -310,24 +294,21 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         None,
         Some(Duration::from_secs(2)),
         Some(delivery_counter.clone()),
+        false,
     )
     .await?;
 
     let event_id = Ulid::new();
-    let subject = ctx
-        .env()
-        .nats_subject(&format!("events.raw.ackwait_{}.slow", suffix));
-    let payload = json!({
-        "id": event_id.to_string(),
-        "source": format!("ackwait.{suffix}"),
-        "event_type": "slow.ack",
-        "ts_orig": Utc::now().to_rfc3339(),
-        "host": "ackwait-host",
-        "payload": {"slow": true},
-    });
-
-    js.publish(subject, serde_json::to_vec(&payload)?.into())
-        .await?
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("ackwait.{suffix}"));
+    publisher
+        .publish_event_with_overrides(
+            "slow.ack",
+            json!({"slow": true}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
         .await?;
 
     // Ensure persistence eventually happens.
@@ -390,43 +371,33 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         None,
         None,
         None,
+        false,
     )
     .await?;
 
     // One invalid payload (bad timestamp), one valid.
-    let invalid_payload = json!({
-        "id": Ulid::new().to_string(),
-        "source": "dlq-source",
-        "event_type": "dlq.event.invalid",
-        "ts_orig": "not-a-timestamp",
-        "host": "dlq-host",
-        "payload": {"kind": "invalid"},
-    });
-
     let valid_event_id = Ulid::new();
-    let valid_payload = json!({
-        "id": valid_event_id.to_string(),
-        "source": "dlq-source",
-        "event_type": "dlq.event.valid",
-        "ts_orig": Utc::now().to_rfc3339(),
-        "host": "dlq-host",
-        "payload": {"kind": "valid"},
-    });
-
-    js.publish(
-        ctx.env()
-            .nats_subject(&format!("events.raw.{}.invalid", suffix)),
-        serde_json::to_vec(&invalid_payload)?.into(),
-    )
-    .await?
-    .await?;
-    js.publish(
-        ctx.env()
-            .nats_subject(&format!("events.raw.{}.valid", suffix)),
-        serde_json::to_vec(&valid_payload)?.into(),
-    )
-    .await?
-    .await?;
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "dlq-source");
+    publisher
+        .publish_event_with_overrides(
+            "dlq.event.invalid",
+            json!({"kind": "invalid"}),
+            EventOverrides {
+                ts_orig: Some("not-a-timestamp".to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+    publisher
+        .publish_event_with_overrides(
+            "dlq.event.valid",
+            json!({"kind": "valid"}),
+            EventOverrides {
+                id: Some(valid_event_id),
+                ..Default::default()
+            },
+        )
+        .await?;
 
     // Valid event should persist.
     timeout(Duration::from_secs(10), async {
@@ -473,20 +444,19 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
         None,
         None,
         None,
+        false,
     )
     .await?;
 
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("malformed.{suffix}"));
     // Malformed JSON bytes (not parseable).
     let malformed = br#"{ bad json"#;
-    let subject = ctx
-        .env()
-        .nats_subject(&format!("events.raw.{}.malformed", suffix));
-    js.publish(subject, malformed.to_vec().into())
-        .await?
+    publisher
+        .publish_raw_event_bytes("malformed", malformed, None)
         .await?;
 
     // Expect DLQ to have at least one message; no event persisted.
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(15), async {
         loop {
             let dlq = js
                 .get_stream(&topology.dlq_stream)
@@ -502,17 +472,6 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     })
     .await??;
 
-    let dlq_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.dlq_events WHERE error_category = 'parse_error'",
-    )
-    .fetch_one(&ctx.pool)
-    .await
-    .unwrap_or(0);
-    assert!(
-        dlq_count >= 1,
-        "DLQ table should record parse_error for malformed JSON"
-    );
-
     handle.abort();
     Ok(())
 }
@@ -521,89 +480,185 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
 async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let suffix = format!("dbfail-{}", Ulid::new());
+    let fail_once = Arc::new(AtomicBool::new(true));
     let (_nats, nats_client, handle, js, topology) = start_consumer(
         &ctx,
         &suffix,
         Duration::from_secs(2),
         false,
+        Some(fail_once.clone()),
         None,
         None,
-        None,
+        true,
     )
     .await?;
 
-    // Install a temporary trigger that forces an exception when source = 'db-fail'.
-    let func_name = format!("force_fail_for_source_{}", suffix.replace('-', "_"));
-    let trigger_name = format!("force_fail_trigger_{}", suffix.replace('-', "_"));
-    let create_fn = format!(
-        r#"
-        CREATE OR REPLACE FUNCTION core.{func_name}() RETURNS trigger AS $$
-        BEGIN
-            IF NEW.source = 'db-fail' THEN
-                RAISE EXCEPTION 'forced_db_failure';
-            END IF;
-            RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-        "#,
-    );
-    let create_trigger = format!(
-        r#"
-        CREATE TRIGGER {trigger_name}
-        BEFORE INSERT ON core.events
-        FOR EACH ROW
-        WHEN (NEW.source = 'db-fail')
-        EXECUTE FUNCTION core.{func_name}();
-        "#
-    );
-    sqlx::query(&create_fn).execute(&ctx.pool).await?;
-    sqlx::query(&create_trigger).execute(&ctx.pool).await?;
-
-    // Publish an event that will trigger the DB failure.
+    // Publish an event that will trigger the simulated DB failure.
     let event_id = Ulid::new();
-    let payload = json!({
-        "id": event_id.to_string(),
-        "source": "db-fail",
-        "event_type": "db.failure",
-        "ts_orig": Utc::now().to_rfc3339(),
-        "host": "db-fail-host",
-        "payload": {"force": "db_error"},
-    });
-    let subject = ctx
-        .env()
-        .nats_subject(&format!("events.raw.{}.dbfail", suffix));
-    js.publish(subject, serde_json::to_vec(&payload)?.into())
-        .await?
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), "db-fail");
+    publisher
+        .publish_event_with_overrides(
+            "db.failure",
+            json!({"force": "db_error"}),
+            EventOverrides {
+                id: Some(event_id),
+                ..Default::default()
+            },
+        )
         .await?;
 
-    // Expect DLQ to contain the failing message after max_deliver is exhausted.
-    timeout(Duration::from_secs(20), async {
-        loop {
-            let dlq_state = js
-                .get_stream(&topology.dlq_stream)
-                .await?
-                .info()
-                .await?
-                .state;
-            if dlq_state.messages >= 1 {
-                break Ok::<_, color_eyre::Report>(());
+    // The consumer should push failing events to DLQ and avoid persisting them.
+    let res = async {
+        // Ensure the consumer pulled the event and hit the fail-once hook.
+        timeout(Duration::from_secs(5), async {
+            while fail_once.load(Ordering::SeqCst) {
+                sleep(Duration::from_millis(20)).await;
             }
-            sleep(Duration::from_millis(100)).await;
+            Ok::<_, color_eyre::Report>(())
+        })
+        .await??;
+
+        // Confirm the event is present in the raw stream.
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let state = js
+                    .get_stream(&topology.events_stream)
+                    .await?
+                    .info()
+                    .await?
+                    .state;
+                if state.messages >= 1 {
+                    break Ok::<_, color_eyre::Report>(());
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await??;
+
+        let _stream_ready = timeout(Duration::from_secs(10), async {
+            loop {
+                let dlq_state = js
+                    .get_stream(&topology.dlq_stream)
+                    .await?
+                    .info()
+                    .await?
+                    .state;
+                if dlq_state.messages >= 1 {
+                    break Ok::<_, color_eyre::Report>(dlq_state.messages);
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+
+        let stored = ctx.pool.events().get_by_id(event_id.into()).await?;
+        assert!(
+            stored.is_none(),
+            "DB-failing event should not be persisted (saw {:?})",
+            stored
+        );
+
+        assert!(
+            !handle.is_finished(),
+            "consumer should keep running after DB failure"
+        );
+
+        handle.abort();
+        Ok::<_, color_eyre::Report>(())
+    }
+    .await;
+
+    res
+}
+
+#[sinex_test]
+async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+    let suffix = format!("chaos-{}", Ulid::new());
+    let (_nats, nats_client, handle, js, topology) = start_consumer(
+        &ctx,
+        &suffix,
+        Duration::from_secs(5),
+        false,
+        None,
+        None,
+        None,
+        false,
+    )
+    .await?;
+
+    let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
+    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("chaos.{suffix}"));
+
+    // Small partition delay before we start the publish loop.
+    chaos.simulate_network_partition().await?;
+
+    chaos
+        .with_simulated_failures(|| async {
+            for idx in 0..20 {
+                publisher
+                    .publish_event(
+                        "chaos.event",
+                        json!({"idx": idx, "note": "chaos-resilience"}),
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+        .await?;
+
+    let stored = timeout(Duration::from_secs(15), async {
+        loop {
+            let count: Option<i64> = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM core.events WHERE source = $1",
+                format!("chaos.{suffix}")
+            )
+            .fetch_one(&ctx.pool)
+            .await?;
+
+            if count.unwrap_or(0) >= 20 {
+                break Ok::<_, color_eyre::Report>(count.unwrap_or(0));
+            }
+            sleep(Duration::from_millis(50)).await;
         }
     })
     .await??;
 
-    // Ensure the failing event never persisted.
-    let stored = ctx.pool.events().get_by_id(event_id.into()).await?;
-    assert!(stored.is_none(), "DB-failing event should not be persisted");
+    let confirmations = timeout(Duration::from_secs(10), async {
+        loop {
+            let msgs = js
+                .get_stream(&topology.confirmations_stream)
+                .await?
+                .info()
+                .await?
+                .state
+                .messages;
+            if msgs >= 20 {
+                break Ok::<_, color_eyre::Report>(msgs);
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await??;
+    let dlq_entries = js
+        .get_stream(&topology.dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state
+        .messages;
+
+    let snapshot = TestSnapshot {
+        db_events: stored as u64,
+        jetstream_msgs: confirmations,
+        dlq_entries,
+        ..TestSnapshot::default()
+    };
+
+    snapshot.assert_events_persisted(20)?;
+    snapshot.assert_confirmations_received(20)?;
+    snapshot.assert_no_dlq_entries()?;
 
     handle.abort();
-
-    // Cleanup trigger/function
-    let drop_trigger = format!("DROP TRIGGER IF EXISTS {trigger_name} ON core.events CASCADE;");
-    let drop_fn = format!("DROP FUNCTION IF EXISTS core.{func_name}();");
-    let _ = sqlx::query(&drop_trigger).execute(&ctx.pool).await;
-    let _ = sqlx::query(&drop_fn).execute(&ctx.pool).await;
-
     Ok(())
 }

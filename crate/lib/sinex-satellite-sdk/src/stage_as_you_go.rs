@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/stage_as_you_go.md")]
+#![doc = include_str!("../docs/stage_as_you_go.md")]
 
 use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
 use crate::{

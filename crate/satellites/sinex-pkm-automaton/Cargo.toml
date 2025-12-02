@@ -9,6 +9,7 @@ sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 sinex-services = { path = "../../lib/sinex-services" }
 sinex-core = { path = "../../lib/sinex-core" }
 sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
+sqlx = { workspace = true }
 
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

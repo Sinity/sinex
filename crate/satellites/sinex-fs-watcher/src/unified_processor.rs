@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/unified_processor.md")]
+#![doc = include_str!("../docs/unified_processor.md")]
 
 //! Filesystem watcher processor using JetStream-first acquisition.
 //!
@@ -44,6 +44,8 @@ use tracing::{debug, error, info, instrument, warn};
 use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
+const FS_WATCH_CHANNEL_SIZE: usize = 256; // Buffer size for filesystem event channel
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -69,7 +71,7 @@ impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
             watch_paths: vec![],
-            max_depth: Some(10),
+            max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
@@ -489,7 +491,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> SatelliteResult<()> {
 
     info!("Watching path: {}", normalized.as_str());
 
-    let (tx, mut rx) = mpsc::channel::<Event>(256);
+    let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
@@ -849,6 +851,10 @@ mod tests {
 
     #[sinex_test]
     async fn handle_file_created_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
+        let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
         let nats = EphemeralNats::start().await?;
         let nats_client = nats.connect().await?;
 
@@ -878,7 +884,7 @@ mod tests {
 
         handle_file_created(&watch_ctx, temp_root.path().to_str().unwrap(), &file_path).await?;
 
-        let event = timeout(Duration::from_secs(5), event_rx.recv())
+        let event = timeout(Duration::from_secs(10), event_rx.recv())
             .await?
             .expect("filesystem event emitted");
 
@@ -906,6 +912,9 @@ mod tests {
 
         assert_eq!(total_bytes.unwrap_or_default(), 11);
 
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 }

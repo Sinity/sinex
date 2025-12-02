@@ -1,0 +1,119 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        THE LIFECYCLE OF AN EVENT                             ║
+║                      "From Capture to Understanding"                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+    Stage I: SNAPSHOT                    "Awaken to the present state"
+    ═══════════════════════
+
+         🌅
+        ╱│╲          The satellite opens its eyes
+       ╱ │ ╲         Surveys the landscape as it exists NOW
+      ╱  │  ╲        Records what IS, not what CHANGED
+     ╱   │   ╲
+    ╱    ▼    ╲      Creates the point-in-time anchor
+    ────────────      "Here. This moment. These files exist."
+
+
+
+    Stage II: GAP-FILLING                "Remember what was forgotten"
+    ═══════════════════════
+
+    ⏮ ━━━━━━━━━━━━━━━━━ ⏭
+         [Time Gap]         The satellite was sleeping
+         [Events Lost?]     But the world continued turning
+
+         ╭───────────╮      Bounded historical replay
+         │ Checkpoint│──→   "What happened while I was away?"
+         ╰───────────╯
+                            Atuin command history fills the void
+                            Modified files reveal their changes
+                            The gap closes, continuity restored
+
+
+
+    Stage III: CONTINUOUS PROCESSING      "Flow with the now"
+    ═════════════════════════════════
+
+         ∞ → ∞ → ∞ → ∞ → ∞
+         │   │   │   │   │    Real-time stream begins
+         ▼   ▼   ▼   ▼   ▼
+    ╔════════════════════════╗
+    ║  Event Stream (Live)   ║   Every keystroke
+    ║                        ║   Every file save
+    ║  Unbounded. Eternal.   ║   Every window switch
+    ║  Until shutdown.       ║   Every clipboard copy
+    ╚════════════════════════╝
+                                 Flowing into eternity...
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+
+              THE TRANSFORMATION: Stage-as-You-Go
+
+    1. MATERIAL ACQUISITION                 git-annex
+       ┌──────────────────┐                 ▲
+       │ File content     │─────────────────┘
+       │ Terminal output  │    Preserve the original
+       │ Clipboard data   │    Immutable. Verifiable.
+       └──────────────────┘
+
+              │
+              ▼
+
+    2. PROVISIONAL EVENT                   NATS JetStream
+       ┌──────────────────┐                 ▲
+       │ ULID timestamp   │                 │
+       │ Event type       │─────────────────┘
+       │ Material refs    │    Publish immediately
+       │ Nats-Msg-Id      │    Idempotent. Durable.
+       └──────────────────┘
+
+              │
+              ▼
+
+    3. PERSISTENCE                         PostgreSQL
+       ┌──────────────────┐                 ▲
+       │ Validated        │                 │
+       │ Indexed          │─────────────────┘
+       │ Immutable        │    The substrate grows
+       │ Provenance       │    Write-once. Time-ordered.
+       └──────────────────┘
+
+              │
+              ▼
+
+    4. CONFIRMATION                        NATS JetStream
+       ┌──────────────────┐                 ▲
+       │ Canonical ULID   │                 │
+       │ Acknowledgment   │─────────────────┘
+       │ Ready for query  │    Confirm existence
+       └──────────────────┘    Automata may proceed.
+
+              │
+              ▼
+
+    5. SYNTHESIS                           Automata
+       ┌──────────────────┐
+       │ Meaning emerges  │    Analytics extract patterns
+       │ Knowledge forms  │    Search builds indices
+       │ Relations appear │    PKM weaves connections
+       └──────────────────┘    Content extracts entities
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+
+               "The event is born in the external world,
+                captured by vigilant sensors,
+                preserved in immutable storage,
+                and transformed into understanding.
+
+                At each stage: provenance.
+                At each step: sovereignty.
+                At each moment: truth."
+
+
+                           ⧗  The Event Never Lies  ⧗

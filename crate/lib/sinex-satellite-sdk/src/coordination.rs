@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/coordination.md")]
+#![doc = include_str!("../docs/coordination.md")]
 
 use crate::heartbeat::HeartbeatEmitter;
 use crate::stream_processor::ProcessorRuntimeState;

@@ -305,10 +305,22 @@ async fn test_concurrent_resource_access(ctx: TestContext) -> Result<()> {
     }
 
     // Wait for cleanup to complete
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if cleanup_count.load(Ordering::SeqCst) >= 5 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| SinexError::timeout("cleanup count did not reach expected value"))?;
 
-    // Verify all cleanups were called
-    assert_eq!(cleanup_count.load(Ordering::SeqCst), 5);
+    assert_eq!(
+        cleanup_count.load(Ordering::SeqCst),
+        5,
+        "all resource cleanups should have run"
+    );
 
     Ok(())
 }

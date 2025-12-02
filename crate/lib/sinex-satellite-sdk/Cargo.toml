@@ -47,6 +47,7 @@ sd-notify = "0.4"
 gethostname.workspace = true
 parking_lot = "0.12"
 blake3 = "1.5"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
 sysinfo = "0.31"
 nix = { version = "0.28", features = ["fs", "resource"] }
 url = "2.5"

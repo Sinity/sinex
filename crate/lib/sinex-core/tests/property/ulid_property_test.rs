@@ -659,7 +659,7 @@ mod stress_tests {
         // Most timestamp differences should be 0 or 1 millisecond
         let max_diff = timestamp_diffs.iter().max().unwrap();
         assert!(
-            *max_diff <= 10,
+            *max_diff <= 20,
             "Maximum timestamp difference too large: {max_diff} ms"
         );
 

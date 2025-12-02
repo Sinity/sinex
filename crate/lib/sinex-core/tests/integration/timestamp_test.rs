@@ -136,6 +136,9 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
 /// Test timestamp precision handling
 #[sinex_test]
 async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    let source = format!("precision_test_{}", Ulid::new());
     // Test various precision levels
     let precision_cases = vec![
         // Second precision
@@ -159,7 +162,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 
     for (i, &ts) in precision_cases.iter().enumerate() {
         let event = Event::test_event(
-            EventSource::from("precision_test"),
+            EventSource::from(source.as_str()),
             EventType::from("precision_event"),
             json!({
                 "precision_level": i,
@@ -177,7 +180,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
         .pool
         .events()
         .get_by_source(
-            &EventSource::from("precision_test"),
+            &EventSource::from(source.as_str()),
             sinex_core::types::Pagination::new(Some(10), None),
         )
         .await?;
@@ -205,6 +208,9 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
             level
         );
     }
+
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
 
     Ok(())
 }

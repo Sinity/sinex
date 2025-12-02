@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/ulid.md")]
+#![doc = include_str!("../docs/ulid.md")]
 
 use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
@@ -130,7 +130,7 @@ impl Ulid {
         let mut state = MONOTONIC_STATE.lock().unwrap_or_else(|poisoned| {
             // If the mutex is poisoned (due to panic during ULID generation),
             // recover with a fresh state to prevent application crashes
-            eprintln!("WARN: ULID monotonic state mutex was poisoned, recovering");
+            tracing::warn!("ULID monotonic state mutex was poisoned, recovering with fresh state");
             let mut recovered = poisoned.into_inner();
             recovered.last_timestamp = now_ms.saturating_sub(1); // Ensure we advance
             recovered.last_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;

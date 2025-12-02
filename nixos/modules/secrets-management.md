@@ -1,8 +1,6 @@
 # Secrets Management with agenix
 
-**IMPORTANT**: This document describes the PLANNED approach for secrets management using `agenix`. However, agenix is NOT currently implemented in the system. This documentation was extracted from TIM-SecretsManagementAgenix but the actual implementation never followed.
-
-This document describes how secrets WOULD BE managed in the Sinex NixOS configuration using `agenix`.
+**Status (2025-12-02)**: agenix is wired into the NixOS module (`services.sinex.secrets.enableAgenix = true` by default). Age files placed under `secret/*.age` are decrypted to `/run/agenix/<name>` and surfaced via `config.sinex.secrets.paths`. The gateway unit requires `sinex-gateway-admin-token.age` (or an explicit `services.sinex.secrets.gatewayAdminTokenFile`) and will refuse to start if the token file is missing.
 
 ## Overview
 

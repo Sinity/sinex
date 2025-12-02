@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/query_helpers.md")]
+#![doc = include_str!("../../docs/query_helpers.md")]
 
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{retry, timeouts};

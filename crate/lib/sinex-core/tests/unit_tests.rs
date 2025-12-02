@@ -663,12 +663,15 @@ fn test_event_creation_performance() -> color_eyre::eyre::Result<()> {
 
 #[sinex_test]
 async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    let source = format!("ordering-test-{}", Ulid::new());
     // Create events with slight delays to ensure ordering
     let mut events = Vec::new();
 
     for i in 0..5 {
         let event = ctx
-            .create_test_event("ordering-test", "sequential.event", json!({"sequence": i}))
+            .create_test_event(&source, "sequential.event", json!({"sequence": i}))
             .await?;
         events.push(event);
 
@@ -681,7 +684,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
         .pool
         .events()
         .get_by_source(
-            &EventSource::from_static("ordering-test"),
+            &EventSource::from(source.as_str()),
             sinex_core::types::Pagination::new(Some(10), None),
         )
         .await?;
@@ -703,6 +706,8 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
         assert!(a >= b, "Events should be in reverse insertion order");
     }
 
+    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
+    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     Ok(())
 }
 

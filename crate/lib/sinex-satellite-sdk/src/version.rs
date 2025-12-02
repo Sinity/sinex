@@ -278,7 +278,7 @@ pub fn print_version_info() {
             }
         }
         Err(e) => {
-            eprintln!("Error reading version information: {}", e);
+            tracing::error!(error = %e, "Error reading version information");
             let fallback = SatelliteVersion::current_or_default();
             println!("{}", fallback.full_version);
             println!("status: version info corrupted, using fallback");

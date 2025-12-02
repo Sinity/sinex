@@ -817,7 +817,7 @@ async fn test_jetstream_publish_regression_detection(
 ) -> color_eyre::eyre::Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
-    let js = JetStream::new(client.clone());
+    let js = nats.jetstream_with_client(client.clone());
 
     let stream_name = format!("regression_publish_{}", Ulid::new());
     let subject = format!("regression.publish.{}", Ulid::new());

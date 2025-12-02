@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/systemd_integration.md")]
+#![doc = include_str!("../docs/systemd_integration.md")]
 
 //! Modern systemd/journald integration using the `nix` crate.
 

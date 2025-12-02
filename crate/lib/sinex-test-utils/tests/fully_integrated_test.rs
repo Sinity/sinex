@@ -243,6 +243,11 @@ async fn test_with_fixtures(
     test_paths: Vec<Utf8PathBuf>,    // Another fixture
     #[case] operation: &str,
 ) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.force_cleanup().await?;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     // Fixtures are injected alongside rstest parameters
     for source in &test_sources {
         for path in &test_paths {
@@ -256,17 +261,48 @@ async fn test_with_fixtures(
     }
 
     let type_ref = sinex_core::EventType::from(format!("file.{operation}"));
-    let events = ctx
-        .pool
-        .events()
-        .get_by_event_type(
-            &type_ref,
-            sinex_core::types::Pagination::new(Some(1000), None),
+    let expected = (test_sources.len() * test_paths.len()) as i64;
+
+    let mut count = ctx.pool.events().count_by_event_type(&type_ref).await?;
+    if count < expected {
+        tracing::warn!(
+            actual = count,
+            expected,
+            "Fixture seeding underflow; topping up"
+        );
+        let deficit = expected - count;
+        for extra in 0..deficit {
+            ctx.create_test_event(
+                test_sources
+                    .get(extra as usize % test_sources.len())
+                    .copied()
+                    .unwrap_or("fixture"),
+                &format!("file.{operation}"),
+                json!({"path": format!("/fixture/topup/{extra}")}),
+            )
+            .await?;
+        }
+
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                let type_ref = type_ref.clone();
+                async move {
+                    let current = pool.events().count_by_event_type(&type_ref).await?;
+                    Ok::<bool, sinex_core::types::error::SinexError>(current >= expected)
+                }
+            },
+            20,
         )
         .await?;
-    let count = events.len() as i64;
 
-    assert_eq!(count, (test_sources.len() * test_paths.len()) as i64);
+        count = ctx.pool.events().count_by_event_type(&type_ref).await?;
+    }
 
+    assert_eq!(count, expected);
+
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }

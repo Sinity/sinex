@@ -3,7 +3,7 @@
 > The workspace-wide testing handbook lives at [`TESTING.md`](../../TESTING.md).
 > Use it for quick-start commands, suite layout, and property-testing guidance.
 > This README focuses on the crate itself; API-level details are in
-> `doc/overview.md` and `doc/testing_quality_overview.md`.
+> `docs/overview.md` and `docs/testing_quality_overview.md`.
 
 A comprehensive testing framework for the Sinex event-driven data capture system, providing database isolation, fixture management, and robust testing patterns.
 
@@ -319,7 +319,7 @@ export SINEX_TEST_CLEANUP=true      # Auto-cleanup after tests
 
 ## Documentation
 
-- **[doc/overview.md](./doc/overview.md)** - API reference, fixtures, timing utilities, assertions
+- **[docs/overview.md](./docs/overview.md)** - API reference, fixtures, timing utilities, assertions
 - **[API Documentation](https://docs.rs/sinex-test-utils)** - Generated API docs
 - **[Examples](./tests/)** - Test examples and integration tests
 

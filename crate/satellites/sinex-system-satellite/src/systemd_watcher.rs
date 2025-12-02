@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/systemd_watcher.md")]
+#![doc = include_str!("../docs/systemd_watcher.md")]
 
 //! systemd watcher module.
 

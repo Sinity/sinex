@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/search.md")]
+#![doc = include_str!("../docs/search.md")]
 
 //! Search service orchestration.
 

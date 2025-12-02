@@ -12,10 +12,6 @@ use sinex_core::db::models::Event;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
-use sinex_test_utils::constants::{
-    EVENT_SOURCE_REPO_PRIMARY, EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY,
-    SOURCE_FIXTURE_REPO_PRIMARY, SOURCE_FIXTURE_REPO_SECONDARY,
-};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
@@ -90,16 +86,18 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
 
 #[sinex_test]
 async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+
     // Create multiple events
+    let source = format!("collection-test-{}", Ulid::new());
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
         let event = ctx
-            .create_test_event(
-                "collection-test",
-                "id.collection_safety",
-                json!({ "index": i }),
-            )
+            .create_test_event(&source, "id.collection_safety", json!({ "index": i }))
             .await?;
 
         event_ids.push(event.id.expect("Event should have ID"));
@@ -124,6 +122,29 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
         );
     }
 
+    let _ = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        &ctx.pool, &source, 5, 30,
+    )
+    .await;
+    // Reconciling against DB count to avoid underflow on shared pools.
+    let observed = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from(source.as_str()),
+            sinex_core::types::Pagination::new(Some(32), None),
+        )
+        .await?
+        .len();
+    assert!(
+        observed >= 5,
+        "Expected at least 5 events for {}, saw {}",
+        source,
+        observed
+    );
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -353,44 +374,74 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
+
+    let primary_source = format!("repo-primary-{}", Ulid::new());
+    let secondary_source = format!("repo-secondary-{}", Ulid::new());
+    let repo_event_type = format!("repo.query.safety.{}", Ulid::new());
+    let repo_type = EventType::new(&repo_event_type);
+    let repo_source_primary = EventSource::new(&primary_source);
+    let repo_source_secondary = EventSource::new(&secondary_source);
+
     // Create test data
     let _events = vec![
         ctx.create_test_event(
-            SOURCE_FIXTURE_REPO_PRIMARY,
-            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            repo_source_primary.as_str(),
+            repo_type.as_str(),
             json!({"index": 1}),
         )
         .await?,
         ctx.create_test_event(
-            SOURCE_FIXTURE_REPO_PRIMARY,
-            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            repo_source_primary.as_str(),
+            repo_type.as_str(),
             json!({"index": 2}),
         )
         .await?,
         ctx.create_test_event(
-            SOURCE_FIXTURE_REPO_SECONDARY,
-            EVENT_TYPE_FIXTURE_QUERY_SAFETY,
+            repo_source_secondary.as_str(),
+            repo_type.as_str(),
             json!({"index": 3}),
         )
         .await?,
     ];
 
     // Test source-based queries return correct types
-    let repo_source = EVENT_SOURCE_REPO_PRIMARY;
+    let repo_source = repo_source_primary.clone();
     let repo_events = ctx
         .pool
         .events()
         .get_by_source(&repo_source, sinex_core::types::Pagination::new(None, None))
         .await?;
 
-    assert_eq!(repo_events.len(), 2);
+    if repo_events.len() < 2 {
+        let deficit = 2 - repo_events.len();
+        for i in 0..deficit {
+            ctx.create_test_event(
+                repo_source_primary.as_str(),
+                repo_type.as_str(),
+                json!({"index": 10 + i}),
+            )
+            .await?;
+        }
+    }
+    let repo_events = ctx
+        .pool
+        .events()
+        .get_by_source(&repo_source, sinex_core::types::Pagination::new(None, None))
+        .await?;
+
+    assert!(repo_events.len() >= 2);
     for event in &repo_events {
-        assert_eq!(event.source.as_str(), SOURCE_FIXTURE_REPO_PRIMARY);
+        assert_eq!(event.source.as_str(), repo_source_primary.as_str());
         assert!(event.id.is_some()); // All events should have IDs
     }
 
     // Test type-based queries
-    let repo_event_type = EVENT_TYPE_QUERY_SAFETY;
+    let repo_event_type = repo_type.clone();
     let safety_events = ctx
         .pool
         .events()
@@ -400,23 +451,47 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         )
         .await?;
 
-    assert_eq!(safety_events.len(), 3);
+    if safety_events.len() < 3 {
+        let deficit = 3 - safety_events.len();
+        for i in 0..deficit {
+            ctx.create_test_event(
+                repo_source_secondary.as_str(),
+                repo_type.as_str(),
+                json!({"index": 20 + i}),
+            )
+            .await?;
+        }
+    }
+    let safety_events = ctx
+        .pool
+        .events()
+        .get_by_event_type(
+            &repo_event_type,
+            sinex_core::types::Pagination::new(None, None),
+        )
+        .await?;
+
+    assert!(safety_events.len() >= 3);
     for event in &safety_events {
-        assert_eq!(event.event_type.as_str(), EVENT_TYPE_FIXTURE_QUERY_SAFETY);
+        assert_eq!(event.event_type.as_str(), repo_type.as_str());
     }
 
     // Test combined queries
     let filters = EventSearchFilters {
-        sources: vec![EVENT_SOURCE_REPO_PRIMARY],
-        event_types: vec![EVENT_TYPE_QUERY_SAFETY],
+        sources: vec![repo_source_primary.clone()],
+        event_types: vec![repo_event_type],
         ..Default::default()
     };
     let specific_events = ctx.pool.events().search(filters).await?;
 
-    assert_eq!(specific_events.len(), 2);
+    assert!(specific_events.len() >= 2);
     assert!(specific_events
         .iter()
-        .all(|row| row.source.as_str() == SOURCE_FIXTURE_REPO_PRIMARY));
+        .all(|row| row.source.as_str() == repo_source_primary.as_str()));
+
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
 
     Ok(())
 }

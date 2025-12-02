@@ -20,11 +20,11 @@ rustdoc.
 
 ## 2. Crate Layout Requirements
 
-1. Create a `doc/` directory in every crate root (`<crate>/doc/`).
-2. Add `doc/README.md` describing the crate’s responsibility, major entry points,
+1. Create a `docs/` directory in every crate root (`<crate>/docs/`).
+2. Add `docs/README.md` describing the crate’s responsibility, major entry points,
    and its relationships to the rest of the system.
-3. Write one Markdown file per deep dive (e.g. `doc/replay_state_machine.md`,
-   `doc/jetstream_pipeline.md`). Co-locate diagrams or assets alongside.
+3. Write one Markdown file per deep dive (e.g. `docs/replay_state_machine.md`,
+   `docs/jetstream_pipeline.md`). Co-locate diagrams or assets alongside.
 4. Keep narrow, tactical notes (field explanations, algorithm details) inside
    the Markdown file. The corresponding `.rs` file should only retain a short
    pointer such as `//! See crate::doc::replay_state_machine`.
@@ -34,8 +34,8 @@ rustdoc.
 
 ## 3. Rustdoc Inclusion Guide
 
-- At the crate root, include the overview via `#![doc = include_str!("doc/README.md")]`.
-- For modules with companion Markdown, add `#![doc = include_str!("doc/<file>.md")]`
+- At the crate root, include the overview via `#![doc = include_str!("docs/README.md")]`.
+- For modules with companion Markdown, add `#![doc = include_str!("docs/<file>.md")]`
   (or the appropriate relative path) alongside the module definition.
 - If a module benefits from an inline summary, keep a 1–2 sentence `//!` block
   above the include.
@@ -46,8 +46,8 @@ rustdoc.
 Example:
 
 ```rust
-#![doc = include_str!("doc/README.md")]
-#![doc = include_str!("../../docs/architecture/runtime/topology.md")]
+#![doc = include_str!("docs/README.md")]
+#![doc = include_str!("../../docs/current/architecture/Core_Architecture.md")]
 ```
 
 ## 4. Workspace Documentation
@@ -56,7 +56,7 @@ Example:
   historical analyses, and other cross-cutting material.
 - Crate-level Markdown should link upward when wider background already exists.
   For example, a gateway module deep dive can reference
-  `../../docs/architecture/data-plane.md` for wider context.
+  `../../docs/current/architecture/data-plane.md` for wider context.
 - When crate-level changes alter system-wide behaviour, update the relevant
   global doc and leave a short link from the crate so readers can follow the
   chain.
@@ -65,7 +65,7 @@ Example:
 
 When touching a crate, run through this list:
 
-1. [ ] `doc/` directory exists with `README.md` and any deep dives.
+1. [ ] `docs/` directory exists with `README.md` and any deep dives.
 2. [ ] Crate root uses `#![doc = include_str!(...)]` for the overview and any
        relevant global documents.
 3. [ ] Modules include their Markdown counterparts via `#![doc = include_str!(...)]`.

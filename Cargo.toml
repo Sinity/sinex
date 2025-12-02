@@ -28,6 +28,8 @@ members = [
   # Automaton crates
   "crate/satellites/sinex-analytics-automaton",
   "crate/satellites/sinex-search-automaton",
+  "crate/satellites/sinex-content-automaton",
+  "crate/satellites/sinex-pkm-automaton",
 
   # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",

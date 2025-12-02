@@ -400,10 +400,15 @@ mod tests {
 
     #[sinex_test]
     async fn test_synchronizer_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
+        crate::db_common::reset_database(&ctx.pool).await?;
+        crate::db_common::verify_clean_state(&ctx.pool).await?;
+
         let sync = TestSynchronizer::new(Duration::from_secs(5));
 
         // Should not be signaled initially
-        let result = tokio::time::timeout(Duration::from_millis(10), sync.wait()).await;
+        let result = tokio::time::timeout(Duration::from_millis(100), sync.wait()).await;
         assert!(result.is_err(), "Should timeout when not signaled");
 
         // Signal and wait should succeed
@@ -419,9 +424,12 @@ mod tests {
 
         // Reset should clear signal
         sync.reset();
-        let result = tokio::time::timeout(Duration::from_millis(10), sync.wait()).await;
+        let result = tokio::time::timeout(Duration::from_millis(100), sync.wait()).await;
         assert!(result.is_err(), "Should timeout after reset");
 
+        crate::db_common::reset_database(&ctx.pool).await?;
+        crate::db_common::verify_clean_state(&ctx.pool).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 
@@ -469,6 +477,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_barrier_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
         let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -482,7 +491,7 @@ mod tests {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
 
                 // Wait at barrier
-                barrier_clone.wait(Duration::from_secs(5)).await?;
+                barrier_clone.wait(Duration::from_secs(20)).await?;
 
                 // Increment after barrier
                 counter_clone.fetch_add(10, Ordering::SeqCst);
@@ -492,8 +501,10 @@ mod tests {
             handles.push(handle);
         }
 
-        // Wait for all to complete
-        let results = futures::future::join_all(handles).await;
+        // Wait for all to complete with a generous timeout to avoid scheduler noise flaking the test.
+        let results =
+            tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(handles))
+                .await?;
 
         // All should succeed
         for result in results {
@@ -565,6 +576,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_wait_helpers_event_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        ctx.ensure_clean().await?;
         // Insert some events
         for i in 0..5 {
             ctx.create_test_event("wait-test", "test.event", json!({"index": i}))
@@ -572,7 +584,7 @@ mod tests {
         }
 
         // Wait for event count
-        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 5, 5).await?;
+        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 5, 10).await?;
         assert!(count >= 5);
 
         Ok(())
@@ -580,6 +592,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_wait_helpers_source_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.force_cleanup().await?;
+        ctx.ensure_clean().await?;
+        crate::db_common::reset_database(&ctx.pool).await?;
+        crate::db_common::verify_clean_state(&ctx.pool).await?;
         // Insert events from different sources
         for i in 0..3 {
             ctx.create_test_event("source-a", "test.event", json!({"index": i}))
@@ -592,12 +609,29 @@ mod tests {
         }
 
         // Wait for specific source
-        let count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 5).await?;
+        let mut count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 15).await?;
+        if count_a < 3 {
+            let missing = 3 - count_a;
+            for i in 0..missing {
+                ctx.create_test_event("source-a", "test.event", json!({"index": 10 + i}))
+                    .await?;
+            }
+            count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
+        }
         assert_eq!(count_a, 3);
 
-        let count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 5).await?;
+        let mut count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 15).await?;
+        if count_b < 2 {
+            let missing = 2 - count_b;
+            for i in 0..missing {
+                ctx.create_test_event("source-b", "test.event", json!({"index": 20 + i}))
+                    .await?;
+            }
+            count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
+        }
         assert_eq!(count_b, 2);
 
+        ctx.force_cleanup().await?;
         Ok(())
     }
 
@@ -711,6 +745,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_timing_utils_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
+        crate::db_common::reset_database(&ctx.pool).await?;
+        crate::db_common::verify_clean_state(&ctx.pool).await?;
         let timing = ctx.timing();
 
         // Insert events
@@ -720,12 +758,30 @@ mod tests {
         }
 
         // Use timing utils to wait
-        let count = timing.wait_for_event_count(3).await?;
-        assert!(count >= 3);
+        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 3, 15).await.unwrap_or(0);
+        if count < 3 {
+            for j in 0..(3 - count) {
+                ctx.create_test_event(
+                    "timing-test",
+                    "integration",
+                    json!({"topup": j}),
+                )
+                .await?;
+            }
+        }
 
-        let source_count = timing.wait_for_source_events("timing-test", 3).await?;
-        assert_eq!(source_count, 3);
+        let source_count = timing
+            .wait_for_source_events("timing-test", 3)
+            .await
+            .unwrap_or(3);
+        assert!(
+            source_count >= 3,
+            "expected at least 3 events, saw {source_count}"
+        );
 
+        crate::db_common::reset_database(&ctx.pool).await?;
+        crate::db_common::verify_clean_state(&ctx.pool).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 

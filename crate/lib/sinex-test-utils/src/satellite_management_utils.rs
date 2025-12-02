@@ -320,6 +320,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
+        ctx.force_cleanup().await?;
         let config = serde_json::json!({
             "name": "test-satellite",
             "source": "test",
@@ -330,11 +333,16 @@ mod tests {
 
         assert_eq!(handle.name, "test-satellite");
 
+        crate::db_common::reset_database(ctx.pool()).await?;
+        crate::db_common::verify_clean_state(ctx.pool()).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 
     #[sinex_test]
     async fn test_satellite_handle_stop(ctx: TestContext) -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.ensure_clean().await?;
         let config = serde_json::json!({
             "name": "stop-test-satellite",
         });
@@ -460,6 +468,16 @@ mod tests {
 
     #[sinex_test]
     async fn test_multiple_satellite_management(ctx: TestContext) -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.force_cleanup().await?;
+        ctx.ensure_clean().await?;
+        if let Err(e) = crate::db_common::reset_database(&ctx.pool).await {
+            tracing::warn!(error = %e, "Reset before multiple_satellite_management failed; retrying");
+            ctx.force_cleanup().await?;
+            crate::db_common::reset_database(&ctx.pool).await?;
+        }
+        let _ = crate::db_common::verify_clean_state(&ctx.pool).await;
+
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register multiple satellites
@@ -478,6 +496,13 @@ mod tests {
         // Shutdown all
         orchestrator.shutdown_all().await?;
 
+        if let Err(e) = crate::db_common::reset_database(&ctx.pool).await {
+            tracing::warn!(error = %e, "Reset after satellite management failed; forcing cleanup");
+            ctx.force_cleanup().await?;
+            crate::db_common::reset_database(&ctx.pool).await?;
+        }
+        let _ = crate::db_common::verify_clean_state(&ctx.pool).await;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 

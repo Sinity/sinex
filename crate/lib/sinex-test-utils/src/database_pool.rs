@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/database_pool.md")]
+#![doc = include_str!("../docs/database_pool.md")]
 
 use crate::Result;
 use futures::Future;
@@ -225,7 +225,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(64);
+            .unwrap_or(32);
 
         let mut config = Self {
             size,
@@ -274,7 +274,7 @@ impl PoolConfig {
 
         let slot_max = parse_env_u32("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
             .map(|v| v.clamp(1, 32))
-            .unwrap_or(2);
+            .unwrap_or(4);
         self.slot_max_connections = slot_max;
 
         let admin_default = self.slot_max_connections.max(1).clamp(1, 8);
@@ -1055,20 +1055,42 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
                             eprintln!(
                                 "  ❌ Database {db_name} still dirty after retry: {second_verify}"
                             );
-                            POOL_METRICS.record_cleanup_failure();
-                            log_remaining_rows(pool).await;
-                            return Err(SinexError::unknown(format!(
-                                "Database {db_name} cleanup verification failed: {second_verify}"
-                            )));
+                            // Last-resort forced cleanup to clear FK-linked rows.
+                            if let Err(force_err) = force_event_material_cleanup(pool).await {
+                                POOL_METRICS.record_cleanup_failure();
+                                log_remaining_rows(pool).await;
+                                return Err(SinexError::unknown(format!(
+                                    "Database {db_name} cleanup verification failed after retry: {second_verify}; forced cleanup failed: {force_err}"
+                                )));
+                            }
+                            if let Err(final_verify) =
+                                crate::db_common::verify_clean_state(pool).await
+                            {
+                                POOL_METRICS.record_cleanup_failure();
+                                log_remaining_rows(pool).await;
+                                return Err(SinexError::unknown(format!(
+                                    "Database {db_name} cleanup verification failed after forced cleanup: {final_verify}"
+                                )));
+                            }
                         }
                     }
                     Err(retry_err) => {
                         eprintln!("  ❌ Retry cleanup for {db_name} failed: {retry_err}");
-                        POOL_METRICS.record_cleanup_failure();
-                        log_remaining_rows(pool).await;
-                        return Err(SinexError::unknown(format!(
-                            "Database {db_name} cleanup retry failed: {retry_err}"
-                        )));
+                        if let Err(force_err) = force_event_material_cleanup(pool).await {
+                            POOL_METRICS.record_cleanup_failure();
+                            log_remaining_rows(pool).await;
+                            return Err(SinexError::unknown(format!(
+                                "Database {db_name} cleanup retry failed: {retry_err}; forced cleanup failed: {force_err}"
+                            )));
+                        }
+                        if let Err(final_verify) = crate::db_common::verify_clean_state(pool).await
+                        {
+                            POOL_METRICS.record_cleanup_failure();
+                            log_remaining_rows(pool).await;
+                            return Err(SinexError::unknown(format!(
+                                "Database {db_name} cleanup failed after forced cleanup: {final_verify}"
+                            )));
+                        }
                     }
                 }
             }
@@ -1081,9 +1103,21 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             POOL_METRICS.record_cleanup_failure();
             log_remaining_rows(pool).await;
 
-            Err(SinexError::unknown(format!(
-                "Database {db_name} cleanup failed: {e}"
-            )))
+            // Attempt one last forced cleanup focusing on stubborn event/material rows.
+            if let Err(force_err) = force_event_material_cleanup(pool).await {
+                return Err(SinexError::unknown(format!(
+                    "Database {db_name} cleanup failed: {e}; forced cleanup also failed: {force_err}"
+                )));
+            }
+
+            if let Err(verify_err) = crate::db_common::verify_clean_state(pool).await {
+                return Err(SinexError::unknown(format!(
+                    "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
+                )));
+            }
+
+            eprintln!("  ✅ Database cleanup recovered after forced truncation");
+            Ok(())
         }
     }
 }
@@ -1096,6 +1130,95 @@ async fn log_remaining_rows(pool: &DbPool) {
             }
         }
     }
+}
+
+/// Final backstop cleanup when standard reset fails (e.g., FK contention).
+async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(conn.as_mut())
+        .await?;
+    let _ = sqlx::query("SET row_security = off")
+        .execute(conn.as_mut())
+        .await;
+    let _ = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await;
+
+    let mut attempts = 0;
+    let mut last_events = 0_i64;
+    let mut last_materials = 0_i64;
+
+    while attempts < 3 {
+        attempts += 1;
+
+        let tables = [
+            "core.event_annotations",
+            "core.event_relations",
+            "core.event_cluster_members",
+            "core.event_embeddings",
+            "core.entity_relations",
+            "core.revisions",
+            "core.processor_checkpoints",
+            "core.operations_log",
+            "core.transactional_outbox",
+            "core.tags",
+            "core.tagged_items",
+            "core.blobs",
+            "raw.temporal_ledger",
+            "core.event_clusters",
+            "core.entities",
+        ];
+
+        for table in tables {
+            let _ = sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(conn.as_mut())
+                .await;
+        }
+
+        // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
+        let _ = sqlx::query("DELETE FROM core.events")
+            .execute(conn.as_mut())
+            .await;
+        let _ =
+            sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
+                .execute(pool)
+                .await;
+        let _ = sqlx::query("DELETE FROM raw.source_material_registry")
+            .execute(conn.as_mut())
+            .await;
+
+        let counts = crate::db_common::get_row_counts(pool)
+            .await
+            .unwrap_or_default();
+        last_events = *counts.get("core.events").unwrap_or(&0);
+        last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
+        if last_events == 0 && last_materials <= 1 {
+            break;
+        }
+    }
+
+    if last_events != 0 || last_materials > 1 {
+        // Final aggressive delete before giving up.
+        let _ = sqlx::query("DELETE FROM core.events")
+            .execute(conn.as_mut())
+            .await;
+        let _ = sqlx::query("DELETE FROM raw.source_material_registry")
+            .execute(conn.as_mut())
+            .await;
+    }
+
+    let _ = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await;
+    let _ = sqlx::query("SET row_security = on")
+        .execute(conn.as_mut())
+        .await;
+    sqlx::query("SET session_replication_role = 'origin'")
+        .execute(conn.as_mut())
+        .await?;
+
+    Ok(())
 }
 
 // Global pool instance - initialized on first use

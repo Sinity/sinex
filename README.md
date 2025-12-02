@@ -127,7 +127,7 @@ All satellites support two operational modes:
 
 ### Quick Links
 - **Development Guide**: See [CLAUDE.md](CLAUDE.md) for development workflows and patterns
-- **Architecture Deep-Dive**: See [docs/architecture/](docs/architecture/) for domain-specific details
+- **Architecture Deep-Dive**: See [docs/current/architecture/](docs/current/architecture/) for domain-specific details
 - **NixOS Module**: See [nixos/modules/](nixos/modules/) for deployment configuration
 - **Roadmap**: See [docs/roadmap/](docs/roadmap/) for future features and architectural directions
 
@@ -290,15 +290,15 @@ Additional notes:
 
 ### Core
 - **Docs Index**: [`docs/README.md`](docs/README.md) — Start here
-- **Architecture**: [`docs/architecture/`](docs/architecture/)
+- **Architecture**: [`docs/current/architecture/`](docs/current/architecture/)
 - **Roadmap**: [`docs/roadmap/`](docs/roadmap/)
-- **Integrity & Security**: [`docs/architecture/SystemOperations_And_Integrity_Architecture.md`](docs/architecture/SystemOperations_And_Integrity_Architecture.md), [`docs/architecture/security-architecture.md`](docs/architecture/security-architecture.md)
+- **Integrity & Security**: [`docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`](docs/current/architecture/SystemOperations_And_Integrity_Architecture.md), [`docs/current/architecture/security-architecture.md`](docs/current/architecture/security-architecture.md)
 
 ### Key Components
-- **Core Architecture**: [`docs/architecture/Core_Architecture.md`](docs/architecture/Core_Architecture.md)
-- **Schema & Taxonomy**: [`crate/lib/sinex-schema/doc/overview.md`](crate/lib/sinex-schema/doc/overview.md), [`docs/architecture/event-taxonomy.md`](docs/architecture/event-taxonomy.md)
+- **Core Architecture**: [`docs/current/architecture/Core_Architecture.md`](docs/current/architecture/Core_Architecture.md)
+- **Schema & Taxonomy**: [`crate/lib/sinex-schema/docs/overview.md`](crate/lib/sinex-schema/docs/overview.md), [`docs/current/architecture/event-taxonomy.md`](docs/current/architecture/event-taxonomy.md)
   - When any `EventPayload` changes, run `./scripts/schema-dev.sh generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
-- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/doc/overview.md`](crate/lib/sinex-satellite-sdk/doc/overview.md)
+- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](crate/lib/sinex-satellite-sdk/docs/overview.md)
 
 ### For Contributors
 - **Testing Guide**: [`TESTING.md`](TESTING.md)

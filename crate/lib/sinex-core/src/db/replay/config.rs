@@ -5,6 +5,18 @@
 
 use serde::{Deserialize, Serialize};
 
+// Default cascade analysis configuration
+const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
+const DEFAULT_CASCADE_BATCH_SIZE: usize = 1000;
+const DEFAULT_CASCADE_MAX_MEMORY_BYTES: usize = 100 * 1024 * 1024; // 100MB
+const DEFAULT_CASCADE_TIMEOUT_SECS: u64 = 300; // 5 minutes
+
+// Default batch replay configuration
+const DEFAULT_REPLAY_BATCH_SIZE: usize = 500;
+const DEFAULT_REPLAY_PARALLEL_WORKERS: usize = 4;
+const DEFAULT_REPLAY_MAX_RETRIES: u32 = 3;
+const DEFAULT_REPLAY_RETRY_DELAY_MS: u64 = 1000;
+
 /// Configuration for cascade analysis operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CascadeConfig {
@@ -23,11 +35,11 @@ pub struct CascadeConfig {
 impl Default for CascadeConfig {
     fn default() -> Self {
         Self {
-            max_depth: 100,
-            batch_size: 1000,
+            max_depth: DEFAULT_CASCADE_MAX_DEPTH,
+            batch_size: DEFAULT_CASCADE_BATCH_SIZE,
             use_bloom_filter: true,
-            max_memory_bytes: 100 * 1024 * 1024, // 100MB
-            timeout_seconds: 300,                // 5 minutes
+            max_memory_bytes: DEFAULT_CASCADE_MAX_MEMORY_BYTES,
+            timeout_seconds: DEFAULT_CASCADE_TIMEOUT_SECS,
         }
     }
 }
@@ -50,11 +62,11 @@ pub struct BatchConfig {
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            batch_size: 500,
-            parallel_workers: 4,
+            batch_size: DEFAULT_REPLAY_BATCH_SIZE,
+            parallel_workers: DEFAULT_REPLAY_PARALLEL_WORKERS,
             checkpoint_after_batch: true,
-            max_retries: 3,
-            retry_delay_ms: 1000,
+            max_retries: DEFAULT_REPLAY_MAX_RETRIES,
+            retry_delay_ms: DEFAULT_REPLAY_RETRY_DELAY_MS,
         }
     }
 }

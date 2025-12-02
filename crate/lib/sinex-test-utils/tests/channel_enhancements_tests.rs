@@ -1,3 +1,5 @@
+#![cfg(feature = "channel-testing")]
+
 use std::time::Duration;
 
 use sinex_core::{Event, JsonValue};

@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/service.md")]
+#![doc = include_str!("../docs/service.md")]
 
 //! Main ingestion service implementation.
 

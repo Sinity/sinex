@@ -12,6 +12,7 @@ to a systemd unit, CLI argument, or generated configuration file.
 | `services.sinex.stateRoot` | Root that all derived paths cascade from (logs, spool, blobs, DLQ). |
 | `services.sinex.users` | `target` (captured workstation user) and `satellites` (service account). |
 | `services.sinex.database` | PostgreSQL provisioning, connection pool sizing, and migrations. |
+| `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
 | `services.sinex.storage` | Dead-letter queue handling and git-annex backed blob store. |
 | `services.sinex.core` | Ingestion (`sinex-ingestd`) and gateway service configuration. |
 | `services.sinex.satellites` | Filesystem/terminal/desktop/system collectors plus automata. |
@@ -36,6 +37,7 @@ values derived from `stateRoot` and the global `logLevel`.
     logLevel = "info";
 
     database.autoSetup = true;
+    nats.autoSetup = true; # defaulted on when services.sinex.enable = true
 
     storage.dlq.cleanup = {
       schedule = "hourly";
@@ -73,6 +75,8 @@ disabled (e.g. staging migrations).
   on boot.
 - `storage.blob.maintenance` controls GC/fsck timers. Enable health checks to log
   repository size warnings.
+- `nats.bootstrapStreams.enable` bootstraps standard JetStream streams via the `nats`
+  CLI (requires `pkgs.natscli`).
 
 ### Core & Satellites
 - `core.ingestd` and `core.gateway` expose per-service resources, log levels,
@@ -113,6 +117,7 @@ disabled (e.g. staging migrations).
 - `default.nix` – option definitions and shared wiring (tmpfiles, user accounts,
   DLQ timer).
 - `database.nix` – PostgreSQL provisioning when `database.autoSetup = true`.
+- `nats.nix` – NATS/JetStream provisioning and stream bootstrap when enabled.
 - `blob-storage.nix` – git-annex initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.

@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/types_overview.md")]
+#![doc = include_str!("../../docs/types_overview.md")]
 
 pub mod domain;
 pub mod error;
