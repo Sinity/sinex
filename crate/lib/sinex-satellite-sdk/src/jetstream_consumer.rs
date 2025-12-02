@@ -96,8 +96,8 @@ impl JetStreamEventConsumer {
 
         let js = jetstream::new(self.nats_client.clone());
 
-        let raw_stream = self.env.nats_subject("events_raw");
-        let confirmations_stream = self.env.nats_subject("events_confirmations");
+        let raw_stream = self.env.nats_stream_name("EVENTS_RAW");
+        let confirmations_stream = self.env.nats_stream_name("EVENTS_CONFIRMATIONS");
 
         let raw_consumer = self
             .create_or_get_consumer(&js, &raw_stream, "events.raw.>")
