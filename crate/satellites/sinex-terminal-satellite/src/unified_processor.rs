@@ -39,6 +39,10 @@ use validator::ValidationError;
 
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";
 
+// Default configuration values
+const DEFAULT_POLLING_INTERVAL_SECS: u64 = 15;
+const DEFAULT_MAX_CAPTURE_BYTES: u64 = 32 * 1024; // 32 KiB
+
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistorySourceConfig {
@@ -86,8 +90,8 @@ impl Default for TerminalConfig {
 
         Self {
             history_sources: default_sources,
-            polling_interval_secs: 15,
-            max_capture_bytes: 32 * 1024,
+            polling_interval_secs: DEFAULT_POLLING_INTERVAL_SECS,
+            max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
 }
