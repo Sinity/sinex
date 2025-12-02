@@ -72,6 +72,7 @@ impl ClipboardWatcher {
             }
         }
 
+        // Use a bounded channel to avoid unbounded buffering from annex emissions.
         let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
         tokio::spawn(async move {
             while let Some(event) = blob_event_rx.recv().await {
