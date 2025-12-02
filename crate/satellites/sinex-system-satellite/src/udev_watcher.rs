@@ -254,8 +254,8 @@ impl UdevWatcher {
                     let raw_event =
                         self.create_device_event("remove", &device_path, device_type, properties)?;
 
-                    if tx.send(raw_event).is_err() {
-                        warn!("Event channel closed");
+                    if let Err(e) = tx.send(raw_event) {
+                        warn!("Event channel closed: {}", e);
                         break;
                     }
 
