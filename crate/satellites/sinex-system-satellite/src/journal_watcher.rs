@@ -270,6 +270,21 @@ impl JournalWatcher {
         &mut self,
         tx: &mpsc::UnboundedSender<Event<JsonValue>>,
     ) -> SatelliteResult<()> {
+        // Introduce a bounded channel to avoid unbounded buffering on bursts.
+        const FOLLOW_CHANNEL_CAPACITY: usize = 1024;
+        let (bounded_tx, mut bounded_rx) =
+            mpsc::channel::<Event<JsonValue>>(FOLLOW_CHANNEL_CAPACITY);
+
+        // Forwarder task to keep original semantics while bounding memory.
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = bounded_rx.recv().await {
+                if let Err(err) = Self::send_event(&tx_clone, event, "journal_follow_event").await {
+                    warn!("Failed to forward journal follow event: {}", err);
+                }
+            }
+        });
+
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
         // Add cursor position if we have one
@@ -353,7 +368,10 @@ impl JournalWatcher {
                                     self.save_cursor(cursor).await?;
                                 }
 
-                                Self::send_event(tx, event, "journal_follow_event").await?;
+                                // Try to enqueue to bounded channel; on overflow drop one to make room.
+                                if let Err(e) = bounded_tx.try_send(event) {
+                                    debug!("Journal follow channel overflow: {}", e);
+                                }
                             }
                         }
                         Err(e) => {
