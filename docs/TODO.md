@@ -88,6 +88,26 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Steps:** Introduce a composable step/middleware chain (tower-like) for validation → enrichment → transformation → side effects, and migrate all event processing paths to it to standardize metrics/tracing/error handling. Make the chain the default pattern for new processors; eliminate ad-hoc inline pipelines.  
     - **Tests:** Unit tests for individual steps and composition; integration tests showing a migrated pipeline (e.g., ingestd event/material consumers, one satellite) behaves identically with the chain.
 
+54. **Paths still passed as raw strings**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs`, `blob_manager.rs`, related callers.  
+    - **Steps:** Introduce a `VerifiedPath` newtype with a private constructor that enforces validation; update blob/path consumers to accept `VerifiedPath` instead of raw strings/PathBuf.  
+    - **Tests:** Extend path validation/security tests to require `VerifiedPath` and ensure traversal/symlink cases are rejected at compile-time API boundaries.
+
+55. **Stateful automata lack sharding/affinity**  
+    - **Files:** stateful automata (analytics, session-aware processors), routing helpers.  
+    - **Steps:** Add a `Shardable` trait + consistent hashing router for JetStream subjects to guarantee per-key ordering/affinity; adopt in stateful processors.  
+    - **Tests:** Integration test that events with the same shard key always hit the same worker and preserve order under parallel workers.
+
+56. **Retry/idempotency not encoded in types**  
+    - **Files:** retry helpers, satellite/ingestd operations.  
+    - **Steps:** Add marker traits (e.g., `Idempotent`) for operations eligible for automatic retry; enforce via retry wrappers.  
+    - **Tests:** Unit tests that non-idempotent ops are refused by retry helpers; positive test for idempotent ops.
+
+57. **Units/size/times use raw integers**  
+    - **Files:** config structs and validation for timeouts/size limits in ingestd/satellites.  
+    - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).  
+    - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.
+
 ## Gateway Hardening
 
 1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
