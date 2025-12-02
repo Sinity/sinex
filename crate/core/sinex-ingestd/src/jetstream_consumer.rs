@@ -331,6 +331,7 @@ impl JetStreamConsumer {
         }
     }
 
+    #[tracing::instrument(skip(self, consumer), fields(consumer_name = %self.config.consumer_name))]
     async fn process_batch(
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
@@ -779,6 +780,7 @@ impl JetStreamConsumer {
     }
 
     /// Route failed message to DLQ
+    #[tracing::instrument(skip(self, msg), fields(error = %error))]
     async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) {
         let dlq_entry = DlqEntry {
             event_id: msg

@@ -385,6 +385,7 @@ impl MaterialAssembler {
     }
 
     /// Handle a begin message
+    #[tracing::instrument(skip(self, msg))]
     async fn handle_begin(&self, msg: jetstream::Message) -> IngestdResult<()> {
         let begin: MaterialBeginMessage = serde_json::from_slice(&msg.payload).map_err(|e| {
             SinexError::parse(format!("Failed to decode begin message payload: {}", e))
@@ -443,6 +444,7 @@ impl MaterialAssembler {
     }
 
     /// Store a slice (in-order or buffered) for a material
+    #[tracing::instrument(skip(self, data), fields(material_id = %material_id, offset = offset, data_len = data.len()))]
     async fn handle_slice(
         &self,
         material_id: Ulid,
@@ -767,6 +769,7 @@ impl MaterialAssembler {
     }
 
     /// Handle material finalization (end message)
+    #[tracing::instrument(skip(self, end), fields(material_id = %end.material_id))]
     async fn handle_end(&self, end: MaterialEndMessage) -> IngestdResult<()> {
         let material_id = Ulid::from_str(&end.material_id).map_err(|e| {
             SinexError::parse(format!(
