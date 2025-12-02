@@ -44,6 +44,7 @@ use tracing::{debug, error, info, instrument, warn};
 use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -69,7 +70,7 @@ impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
             watch_paths: vec![],
-            max_depth: Some(10),
+            max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
