@@ -77,10 +77,10 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** `HotlogAutomaton` is deprecated—everything must implement `StatefulStreamProcessor`.
 
 ### Tasks
-- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.)
+- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.) *(Shim since removed after migration completed.)*
 - [x] Port remaining automata to `StatefulStreamProcessor` + `processor_main!`. (Health, content, and PKM automata now have processor_main! binaries; search/analytics already on the unified runner.)
 - [x] Remove legacy Hotlog implementation artifacts once no crate depends on them. (Deleted unused `automaton.rs` in `sinex-health-aggregator`; removed Hotlog shim from `sinex-satellite-sdk`.)
-- [ ] Update docs/tests to reflect the unified processor model.
+- [x] Update docs/tests to reflect the unified processor model. (Health/content/PKM automaton docs now note processor_main! and SSP entrypoints.)
 
 **Exit criteria:** `rg HotlogAutomaton` returns zero outside deprecated shim files; all automata share one runner path; docs no longer mention Hotlog.
 
