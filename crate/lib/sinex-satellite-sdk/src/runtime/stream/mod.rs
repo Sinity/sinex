@@ -260,9 +260,8 @@ pub trait StatefulStreamProcessor: Send + Sync {
     /// Default implementation returns NotImplemented error for non-automata.
     async fn process_event_batch(
         &mut self,
-        events: Vec<Event<JsonValue>>,
+        _events: Vec<Event<JsonValue>>,
     ) -> SatelliteResult<ProcessingStats> {
-        let _ = events; // Suppress unused parameter warning
         Err(SatelliteError::General(eyre!(
             "This processor does not support event batch processing. Only automata should implement this method."
         )))
