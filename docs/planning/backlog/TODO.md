@@ -392,5 +392,55 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
 51. **Satellites still insert source material/ledger rows, racing ingestd**  
     - **Files:** `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs`, `stage_as_you_go.rs`.  
     - **Steps:** stop writing directly to `raw.source_material_registry` and `raw.temporal_ledger` from satellites. In the JetStream architecture ingestd’s `MaterialAssembler` is the single writer; the current duplicate inserts hit the unique constraint `uk_temporal_ledger_material_offset` when ingestd replays the same material. Emit begin/slice/end only via JetStream and let ingestd persist the rows.  
-    - **Tests:** integration test `jetstream_material_ingest_conflicts_with_satellite_inserts` that currently reproduces a duplicate-key violation when both the satellite and ingestd try to insert the same `(source_material_id, offset_start)`.
+    - **Tests:** integration test `jetstream_material_ingest_conflicts_with_satellite_inserts` that currently reproduces a duplicate-key violation when both the satellite and ingestd try to insert the same `(source_material_id, offset_start)`.  
     - **Status:** `jetstream_material_ingest_conflicts_with_satellite_inserts` (`crate/lib/sinex-satellite-sdk/tests/stage_as_you_go_requires_db.rs`) now fails because Stage-as-You-Go writes the ledger row before ingestd runs, causing a duplicate-key error when the ingest service attempts the same insert.
+
+65. **MaterialAssembler lacks resilience for out-of-order slices and restarts**  
+    - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs`, `crate/lib/sinex-test-utils` (JetStream harness).  
+    - **Steps:** Handle out-of-order slices (buffer/reorder or reject to DLQ), add timeout logic for incomplete materials, detect hash mismatches and route to DLQ with metadata, and rebuild in-flight state from JetStream after crash/restart (persist minimal ledger/slice metadata to allow reconstruction).  
+    - **Tests:** Integration tests covering slice reordering, timeout expiry, hash-mismatch DLQ, concurrent materials isolation, and restart recovery that rebuilds state from the stream.
+
+66. **JetStream consumer stress/regression suite is missing**  
+    - **Files:** `crate/lib/sinex-test-utils/src/nats.rs`, JetStream integration tests.  
+    - **Steps:** Add a comprehensive stress suite (ack/nack, requeue, idempotency, restart, DLQ routing under load) to catch flakes; tune EphemeralNats defaults (timeouts, acks) and add monitoring hooks to fail fast in CI.  
+    - **Tests:** New reliable-profile Nextest suite that publishes many events/material slices, asserts no timeouts/undelivered messages, and guards against consumer deadlocks/races.
+
+67. **Hot-path clone/alloc audit for ingestion and checkpoints**  
+    - **Files:** `crate/core/sinex-ingestd/*`, `crate/lib/sinex-core/src/db/repositories/events.rs`, `crate/lib/sinex-satellite-sdk` (checkpoint/stage-as-you-go).  
+    - **Steps:** Profile and reduce unnecessary `.clone()`/buffer copies in ingestion and checkpoint paths; favor references/Arc and zero-copy deserialization where safe. Start with identified hotspots in material assembler and event persistence.  
+    - **Tests:** Benchmark or micro-benchmark harness showing reduced allocations/CPU; ensure existing ingestion tests stay green.
+
+68. **Unsafe unwraps in cascade analyzer**  
+    - **Files:** `crate/core/sinex-gateway/src/cascade_analyzer.rs`.  
+    - **Steps:** Replace `.unwrap()` on `dependencies`/`in_degree` maps (e.g., lines ~629-630) with safe `entry`/default patterns to avoid panics on missing keys. Add defensive handling/logging for malformed graphs.  
+    - **Tests:** Unit test covering missing key scenarios to ensure no panic and that graph accounting remains correct.
+
+69. **Production panics instead of Result**  
+    - **Files:** `crate/lib/sinex-core/src/db/models/event.rs`, `crate/satellites/sinex-fs-watcher/src/unified_processor.rs`, `crate/satellites/sinex-terminal-satellite/src/unified_processor.rs`.  
+    - **Steps:** Replace `panic!`/`unwrap!` in runtime paths with typed errors and propagate via `Result`. Audit terminal/fs watchers for unsafe matches; ensure user-facing errors are surfaced without crashing.  
+    - **Tests:** Regression tests that previously panicked now return errors; Nextest suite should complete without panic backtraces from these modules.
+
+70. **Dead-code suppressions hide incomplete refactors**  
+    - **Files:** `crate/core/sinex-gateway/src/cascade_analyzer.rs`, `crate/core/sinex-gateway/src/native_messaging.rs`, other `#[allow(dead_code)]` blocks.  
+    - **Steps:** Review/remediate  `#[allow(dead_code)]` usages: remove unused items or document why retained. Prefer feature flags/tests over blanket suppression.  
+    - **Tests:** `cargo check` with suppressions removed where possible; add narrow `cfg(test)` guards for test-only helpers.
+
+71. **Commented-out tests/benchmarks should be restored or deleted**  
+    - **Files:** `crate/lib/sinex-core/tests/adversarial/chaos_engineering_test.rs` (large commented blocks), any other commented suites/benches.  
+    - **Steps:** Re-enable viable tests or delete obsolete ones; if blocked, mark TODO with blocker description and target milestone.  
+    - **Tests:** Reactivated tests should pass (or be marked fail-first with clear tracking); no lingering commented blocks.
+
+72. **Inconsistent lock poisoning handling**  
+    - **Files:** `crate/core/sinex-gateway/src/replay_control.rs` and other mutex users.  
+    - **Steps:** Standardize mutex handling: avoid bare `.lock().unwrap()`, handle poisoned locks with recover/log-or-recreate strategy. Align patterns across the file.  
+    - **Tests:** Unit test simulating poisoned mutex to ensure handler path doesn’t panic; replay_control tests should still pass.
+
+73. **Verbose parameter extraction in handlers**  
+    - **Files:** `crate/core/sinex-gateway/src/handlers.rs`.  
+    - **Steps:** Introduce helper for typed JSON-RPC parameter extraction to replace repeated `.as_str()`/`.as_i64()` calls; add validation errors instead of ad-hoc conversions.  
+    - **Tests:** Handler unit tests asserting structured errors on bad types; existing handler tests remain green.
+
+74. **Docs structure: clarify current vs planning vs archived**  
+    - **Files:** `docs/` tree (`README.md`, `way.md`, `way_2.md`, `JETSTREAM_MIGRATION_STATUS.md`, `IMPLEMENTATION_PROGRESS.md`, testing docs, misc analyses).  
+    - **Steps:** Restructure docs to clearly separate current state, planning/roadmap, vision, and archived history; add a migration guide in `docs/archived/README.md`; consolidate duplicate testing docs; remove temporary files (e.g., `tmp_seaquery_research.md`); update cross-references and the main docs README.  
+    - **Tests:** Manual verification: all moved docs have updated links; status/confusion between current and future docs resolved; no stray temp files remain.

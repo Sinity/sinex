@@ -1,51 +1,36 @@
-Sinex Documentation Index
-> **Purpose:** Map of canonical docs; update whenever ownership or authoritative references change.
+# Sinex Documentation Index
 
-Use this index to locate the current sources of truth. Historical essays and
-exploratory brainstorming live in `docs/historical/` unless they are promoted
-into the curated list below.
+**Purpose:** Map of canonical docs; update when ownership or authoritative references change.
 
-## Core Architecture
+- `current/` — single source of truth for what exists and works today (architecture, security, testing).
+- `planning/` — active playbooks (`active/`), roadmap/priorities (`roadmap/`), proposals under consideration (`proposals/`), and backlog (`backlog/TODO.md`).
+- `vision/` — long-term direction and explorations.
+- `archived/` — superseded/historical material (see `archived/README.md` for pointers).
+- `documentation-guidelines.md` — authoring conventions.
+- Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
 
-- `docs/way.md` – JetStream refactor playbook and ingestion canon. Treat this as
-  the authoritative flow until it says otherwise.
-- `docs/architecture/Core_Architecture.md` – end-to-end system shape and data
-  substrate.
-- `docs/architecture/provenance.md` – sensor/ingestor boundaries,
-  Stage-as-you-go execution, and provenance expectations.
-- `docs/security.md` – live security posture, open gaps, and contributor
-  guardrails (pairs with the broader architecture note below).
-- `docs/architecture/security-architecture.md` – threat model and defence
-  layers; update alongside the security posture doc.
+## Current (what is live now)
+- `current/architecture/` — Core architecture, provenance, security architecture, operations, user interaction, event taxonomy.
+- `current/security.md` — Current security posture and guardrails.
+- `current/testing/` — Testing patterns and guides in use today.
 
-## Implementation References
+## Planning (what’s next)
+- `planning/active/` — Execution playbooks (`way.md`, `implementation-plan.md`).
+- `planning/roadmap/` — Roadmap, development/test priorities, feature directions.
+- `planning/backlog/TODO.md` — Backlog of tracked tasks.
+- `planning/proposals/` — Proposals under review (e.g., DB repository migration).
+- `TODO.md` — Backlog of tracked tasks (cross-referenced from planning).
 
-- Each crate under `crate/**/docs/` documents its domain (core types, satellite
-  SDK, schema, services, test utils). Prefer crate-local docs for implementation
-  detail before expanding this index.
-- `TESTING.md` and `crate/lib/sinex-test-utils/docs/testing_quality_overview.md`
-  define testing contracts.
-- `docs/documentation-guidelines.md` covers authoring conventions.
+## Vision (long-term)
+- `vision/manifesto.md` and `vision/*.md` — Strategic direction and exploratory designs. Check file headers for currency notes.
 
-## Vision & Roadmap
-
-- `docs/vision/manifesto.md` – consolidated principles and strategic
-  trajectory (supersedes scattered “vision” documents).
-- `docs/vision/*.md` – individual explorations; heed the operational notes at
-  the top of each file for currency.
+## Archived
+- `archived/` — Superseded analyses/overviews; consult `archived/README.md` for where to find the current equivalents.
 
 ## Host / Deployment Notes
-
-Host-specific documentation (NixOS layout, secrets, deployment topology) lives
-in the system configuration repository: `/realm/sinnix/docs/{structure,target,breakthrough}.md`.
-Keep those files authoritative for the `sinnix` host and avoid duplicating them
-here.
+Host-specific documentation (NixOS layout, secrets, deployment topology) lives in `/realm/sinnix/docs/{structure,target,breakthrough}.md`. Keep those files authoritative for the `sinnix` host and avoid duplicating them here.
 
 ## Contributing to Documentation
-
-- Keep canonical explanations beside the implementation when possible (e.g.,
-  crate README for crate-specific behaviour).
-- Update this index whenever a new top-level doc is introduced or a pointer is
-  retired.
-- If you need context that lives in historical archives, port only the
-  verifiable, evergreen portions into the curated docs above.
+- Keep canonical explanations beside the implementation when possible (e.g., crate README for crate-specific behaviour).
+- Update this index when a new top-level doc is introduced or relocated.
+- If you mine historical archives, port only the verifiable, evergreen portions into the curated docs above.
