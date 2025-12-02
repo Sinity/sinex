@@ -216,7 +216,9 @@ impl HistoryWatcherContext {
         let mut file = tokio::fs::File::open(&self.path).await?;
         file.seek(SeekFrom::Start(offset)).await?;
 
-        let mut buffer = Vec::new();
+        // Pre-allocate to reduce repeated growth; capped by max_capture_bytes.
+        let prealloc = (self.max_capture_bytes as usize).min(32 * 1024);
+        let mut buffer = Vec::with_capacity(prealloc);
         file.read_to_end(&mut buffer).await?;
 
         Ok(String::from_utf8_lossy(&buffer).to_string())
