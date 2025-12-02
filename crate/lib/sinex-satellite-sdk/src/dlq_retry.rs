@@ -207,8 +207,10 @@ impl DlqRetryHandler {
             })?;
 
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Retry-Count", (retry_count + 1).to_string().as_str());
-        headers.insert("Retried-At", chrono::Utc::now().to_rfc3339().as_str());
+        let retry_count_str = (retry_count + 1).to_string();
+        let retried_at_str = chrono::Utc::now().to_rfc3339();
+        headers.insert("Retry-Count", &retry_count_str);
+        headers.insert("Retried-At", &retried_at_str);
 
         if let Some(ref original_headers) = msg.headers {
             if let Some(msg_id) = original_headers.get("Nats-Msg-Id") {

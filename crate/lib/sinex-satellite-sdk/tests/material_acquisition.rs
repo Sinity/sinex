@@ -171,8 +171,10 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 
     for (offset, data) in slices {
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Offset", offset.to_string().as_str());
-        headers.insert("Chunk-Hash", blake3::hash(&data).to_hex().as_str());
+        let offset_str = offset.to_string();
+        let chunk_hash = blake3::hash(&data).to_hex();
+        headers.insert("Offset", &offset_str);
+        headers.insert("Chunk-Hash", &chunk_hash);
 
         js.publish_with_headers(
             env.nats_subject(&format!("source_material.slices.{}", material_id)),
