@@ -349,6 +349,21 @@ impl SystemdWatcher {
     ) -> SatelliteResult<()> {
         info!("Starting systemd journal monitoring for unit changes");
 
+        const SYSTEMD_FOLLOW_CHANNEL_CAPACITY: usize = 1024;
+        let (bounded_tx, mut bounded_rx) =
+            mpsc::channel::<Event<JsonValue>>(SYSTEMD_FOLLOW_CHANNEL_CAPACITY);
+
+        // Forwarder to the original unbounded sender, keeps memory bounded.
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = bounded_rx.recv().await {
+                if let Err(err) = tx_clone.send(event) {
+                    warn!("Systemd watcher: event channel closed: {}", err);
+                    break;
+                }
+            }
+        });
+
         loop {
             // Start journalctl to follow systemd messages
             let mut child = Command::new("journalctl")
@@ -390,9 +405,10 @@ impl SystemdWatcher {
                 {
                     Ok(Ok(Some(line))) => {
                         if let Some(event) = self.parse_systemd_journal_entry(&line) {
-                            if tx.send(event).is_err() {
-                                warn!("Event channel closed");
-                                break;
+                            if let Err(mpsc::error::TrySendError::Full(_)) =
+                                bounded_tx.try_send(event)
+                            {
+                                debug!("Systemd watcher channel full; dropping oldest event");
                             }
                         }
                     }
