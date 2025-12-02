@@ -14,6 +14,11 @@ use sinex_core::{
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
 
+// Default values for created_by fields when not provided by caller
+const DEFAULT_CREATOR_HOST: &str = "sinex-host";
+const DEFAULT_CREATOR_GATEWAY: &str = "sinex-gateway";
+const DEFAULT_CREATOR_CLI: &str = "sinex-cli";
+
 // Analytics handlers
 
 pub async fn handle_event_count_by_source(
@@ -83,7 +88,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
     let created_by = params
         .get("created_by")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-host");
+        .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annotation_id = service
         .create_note(event_id, &content, tags, created_by, None)
@@ -115,7 +120,7 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
     let created_by = params
         .get("created_by")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-gateway");
+        .unwrap_or(DEFAULT_CREATOR_GATEWAY);
 
     let entity_ids = service
         .create_entities_from_source_material(source_material_id, entities, created_by)
@@ -213,7 +218,7 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
     let source = params
         .get("source")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-host");
+        .unwrap_or(DEFAULT_CREATOR_HOST);
 
     let annex_key = service
         .store_content(&content, filename, content_type, source)
@@ -231,7 +236,7 @@ pub async fn handle_replay_create_operation(
     let actor = params
         .get("actor")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
 
     let scope_val = params
@@ -262,7 +267,7 @@ pub async fn handle_replay_approve_operation(
     let approver = params
         .get("approver")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
     let operation = client.approve(operation_id, approver).await?;
     Ok(json!({ "operation": operation }))
@@ -276,7 +281,7 @@ pub async fn handle_replay_execute_operation(
     let executor = params
         .get("executor")
         .and_then(|v| v.as_str())
-        .unwrap_or("sinex-cli")
+        .unwrap_or(DEFAULT_CREATOR_CLI)
         .to_string();
     let operation = client.execute(operation_id, executor).await?;
     Ok(json!({ "operation": operation }))
