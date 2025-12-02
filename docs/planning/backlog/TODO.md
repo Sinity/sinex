@@ -444,3 +444,48 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Files:** `docs/` tree (`README.md`, `way.md`, `way_2.md`, `JETSTREAM_MIGRATION_STATUS.md`, `IMPLEMENTATION_PROGRESS.md`, testing docs, misc analyses).  
     - **Steps:** Restructure docs to clearly separate current state, planning/roadmap, vision, and archived history; add a migration guide in `docs/archived/README.md`; consolidate duplicate testing docs; remove temporary files (e.g., `tmp_seaquery_research.md`); update cross-references and the main docs README.  
     - **Tests:** Manual verification: all moved docs have updated links; status/confusion between current and future docs resolved; no stray temp files remain.
+
+75. **Refactor MaterialAssembler::restore_state for readability**  
+    - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs` (restore_state).  
+    - **Steps:** Extract helpers (e.g., restore_single_material, restore_buffered_slices, recompute_hash) to reduce nesting and clarify error handling; keep crash-recovery behavior intact.  
+    - **Tests:** Existing MaterialAssembler recovery tests plus new unit tests for corrupted state files and buffered-slice reconstruction; ensure restart recovery still passes.
+
+76. **Refactor MaterialAssembler::handle_slice duplication**  
+    - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs` (handle_slice).  
+    - **Steps:** Extract common write/flush/hash/update logic and buffered flush loop into helpers (e.g., append_slice_to_file, flush_sequential_buffers); preserve out-of-order handling semantics.  
+    - **Tests:** Existing slice-ordering tests plus new coverage for in-order/out-of-order/duplicate slices; validate offsets and hashes unchanged.
+
+77. **Simplify system UnifiedProcessor::scan branches**  
+    - **Files:** `crate/satellites/sinex-system-satellite/src/unified_processor.rs` (scan).  
+    - **Steps:** Extract snapshot/historical/continuous branch handlers and a stats builder; use a scan result struct to reduce inline tuple construction.  
+    - **Tests:** Existing system scan tests plus new unit tests per branch to ensure no behavioral drift.
+
+78. **Reduce duplication in JetStreamConsumer::process_batch**  
+    - **Files:** `crate/core/sinex-ingestd/src/jetstream_consumer.rs` (process_batch).  
+    - **Steps:** Introduce shared validation/DLQ helper(s) to eliminate repeated error-handling blocks across validation stages; extract batch persistence into its own method to simplify control flow.  
+    - **Tests:** Existing ingestion/validation tests plus new fail-first for each validation stage ensuring DLQ routing and acks still behave identically.
+
+79. **Fix missing binaries and dual implementations in satellites**  
+    - **Files:** `crate/satellites/sinex-health-aggregator`, `sinex-content-automaton`, `sinex-pkm-automaton`, `sinex-analytics-automaton`, `sinex-search-automaton`.  
+    - **Steps:** Add `[[bin]]` entries for automata with `src/main.rs`, add missing `main.rs` for health/content/pkm automata using `processor_main!`, and remove the legacy `HotlogAutomaton` implementation in health-aggregator. Align binary names with processor_name outputs.  
+    - **Tests:** `cargo check`/`nextest` for these crates; ensure devenv/nixos service wiring resolves binaries without missing-target errors.
+
+80. **Standardize satellite/automaton Cargo versions**  
+    - **Files:** Satellite/automaton `Cargo.toml` where `version = "0.1.0"` or `0.5.0` is set.  
+    - **Steps:** Switch to `version.workspace = true` for satellites/automata to match workspace policy unless a crate is intentionally versioned separately (document exceptions).  
+    - **Tests:** `cargo metadata`/`cargo check` to ensure workspace builds after version normalization.
+
+81. **Document and enforce error handling conventions**  
+    - **Files:** Error-prone satellites (`fs-watcher`, `terminal-satellite`, `desktop-satellite`, `system-satellite`, `analytics-automaton`, `search-automaton`, `health-aggregator`), plus contributing docs.  
+    - **Steps:** Define when to use `SatelliteError::{General,Processing,Lifecycle}`, prefer `eyre` context over `to_string`, and align logging levels (warn vs error). Refactor representative call sites to match the guideline and add a short doc section (e.g., in contributing/testing).  
+    - **Tests:** Existing suites should remain green; add a lint/checklist in docs; optional unit tests for error mapping if available.
+
+82. **Unify naming patterns for processors/automata**  
+    - **Files:** Satellite/automaton structs and `processor_name()` implementations.  
+    - **Steps:** Choose a single suffix convention (e.g., capture = *Satellite, derivation = *Automaton, aggregation = *Aggregator) and align struct names, binary names, and `processor_name()` outputs; fix stray spelling (“initialised” → “initialized”).  
+    - **Tests:** `cargo check` across satellites/automata; adjust any string-based tests expecting old names.
+
+83. **Standardize test organization and helpers**  
+    - **Files:** Satellite test trees (`crate/satellites/*/tests`), inline `#[cfg(test)]` modules.  
+    - **Steps:** Prefer categorized directories where practical, use `TestContext` injection (`#[sinex_test]` style) instead of manual setup, settle on one return type (`TestResult<()>`), and normalize file naming (`*_test.rs`). Add guidance to testing docs.  
+    - **Tests:** Ensure reorganized tests still pass; no behavioral changes expected.
