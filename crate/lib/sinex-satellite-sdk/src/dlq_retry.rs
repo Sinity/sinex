@@ -9,6 +9,13 @@ use sinex_core::environment::SinexEnvironment;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+// Default DLQ retry configuration values
+const DEFAULT_DLQ_CONSUMER_NAME: &str = "dlq-retry-consumer";
+const DEFAULT_DLQ_BATCH_SIZE: usize = 10;
+const DEFAULT_DLQ_MAX_RETRIES: u32 = 3;
+const DEFAULT_DLQ_RETRY_DELAY_SECS: u64 = 60;
+const DEFAULT_DLQ_ACK_WAIT_SECS: u64 = 60;
+
 /// Configuration for DLQ retry operations
 #[derive(Debug, Clone)]
 pub struct DlqRetryConfig {
@@ -25,10 +32,10 @@ pub struct DlqRetryConfig {
 impl Default for DlqRetryConfig {
     fn default() -> Self {
         Self {
-            consumer_name: "dlq-retry-consumer".to_string(),
-            batch_size: 10,
-            max_retries: 3,
-            retry_delay: Duration::from_secs(60),
+            consumer_name: DEFAULT_DLQ_CONSUMER_NAME.to_string(),
+            batch_size: DEFAULT_DLQ_BATCH_SIZE,
+            max_retries: DEFAULT_DLQ_MAX_RETRIES,
+            retry_delay: Duration::from_secs(DEFAULT_DLQ_RETRY_DELAY_SECS),
         }
     }
 }
@@ -72,7 +79,7 @@ impl DlqRetryHandler {
                 durable_name: Some(self.config.consumer_name.clone()),
                 filter_subject: self.env.nats_subject("events.dlq.>"),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                ack_wait: Duration::from_secs(60),
+                ack_wait: Duration::from_secs(DEFAULT_DLQ_ACK_WAIT_SECS),
                 max_ack_pending: self.config.batch_size as i64,
                 ..Default::default()
             })
