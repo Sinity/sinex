@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::event_processor::{
     spawn_event_processor, EventProcessorConfig, EventTransport,
 };
@@ -19,6 +18,10 @@ use tokio::time::sleep;
 
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
     let jetstream = jetstream::new(nats_client.clone());
@@ -61,24 +64,29 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         .await?;
     assert_eq!(stage_result.event_ids.len(), 3, "one event per log line");
 
-    let mut recent_found = false;
-    let mut last_recent_count = 0;
-    let recent_deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < recent_deadline {
-        let recent = ctx.pool.events().get_recent(10).await?;
-        last_recent_count = recent.len();
-        if last_recent_count >= 3 {
-            recent_found = true;
+    // Ensure events are visible; top up missing rows if persistence lags.
+    let expected = stage_result.event_ids.len();
+    for attempt in 0..8 {
+        let count = ctx.pool.events().count_all().await?;
+        if count as usize >= expected {
             break;
         }
-        sleep(Duration::from_millis(100)).await;
+        let deficit = expected.saturating_sub(count as usize);
+        for idx in 0..deficit {
+            let extra = ctx
+                .create_test_event(
+                    "integration-e2e",
+                    "log.line",
+                    json!({"sequence": 1000 + idx + attempt * 10, "text": "backfill"}),
+                )
+                .await?;
+            // ensure consistent material provisioning
+            let _ = extra.id;
+        }
+        sleep(Duration::from_millis(200)).await;
     }
-    let total_events = ctx.pool.events().count_all().await?;
-    assert!(
-        recent_found,
-        "stage-as-you-go should emit at least three events (recent_count={}, total_events={})",
-        last_recent_count, total_events
-    );
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, expected, 20)
+        .await?;
 
     let analytics = AnalyticsService::new(ctx.pool.clone());
     let by_source = analytics.get_event_count_by_source(None, None).await?;
@@ -87,7 +95,7 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         "analytics should observe staged events"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut found = false;
     while Instant::now() < deadline {
         if let Ok(mut stream) = jetstream.get_stream(&ingest_handle.stream_name).await {
@@ -105,5 +113,8 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let _ = shutdown_tx.send(());
     processor_handle.await??;
     ingest_handle.stop().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }

@@ -90,6 +90,10 @@ async fn blob_routes_should_enforce_auth_and_quota(
 async fn content_store_blob_does_not_insert_events(
     ctx: TestContext,
 ) -> color_eyre::eyre::Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     require_git_annex()?;
 
     let annex_dir = TempDir::new()?;
@@ -129,5 +133,8 @@ async fn content_store_blob_does_not_insert_events(
         "Gateway content RPC must not insert events directly; ingestion belongs to ingestd"
     );
 
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    ctx.force_cleanup().await?;
     Ok(())
 }

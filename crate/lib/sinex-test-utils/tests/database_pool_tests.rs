@@ -14,6 +14,7 @@ use sinex_test_utils::{
 };
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
+use tokio::time::sleep;
 
 #[sinex_test]
 async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<()> {
@@ -151,6 +152,8 @@ async fn test_pool_statistics() -> sinex_test_utils::Result<()> {
 #[sinex_test]
 async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
+    db.force_cleanup().await?;
+    verify_clean_state(db.pool()).await?;
 
     let repo = db.pool().events();
     let event_to_insert = Event::<JsonValue>::test_event(
@@ -160,6 +163,9 @@ async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<
     )
     .with_host(HostName::new("test"));
     let event = repo.insert(event_to_insert).await?;
+
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(db.pool(), "test", 1, 30)
+        .await?;
 
     sqlx::query(
         "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, metadata, created_by) \
@@ -172,10 +178,18 @@ async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<
 
     db.force_cleanup().await?;
 
-    let event_count = db.pool().events().count_all().await?;
-    let annotation_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.event_annotations")
-        .fetch_one(db.pool())
-        .await?;
+    let mut event_count = -1;
+    let mut annotation_count: i64 = -1;
+    for _ in 0..50 {
+        event_count = db.pool().events().count_all().await?;
+        annotation_count = sqlx::query_scalar("SELECT COUNT(*) FROM core.event_annotations")
+            .fetch_one(db.pool())
+            .await?;
+        if event_count == 0 && annotation_count == 0 {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
 
     assert_eq!(event_count, 0);
     assert_eq!(annotation_count, 0);

@@ -827,7 +827,7 @@ impl<
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to get source state: {}", e);
+                            warn!(error = %e, "Failed to get source state");
                         }
                     }
                     println!();
@@ -856,7 +856,7 @@ impl<
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to get ingestion history: {}", e);
+                            warn!(error = %e, "Failed to get ingestion history");
                         }
                     }
                     println!();
@@ -897,7 +897,7 @@ impl<
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to get coverage analysis: {}", e);
+                            warn!(error = %e, "Failed to get coverage analysis");
                         }
                     }
                     println!();
@@ -916,7 +916,7 @@ impl<
                             println!("Data exported to: {}", export_path.as_str());
                         }
                         Err(e) => {
-                            eprintln!("Failed to export data: {}", e);
+                            warn!(error = %e, "Failed to export data");
                         }
                     }
                 }

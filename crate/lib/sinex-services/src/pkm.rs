@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/pkm.md")]
+#![doc = include_str!("../docs/pkm.md")]
 
 //! Personal Knowledge Management (PKM) orchestrator.
 

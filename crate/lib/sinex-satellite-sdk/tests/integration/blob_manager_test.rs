@@ -385,14 +385,14 @@ async fn blob_manager_detects_corruption_on_retrieve(
 
     tokio::fs::write(&blob_path, b"corrupted payload").await?;
 
-    let retrieved = fixture
+    let result = fixture
         .manager
         .retrieve_content(&metadata.annex_key)
-        .await?;
+        .await;
 
-    assert_eq!(
-        retrieved, original_content,
-        "BlobManager should refuse to serve corrupted annex content (TODO #15)"
+    assert!(
+        result.is_err(),
+        "BlobManager should refuse to serve corrupted annex content"
     );
 
     Ok(())

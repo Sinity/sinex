@@ -1,7 +1,7 @@
-#![doc = include_str!("../doc/README.md")]
-#![doc = include_str!("../doc/automaton.md")]
-#![doc = include_str!("../../../../docs/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/automaton.md")]
+#![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! Health aggregator automaton.
 //!
@@ -48,6 +48,9 @@ use sinex_satellite_sdk::{
     ProcessingModel, SatelliteError,
 };
 use std::sync::Arc;
+
+// Default batch size for health event processing
+const DEFAULT_HEALTH_BATCH_SIZE: usize = 128;
 use tokio::sync::mpsc;
 
 /// Configuration for Health Aggregator
@@ -179,7 +182,7 @@ impl HealthAggregator {
         let env = sinex_core::environment().clone();
         let config = JetStreamEventConsumerConfig {
             processing_model: ProcessingModel::LeaderStandby,
-            batch_size: 128,
+            batch_size: DEFAULT_HEALTH_BATCH_SIZE,
             confirmation_timeout: Duration::from_secs(60),
             consumer_name: format!("{}-health-aggregator", service_name.replace('.', "_")),
             enable_provisional_processing: false,

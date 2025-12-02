@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/config.md")]
+#![doc = include_str!("../docs/config.md")]
 
 //! Configuration helpers for the ingestion daemon.
 

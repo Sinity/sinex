@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/window_manager.md")]
+#![doc = include_str!("../docs/window_manager.md")]
 
 // Use local facade for common types
 use crate::common::*;

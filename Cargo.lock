@@ -4182,6 +4182,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-content-automaton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "camino",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-processor-runtime",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sinex-core"
 version = "0.4.2"
 dependencies = [
@@ -4458,6 +4481,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-pkm-automaton"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "camino",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "mimalloc",
+ "serde",
+ "serde_json",
+ "sinex-core",
+ "sinex-processor-runtime",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sinex-processor-runtime"
 version = "0.4.2"
 dependencies = [
@@ -4525,6 +4571,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "sinex-core",
  "sinex-macros",
  "sinex-test-utils",
@@ -4613,6 +4660,7 @@ dependencies = [
  "sha2",
  "sinex-core",
  "sinex-satellite-sdk",
+ "sinex-schema",
  "sinex-test-utils",
  "sqlx",
  "thiserror 2.0.17",

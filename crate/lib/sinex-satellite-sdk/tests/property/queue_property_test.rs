@@ -158,7 +158,7 @@ fn jetstream_delivery_preserves_sequence() -> color_eyre::eyre::Result<()> {
     run_async(async move {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
-        let jetstream = async_nats::jetstream::new(client.clone());
+        let jetstream = nats.jetstream_with_client(client.clone());
 
         let stream_name = format!("PROP_STREAM_{}", Ulid::new());
         let subject = format!("prop.queue.{}", Ulid::new());

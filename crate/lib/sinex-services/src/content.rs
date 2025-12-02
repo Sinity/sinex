@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/content.md")]
+#![doc = include_str!("../docs/content.md")]
 
 //! Content service entry points for binary payload workflows.
 

@@ -1,3 +1,4 @@
+use sinex_core::{DbPoolExt, Id};
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_satellite_sdk::stream_processor::{
     Checkpoint, ProcessorInitContext, ScanArgs, TimeHorizon,
@@ -9,6 +10,11 @@ use tokio::time::{timeout, Duration};
 
 #[sinex_test]
 async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_eyre::Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
+    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+
     let mut runtime = TestRuntimeBuilder::new(&ctx, "document-ingestor")
         .with_dry_run(false)
         .build()
@@ -39,6 +45,24 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_
         .expect("document ingestor should emit a document.ingested event");
 
     assert_eq!(event.event_type.as_str(), "document.ingested");
+    assert_eq!(
+        event.payload["_source_material_id"].as_str().is_some(),
+        true
+    );
+
+    // ensure material persisted and finalized
+    let material_id = match event.provenance {
+        sinex_core::Provenance::Material { id, .. } => *id.as_ulid(),
+        _ => panic!("expected material provenance"),
+    };
+
+    let record = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_ulid(material_id))
+        .await?
+        .expect("material persisted");
+    assert_eq!(record.status.as_str(), "completed");
 
     Ok(())
 }

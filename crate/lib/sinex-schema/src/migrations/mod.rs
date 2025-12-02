@@ -1,4 +1,4 @@
-#![doc = include_str!("../../doc/migrations.md")]
+#![doc = include_str!("../../docs/migrations.md")]
 
 // Declare the single, "squashed" initial schema migration as a public module.
 // This makes `migrations::m20241028_000001_create_canonical_schema` accessible

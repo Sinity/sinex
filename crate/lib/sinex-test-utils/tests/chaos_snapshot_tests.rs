@@ -7,12 +7,12 @@ use sinex_test_utils::{ChaosInjestor, TestSnapshot};
 async fn chaos_injestor_injects_failures() -> Result<()> {
     let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
     chaos
-        .with_simulated_failures(async { Ok::<_, color_eyre::Report>(42) })
+        .with_simulated_failures(|| async { Ok::<_, color_eyre::Report>(42) })
         .await?;
 
     let chaos_fail = ChaosInjestor::new(Duration::from_millis(0), 1.0);
     let result = chaos_fail
-        .with_simulated_failures(async { Ok::<_, color_eyre::Report>(1) })
+        .with_simulated_failures(|| async { Ok::<_, color_eyre::Report>(1) })
         .await;
     assert!(result.is_err(), "failure rate of 1.0 should always fail");
     Ok(())

@@ -297,12 +297,16 @@ mod tests {
         ctx: &TestContext,
         #[strategy(SinexStrategies::json_payload())] payload: Value,
     ) -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        ctx.force_cleanup().await?;
+        ctx.ensure_clean().await?;
         let inserted = ctx
             .create_test_event("json-test", "test.json", payload.clone())
             .await?;
         let mut expected = payload.clone();
         TestContext::sanitize_payload(&mut expected);
         assert_json_equivalent(&inserted.payload, &expected);
+        ctx.force_cleanup().await?;
         Ok::<(), Report>(())
     }
 

@@ -88,7 +88,7 @@ impl WorkTracker {
 
 /// Simulates a worker that processes work items from NATS stream
 async fn simulate_work_processor(
-    client: async_nats::Client,
+    jetstream: async_nats::jetstream::Context,
     stream_name: String,
     consumer_name: String,
     subject_filter: String,
@@ -97,8 +97,6 @@ async fn simulate_work_processor(
     total_items: usize,
     processing_delay: Duration,
 ) -> Result<usize, color_eyre::eyre::Error> {
-    let jetstream = async_nats::jetstream::new(client);
-
     let consumer_config = ConsumerConfig {
         name: Some(consumer_name.clone()),
         durable_name: Some(consumer_name.clone()),
@@ -193,10 +191,10 @@ async fn simulate_work_processor(
 async fn test_work_queue_event_processing_pipeline(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
-    let ctx = ctx.with_nats().await?;
+    let _ctx = ctx.with_nats().await?;
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
-    let jetstream = async_nats::jetstream::new(client.clone());
+    let jetstream = nats.jetstream_with_client(client.clone());
 
     let test_id = Ulid::new();
     let stream_name = format!("sinex_work_queue_{}", test_id);
@@ -264,15 +262,15 @@ async fn test_work_queue_event_processing_pipeline(
     let consumer_name = format!("work_consumer_{}", test_id);
 
     for worker_num in 0..num_workers {
-        let client_clone = client.clone();
         let stream_name_clone = stream_name.clone();
         let consumer_name = consumer_name.clone();
         let subject_clone = subject.clone();
         let worker_id = format!("worker_{}", worker_num);
         let tracker_clone = tracker.clone();
+        let js_clone = jetstream.clone();
 
         join_set.spawn(simulate_work_processor(
-            client_clone,
+            js_clone,
             stream_name_clone,
             consumer_name,
             subject_clone,
@@ -318,8 +316,7 @@ async fn test_concurrent_work_claiming_patterns(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
     let ctx = ctx.with_nats().await?;
-    let client = ctx.nats_client();
-    let jetstream = async_nats::jetstream::new(client.clone());
+    let jetstream = ctx.jetstream().await?;
 
     let test_id = Ulid::new();
     let stream_name = format!("sinex_concurrent_{}", test_id);
@@ -361,15 +358,15 @@ async fn test_concurrent_work_claiming_patterns(
     let consumer_name = format!("concurrent_consumer_{}", test_id);
 
     for worker_num in 0..num_workers {
-        let client_clone = client.clone();
         let stream_name_clone = stream_name.clone();
         let consumer_name = consumer_name.clone();
         let subject_clone = subject.clone();
         let worker_id = format!("concurrent_worker_{}", worker_num);
         let tracker_clone = tracker.clone();
+        let js_clone = jetstream.clone();
 
         join_set.spawn(simulate_work_processor(
-            client_clone,
+            js_clone,
             stream_name_clone,
             consumer_name,
             subject_clone,
@@ -431,8 +428,7 @@ async fn test_work_queue_cleanup_and_tracking(
     ctx: TestContext,
 ) -> Result<(), color_eyre::eyre::Error> {
     let ctx = ctx.with_nats().await?;
-    let client = ctx.nats_client();
-    let jetstream = async_nats::jetstream::new(client.clone());
+    let jetstream = ctx.jetstream().await?;
 
     let test_id = Ulid::new();
     let stream_name = format!("sinex_cleanup_{}", test_id);
@@ -491,7 +487,7 @@ async fn test_work_queue_cleanup_and_tracking(
     let tracker = WorkTracker::new();
     let cleanup_consumer = format!("cleanup_consumer_{}", test_id);
     let cleanup_worker = simulate_work_processor(
-        client.clone(),
+        jetstream.clone(),
         stream_name.clone(),
         cleanup_consumer.clone(),
         subject.clone(),
@@ -553,8 +549,7 @@ async fn test_work_queue_cleanup_and_tracking(
 #[sinex_test]
 async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_eyre::eyre::Error> {
     let ctx = ctx.with_nats().await?;
-    let client = ctx.nats_client();
-    let jetstream = async_nats::jetstream::new(client.clone());
+    let jetstream = ctx.jetstream().await?;
 
     let test_id = Ulid::new();
     let stream_name = format!("sinex_priority_{}", test_id);
@@ -654,15 +649,15 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
         high_priority_work.len() + medium_priority_work.len() + low_priority_work.len();
 
     for (subject, priority) in &priority_streams {
-        let client_clone = client.clone();
         let stream_name_clone = format!("{}_{}", stream_name, subject.split('.').last().unwrap());
         let consumer_name = format!("priority_consumer_{}_{}", test_id, priority);
         let subject_clone = subject.clone();
         let worker_id = format!("priority_worker_{}", priority);
         let tracker_clone = tracker.clone();
+        let js_clone = jetstream.clone();
 
         join_set.spawn(simulate_work_processor(
-            client_clone,
+            js_clone,
             stream_name_clone,
             consumer_name,
             subject_clone,

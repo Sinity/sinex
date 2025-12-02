@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/udev_watcher.md")]
+#![doc = include_str!("../docs/udev_watcher.md")]
 
 //! udev watcher module.
 

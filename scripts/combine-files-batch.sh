@@ -62,7 +62,7 @@ is_text_file() {
 is_doc_file() {
   local path=$1
   case $path in
-    */docs/*|docs/*|*/doc/*|doc/*|schemas/*|*/schemas/*)
+    */docs/*|docs/*|schemas/*|*/schemas/*)
       return 0
       ;;
   esac
@@ -142,7 +142,7 @@ path_priority() {
       ;;
   esac
   case $rel in
-    docs/README.md|docs/architecture/*)
+    docs/README.md|docs/current/architecture/*)
       echo 12
       return
       ;;

@@ -1,7 +1,7 @@
-#![doc = include_str!("../doc/README.md")]
-#![doc = include_str!("../doc/overview.md")]
-#![doc = include_str!("../../../../docs/architecture/UserInteraction_And_Query_Architecture.md")]
-#![doc = include_str!("../../../lib/sinex-satellite-sdk/doc/overview.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/overview.md")]
+#![doc = include_str!("../../../../docs/current/architecture/UserInteraction_And_Query_Architecture.md")]
+#![doc = include_str!("../../../lib/sinex-satellite-sdk/docs/overview.md")]
 
 //! Content automaton entry points.
 //!
@@ -11,22 +11,20 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::Event,
-        types::{events::payloads::*, Id},
+        db::{models::Event, repositories::DbPoolExt},
+        types::{Id, JsonValue},
     };
 
     // SDK facade for common processor types
     pub use sinex_satellite_sdk::{
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanEstimate, ScanReport, StatefulStreamProcessor,
-            TimeHorizon,
+            Checkpoint, ProcessorInitContext, ProcessorRuntimeState, ProcessorType, ScanArgs,
+            ScanReport, StatefulStreamProcessor, TimeHorizon,
         },
-        SatelliteError, SatelliteResult,
+        SatelliteResult,
     };
     pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     };
 
     // External dependencies
@@ -38,7 +36,7 @@ mod common {
         sqlx::PgPool,
         std::{collections::HashMap, time::Duration},
         tokio::sync::mpsc,
-        tracing::{debug, error, info, instrument, warn},
+        tracing::{info, warn},
     };
 }
 
@@ -103,14 +101,6 @@ impl ContentAutomaton {
             event_sender: None,
             db_pool: None,
         }
-    }
-
-    fn runtime(&self) -> SatelliteResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            SatelliteError::General(color_eyre::eyre::eyre!(
-                "Content automaton runtime not initialised"
-            ))
-        })
     }
 
     async fn initialise_with_runtime_state(
@@ -219,13 +209,23 @@ impl ContentAutomaton {
 
         let events = db_pool
             .events()
-            .get_recent(
-                1000,
-                Some(window_start),
-                Some(&self.config.target_event_types),
-            )
+            .get_recent(1000)
             .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?;
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
+            .into_iter()
+            .filter(|event| {
+                event
+                    .ts_orig
+                    .map(|ts| ts > window_start)
+                    .unwrap_or(true)
+            })
+            .filter(|event| {
+                self.config
+                    .target_event_types
+                    .iter()
+                    .any(|t| event.event_type.as_str() == t)
+            })
+            .collect();
 
         Ok(events)
     }
@@ -304,14 +304,17 @@ impl ContentAutomaton {
             "generated_at": Utc::now(),
         });
 
+        let parents = source_event
+            .id
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+
         // Create synthesized event with proper provenance
-        let event = Event::new(
-            "content-automaton",
-            "content.analyzed",
-            analysis_payload,
-            vec![source_event.id],
-        )
-        .with_timestamp(Utc::now());
+        let event = Event::dynamic("content-automaton", "content.analyzed", analysis_payload)
+            .from_parents(parents)
+            .at_time(Utc::now())
+            .build();
 
         Ok(event.into())
     }
@@ -368,14 +371,21 @@ impl ContentAutomaton {
             "generated_at": Utc::now(),
         });
 
+        let parents = source_event
+            .id
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>();
+
         // Create synthesized event with proper provenance
-        let event = Event::new(
+        let event = Event::dynamic(
             "content-automaton",
             "content.classified",
             classification_payload,
-            vec![source_event.id],
         )
-        .with_timestamp(Utc::now());
+        .from_parents(parents)
+        .at_time(Utc::now())
+        .build();
 
         Ok(event.into())
     }
@@ -391,10 +401,13 @@ impl ContentAutomaton {
         let mut content_map: HashMap<String, Vec<Id<Event<JsonValue>>>> = HashMap::new();
 
         for event in events {
-            if let Some(content) = self.extract_content_from_event(event) {
+            if let (Some(content), Some(id)) = (
+                self.extract_content_from_event(event),
+                event.id.clone(),
+            ) {
                 // Simple content fingerprint (first 100 chars)
                 let fingerprint = content.chars().take(100).collect::<String>();
-                content_map.entry(fingerprint).or_default().push(event.id);
+                content_map.entry(fingerprint).or_default().push(id);
             }
         }
 
@@ -410,13 +423,14 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = Event::new(
+                let similarity_event = Event::dynamic(
                     "content-automaton",
                     "content.similarity_detected",
                     similarity_payload,
-                    event_ids,
                 )
-                .with_timestamp(Utc::now());
+                .from_parents(event_ids)
+                .at_time(Utc::now())
+                .build();
 
                 similarity_events.push(similarity_event.into());
             }
@@ -489,15 +503,15 @@ impl StatefulStreamProcessor for ContentAutomaton {
             processor_stats: HashMap::from([
                 (
                     "content_events_processed".to_string(),
-                    serde_json::Value::Number(events_processed.into()),
+                    events_processed,
                 ),
                 (
                     "max_content_size_bytes".to_string(),
-                    serde_json::Value::Number(self.config.max_content_size_bytes.into()),
+                    self.config.max_content_size_bytes as u64,
                 ),
                 (
                     "text_analysis_enabled".to_string(),
-                    serde_json::Value::Bool(self.config.enable_text_analysis),
+                    self.config.enable_text_analysis as u64,
                 ),
             ]),
             successful_targets: vec!["content".to_string()],
@@ -535,23 +549,23 @@ impl ExplorationProvider for ContentAutomaton {
             metadata: HashMap::from([
                 (
                     "target_event_types".to_string(),
-                    format!("{:?}", self.config.target_event_types),
+                    serde_json::json!(self.config.target_event_types),
                 ),
                 (
                     "text_analysis".to_string(),
-                    self.config.enable_text_analysis.to_string(),
+                    serde_json::json!(self.config.enable_text_analysis),
                 ),
                 (
                     "media_analysis".to_string(),
-                    self.config.enable_media_analysis.to_string(),
+                    serde_json::json!(self.config.enable_media_analysis),
                 ),
                 (
                     "content_classification".to_string(),
-                    self.config.enable_content_classification.to_string(),
+                    serde_json::json!(self.config.enable_content_classification),
                 ),
                 (
                     "max_content_size".to_string(),
-                    format!("{} bytes", self.config.max_content_size_bytes),
+                    serde_json::json!(self.config.max_content_size_bytes),
                 ),
             ]),
             healthy: true,

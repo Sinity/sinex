@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/overview.md")]
+#![doc = include_str!("../docs/overview.md")]
 
 //! Terminal processor that tails configured history files and emits structured
 //! command events. Each discovered command is captured as a source material via
@@ -38,6 +38,10 @@ use tracing::{debug, info, instrument, warn};
 use validator::ValidationError;
 
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";
+
+// Default configuration values
+const DEFAULT_POLLING_INTERVAL_SECS: u64 = 15;
+const DEFAULT_MAX_CAPTURE_BYTES: u64 = 32 * 1024; // 32 KiB
 
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,8 +90,8 @@ impl Default for TerminalConfig {
 
         Self {
             history_sources: default_sources,
-            polling_interval_secs: 15,
-            max_capture_bytes: 32 * 1024,
+            polling_interval_secs: DEFAULT_POLLING_INTERVAL_SECS,
+            max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
 }
@@ -728,6 +732,12 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
+        let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+        ctx.force_cleanup().await?;
+        ctx.ensure_clean().await?;
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+
         let TestRuntime {
             runtime,
             mut event_rx,
@@ -798,6 +808,27 @@ mod tests {
             total_bytes.unwrap_or_default(),
             command.as_bytes().len() as i64
         );
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                let material_ulid = material_ulid;
+                let expected = command.as_bytes().len() as i64;
+                async move {
+                    let ledger_bytes: Option<i64> = sqlx::query_scalar(
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                    )
+                    .bind(ulid_to_uuid(material_ulid))
+                    .fetch_optional(&pool)
+                    .await
+                    .map_err(|e| sinex_test_utils::SinexError::database(e.to_string()))?;
+                    Ok::<bool, sinex_test_utils::SinexError>(
+                        ledger_bytes.unwrap_or_default() == expected
+                    )
+                }
+            },
+            20,
+        )
+        .await?;
 
         let payload_command = event
             .payload
@@ -806,6 +837,9 @@ mod tests {
             .expect("payload command present");
         assert_eq!(payload_command, command);
 
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 

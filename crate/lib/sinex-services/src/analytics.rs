@@ -1,4 +1,4 @@
-#![doc = include_str!("../doc/analytics.md")]
+#![doc = include_str!("../docs/analytics.md")]
 
 //! Analytics service entry points for dashboards and reporting.
 

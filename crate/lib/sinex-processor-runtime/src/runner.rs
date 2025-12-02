@@ -13,6 +13,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
+// Checkpoint interval for continuous processing (1 minute)
+const CHECKPOINT_INTERVAL_SECS: u64 = 60;
+
 /// Execution mode for the processor
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProcessorMode {
@@ -173,7 +176,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
 
     /// Run continuous processing with periodic checkpointing
     async fn run_continuous_with_checkpointing(&mut self) -> SatelliteResult<()> {
-        let checkpoint_interval = std::time::Duration::from_secs(60); // Checkpoint every minute
+        let checkpoint_interval = std::time::Duration::from_secs(CHECKPOINT_INTERVAL_SECS);
         let mut checkpoint_timer = tokio::time::interval(checkpoint_interval);
 
         loop {

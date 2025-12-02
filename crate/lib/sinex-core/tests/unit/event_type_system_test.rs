@@ -244,6 +244,8 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
 /// Test shell/terminal payload system
 #[sinex_test]
 async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
         .with_working_directory(Some(sp("/home/user")))
