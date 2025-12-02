@@ -61,7 +61,8 @@ async fn blob_routes_should_enforce_auth_and_quota(
         large_files: Some("anything".to_string()),
     };
 
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let (event_tx, _event_rx) =
+        mpsc::channel(sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY);
     let blob_manager = BlobManager::new(annex_config, ctx.pool.clone(), Some(event_tx))?;
     let content_service = ContentService::new(ctx.pool.clone(), Arc::new(blob_manager));
 

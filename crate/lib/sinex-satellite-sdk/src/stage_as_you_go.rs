@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 
 use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
+use crate::annex::blob_manager::BLOB_EVENT_CHANNEL_CAPACITY;
 use crate::{
     annex::{AnnexConfig, BlobManager, BlobMetadata},
     SatelliteError, SatelliteResult,
@@ -133,11 +134,19 @@ impl StageAsYouGoContext {
             large_files: None,
         };
 
-        match BlobManager::new(
-            annex_config,
-            db_pool.clone(),
-            Some((*event_emitter.sender()).clone()),
-        ) {
+        // Bridge BlobManager events through a bounded channel to the main emitter to avoid
+        // unbounded buffering while preserving existing semantics.
+        let (blob_event_tx, mut blob_event_rx) = mpsc::channel(BLOB_EVENT_CHANNEL_CAPACITY);
+        let emitter_clone = event_emitter.clone();
+        tokio::spawn(async move {
+            while let Some(event) = blob_event_rx.recv().await {
+                if let Err(err) = emitter_clone.emit(event).await {
+                    warn!(error = %err, "Failed to forward blob manager event to emitter");
+                }
+            }
+        });
+
+        match BlobManager::new(annex_config, db_pool.clone(), Some(blob_event_tx)) {
             Ok(manager) => {
                 info!("Stage-as-You-Go blob manager initialised");
                 Some(Arc::new(manager))

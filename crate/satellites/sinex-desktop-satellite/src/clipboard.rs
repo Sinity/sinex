@@ -73,7 +73,9 @@ impl ClipboardWatcher {
         }
 
         // Use a bounded channel to avoid unbounded buffering from annex emissions.
-        let (blob_event_tx, mut blob_event_rx) = mpsc::unbounded_channel::<Event<JsonValue>>();
+        let (blob_event_tx, mut blob_event_rx) = mpsc::channel::<Event<JsonValue>>(
+            sinex_satellite_sdk::annex::BLOB_EVENT_CHANNEL_CAPACITY,
+        );
         tokio::spawn(async move {
             while let Some(event) = blob_event_rx.recv().await {
                 debug!(?event, "Clipboard blob manager emitted event");
