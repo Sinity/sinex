@@ -108,6 +108,41 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
     - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).  
     - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.
 
+58. **Blob manager security patch is unmerged**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/secure_blob_manager_patch.rs`, `blob_manager.rs`.  
+    - **Steps:** Fold the security fixes from `secure_blob_manager_patch.rs` into `blob_manager.rs` (path validation, symlink/traversal guards), then delete the patch file.  
+    - **Tests:** Extend blob/path validation tests to cover the patched behavior; ensure regression in `blob_manager_detects_corruption_on_retrieve` and path traversal tests stay green.
+
+59. **Satellites still require direct DB access (violates edge isolation)**  
+    - **Files:** `crate/lib/sinex-satellite-sdk` (checkpoint manager, Stage-as-You-Go), `crate/core/sinex-ingestd`.  
+    - **Steps:** Move checkpoints to NATS KV/stream, route stage-as-you-go/material writes exclusively via JetStream/ingestd, and remove PgPool dependencies from satellites. Align with the edge-mode TODO to enforce NATS-only satellites.  
+    - **Tests:** Integration run of a satellite with no DATABASE_URL (NATS-only) that still succeeds; ensure duplicate ledger insert races disappear.
+
+60. **Events repository is a God module**  
+    - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs`.  
+    - **Steps:** Split into writer/reader/analytics modules; keep cascade/helpers isolated. Reduce cognitive load and surface narrower traits for callers.  
+    - **Tests:** Ensure existing tests still pass; add smoke tests for the separated modules if needed.
+
+61. **Gateway insecure bypass remains a production foot-gun**  
+    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, docs.  
+    - **Steps:** Remove or hard-gate `SINEX_GATEWAY_ALLOW_INSECURE=1` to localhost/dev; add TLS/mTLS config for TCP bindings (see item 48).  
+    - **Tests:** Integration that asserts TCP startup without TLS/auth fails; dev-mode allows only loopback.
+
+62. **Syslog/journal watcher shells out to journalctl**  
+    - **Files:** `crate/satellites/sinex-system-satellite/src/journal_watcher.rs`.  
+    - **Steps:** Replace `journalctl` subprocess parsing with a native journal API (e.g., sd-journal bindings) to reduce brittleness and improve performance.  
+    - **Tests:** Integration test with journal fixtures via native API; ensure existing watcher tests still pass.
+
+63. **COUNT(*) used for event counts**  
+    - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs` (count_all, stats).  
+    - **Steps:** Replace exact `COUNT(*)` in dashboards/stats with estimates or a maintained counter to avoid full scans at scale.  
+    - **Tests:** Unit/integration test that the new count path returns reasonable estimates and doesn’t block on large tables.
+
+64. **Stage-as-You-Go still writes directly to Postgres**  
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`.  
+    - **Steps:** Remove direct inserts into `raw.source_material_registry`/`raw.temporal_ledger` from satellites; emit begin/slice/end via JetStream and let ingestd’s MaterialAssembler own persistence.  
+    - **Tests:** Regression `jetstream_material_ingest_conflicts_with_satellite_inserts` should be fixed; new test to confirm NATS-only path succeeds without DB.
+
 ## Gateway Hardening
 
 1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*  
