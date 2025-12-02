@@ -1,8 +1,8 @@
 # Database Encryption with pgsodium
 
-## Overview
+## Overview (Tentative)
 
-pgsodium is a PostgreSQL extension that provides encryption functions using the libsodium crypto library. It enables field-level encryption within the database, protecting sensitive data at rest beyond filesystem encryption.
+pgsodium is a PostgreSQL extension that provides encryption functions using the libsodium crypto library. It can be used for targeted field-level encryption of especially sensitive data (e.g., auth tokens or redacted PII fields) but is **not** currently planned as blanket encryption for all event payloads. This remains an optional, exploratory feature; user-configurable redaction at capture time is the primary privacy control.
 
 ## What is pgsodium?
 

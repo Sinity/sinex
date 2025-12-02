@@ -57,10 +57,6 @@ Authoritative backlog for the gaps identified during the recent codebase survey.
         4. Once KV + schema broadcast are in place, delete/disable redundant DB-only satellite codepaths and drop their backing tables from the base schema (no new migration—update the squashed schema and reset DB) to avoid parallel modes.  
     - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
 
-48. **Encryption at rest remains designed, not implemented**  
-    - **Files:** `crate/lib/sinex-schema` (base schema), `docs/roadmap/features/database-encryption-pgsodium.md`, infra scripts.  
-    - **Steps:** Integrate `pgsodium` into the base schema (squashed migration) with managed key handling; expose env/secret wiring in NixOS modules; ensure ingestd/gateway use encrypted columns for sensitive payloads (materials, events).  
-    - **Tests:** VM/integration test that initializes pgsodium, writes/reads encrypted columns, and fails without keys; CI guard that rejects “encryption disabled” builds.
 
 49. **Browser activity capture is missing**  
     - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.  
