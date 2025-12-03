@@ -220,7 +220,14 @@ impl Default for PoolConfig {
     fn default() -> Self {
         let base_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-        let admin_url = base_url.replace("/sinex_dev", "/postgres");
+        let mut admin_url = base_url.replace("/sinex_dev", "/postgres");
+        if !admin_url.contains("user=") {
+            if admin_url.contains('?') {
+                admin_url.push_str("&user=postgres");
+            } else {
+                admin_url.push_str("?user=postgres");
+            }
+        }
         let size = std::env::var("SINEX_TESTUTILS_POOL_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1823,20 +1830,9 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()
     }
 
     let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
-    if let Err(e) = sqlx::query(&create_stmt).execute(pool).await {
-        // On hosted/Nix runners we may lack privilege to create ulid; fall back to a shim.
-        if extension == "ulid" {
-            warn!(
-                "Failed to create extension ulid ({}); installing test-only compatibility shim",
-                e
-            );
-            install_ulid_compat_layer(pool).await?;
-        } else {
-            return Err(SinexError::database(format!(
-                "Failed to create extension {extension}: {e}"
-            )));
-        }
-    }
+    sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
+        SinexError::database(format!("Failed to create extension {extension}: {e}"))
+    })?;
 
     Ok(())
 }
