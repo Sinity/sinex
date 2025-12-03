@@ -1823,9 +1823,20 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()
     }
 
     let create_stmt = format!("CREATE EXTENSION IF NOT EXISTS {extension}");
-    sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
-        SinexError::database(format!("Failed to create extension {extension}: {e}"))
-    })?;
+    if let Err(e) = sqlx::query(&create_stmt).execute(pool).await {
+        // On hosted/Nix runners we may lack privilege to create ulid; fall back to a shim.
+        if extension == "ulid" {
+            warn!(
+                "Failed to create extension ulid ({}); installing test-only compatibility shim",
+                e
+            );
+            install_ulid_compat_layer(pool).await?;
+        } else {
+            return Err(SinexError::database(format!(
+                "Failed to create extension {extension}: {e}"
+            )));
+        }
+    }
 
     Ok(())
 }
