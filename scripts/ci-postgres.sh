@@ -49,8 +49,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-SUPERUSER=$(id -un)
-export PGHOST PGPORT SUPERUSER
+INITIAL_SUPERUSER=$(id -un)
+export PGHOST PGPORT
+
+psql_exec_as() {
+  local user="$1"
+  local database="$2"
+  shift 2
+  PGUSER="$user" psql -q -h "$PGHOST" -p "$PGPORT" -d "$database" -v ON_ERROR_STOP=1 -c "$*" >/dev/null
+}
+
+if ! PGUSER="$INITIAL_SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'postgres'" | grep -q 1; then
+  log_step "Creating superuser role postgres"
+  psql_exec_as "$INITIAL_SUPERUSER" postgres "CREATE ROLE postgres SUPERUSER CREATEDB LOGIN;"
+fi
+
+SUPERUSER=postgres
+export SUPERUSER
 
 psql_exec() {
   local database="$1"
