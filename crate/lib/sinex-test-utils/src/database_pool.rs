@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::warn;
+use url::Url;
 
 #[allow(dead_code)]
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -220,14 +221,9 @@ impl Default for PoolConfig {
     fn default() -> Self {
         let base_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-        let mut admin_url = base_url.replace("/sinex_dev", "/postgres");
-        if !admin_url.contains("user=") {
-            if admin_url.contains('?') {
-                admin_url.push_str("&user=postgres");
-            } else {
-                admin_url.push_str("?user=postgres");
-            }
-        }
+        let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
+            .or_else(|_| std::env::var("SINEX_TESTUTILS_ADMIN_URL"))
+            .unwrap_or_else(|_| force_user(&replace_db_name(&base_url, "postgres"), "postgres"));
         let size = std::env::var("SINEX_TESTUTILS_POOL_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -246,6 +242,28 @@ impl Default for PoolConfig {
         config.recompute_connection_limits();
         config
     }
+}
+
+fn force_user(url: &str, user: &str) -> String {
+    if let Ok(mut parsed) = Url::parse(url) {
+        let _ = parsed.set_username(user);
+        return parsed.to_string();
+    }
+
+    if url.contains('?') {
+        format!("{url}&user={user}")
+    } else {
+        format!("{url}?user={user}")
+    }
+}
+
+fn replace_db_name(url: &str, db: &str) -> String {
+    if let Ok(mut parsed) = Url::parse(url) {
+        parsed.set_path(&format!("/{db}"));
+        return parsed.to_string();
+    }
+
+    url.replace("/sinex_dev", &format!("/{db}"))
 }
 
 /// Pool configuration with customizable parameters
@@ -1310,7 +1328,7 @@ async fn ensure_template_database(
 ) -> Result<String> {
     // Fast-path reuse if cached template is reachable.
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
+        let template_url = replace_db_name(base_url, template_name);
         if PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_millis(750))
@@ -1328,7 +1346,7 @@ async fn ensure_template_database(
     let _lock = TEMPLATE_CREATION_LOCK.lock().await;
 
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
+        let template_url = replace_db_name(base_url, template_name);
         if PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(Duration::from_millis(750))
@@ -1375,7 +1393,8 @@ async fn ensure_template_database(
     let slot_max_connections = slot_max_connections.max(1);
     let template_pool_max = slot_max_connections.saturating_mul(2).max(4);
 
-    let template_url = base_url.replace("/sinex_dev", &format!("/{template_name}"));
+    let template_url = replace_db_name(base_url, template_name);
+    let template_admin_url = replace_db_name(admin_url, template_name);
 
     // Check if template already exists
     let exists: bool = sqlx::query_scalar(&format!(
@@ -1560,7 +1579,7 @@ async fn ensure_template_database(
             .max_lifetime(Duration::from_secs(300))
             .idle_timeout(Duration::from_secs(10))
             .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
-            .connect(&template_url)
+            .connect(&template_admin_url)
             .await?;
 
         // Apply test-specific optimizations for this session only
@@ -1582,11 +1601,11 @@ async fn ensure_template_database(
         // Run migrations against the template database. The sinex-core migration helper
         // reads DATABASE_URL, so temporarily point it at the template DB.
         let prev_db_url = std::env::var("DATABASE_URL").ok();
-        std::env::set_var("DATABASE_URL", &template_url);
+        std::env::set_var("DATABASE_URL", &template_admin_url);
 
         let migrate_result = tokio::time::timeout(
             Duration::from_secs(30),
-            sinex_core::db::run_migrations_for_url(&template_url),
+            sinex_core::db::run_migrations_for_url(&template_admin_url),
         )
         .await
         .map_err(|_| {
