@@ -1160,9 +1160,10 @@ async fn log_remaining_rows(pool: &DbPool) {
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
 async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET session_replication_role = 'replica'")
+    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
-        .await?;
+        .await
+        .is_ok();
     let _ = sqlx::query("SET row_security = off")
         .execute(conn.as_mut())
         .await;
@@ -1239,9 +1240,17 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let _ = sqlx::query("SET row_security = on")
         .execute(conn.as_mut())
         .await;
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+    if replication_disabled {
+        if let Err(err) = sqlx::query("SET session_replication_role = 'origin'")
+            .execute(conn.as_mut())
+            .await
+        {
+            warn!(
+                "Failed to reset session_replication_role to origin after forced cleanup: {}",
+                err
+            );
+        }
+    }
 
     Ok(())
 }
