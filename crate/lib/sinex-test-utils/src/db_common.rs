@@ -118,9 +118,10 @@ async fn force_purge_events_and_materials(
     conn: &mut PoolConnection<Postgres>,
     pool_for_chunks: &DbPool,
 ) -> TestResult<()> {
-    sqlx::query("SET session_replication_role = 'replica'")
+    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
-        .await?;
+        .await
+        .is_ok();
     if let Err(e) = sqlx::query("SET row_security = off")
         .execute(conn.as_mut())
         .await
@@ -290,9 +291,17 @@ async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
     {
         tracing::warn!(error = %e, "Failed to re-enable row_security after force clear");
     }
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+    if replication_disabled {
+        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                "Failed to reset session_replication_role to origin after force purge"
+            );
+        }
+    }
 
     Ok(())
 }
