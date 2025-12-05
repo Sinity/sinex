@@ -644,9 +644,13 @@ impl DatabasePool {
                             eprintln!(
                                 "  Database {name} already exists after creation race; reusing"
                             );
+                            // Ensure permissions are granted even when database was created concurrently
+                            let _ = grant_pool_database_permissions(&name).await;
                         }
                     }
                 } else {
+                    // Ensure permissions are granted on pre-existing databases (CI restarts, etc)
+                    let _ = grant_pool_database_permissions(&name).await;
                     // Check extension versions against the template; drop/recreate if drifted
                     let db_url = base_url.replace("/sinex_dev", &format!("/{name}"));
                     let mut needs_recreate = false;
@@ -1021,6 +1025,60 @@ async fn wait_for_database_absence(conn: &mut PoolConnection<Postgres>, name: &s
     )))
 }
 
+/// Grant schema permissions to app user on a newly created pool database
+async fn grant_pool_database_permissions(db_name: &str) -> Result<()> {
+    // Only grant permissions in CI environment where we have separate superuser
+    if std::env::var("DATABASE_URL_SUPERUSER").is_err() {
+        return Ok(());
+    }
+
+    let app_url = std::env::var("DATABASE_URL_APP").ok();
+    let username = app_url
+        .as_ref()
+        .and_then(|url| url.split("://").nth(1))
+        .and_then(|s| s.split('@').next());
+
+    if let Some(username) = username {
+        let grant_queries = vec![
+            format!("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA audit TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA audit TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA metrics TO {username}"),
+            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA metrics TO {username}"),
+        ];
+
+        // Connect to the specific database to grant permissions
+        let superuser_url = std::env::var("DATABASE_URL_SUPERUSER")
+            .unwrap()
+            .replace("/sinex_dev", &format!("/{}", db_name));
+
+        match sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&superuser_url)
+            .await
+        {
+            Ok(pool) => {
+                for query in grant_queries {
+                    if let Err(e) = sqlx::query(&query).execute(&pool).await {
+                        tracing::warn!(error = %e, query = %query, "Failed to grant permissions on pool database");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, db_name = %db_name, "Failed to connect to pool database for permission grants");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn create_database_from_template(
     conn: &mut PoolConnection<Postgres>,
     name: &str,
@@ -1032,7 +1090,11 @@ async fn create_database_from_template(
     .execute(conn.as_mut())
     .await
     {
-        Ok(_) => Ok(CreateDatabaseOutcome::Created),
+        Ok(_) => {
+            // Grant permissions on the newly created database in CI environment
+            let _ = grant_pool_database_permissions(name).await;
+            Ok(CreateDatabaseOutcome::Created)
+        }
         Err(err) => {
             if let Error::Database(db_err) = &err {
                 let duplicate_code = db_err
