@@ -123,9 +123,11 @@ ensure_extension sinex_dev pg_jsonschema
 ensure_extension sinex_dev timescaledb
 ensure_extension sinex_dev vector
 
-for schema in core raw audit sinex_schemas metrics; do
+# Grant access to all schemas (dynamically discovered from schema registry)
+# This eliminates hardcoded lists and ensures new schemas are automatically included
+while IFS= read -r schema; do
   grant_schema_access "$schema"
-done
+done < <(cargo run --quiet --bin schema-info -- list-schemas)
 
 DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
 DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"

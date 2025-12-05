@@ -70,6 +70,7 @@ mod channel_enhancements;
 #[cfg(feature = "channel-testing")]
 mod channel_helpers;
 mod chaos;
+pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
 mod deployment_scenario_utils;
@@ -79,6 +80,7 @@ pub mod fixtures;
 mod jetstream;
 mod nats;
 mod path_validation;
+pub mod permissions;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;

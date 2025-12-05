@@ -1025,79 +1025,12 @@ async fn wait_for_database_absence(conn: &mut PoolConnection<Postgres>, name: &s
     )))
 }
 
-/// Grant schema permissions to app user on a newly created pool database
+/// Grant schema permissions to app user on a newly created pool database.
+///
+/// This uses the centralized permissions module which automatically grants on ALL
+/// schemas including public (for seaql_migrations), eliminating hardcoded schema lists.
 async fn grant_pool_database_permissions(db_name: &str) -> Result<()> {
-    // Only grant permissions in CI environment where we have separate superuser
-    if std::env::var("DATABASE_URL_SUPERUSER").is_err() {
-        return Ok(());
-    }
-
-    let app_url = std::env::var("DATABASE_URL_APP").ok();
-    let username = app_url
-        .as_ref()
-        .and_then(|url| url.split("://").nth(1))
-        .and_then(|s| s.split('@').next());
-
-    if let Some(username) = username {
-        let grant_queries = vec![
-            format!("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {username}"),
-
-            // CRITICAL FIX: Grant USAGE on all schemas (required to access any objects within)
-            format!("GRANT USAGE ON SCHEMA core TO {username}"),
-            format!("GRANT USAGE ON SCHEMA raw TO {username}"),
-            format!("GRANT USAGE ON SCHEMA audit TO {username}"),
-            format!("GRANT USAGE ON SCHEMA sinex_schemas TO {username}"),
-            format!("GRANT USAGE ON SCHEMA metrics TO {username}"),
-
-            // Grant privileges on existing tables and sequences
-            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA audit TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA audit TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA metrics TO {username}"),
-            format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA metrics TO {username}"),
-
-            // Grant default privileges for future objects created by superuser
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
-            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
-        ];
-
-        // Connect to the specific database to grant permissions
-        let superuser_url = std::env::var("DATABASE_URL_SUPERUSER")
-            .unwrap()
-            .replace("/sinex_dev", &format!("/{}", db_name));
-
-        match sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&superuser_url)
-            .await
-        {
-            Ok(pool) => {
-                for query in grant_queries {
-                    if let Err(e) = sqlx::query(&query).execute(&pool).await {
-                        tracing::warn!(error = %e, query = %query, "Failed to grant permissions on pool database");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, db_name = %db_name, "Failed to connect to pool database for permission grants");
-            }
-        }
-    }
-
-    Ok(())
+    crate::permissions::grant_pool_database_permissions(db_name).await
 }
 
 async fn create_database_from_template(
@@ -1253,6 +1186,9 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let _ = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
         .execute(conn.as_mut())
         .await;
+    let _ = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await;
 
     let mut attempts = 0;
     let mut last_events = 0_i64;
@@ -1318,6 +1254,9 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     }
 
     let _ = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await;
+    let _ = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
         .execute(conn.as_mut())
         .await;
     let _ = sqlx::query("SET row_security = on")
@@ -1721,33 +1660,23 @@ async fn ensure_template_database(
         migrate_result?;
 
         // Grant schema permissions to the non-superuser role for template database operations
-        if std::env::var("DATABASE_URL_SUPERUSER").is_ok() {
-            if let Ok(app_url) = std::env::var("DATABASE_URL_APP") {
-                // Extract the username from the app URL (e.g., "sinity" from "postgresql://sinity@...")
-                if let Some(username) = app_url.split("://").nth(1).and_then(|s| s.split('@').next()) {
-                    eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
-                    let grant_queries = vec![
-                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA audit TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA audit TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA metrics TO {username}"),
-                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA metrics TO {username}"),
-                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON TABLES TO {username}"),
-                    ];
+        // Uses centralized permissions module which grants on ALL schemas (including public)
+        if let Some(granter) = crate::permissions::PermissionGranter::from_env()? {
+            if let Some(username) = std::env::var("DATABASE_URL_APP")
+                .ok()
+                .and_then(|url| url.split("://").nth(1).and_then(|s| s.split('@').next().map(|u| u.to_string())))
+            {
+                eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
 
-                    for query in grant_queries {
-                        if let Err(e) = sqlx::query(&query).execute(&template_pool).await {
-                            tracing::warn!(error = %e, query = %query, "Failed to grant permissions in template database");
-                        }
+                // Use the centralized granter to grant all schemas
+                use sinex_schema::schema_registry;
+                for schema in schema_registry::SINEX_SCHEMAS {
+                    if let Err(e) = granter.grant_schema_access(&template_pool, schema.name).await {
+                        tracing::warn!(
+                            error = %e,
+                            schema = schema.name,
+                            "Failed to grant permissions on schema in template database"
+                        );
                     }
                 }
             }

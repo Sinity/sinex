@@ -135,6 +135,12 @@ async fn force_purge_events_and_materials(
     {
         tracing::warn!(error = %e, "Failed to disable triggers on core.events during force purge");
     }
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger during force purge");
+    }
 
     let mut attempts = 0;
     let mut last_counts = (0_i64, 0_i64);
@@ -233,6 +239,12 @@ async fn force_purge_events_and_materials(
     {
         tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force purge");
     }
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after force purge");
+    }
     if let Err(e) = sqlx::query("SET row_security = on")
         .execute(conn.as_mut())
         .await
@@ -281,6 +293,12 @@ async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
     {
         tracing::warn!(error = %e, "Failed to disable triggers on core.events in force_clear_events_and_materials");
     }
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger in force_clear_events_and_materials");
+    }
 
     let pool_for_chunks = pool.clone();
     force_purge_events_and_materials(&mut conn, &pool_for_chunks).await?;
@@ -290,6 +308,12 @@ async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
         .await
     {
         tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force clear");
+    }
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after force clear");
     }
     if let Err(e) = sqlx::query("SET row_security = on")
         .execute(conn.as_mut())
@@ -379,6 +403,13 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
         .await
     {
         tracing::warn!(error = %e, "Failed to disable triggers on core.events during cleanup");
+    }
+    // Also disable temporal_ledger triggers (append-only constraint)
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger during cleanup");
     }
 
     let pool_for_chunks = pool.clone();
@@ -637,6 +668,13 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
         .await
     {
         tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after cleanup");
+    }
+    // Also re-enable temporal_ledger triggers
+    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
+        .execute(conn.as_mut())
+        .await
+    {
+        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after cleanup");
     }
     if let Err(e) = sqlx::query("SET row_security = on")
         .execute(conn.as_mut())

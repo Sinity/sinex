@@ -12,6 +12,10 @@ description = "Schema definitions and database migrations for Sinex"
 name = "sinex_schema"
 path = "src/lib.rs"
 
+[[bin]]
+name = "schema-info"
+path = "src/bin/schema-info.rs"
+
 [dependencies]
 async-trait = { version = "0.1" }
 sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
