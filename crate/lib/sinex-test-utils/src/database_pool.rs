@@ -1041,6 +1041,15 @@ async fn grant_pool_database_permissions(db_name: &str) -> Result<()> {
     if let Some(username) = username {
         let grant_queries = vec![
             format!("GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {username}"),
+
+            // CRITICAL FIX: Grant USAGE on all schemas (required to access any objects within)
+            format!("GRANT USAGE ON SCHEMA core TO {username}"),
+            format!("GRANT USAGE ON SCHEMA raw TO {username}"),
+            format!("GRANT USAGE ON SCHEMA audit TO {username}"),
+            format!("GRANT USAGE ON SCHEMA sinex_schemas TO {username}"),
+            format!("GRANT USAGE ON SCHEMA metrics TO {username}"),
+
+            // Grant privileges on existing tables and sequences
             format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO {username}"),
             format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO {username}"),
             format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO {username}"),
@@ -1051,6 +1060,18 @@ async fn grant_pool_database_permissions(db_name: &str) -> Result<()> {
             format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO {username}"),
             format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA metrics TO {username}"),
             format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA metrics TO {username}"),
+
+            // Grant default privileges for future objects created by superuser
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
+            format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON SEQUENCES TO {username}"),
         ];
 
         // Connect to the specific database to grant permissions
