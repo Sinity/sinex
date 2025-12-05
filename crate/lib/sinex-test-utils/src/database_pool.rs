@@ -1582,13 +1582,18 @@ async fn ensure_template_database(
 
     // Connect to template database and run all migrations
     let template_pool_future = async {
+        // Use DATABASE_URL_SUPERUSER if available (CI environment), otherwise use admin URL
+        let template_migration_url = std::env::var("DATABASE_URL_SUPERUSER")
+            .unwrap_or_else(|_| template_admin_url.clone())
+            .replace("/sinex_dev", &format!("/{}", template_name));
+
         let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(template_pool_max)
             .min_connections(1)
             .max_lifetime(Duration::from_secs(300))
             .idle_timeout(Duration::from_secs(10))
             .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
-            .connect(&template_admin_url)
+            .connect(&template_migration_url)
             .await?;
 
         // Apply test-specific optimizations for this session only
@@ -1608,13 +1613,13 @@ async fn ensure_template_database(
         }
 
         // Run migrations against the template database. The sinex-core migration helper
-        // reads DATABASE_URL, so temporarily point it at the template DB.
+        // reads DATABASE_URL, so temporarily point it at the template DB with superuser credentials.
         let prev_db_url = std::env::var("DATABASE_URL").ok();
-        std::env::set_var("DATABASE_URL", &template_admin_url);
+        std::env::set_var("DATABASE_URL", &template_migration_url);
 
         let migrate_result = tokio::time::timeout(
             Duration::from_secs(30),
-            sinex_core::db::run_migrations_for_url(&template_admin_url),
+            sinex_core::db::run_migrations_for_url(&template_migration_url),
         )
         .await
         .map_err(|_| {
@@ -1631,6 +1636,39 @@ async fn ensure_template_database(
 
         // Propagate migration result
         migrate_result?;
+
+        // Grant schema permissions to the non-superuser role for template database operations
+        if std::env::var("DATABASE_URL_SUPERUSER").is_ok() {
+            if let Ok(app_url) = std::env::var("DATABASE_URL_APP") {
+                // Extract the username from the app URL (e.g., "sinity" from "postgresql://sinity@...")
+                if let Some(username) = app_url.split("://").nth(1).and_then(|s| s.split('@').next()) {
+                    eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
+                    let grant_queries = vec![
+                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA core TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA core TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA raw TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA raw TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA audit TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA audit TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA sinex_schemas TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA sinex_schemas TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA metrics TO {username}"),
+                        format!("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA metrics TO {username}"),
+                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA core GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA raw GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA audit GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA sinex_schemas GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+                        format!("ALTER DEFAULT PRIVILEGES IN SCHEMA metrics GRANT ALL PRIVILEGES ON TABLES TO {username}"),
+                    ];
+
+                    for query in grant_queries {
+                        if let Err(e) = sqlx::query(&query).execute(&template_pool).await {
+                            tracing::warn!(error = %e, query = %query, "Failed to grant permissions in template database");
+                        }
+                    }
+                }
+            }
+        }
 
         // Seed a canonical test source material so Event::test_event() inserts pass FK checks.
         sqlx::query(
