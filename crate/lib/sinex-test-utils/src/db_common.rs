@@ -260,9 +260,10 @@ async fn force_purge_events_and_materials(
 
 async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET session_replication_role = 'replica'")
+    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
-        .await?;
+        .await
+        .is_ok();
     if let Err(e) = sqlx::query("SET row_security = off")
         .execute(conn.as_mut())
         .await
