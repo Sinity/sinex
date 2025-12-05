@@ -4812,6 +4812,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+ "url",
  "uuid",
  "which 5.0.0",
 ]

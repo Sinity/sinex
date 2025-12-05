@@ -239,9 +239,14 @@ async fn force_purge_events_and_materials(
     {
         tracing::warn!(error = %e, "Failed to re-enable row_security after force purge");
     }
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+    if replication_disabled {
+        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to reset session_replication_role after force purge");
+        }
+    }
 
     if let Err(e) = result {
         return Err(e);
@@ -356,9 +361,13 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
 
     // Disable FK checks for the cleanup session
-    sqlx::query("SET session_replication_role = 'replica'")
+    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
-        .await?;
+        .await
+        .is_ok();
+    if !replication_disabled {
+        tracing::warn!("Unable to set session_replication_role (permission denied); cleanup may be limited");
+    }
     if let Err(e) = sqlx::query("SET row_security = off")
         .execute(conn.as_mut())
         .await
@@ -478,10 +487,15 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     }
     operation_guard.restore(&mut conn).await?;
 
-    // Re-enable FK checks
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+    // Re-enable FK checks (only if we successfully disabled them)
+    if replication_disabled {
+        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to reset session_replication_role to origin after cleanup");
+        }
+    }
 
     // Ensure no stale bootstrap records remain from prior runs
     // This DELETE needs operation_id for RLS policy
@@ -566,9 +580,10 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     purge_result?;
 
     // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
-    sqlx::query("SET session_replication_role = 'replica'")
+    let replication_disabled2 = sqlx::query("SET session_replication_role = 'replica'")
         .execute(conn.as_mut())
-        .await?;
+        .await
+        .is_ok();
     sqlx::query(
         r#"
         DELETE FROM raw.source_material_registry
@@ -579,9 +594,14 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .execute(conn.as_mut())
     .await?;
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+    if replication_disabled2 {
+        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
+            .execute(conn.as_mut())
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to reset session_replication_role after canonical cleanup");
+        }
+    }
 
     // Restore canonical test material record relied upon by Event::test_event.
     sqlx::query(
