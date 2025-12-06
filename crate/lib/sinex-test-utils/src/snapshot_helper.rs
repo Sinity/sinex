@@ -56,6 +56,7 @@ struct FailureSnapshot {
     error: String,
     timestamp: String,
     pool: crate::database_pool::PoolStats,
+    pool_detail: Option<Vec<SlotSnapshot>>,
     context: Option<ContextSnapshot>,
     logs: Option<Vec<String>>,
 }
@@ -65,6 +66,13 @@ struct ContextSnapshot {
     name: String,
     baseline_events: i64,
     elapsed_ms: u128,
+}
+
+#[derive(Serialize)]
+struct SlotSnapshot {
+    name: String,
+    total_connections: usize,
+    idle_connections: usize,
 }
 
 pub enum FailureContext<'a> {
@@ -109,11 +117,37 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         ),
     };
 
+    let slot_detail = crate::database_pool::POOL
+        .try_lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().cloned())
+        .map(|pool| {
+            pool.slots
+                .iter()
+                .map(|slot| {
+                    if let Some(p) = slot.pool.lock().clone() {
+                        SlotSnapshot {
+                            name: slot.name.clone(),
+                            total_connections: p.size(),
+                            idle_connections: p.num_idle(),
+                        }
+                    } else {
+                        SlotSnapshot {
+                            name: slot.name.clone(),
+                            total_connections: 0,
+                            idle_connections: 0,
+                        }
+                    }
+                })
+                .collect()
+        });
+
     let snapshot = FailureSnapshot {
         test: test_name.to_string(),
         error: error.into(),
         timestamp: Utc::now().to_rfc3339(),
         pool: get_pool_stats(),
+        pool_detail: slot_detail,
         context: ctx_snapshot,
         logs,
     };

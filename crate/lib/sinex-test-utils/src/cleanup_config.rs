@@ -176,6 +176,14 @@ impl Default for CleanupConfig {
                     protected: false,
                     reason: None,
                 },
+                // Protected/internal tables (never touch)
+                TableCleanupStrategy {
+                    table_name: "seaql_migrations",
+                    method: CleanupMethod::Skip,
+                    disable_triggers: false,
+                    protected: true,
+                    reason: Some("Migration history table; must never be cleaned"),
+                },
             ],
         }
     }
