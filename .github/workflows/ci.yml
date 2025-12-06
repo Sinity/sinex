@@ -61,9 +61,11 @@ jobs:
         set -euo pipefail
         export CARGO_TARGET_DIR="$PWD/target-ci"
         scripts/ci-postgres.sh <<'POSTGRES'
-        pushd crate/lib/sinex-schema >/dev/null
-        DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-        popd
+        DATABASE_URL="$DATABASE_URL_SUPERUSER" \
+          cargo run \
+            --manifest-path crate/lib/sinex-schema/Cargo.toml \
+            --bin sinex-schema -- \
+            up
         bash scripts/check_forbidden_patterns.sh
         ./scripts/schema-dev.sh generate
         if ! git diff --quiet -- schemas; then

@@ -124,10 +124,19 @@ ensure_extension sinex_dev timescaledb
 ensure_extension sinex_dev vector
 
 # Grant access to all schemas (dynamically discovered from schema registry)
-# This eliminates hardcoded lists and ensures new schemas are automatically included
-while IFS= read -r schema; do
+# Use explicit manifest/bin to avoid Cargo default-run ambiguity and ensure failures
+# stop the script instead of being swallowed by process substitution.
+SCHEMA_LIST=$(
+  cargo run \
+    --quiet \
+    --manifest-path crate/lib/sinex-schema/Cargo.toml \
+    --bin schema-info -- \
+    list-schemas
+)
+
+for schema in $SCHEMA_LIST; do
   grant_schema_access "$schema"
-done < <(cargo run --quiet --bin schema-info -- list-schemas)
+done
 
 DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
 DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"

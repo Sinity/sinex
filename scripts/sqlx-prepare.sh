@@ -13,9 +13,11 @@ mkdir -p .sqlx
 echo "Preparing SQLx metadata using workspace-wide build..."
 
 scripts/ci-postgres.sh <<'SQLX'
-pushd crate/lib/sinex-schema >/dev/null
-DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-popd
+DATABASE_URL="$DATABASE_URL_SUPERUSER" \
+  cargo run \
+    --manifest-path crate/lib/sinex-schema/Cargo.toml \
+    --bin sinex-schema -- \
+    up
 cargo sqlx prepare --workspace -- --all-targets --all-features
 extra_crates=(
   crate/lib/sinex-test-utils

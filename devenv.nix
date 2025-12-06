@@ -169,11 +169,19 @@ in {
     "dev:unused".exec = "cargo machete";
 
     "db:migrate".exec = ''
-      (cd crate/lib/sinex-schema && DATABASE_URL="$DATABASE_URL" cargo run -- up)
+      DATABASE_URL="$DATABASE_URL" \
+        cargo run \
+          --manifest-path crate/lib/sinex-schema/Cargo.toml \
+          --bin sinex-schema -- \
+          up
     '';
 
     "db:status".exec = ''
-      (cd crate/lib/sinex-schema && DATABASE_URL="$DATABASE_URL" cargo run -- status)
+      DATABASE_URL="$DATABASE_URL" \
+        cargo run \
+          --manifest-path crate/lib/sinex-schema/Cargo.toml \
+          --bin sinex-schema -- \
+          status
     '';
 
     "db:reset".exec = ''

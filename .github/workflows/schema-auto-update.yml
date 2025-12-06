@@ -32,9 +32,11 @@ jobs:
           set -euo pipefail
           scripts/ci-postgres.sh <<'POSTGRES'
           set -euo pipefail
-          pushd crate/lib/sinex-schema >/dev/null
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-          popd
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" \
+            cargo run \
+              --manifest-path crate/lib/sinex-schema/Cargo.toml \
+              --bin sinex-schema -- \
+              up
           ./scripts/schema-dev.sh generate
           POSTGRES
           DEVENV

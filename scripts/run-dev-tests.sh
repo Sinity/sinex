@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pushd crate/lib/sinex-schema >/dev/null
-DATABASE_URL="${DATABASE_URL_SUPERUSER:?missing superuser url}" cargo run -- up
-popd
+DATABASE_URL="${DATABASE_URL_SUPERUSER:?missing superuser url}" \
+  cargo run \
+    --manifest-path crate/lib/sinex-schema/Cargo.toml \
+    --bin sinex-schema -- \
+    up
 
 extra_args=()
 if [ "${SINEX_DEVTEST_NO_FAIL_FAST:-0}" != "0" ]; then
