@@ -456,6 +456,8 @@ impl TestContext {
 
     /// Force cleanup of the underlying database (use with caution)
     pub async fn force_cleanup(&self) -> TestResult<()> {
+        // Ensure no background work is still touching the database before wiping it.
+        self.quiesce_background_tasks().await?;
         self.db
             .force_cleanup()
             .await
@@ -904,19 +906,13 @@ impl BackgroundRegistry {
 impl Drop for TestContext {
     fn drop(&mut self) {
         // Ensure any registered background work is flushed before returning the database.
-        if Handle::try_current().is_ok() {
-            let registry = self.background.clone();
-            let _ = tokio::task::block_in_place(|| {
-                futures::executor::block_on(async {
-                    registry.lock().await.quiesce().await;
-                })
-            });
-        } else {
-            let registry = self.background.clone();
-            let _ = futures::executor::block_on(async {
-                registry.lock().await.quiesce().await;
-            });
-        }
+        // Note: We cannot use block_in_place here because nextest runs tests with
+        // current_thread runtime, which doesn't support block_in_place.
+        // Always use futures::executor::block_on which works in all contexts.
+        let registry = self.background.clone();
+        let _ = futures::executor::block_on(async {
+            registry.lock().await.quiesce().await;
+        });
 
         let pool = self.pool.clone();
         let records = {
