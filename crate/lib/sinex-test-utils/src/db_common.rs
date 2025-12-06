@@ -263,7 +263,7 @@ impl Drop for OperationIdGuard {
 }
 
 /// Run a cleanup block with session guards applied, guaranteeing restoration even on error.
-async fn with_cleanup_session<F, Fut, T>(
+pub async fn with_cleanup_session<F, Fut, T>(
     conn: &mut PoolConnection<Postgres>,
     config: &crate::cleanup_config::CleanupConfig,
     f: F,

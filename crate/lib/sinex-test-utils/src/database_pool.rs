@@ -903,6 +903,16 @@ impl DatabasePool {
                     Err(_) => continue, // Try next slot
                 };
 
+                // Preflight session state sanity on a fresh slot pool
+                if let Err(e) = ensure_default_session_state(&pool).await {
+                    eprintln!(
+                        "⚠️  Slot {} failed session preflight ({}); recreating slot pool",
+                        slot.name, e
+                    );
+                    let _ = pool.close().await;
+                    continue;
+                }
+
                 // Try to acquire an advisory lock for this database
                 // Use a compound lock ID: slot_index + process_id for better uniqueness
                 let lock_id = (1000 + slot_index as i64) * 100000 + (pid as i64);
@@ -1194,31 +1204,57 @@ async fn log_remaining_rows(pool: &DbPool) {
 }
 
 /// Ensure a pooled connection is returned to default session state; best-effort only.
-async fn ensure_default_session_state(pool: &DbPool) {
-    if let Ok(mut conn) = pool.acquire().await {
-        if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
-            .fetch_one(conn.as_mut())
-            .await
-        {
-            if role != "origin" {
-                let _ = sqlx::query("SET session_replication_role = 'origin'")
-                    .execute(conn.as_mut())
-                    .await;
-                eprintln!("  ⚠️  Reset session_replication_role from {role} to origin");
-            }
+async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
+        .fetch_one(conn.as_mut())
+        .await
+    {
+        if role != "origin" {
+            sqlx::query("SET session_replication_role = 'origin'")
+                .execute(conn.as_mut())
+                .await
+                .map_err(|e| SinexError::database(e.to_string()))?;
+            eprintln!("  ⚠️  Reset session_replication_role from {role} to origin");
         }
-        if let Ok(row_sec) = sqlx::query_scalar::<_, String>("SHOW row_security")
+    }
+    if let Ok(row_sec) = sqlx::query_scalar::<_, String>("SHOW row_security")
+        .fetch_one(conn.as_mut())
+        .await
+    {
+        if row_sec.to_lowercase() != "on" {
+            sqlx::query("SET row_security = on")
+                .execute(conn.as_mut())
+                .await
+                .map_err(|e| SinexError::database(e.to_string()))?;
+            eprintln!("  ⚠️  Reset row_security to on");
+        }
+    }
+
+    // Check critical triggers are enabled
+    let config = crate::cleanup_config::CleanupConfig::default();
+    for table in config.tables_requiring_trigger_disable() {
+        let query = format!(
+            "SELECT NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '{}'::regclass AND NOT tgenabled IN ('O','D')) AS enabled",
+            table.table_name
+        );
+        if let Ok(enabled) = sqlx::query_scalar::<_, Option<bool>>(&query)
             .fetch_one(conn.as_mut())
             .await
         {
-            if row_sec.to_lowercase() != "on" {
-                let _ = sqlx::query("SET row_security = on")
-                    .execute(conn.as_mut())
-                    .await;
-                eprintln!("  ⚠️  Reset row_security to on");
+            if enabled == Some(false) {
+                sqlx::query(&format!(
+                    "ALTER TABLE {} ENABLE TRIGGER ALL",
+                    table.table_name
+                ))
+                .execute(conn.as_mut())
+                .await
+                .map_err(|e| SinexError::database(e.to_string()))?;
+                eprintln!("  ⚠️  Re-enabled triggers on {}", table.table_name);
             }
         }
     }
+    Ok(())
 }
 
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).

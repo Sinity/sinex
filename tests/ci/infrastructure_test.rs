@@ -334,6 +334,39 @@ async fn session_guards_restore_state() -> TestResult<()> {
     Ok(())
 }
 
+/// Verifies guards restore state even when the inner block errors.
+#[sinex_test]
+async fn session_guards_restore_on_error() -> TestResult<()> {
+    use sinex_test_utils::cleanup_config::CleanupConfig;
+
+    let pool = test_db_pool().await;
+    let mut conn = pool.acquire().await?;
+    let config = CleanupConfig::default();
+
+    let initial_replication_role: String = sqlx::query_scalar("SHOW session_replication_role")
+        .fetch_one(&mut *conn)
+        .await?;
+
+    // Force an error inside the guard block
+    let result = sinex_test_utils::db_common::with_cleanup_session(&mut conn, &config, |_conn| async move {
+        Err(color_eyre::eyre::eyre!("intentional failure"))
+    })
+    .await;
+
+    assert!(result.is_err(), "Expected intentional failure");
+
+    let final_replication_role: String = sqlx::query_scalar("SHOW session_replication_role")
+        .fetch_one(&mut *conn)
+        .await?;
+
+    assert_eq!(
+        final_replication_role, initial_replication_role,
+        "Guards should restore original session state even on error"
+    );
+
+    Ok(())
+}
+
 /// Verifies that CleanupConfig is authoritative for cleanup behavior.
 ///
 /// No hardcoded table lists should exist in cleanup functions.
