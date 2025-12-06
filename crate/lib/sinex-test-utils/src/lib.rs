@@ -73,7 +73,7 @@ mod chaos;
 pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
-mod session_guards;
+pub mod session_guards;
 mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
@@ -138,8 +138,8 @@ pub mod prelude {
             EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY, SOURCE_FIXTURE_REPO_PRIMARY,
             SOURCE_FIXTURE_REPO_SECONDARY,
         },
-        optional_extension_missing, pool_slot_count, test_context_fixture, test_event_sources,
-        test_event_types, test_paths, test_sources, with_pool_size,
+        optional_extension_missing, pool_slot_count, test_context_fixture, test_db_pool,
+        test_event_sources, test_event_types, test_paths, test_sources, with_pool_size,
     };
 
     // Core sinex imports - now using flattened namespace
@@ -306,6 +306,7 @@ pub use database_pool::{
     get_pool_stats, optional_extension_missing, pool_slot_count, reset_pool, with_pool_size,
     DatabasePoolTestGuard, DatabaseStats, PoolHealthReport, TestDatabase,
 };
+pub use db_common::test_db_pool;
 pub use deployment_scenario_utils::{
     CompatibilityResult, CompatibilityTestScenario, ComponentConfig, ConfigCompatibilityTester,
     DependencyAvailability, DependencyType, EnvironmentSetup, EnvironmentType, ExpectedOutcome,

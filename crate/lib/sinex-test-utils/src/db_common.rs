@@ -114,33 +114,43 @@ impl OperationIdGuard {
     }
 }
 
+/// Returns a database pool for CI infrastructure tests.
+///
+/// This is a simple pool connection to the DATABASE_URL environment variable,
+/// used by CI tests that need direct database access without the full TestContext
+/// infrastructure.
+///
+/// # Panics
+///
+/// Panics if DATABASE_URL is not set or if connection fails. This is intentional
+/// for CI tests - they should fail fast if the database is not configured.
+pub async fn test_db_pool() -> DbPool {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set for CI infrastructure tests");
+
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("Failed to connect to database for CI tests")
+}
+
 async fn force_purge_events_and_materials(
     conn: &mut PoolConnection<Postgres>,
     pool_for_chunks: &DbPool,
 ) -> TestResult<()> {
-    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await
-        .is_ok();
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security before force purge");
-    }
-    // Explicitly disable triggers to bypass FK enforcement if the replication role toggle is insufficient.
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events during force purge");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger during force purge");
-    }
+    let config = crate::cleanup_config::CleanupConfig::default();
+
+    // Use guards for session state
+    let replication_guard = crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(conn).await?;
+    let row_security_guard = crate::session_guards::RowSecurityGuard::disable_for_cleanup(conn).await?;
+
+    // Disable triggers for tables that require it (config-driven)
+    let trigger_tables: Vec<_> = config
+        .tables_requiring_trigger_disable()
+        .map(|t| t.table_name)
+        .collect();
+    let triggers_guard = crate::session_guards::TriggersGuard::disable_for_cleanup(conn, trigger_tables).await?;
 
     let mut attempts = 0;
     let mut last_counts = (0_i64, 0_i64);
@@ -233,38 +243,13 @@ async fn force_purge_events_and_materials(
         );
     }
 
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force purge");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after force purge");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after force purge");
-    }
-    if replication_disabled {
-        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to reset session_replication_role after force purge");
-        }
-    }
-
-    if let Err(e) = result {
-        return Err(e);
-    }
-
+    // Check final state before restoring session
     if last_counts.0 != 0 || last_counts.1 > 1 {
+        // Restore guards before returning error
+        triggers_guard.restore(conn).await?;
+        row_security_guard.restore(conn).await?;
+        replication_guard.restore(conn).await?;
+
         return Err(eyre!(
             "Force purge left {} events and {} materials",
             last_counts.0,
@@ -272,68 +257,21 @@ async fn force_purge_events_and_materials(
         ));
     }
 
-    Ok(())
+    // Restore session state via guards
+    triggers_guard.restore(conn).await?;
+    row_security_guard.restore(conn).await?;
+    replication_guard.restore(conn).await?;
+
+    result
 }
 
 async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
-    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await
-        .is_ok();
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security in force_clear_events_and_materials");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events in force_clear_events_and_materials");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger in force_clear_events_and_materials");
-    }
-
     let pool_for_chunks = pool.clone();
-    force_purge_events_and_materials(&mut conn, &pool_for_chunks).await?;
 
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force clear");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after force clear");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after force clear");
-    }
-    if replication_disabled {
-        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                "Failed to reset session_replication_role to origin after force purge"
-            );
-        }
-    }
-
-    Ok(())
+    // force_purge_events_and_materials sets up its own session guards,
+    // so we don't need to duplicate that here
+    force_purge_events_and_materials(&mut conn, &pool_for_chunks).await
 }
 
 impl Drop for OperationIdGuard {

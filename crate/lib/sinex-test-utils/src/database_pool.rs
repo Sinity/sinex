@@ -1176,19 +1176,20 @@ async fn log_remaining_rows(pool: &DbPool) {
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
 async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let mut conn = pool.acquire().await?;
-    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await
-        .is_ok();
-    let _ = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await;
-    let _ = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await;
-    let _ = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await;
+    let config = crate::cleanup_config::CleanupConfig::default();
+
+    // Use RAII guards for session state
+    let replication_guard =
+        crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
+    let row_security_guard =
+        crate::session_guards::RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
+    let trigger_tables: Vec<_> = config
+        .tables_requiring_trigger_disable()
+        .map(|t| t.table_name)
+        .collect();
+    let triggers_guard =
+        crate::session_guards::TriggersGuard::disable_for_cleanup(&mut conn, trigger_tables)
+            .await?;
 
     let mut attempts = 0;
     let mut last_events = 0_i64;
@@ -1197,26 +1198,9 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     while attempts < 3 {
         attempts += 1;
 
-        let tables = [
-            "core.event_annotations",
-            "core.event_relations",
-            "core.event_cluster_members",
-            "core.event_embeddings",
-            "core.entity_relations",
-            "core.revisions",
-            "core.processor_checkpoints",
-            "core.operations_log",
-            "core.transactional_outbox",
-            "core.tags",
-            "core.tagged_items",
-            "core.blobs",
-            "raw.temporal_ledger",
-            "core.event_clusters",
-            "core.entities",
-        ];
-
-        for table in tables {
-            let _ = sqlx::query(&format!("DELETE FROM {table}"))
+        // Delete from all tables that need cleanup (config-driven)
+        for table in config.tables_to_clean() {
+            let _ = sqlx::query(&format!("DELETE FROM {}", table.table_name))
                 .execute(conn.as_mut())
                 .await;
         }
@@ -1253,26 +1237,10 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
             .await;
     }
 
-    let _ = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await;
-    let _ = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await;
-    let _ = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await;
-    if replication_disabled {
-        if let Err(err) = sqlx::query("SET session_replication_role = 'origin'")
-            .execute(conn.as_mut())
-            .await
-        {
-            warn!(
-                "Failed to reset session_replication_role to origin after forced cleanup: {}",
-                err
-            );
-        }
-    }
+    // Restore session state via guards (order matters)
+    triggers_guard.restore(&mut conn).await?;
+    row_security_guard.restore(&mut conn).await?;
+    replication_guard.restore(&mut conn).await?;
 
     Ok(())
 }

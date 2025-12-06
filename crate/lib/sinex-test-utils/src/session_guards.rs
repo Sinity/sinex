@@ -9,7 +9,7 @@ use sqlx::{pool::PoolConnection, Postgres};
 use crate::Result;
 
 /// Guard that temporarily sets `session_replication_role = 'replica'`.
-pub(crate) struct ReplicationRoleGuard {
+pub struct ReplicationRoleGuard {
     was_set: bool,
 }
 
@@ -49,7 +49,7 @@ impl ReplicationRoleGuard {
 }
 
 /// Guard that temporarily disables row-level security.
-pub(crate) struct RowSecurityGuard {
+pub struct RowSecurityGuard {
     was_disabled: bool,
 }
 
@@ -83,7 +83,7 @@ impl RowSecurityGuard {
 }
 
 /// Guard that temporarily disables triggers on specific tables.
-pub(crate) struct TriggersGuard {
+pub struct TriggersGuard {
     tables: Vec<String>,
 }
 
