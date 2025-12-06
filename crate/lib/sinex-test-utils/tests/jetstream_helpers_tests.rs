@@ -3,11 +3,11 @@ use std::time::Duration;
 use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
 use color_eyre::eyre;
 use serde_json::json;
-use sinex_test_utils::{sinex_test, EphemeralNats, TestResult, TestSatellitePublisher};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestSatellitePublisher};
 use tokio::time::sleep;
 
 #[sinex_test]
-async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> TestResult<()> {
+async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> sinex_test_utils::TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let env = sinex_core::environment();
     let subject_prefix = env.nats_subject("tests.sample");

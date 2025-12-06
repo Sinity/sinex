@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/database_pool.md")]
 
 use crate::Result;
-use futures::Future;
+use futures::{future::BoxFuture, Future};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -102,15 +102,25 @@ pub struct PoolStats {
     pub idle_connections: usize,
 }
 
+/// Slot-level connection stats
+#[derive(Debug, Clone, Serialize)]
+pub struct SlotStats {
+    pub name: String,
+    pub total_connections: usize,
+    pub idle_connections: usize,
+}
+
 /// Get current pool statistics
 pub fn get_pool_stats() -> PoolStats {
     // Aggregate connection counts if pool exists.
     let mut totals = (0usize, 0usize);
-    if let Some(pool) = POOL.blocking_lock().as_ref().cloned() {
-        for slot in &pool.slots {
-            if let Some(p) = slot.pool.lock().clone() {
-                totals.0 += p.size();
-                totals.1 += p.num_idle();
+    if let Ok(pool_guard) = POOL.try_lock() {
+        if let Some(pool) = pool_guard.as_ref().cloned() {
+            for slot in &pool.slots {
+                if let Some(p) = slot.pool.lock().clone() {
+                    totals.0 += p.size() as usize;
+                    totals.1 += p.num_idle() as usize;
+                }
             }
         }
     }
@@ -119,6 +129,53 @@ pub fn get_pool_stats() -> PoolStats {
     stats.total_connections = totals.0;
     stats.idle_connections = totals.1;
     stats
+}
+
+/// Async-friendly variant of pool statistics gathering.
+pub async fn get_pool_stats_async() -> PoolStats {
+    let mut totals = (0usize, 0usize);
+    if let Some(pool) = POOL.lock().await.as_ref().cloned() {
+        for slot in &pool.slots {
+            if let Some(p) = slot.pool.lock().clone() {
+                totals.0 += p.size() as usize;
+                totals.1 += p.num_idle() as usize;
+            }
+        }
+    }
+
+    let mut stats = POOL_METRICS.get_stats();
+    stats.total_connections = totals.0;
+    stats.idle_connections = totals.1;
+    stats
+}
+
+/// Get per-slot connection stats (best effort; returns empty if pool not initialized).
+pub fn get_slot_stats() -> Vec<SlotStats> {
+    if let Ok(pool_guard) = POOL.try_lock() {
+        if let Some(pool) = pool_guard.as_ref().cloned() {
+            return pool
+                .slots
+                .iter()
+                .map(|slot| {
+                    if let Some(p) = slot.pool.lock().clone() {
+                        SlotStats {
+                            name: slot.name.clone(),
+                            total_connections: p.size() as usize,
+                            idle_connections: p.num_idle() as usize,
+                        }
+                    } else {
+                        SlotStats {
+                            name: slot.name.clone(),
+                            total_connections: 0,
+                            idle_connections: 0,
+                        }
+                    }
+                })
+                .collect();
+        }
+    }
+
+    Vec::new()
 }
 
 /// Template database name cached for the current test process  
@@ -412,7 +469,7 @@ impl TestDatabase {
 
     /// Force cleanup of this database (for testing)
     pub async fn force_cleanup(&self) -> Result<()> {
-        clean_database(&self.pool, &self.name).await
+        clean_database(&self.pool, &self.name, self.url()).await
     }
 }
 
@@ -546,7 +603,7 @@ struct DatabaseSlot {
 }
 
 /// The global database pool
-struct DatabasePool {
+pub(crate) struct DatabasePool {
     slots: Vec<Arc<DatabaseSlot>>,
     slot_max_connections: u32,
 }
@@ -942,7 +999,7 @@ impl DatabasePool {
 
                 // Clean it before use
                 let clean_start = std::time::Instant::now();
-                match clean_database(&pool, &slot.name).await {
+                match clean_database(&pool, &slot.name, &slot.url).await {
                     Ok(_) => {
                         let clean_time = clean_start.elapsed();
                         if clean_time.as_millis() > 100 {
@@ -1098,97 +1155,91 @@ async fn create_database_from_template(
 }
 
 /// Clean a database for reuse
-async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
+async fn clean_database(pool: &DbPool, db_name: &str, db_url: &str) -> Result<()> {
     eprintln!("🧹 Cleaning database: {db_name}");
+    let mut working_pool = pool.clone();
 
     // Use the shared db_common implementation
     // Relax strict FK that can block synthetic test IDs
     let _ = sqlx::query(
         "ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey",
     )
-    .execute(pool)
+    .execute(&working_pool)
     .await;
 
-    match crate::db_common::reset_database(pool).await {
-        Ok(_) => {
-            if let Err(verify_err) = crate::db_common::verify_clean_state(pool).await {
-                eprintln!(
-                    "  ⚠️ Database {db_name} failed clean-state verification: {verify_err}. Retrying cleanup once."
-                );
-
-                // Retry once more to avoid transient race conditions
-                match crate::db_common::reset_database(pool).await {
-                    Ok(_) => {
-                        if let Err(second_verify) = crate::db_common::verify_clean_state(pool).await
-                        {
-                            eprintln!(
-                                "  ❌ Database {db_name} still dirty after retry: {second_verify}"
-                            );
-                            // Last-resort forced cleanup to clear FK-linked rows.
-                            if let Err(force_err) = force_event_material_cleanup(pool).await {
-                                POOL_METRICS.record_cleanup_failure();
-                                log_remaining_rows(pool).await;
-                                return Err(SinexError::unknown(format!(
-                                    "Database {db_name} cleanup verification failed after retry: {second_verify}; forced cleanup failed: {force_err}"
-                                )));
-                            }
-                            if let Err(final_verify) =
-                                crate::db_common::verify_clean_state(pool).await
-                            {
-                                POOL_METRICS.record_cleanup_failure();
-                                log_remaining_rows(pool).await;
-                                return Err(SinexError::unknown(format!(
-                                    "Database {db_name} cleanup verification failed after forced cleanup: {final_verify}"
-                                )));
-                            }
-                        }
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match crate::db_common::reset_database(&working_pool).await {
+            Ok(_) => {
+                if let Err(verify_err) = crate::db_common::verify_clean_state(&working_pool).await {
+                    if attempt >= 2 {
+                        POOL_METRICS.record_cleanup_failure();
+                        log_remaining_rows(&working_pool).await;
+                        return Err(SinexError::unknown(format!(
+                            "Database {db_name} cleanup failed: {verify_err}"
+                        )));
                     }
-                    Err(retry_err) => {
-                        eprintln!("  ❌ Retry cleanup for {db_name} failed: {retry_err}");
-                        if let Err(force_err) = force_event_material_cleanup(pool).await {
-                            POOL_METRICS.record_cleanup_failure();
-                            log_remaining_rows(pool).await;
-                            return Err(SinexError::unknown(format!(
-                                "Database {db_name} cleanup retry failed: {retry_err}; forced cleanup failed: {force_err}"
-                            )));
-                        }
-                        if let Err(final_verify) = crate::db_common::verify_clean_state(pool).await
-                        {
-                            POOL_METRICS.record_cleanup_failure();
-                            log_remaining_rows(pool).await;
-                            return Err(SinexError::unknown(format!(
-                                "Database {db_name} cleanup failed after forced cleanup: {final_verify}"
-                            )));
-                        }
-                    }
+                    eprintln!(
+                        "  ⚠️ Database {db_name} failed clean-state verification: {verify_err}. Retrying cleanup once."
+                    );
+                    continue;
                 }
+
+                eprintln!("  ✅ Database cleanup verified - all tables empty");
+                ensure_default_session_state(&working_pool).await?;
+                return Ok(());
             }
+            Err(e) => {
+                let msg = e.to_string();
+                let retryable = msg.contains("does not exist")
+                    || msg.contains("terminating connection")
+                    || msg.contains("Broken pipe")
+                    || msg.contains("connection");
 
-            eprintln!("  ✅ Database cleanup verified - all tables empty");
-            ensure_default_session_state(pool).await;
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("  ❌ CRITICAL: Database {db_name} cleanup failed: {e}");
-            POOL_METRICS.record_cleanup_failure();
-            log_remaining_rows(pool).await;
+                if retryable && attempt < 3 {
+                    eprintln!(
+                        "  ⚠️  Cleanup for {db_name} failed with connection error ({msg}); attempting to recreate slot and retry."
+                    );
+                    recreate_pool_database(db_name, db_url)
+                        .await
+                        .map_err(|recreate_err| {
+                            POOL_METRICS.record_cleanup_failure();
+                            SinexError::unknown(format!(
+                                "Cleanup failed and recreate failed for {db_name}: {recreate_err}"
+                            ))
+                        })?;
+                    // Fresh pool for the recreated database
+                    let fresh_pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(4)
+                        .acquire_timeout(Duration::from_secs(5))
+                        .connect(db_url)
+                        .await?;
+                    working_pool = fresh_pool;
+                    continue;
+                }
 
-            // Attempt one last forced cleanup focusing on stubborn event/material rows.
-            if let Err(force_err) = force_event_material_cleanup(pool).await {
-                return Err(SinexError::unknown(format!(
-                    "Database {db_name} cleanup failed: {e}; forced cleanup also failed: {force_err}"
-                )));
+                eprintln!("  ❌ CRITICAL: Database {db_name} cleanup failed: {e}");
+                POOL_METRICS.record_cleanup_failure();
+                log_remaining_rows(&working_pool).await;
+
+                // Attempt one last forced cleanup focusing on stubborn event/material rows.
+                if let Err(force_err) = force_event_material_cleanup(&working_pool).await {
+                    return Err(SinexError::unknown(format!(
+                        "Database {db_name} cleanup failed: {e}; forced cleanup also failed: {force_err}"
+                    )));
+                }
+
+                if let Err(verify_err) = crate::db_common::verify_clean_state(&working_pool).await {
+                    return Err(SinexError::unknown(format!(
+                        "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
+                    )));
+                }
+
+                eprintln!("  ✅ Database cleanup recovered after forced truncation");
+                ensure_default_session_state(&working_pool).await?;
+                return Ok(());
             }
-
-            if let Err(verify_err) = crate::db_common::verify_clean_state(pool).await {
-                return Err(SinexError::unknown(format!(
-                    "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
-                )));
-            }
-
-            eprintln!("  ✅ Database cleanup recovered after forced truncation");
-            ensure_default_session_state(pool).await;
-            Ok(())
         }
     }
 }
@@ -1203,8 +1254,42 @@ async fn log_remaining_rows(pool: &DbPool) {
     }
 }
 
+fn admin_url_from_slot(slot_url: &str) -> Result<String> {
+    let mut url =
+        Url::parse(slot_url).map_err(|e| SinexError::database(format!("Invalid slot url: {e}")))?;
+    url.set_path("/postgres");
+    Ok(url.to_string())
+}
+
+async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
+    let admin_url = admin_url_from_slot(slot_url)?;
+    let template_name = TEMPLATE_DB_NAME
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "sinex_test_template_shared".to_string());
+
+    let admin_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(&admin_url)
+        .await
+        .map_err(|e| SinexError::database(format!("Admin connect failed: {e}")))?;
+
+    // Drop and recreate from template
+    sqlx::query(&format!("DROP DATABASE IF EXISTS {db_name}"))
+        .execute(&admin_pool)
+        .await
+        .map_err(|e| SinexError::database(format!("Drop {db_name} failed: {e}")))?;
+
+    create_database_from_template(&mut admin_pool.acquire().await?, db_name, &template_name)
+        .await?;
+
+    let _ = grant_pool_database_permissions(db_name).await;
+    Ok(())
+}
+
 /// Ensure a pooled connection is returned to default session state; best-effort only.
-async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
+pub async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
     let mut conn = pool.acquire().await?;
     if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
         .fetch_one(conn.as_mut())
@@ -1261,67 +1346,86 @@ async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
 async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let mut conn = pool.acquire().await?;
     let config = crate::cleanup_config::CleanupConfig::default();
+    let pool_for_chunks = pool.clone();
+    let cleanup_tables: Vec<String> = config
+        .ordered_tables()
+        .into_iter()
+        .map(|t| t.table_name.to_string())
+        .collect();
 
-    crate::db_common::with_cleanup_session(&mut conn, &config, |conn| async move {
-        let mut attempts = 0;
-        let mut last_events = 0_i64;
-        let mut last_materials = 0_i64;
+    crate::db_common::with_cleanup_session(&mut conn, &config, |conn| {
+        let fut: BoxFuture<'_, crate::TestResult<()>> = Box::pin(async move {
+            let mut attempts = 0;
+            let mut last_events = 0_i64;
+            let mut last_materials = 0_i64;
 
-        while attempts < 3 {
-            attempts += 1;
+            while attempts < 3 {
+                attempts += 1;
 
-            // Delete from all tables that need cleanup (config-driven)
-            for table in config.ordered_tables() {
-                let _ = sqlx::query(&format!("DELETE FROM {}", table.table_name))
+                // Delete from all tables that need cleanup (config-driven)
+                for table in &cleanup_tables {
+                    let _ = sqlx::query(&format!("DELETE FROM {}", table))
+                        .execute(conn.as_mut())
+                        .await;
+                }
+
+                // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
+                let _ = sqlx::query("DELETE FROM core.events")
+                    .execute(conn.as_mut())
+                    .await;
+                let _ = sqlx::query(
+                    "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
+                )
+                .execute(&pool_for_chunks)
+                .await;
+                let _ = sqlx::query("DELETE FROM raw.source_material_registry")
+                    .execute(conn.as_mut())
+                    .await;
+
+                let counts = crate::db_common::get_row_counts(&pool_for_chunks)
+                    .await
+                    .unwrap_or_default();
+                last_events = *counts.get("core.events").unwrap_or(&0);
+                last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
+                if last_events == 0 && last_materials <= 1 {
+                    break;
+                }
+            }
+
+            if last_events != 0 || last_materials > 1 {
+                // Final aggressive delete before giving up.
+                let _ = sqlx::query("DELETE FROM core.events")
+                    .execute(conn.as_mut())
+                    .await;
+                let _ = sqlx::query("DELETE FROM raw.source_material_registry")
                     .execute(conn.as_mut())
                     .await;
             }
 
-            // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
-            let _ = sqlx::query("DELETE FROM core.events")
-                .execute(conn.as_mut())
-                .await;
-            let _ = sqlx::query(
-                "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
-            )
-            .execute(pool)
-            .await;
-            let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-                .execute(conn.as_mut())
-                .await;
-
-            let counts = crate::db_common::get_row_counts(pool)
-                .await
-                .unwrap_or_default();
-            last_events = *counts.get("core.events").unwrap_or(&0);
-            last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
-            if last_events == 0 && last_materials <= 1 {
-                break;
+            if last_events != 0 || last_materials > 1 {
+                return Err(SinexError::unknown(format!(
+                    "Force cleanup left {last_events} events and {last_materials} materials"
+                ))
+                .into());
             }
-        }
 
-        if last_events != 0 || last_materials > 1 {
-            // Final aggressive delete before giving up.
-            let _ = sqlx::query("DELETE FROM core.events")
-                .execute(conn.as_mut())
-                .await;
-            let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-                .execute(conn.as_mut())
-                .await;
-        }
-
-        if last_events != 0 || last_materials > 1 {
-            return Err(SinexError::unknown(format!(
-                "Force cleanup left {last_events} events and {last_materials} materials"
-            )));
-        }
-
-        Ok(())
+            Ok(())
+        });
+        fut
     })
+    .await
+    .map_err(|e| SinexError::unknown(e.to_string()))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn force_event_material_cleanup_for_tests(pool: &DbPool) -> Result<()> {
+    force_event_material_cleanup(pool).await
 }
 
 // Global pool instance - initialized on first use
-static POOL: Lazy<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
+pub(crate) static POOL: Lazy<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
     Lazy::new(|| tokio::sync::Mutex::new(None));
 
 /// Acquire a test database
@@ -2331,7 +2435,7 @@ mod benches {
         }
 
         // Perform cleanup
-        clean_database(pool, db.name()).await?;
+        clean_database(pool, db.name(), db.url()).await?;
         drop(db);
         Ok(())
     }

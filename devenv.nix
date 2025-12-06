@@ -196,6 +196,7 @@ in {
     '';
 
     "db:psql".exec = "psql \"$DATABASE_URL\"";
+    "db:doctor".exec = "cargo run -p sinex-test-utils --bin db_doctor";
 
     "sqlx:prepare".exec = "./scripts/sqlx-prepare.sh";
 

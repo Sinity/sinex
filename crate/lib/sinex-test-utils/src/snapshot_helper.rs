@@ -3,10 +3,12 @@
 use crate::database_pool::get_pool_stats;
 use crate::{TestContext, TestContextFailureSnapshot};
 use chrono::Utc;
+use futures::Future;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Helper for advanced snapshot testing with custom redactions
 pub struct SnapshotTestHelper {
@@ -117,30 +119,23 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         ),
     };
 
-    let slot_detail = crate::database_pool::POOL
-        .try_lock()
-        .ok()
-        .and_then(|guard| guard.as_ref().cloned())
-        .map(|pool| {
-            pool.slots
-                .iter()
-                .map(|slot| {
-                    if let Some(p) = slot.pool.lock().clone() {
-                        SlotSnapshot {
-                            name: slot.name.clone(),
-                            total_connections: p.size(),
-                            idle_connections: p.num_idle(),
-                        }
-                    } else {
-                        SlotSnapshot {
-                            name: slot.name.clone(),
-                            total_connections: 0,
-                            idle_connections: 0,
-                        }
-                    }
-                })
-                .collect()
-        });
+    let slot_detail: Option<Vec<SlotSnapshot>> = {
+        let slots = crate::database_pool::get_slot_stats();
+        if slots.is_empty() {
+            None
+        } else {
+            Some(
+                slots
+                    .into_iter()
+                    .map(|s| SlotSnapshot {
+                        name: s.name,
+                        total_connections: s.total_connections,
+                        idle_connections: s.idle_connections,
+                    })
+                    .collect(),
+            )
+        }
+    };
 
     let snapshot = FailureSnapshot {
         test: test_name.to_string(),
@@ -171,6 +166,29 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         }
         Err(err) => {
             eprintln!("⚠️  failed to serialize failure snapshot for {test_name}: {err}");
+        }
+    }
+}
+
+/// Retry a fallible async block once, capturing diagnostics on the first failure.
+pub async fn retry_with_snapshot<F, Fut>(
+    test_name: &str,
+    ctx: &crate::TestContext,
+    f: F,
+) -> crate::TestResult<()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = crate::TestResult<()>>,
+{
+    match f().await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            persist_failure(test_name, err.to_string(), FailureContext::Borrowed(ctx));
+            // Best-effort recovery before retrying.
+            let _ = ctx.force_cleanup().await;
+            let _ = crate::db_common::reset_database(ctx.pool()).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            f().await
         }
     }
 }

@@ -178,7 +178,7 @@ impl Default for CleanupConfig {
                 },
                 // Protected/internal tables (never touch)
                 TableCleanupStrategy {
-                    table_name: "seaql_migrations",
+                    table_name: "public.seaql_migrations",
                     method: CleanupMethod::Skip,
                     disable_triggers: false,
                     protected: true,

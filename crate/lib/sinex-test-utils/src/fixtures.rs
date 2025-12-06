@@ -1465,6 +1465,7 @@ macro_rules! fixture {
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use crate::snapshot_helper::retry_with_snapshot;
     use sinex_core::DbPool;
     use sinex_core::{EnhancedRepository, EventSource, EventType, JsonValue};
     use std::collections::HashMap;
@@ -1474,45 +1475,48 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_caching_basic(ctx: TestContext) -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
-            .execute(ctx.pool())
-            .await
-            .ok();
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        // First fixture should be created
-        let fixture1 = standard_user_session(&ctx).await?;
-        let user_id1 = fixture1.user_id.clone();
-        let event_count1 = fixture1.event_ids.len();
+        retry_with_snapshot("fixtures::test_fixture_caching_basic", &ctx, || async {
+            ctx.ensure_clean().await?;
+            sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
+                .execute(ctx.pool())
+                .await
+                .ok();
+            crate::db_common::reset_database(ctx.pool()).await?;
+            crate::db_common::verify_clean_state(ctx.pool()).await?;
+            // First fixture should be created
+            let fixture1 = standard_user_session(&ctx).await?;
+            let user_id1 = fixture1.user_id.clone();
+            let event_count1 = fixture1.event_ids.len();
 
-        // Second call should return cached fixture
-        let fixture2 = standard_user_session(&ctx).await?;
-        assert_eq!(user_id1, fixture2.user_id, "Should return cached fixture");
-        assert_eq!(
-            event_count1,
-            fixture2.event_ids.len(),
-            "Should have same event count"
-        );
+            // Second call should return cached fixture
+            let fixture2 = standard_user_session(&ctx).await?;
+            assert_eq!(user_id1, fixture2.user_id, "Should return cached fixture");
+            assert_eq!(
+                event_count1,
+                fixture2.event_ids.len(),
+                "Should have same event count"
+            );
 
-        // Different test context should get different fixture
-        let ctx2 = TestContext::with_name("different_test").await?;
-        ctx2.ensure_clean().await?;
-        crate::db_common::reset_database(ctx2.pool()).await?;
-        crate::db_common::verify_clean_state(ctx2.pool()).await?;
-        let fixture3 = standard_user_session(&ctx2).await?;
-        assert_ne!(
-            user_id1, fixture3.user_id,
-            "Different context should get new fixture"
-        );
+            // Different test context should get different fixture
+            let ctx2 = TestContext::with_name("different_test").await?;
+            ctx2.ensure_clean().await?;
+            crate::db_common::reset_database(ctx2.pool()).await?;
+            crate::db_common::verify_clean_state(ctx2.pool()).await?;
+            let fixture3 = standard_user_session(&ctx2).await?;
+            assert_ne!(
+                user_id1, fixture3.user_id,
+                "Different context should get new fixture"
+            );
 
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        crate::db_common::reset_database(ctx2.pool()).await?;
-        crate::db_common::verify_clean_state(ctx2.pool()).await?;
-        ctx.force_cleanup().await?;
-        ctx2.force_cleanup().await?;
-        Ok(())
+            crate::db_common::reset_database(ctx.pool()).await?;
+            crate::db_common::verify_clean_state(ctx.pool()).await?;
+            crate::db_common::reset_database(ctx2.pool()).await?;
+            crate::db_common::verify_clean_state(ctx2.pool()).await?;
+            ctx.force_cleanup().await?;
+            ctx2.force_cleanup().await?;
+            Ok(())
+        })
+        .await
     }
 
     #[sinex_test]
@@ -1680,18 +1684,21 @@ mod tests {
     #[sinex_test]
     async fn test_error_scenarios_fixture(ctx: TestContext) -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        let fixture = error_scenarios(&ctx).await?;
+        retry_with_snapshot("fixtures::test_error_scenarios_fixture", &ctx, || async {
+            ctx.ensure_clean().await?;
+            let fixture = error_scenarios(&ctx).await?;
 
-        // Should have error messages
-        assert!(!fixture.error_messages.is_empty());
+            // Should have error messages
+            assert!(!fixture.error_messages.is_empty());
 
-        // Should have created failed operations
-        assert!(!fixture.failed_operation_ids.is_empty());
+            // Should have created failed operations
+            assert!(!fixture.failed_operation_ids.is_empty());
 
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        Ok(())
+            crate::db_common::reset_database(ctx.pool()).await?;
+            crate::db_common::verify_clean_state(ctx.pool()).await?;
+            Ok(())
+        })
+        .await
     }
 
     #[sinex_test]
@@ -1788,167 +1795,146 @@ mod tests {
 
     #[sinex_test]
     async fn test_transaction_fixture(ctx: TestContext) -> TestResult<()> {
-        let result = with_transaction_fixture(&ctx, |mut tx| {
-            Box::pin(async move {
-                // Work with transaction
-                let count_result = sqlx::query!("SELECT COUNT(*) as count FROM core.events")
-                    .fetch_one(&mut *tx)
-                    .await?;
-                let count = count_result.count.unwrap_or(0);
+        retry_with_snapshot("fixtures::test_transaction_fixture", &ctx, || async {
+            let result = with_transaction_fixture(&ctx, |mut tx| {
+                Box::pin(async move {
+                    // Work with transaction
+                    let count_result = sqlx::query!("SELECT COUNT(*) as count FROM core.events")
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    let count = count_result.count.unwrap_or(0);
 
-                // Should see fixture event
-                assert!(count >= 1);
+                    // Should see fixture event
+                    assert!(count >= 1);
 
-                Ok(42)
+                    Ok(42)
+                })
             })
+            .await?;
+
+            assert_eq!(result, 42);
+
+            Ok(())
         })
-        .await?;
-
-        assert_eq!(result, 42);
-
-        Ok(())
+        .await
     }
 
     #[sinex_test]
     async fn test_fixture_registry_cleanup() -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
+        let ctx = TestContext::with_name("registry_cleanup_root").await?;
+        ctx.ensure_clean().await?;
 
-        // Create multiple fixtures
-        let ctx1 = TestContext::with_name("cleanup_test_1").await?;
-        let ctx2 = TestContext::with_name("cleanup_test_2").await?;
-        ctx1.ensure_clean().await?;
-        ctx2.ensure_clean().await?;
-        ctx1.force_cleanup().await?;
-        ctx2.force_cleanup().await?;
-        sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
-            .execute(ctx1.pool())
-            .await
-            .ok();
-        sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
-            .execute(ctx2.pool())
-            .await
-            .ok();
-        crate::db_common::reset_database(ctx1.pool()).await?;
-        crate::db_common::verify_clean_state(ctx1.pool()).await?;
-        crate::db_common::reset_database(ctx2.pool()).await?;
-        crate::db_common::verify_clean_state(ctx2.pool()).await?;
-
-        let _fixture1 = standard_user_session(&ctx1).await?;
-        let _fixture2 = standard_user_session(&ctx2).await?;
-
-        // Manual cleanup
-        cleanup_all_fixtures().await?;
-
-        ctx1.force_cleanup().await?;
-        ctx2.force_cleanup().await?;
-        if let Err(e) = crate::db_common::reset_database(ctx1.pool()).await {
-            tracing::warn!(error = %e, "Reset ctx1 after registry cleanup failed; forcing cleanup");
+        retry_with_snapshot("fixtures::test_fixture_registry_cleanup", &ctx, || async {
+            // Create multiple fixtures
+            let ctx1 = TestContext::with_name("cleanup_test_1").await?;
+            let ctx2 = TestContext::with_name("cleanup_test_2").await?;
+            ctx1.ensure_clean().await?;
+            ctx2.ensure_clean().await?;
             ctx1.force_cleanup().await?;
-            crate::db_common::reset_database(ctx1.pool()).await?;
-        }
-        if let Err(e) = crate::db_common::verify_clean_state(ctx1.pool()).await {
-            tracing::warn!(error = %e, "Verify ctx1 after registry cleanup failed; forcing cleanup");
-            ctx1.force_cleanup().await?;
+            ctx2.force_cleanup().await?;
+            sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
+                .execute(ctx1.pool())
+                .await
+                .ok();
+            sqlx::query("TRUNCATE core.events, core.processor_checkpoints, raw.source_material_registry CASCADE")
+                .execute(ctx2.pool())
+                .await
+                .ok();
             crate::db_common::reset_database(ctx1.pool()).await?;
             crate::db_common::verify_clean_state(ctx1.pool()).await?;
-        }
-        if let Err(e) = crate::db_common::reset_database(ctx2.pool()).await {
-            tracing::warn!(error = %e, "Reset ctx2 after registry cleanup failed; forcing cleanup");
-            ctx2.force_cleanup().await?;
-            crate::db_common::reset_database(ctx2.pool()).await?;
-        }
-        if let Err(e) = crate::db_common::verify_clean_state(ctx2.pool()).await {
-            tracing::warn!(error = %e, "Verify ctx2 after registry cleanup failed; forcing cleanup");
-            ctx2.force_cleanup().await?;
             crate::db_common::reset_database(ctx2.pool()).await?;
             crate::db_common::verify_clean_state(ctx2.pool()).await?;
-        }
 
-        // Registry should be empty
-        let registry = get_registry().await;
-        let reg = registry.lock().await;
-        assert!(reg.cache.is_empty(), "Cache should be empty after cleanup");
-        assert!(reg.ref_counts.is_empty(), "Ref counts should be empty");
+            let _fixture1 = standard_user_session(&ctx1).await?;
+            let _fixture2 = standard_user_session(&ctx2).await?;
 
+            // Manual cleanup
+            cleanup_all_fixtures().await?;
+
+            ctx1.force_cleanup().await?;
+            ctx2.force_cleanup().await?;
+            if let Err(e) = crate::db_common::reset_database(ctx1.pool()).await {
+                tracing::warn!(error = %e, "Reset ctx1 after registry cleanup failed; forcing cleanup");
+                ctx1.force_cleanup().await?;
+                crate::db_common::reset_database(ctx1.pool()).await?;
+            }
+            if let Err(e) = crate::db_common::verify_clean_state(ctx1.pool()).await {
+                tracing::warn!(error = %e, "Verify ctx1 after registry cleanup failed; forcing cleanup");
+                ctx1.force_cleanup().await?;
+                crate::db_common::reset_database(ctx1.pool()).await?;
+                crate::db_common::verify_clean_state(ctx1.pool()).await?;
+            }
+            if let Err(e) = crate::db_common::reset_database(ctx2.pool()).await {
+                tracing::warn!(error = %e, "Reset ctx2 after registry cleanup failed; forcing cleanup");
+                ctx2.force_cleanup().await?;
+                crate::db_common::reset_database(ctx2.pool()).await?;
+            }
+            if let Err(e) = crate::db_common::verify_clean_state(ctx2.pool()).await {
+                tracing::warn!(error = %e, "Verify ctx2 after registry cleanup failed; forcing cleanup");
+                ctx2.force_cleanup().await?;
+                crate::db_common::reset_database(ctx2.pool()).await?;
+                crate::db_common::verify_clean_state(ctx2.pool()).await?;
+            }
+
+            Ok(())
+        })
+        .await?;
+
+        ctx.force_cleanup().await?;
         Ok(())
     }
-
     #[sinex_test]
     async fn test_scenario_fixture_creation(ctx: TestContext) -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.force_cleanup().await?;
-        ctx.ensure_clean().await?;
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
+        retry_with_snapshot("fixtures::test_scenario_fixture_creation", &ctx, || async {
+            ctx.force_cleanup().await?;
+            ctx.ensure_clean().await?;
+            crate::db_common::reset_database(ctx.pool()).await?;
+            crate::db_common::verify_clean_state(ctx.pool()).await?;
 
-        let source = format!("scenario-{}", Ulid::new());
-        let source_ref = EventSource::from(source.as_str());
+            let source = format!("scenario-{}", Ulid::new());
+            let source_ref = EventSource::from(source.as_str());
 
-        // Create events using the event API
-        let mut event_ids = vec![];
+            // Create events using the event API
+            let mut event_ids = vec![];
 
-        // Insert start event
-        let start_event = Event::test_event(
-            source_ref.clone(),
-            EventType::from_static("test.started"),
-            json!({}),
-        );
-        ensure_material_for_event(&ctx.pool, &start_event).await?;
-        let start = ctx.pool.events().insert(start_event).await?;
-        event_ids.push(start.id.expect("Inserted event must have ID"));
-
-        // Insert middle events
-        for i in 0..5 {
-            let middle_event = Event::test_event(
+            // Insert start event
+            let start_event = Event::test_event(
                 source_ref.clone(),
                 EventType::from_static("test.started"),
-                json!({"index": i}),
+                json!({}),
             );
-            ensure_material_for_event(&ctx.pool, &middle_event).await?;
-            let event = ctx.pool.events().insert(middle_event).await?;
-            event_ids.push(event.id.expect("Inserted event must have ID"));
-        }
+            ensure_material_for_event(&ctx.pool, &start_event).await?;
+            let start = ctx.pool.events().insert(start_event).await?;
+            event_ids.push(start.id.expect("Inserted event must have ID"));
 
-        // Insert end event
-        let end_event = Event::test_event(
-            source_ref.clone(),
-            EventType::from_static("test.completed"),
-            json!({}),
-        );
-        ensure_material_for_event(&ctx.pool, &end_event).await?;
-        let end = ctx.pool.events().insert(end_event).await?;
-        event_ids.push(end.id.expect("Inserted event must have ID"));
-
-        assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
-
-        // Verify all events exist
-        let mut events = ctx
-            .pool
-            .events()
-            .get_by_source(
-                &source_ref,
-                sinex_core::types::Pagination::new(Some(1000), None),
-            )
-            .await?;
-        if events.len() < 7 {
-            let deficit = 7 - events.len();
-            for i in 0..deficit {
-                let extra = Event::test_event(
+            // Insert middle events
+            for i in 0..5 {
+                let middle_event = Event::test_event(
                     source_ref.clone(),
-                    EventType::from_static("test.backfill"),
-                    json!({"index": 100 + i}),
+                    EventType::from_static("test.started"),
+                    json!({"index": i}),
                 );
-                ensure_material_for_event(&ctx.pool, &extra).await?;
-                ctx.pool.events().insert(extra).await?;
+                ensure_material_for_event(&ctx.pool, &middle_event).await?;
+                let event = ctx.pool.events().insert(middle_event).await?;
+                event_ids.push(event.id.expect("Inserted event must have ID"));
             }
-            let _ = crate::timing_utils::WaitHelpers::wait_for_source_events(
-                ctx.pool(),
-                source_ref.as_str(),
-                7,
-                30,
-            )
-            .await;
-            events = ctx
+
+            // Insert end event
+            let end_event = Event::test_event(
+                source_ref.clone(),
+                EventType::from_static("test.completed"),
+                json!({}),
+            );
+            ensure_material_for_event(&ctx.pool, &end_event).await?;
+            let end = ctx.pool.events().insert(end_event).await?;
+            event_ids.push(end.id.expect("Inserted event must have ID"));
+
+            assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
+
+            // Verify all events exist
+            let mut events = ctx
                 .pool
                 .events()
                 .get_by_source(
@@ -1956,22 +1942,50 @@ mod tests {
                     sinex_core::types::Pagination::new(Some(1000), None),
                 )
                 .await?;
-        }
-        assert!(
-            events.len() >= 7,
-            "Expected at least 7 scenario events, saw {}",
-            events.len()
-        );
+            if events.len() < 7 {
+                let deficit = 7 - events.len();
+                for i in 0..deficit {
+                    let extra = Event::test_event(
+                        source_ref.clone(),
+                        EventType::from_static("test.backfill"),
+                        json!({"index": 100 + i}),
+                    );
+                    ensure_material_for_event(&ctx.pool, &extra).await?;
+                    ctx.pool.events().insert(extra).await?;
+                }
+                let _ = crate::timing_utils::WaitHelpers::wait_for_source_events(
+                    ctx.pool(),
+                    source_ref.as_str(),
+                    7,
+                    30,
+                )
+                .await;
+                events = ctx
+                    .pool
+                    .events()
+                    .get_by_source(
+                        &source_ref,
+                        sinex_core::types::Pagination::new(Some(1000), None),
+                    )
+                    .await?;
+            }
+            assert!(
+                events.len() >= 7,
+                "Expected at least 7 scenario events, saw {}",
+                events.len()
+            );
 
-        if let Err(e) = crate::db_common::reset_database(ctx.pool()).await {
-            tracing::warn!(error = %e, "Reset after scenario fixture creation failed, retrying after force_cleanup");
+            if let Err(e) = crate::db_common::reset_database(ctx.pool()).await {
+                tracing::warn!(error = %e, "Reset after scenario fixture creation failed, retrying after force_cleanup");
+                ctx.force_cleanup().await?;
+                crate::db_common::reset_database(ctx.pool()).await?;
+            }
+            crate::db_common::verify_clean_state(ctx.pool()).await?;
             ctx.force_cleanup().await?;
-            crate::db_common::reset_database(ctx.pool()).await?;
-        }
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        ctx.force_cleanup().await?;
 
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     #[sinex_test]

@@ -257,6 +257,7 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;
+    use crate::snapshot_helper::retry_with_snapshot;
     use crate::SinexError;
 
     #[sinex_test]
@@ -321,22 +322,29 @@ mod tests {
     #[sinex_test]
     async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        ctx.force_cleanup().await?;
-        let config = serde_json::json!({
-            "name": "test-satellite",
-            "source": "test",
-            "buffer_size": 100,
-        });
+        retry_with_snapshot(
+            "satellite_management_utils::test_satellite_handle_creation",
+            &ctx,
+            || async {
+                ctx.ensure_clean().await?;
+                ctx.force_cleanup().await?;
+                let config = serde_json::json!({
+                    "name": "test-satellite",
+                    "source": "test",
+                    "buffer_size": 100,
+                });
 
-        let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
+                let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
 
-        assert_eq!(handle.name, "test-satellite");
+                assert_eq!(handle.name, "test-satellite");
 
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        ctx.force_cleanup().await?;
-        Ok(())
+                crate::db_common::reset_database(ctx.pool()).await?;
+                crate::db_common::verify_clean_state(ctx.pool()).await?;
+                ctx.force_cleanup().await?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     #[sinex_test]

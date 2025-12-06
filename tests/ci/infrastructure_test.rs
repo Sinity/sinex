@@ -4,6 +4,7 @@
 //! preventing permission-related failures that could otherwise only be
 //! caught during CI runs.
 
+use futures::future::BoxFuture;
 use sinex_schema::schema_registry;
 use sinex_test_utils::{sinex_test, test_db_pool, TestResult};
 use sqlx::{PgPool, Row};
@@ -348,8 +349,10 @@ async fn session_guards_restore_on_error() -> TestResult<()> {
         .await?;
 
     // Force an error inside the guard block
-    let result = sinex_test_utils::db_common::with_cleanup_session(&mut conn, &config, |_conn| async move {
-        Err(color_eyre::eyre::eyre!("intentional failure"))
+    let result = sinex_test_utils::db_common::with_cleanup_session(&mut conn, &config, |_conn| {
+        let fut: BoxFuture<'_, TestResult<()>> =
+            Box::pin(async move { Err(color_eyre::eyre::eyre!("intentional failure")) });
+        fut
     })
     .await;
 
@@ -407,5 +410,21 @@ async fn cleanup_config_is_authoritative() -> TestResult<()> {
         "raw.temporal_ledger must have disable_triggers = true"
     );
 
+    Ok(())
+}
+
+/// Ensures pool stats helpers are usable inside async runtimes (no blocking_lock panics).
+#[sinex_test]
+async fn pool_stats_helpers_are_async_safe() -> TestResult<()> {
+    let _ = sinex_test_utils::database_pool::get_pool_stats();
+    let _ = sinex_test_utils::database_pool::get_pool_stats_async().await;
+    Ok(())
+}
+
+/// Ensures session state reset helper is callable in CI (permissions, triggers, RLS).
+#[sinex_test]
+async fn can_reset_session_state_via_helper() -> TestResult<()> {
+    let pool = test_db_pool().await;
+    sinex_test_utils::database_pool::ensure_default_session_state(&pool).await?;
     Ok(())
 }

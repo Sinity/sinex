@@ -16,19 +16,12 @@ pub struct ReplicationRoleGuard {
 impl ReplicationRoleGuard {
     /// Attempt to set session_replication_role to 'replica' for cleanup.
     pub async fn disable_for_cleanup(conn: &mut PoolConnection<Postgres>) -> Result<Self> {
-        let was_set = sqlx::query("SET session_replication_role = 'replica'")
+        sqlx::query("SET session_replication_role = 'replica'")
             .execute(conn.as_mut())
             .await
-            .is_ok();
+            .map_err(|e| crate::SinexError::database(e.to_string()))?;
 
-        if !was_set {
-            tracing::warn!(
-                "Unable to set session_replication_role = 'replica' (permission denied); \
-                 cleanup may be limited by FK constraints"
-            );
-        }
-
-        Ok(Self { was_set })
+        Ok(Self { was_set: true })
     }
 
     /// Restore session_replication_role to 'origin'.
@@ -60,16 +53,12 @@ pub struct RowSecurityGuard {
 impl RowSecurityGuard {
     /// Disable RLS for cleanup operations.
     pub async fn disable_for_cleanup(conn: &mut PoolConnection<Postgres>) -> Result<Self> {
-        let was_disabled = sqlx::query("SET row_security = off")
+        sqlx::query("SET row_security = off")
             .execute(conn.as_mut())
             .await
-            .is_ok();
+            .map_err(|e| crate::SinexError::database(e.to_string()))?;
 
-        if !was_disabled {
-            tracing::warn!("Failed to disable row_security (permission denied)");
-        }
-
-        Ok(Self { was_disabled })
+        Ok(Self { was_disabled: true })
     }
 
     /// Restore row security to ON.
@@ -107,11 +96,11 @@ impl TriggersGuard {
             let table_name = table.as_ref();
             let query = format!("ALTER TABLE {} DISABLE TRIGGER ALL", table_name);
 
-            if sqlx::query(&query).execute(conn.as_mut()).await.is_ok() {
-                disabled_tables.push(table_name.to_string());
-            } else {
-                tracing::warn!(table = %table_name, "Failed to disable triggers on table");
-            }
+            sqlx::query(&query)
+                .execute(conn.as_mut())
+                .await
+                .map_err(|e| crate::SinexError::database(e.to_string()))?;
+            disabled_tables.push(table_name.to_string());
         }
 
         Ok(Self {

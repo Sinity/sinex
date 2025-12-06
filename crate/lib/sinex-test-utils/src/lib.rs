@@ -303,8 +303,9 @@ pub use channel_enhancements::{
 };
 pub use database_pool::{
     acquire_admin_connection, acquire_pool_test_guard, acquire_test_database, check_pool_health,
-    get_pool_stats, optional_extension_missing, pool_slot_count, reset_pool, with_pool_size,
-    DatabasePoolTestGuard, DatabaseStats, PoolHealthReport, TestDatabase,
+    ensure_default_session_state, get_pool_stats, get_pool_stats_async, get_slot_stats,
+    optional_extension_missing, pool_slot_count, reset_pool, with_pool_size, DatabasePoolTestGuard,
+    DatabaseStats, PoolHealthReport, TestDatabase,
 };
 pub use db_common::test_db_pool;
 pub use deployment_scenario_utils::{
