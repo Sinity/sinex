@@ -147,7 +147,8 @@ in {
     "dev:check".exec = "cargo check --workspace --all-features";
     "dev:build".exec = "cargo build --workspace";
 
-    "dev:test".exec = "scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
+    # Stream CI harness output and enable verbose postgres setup logs when running locally.
+    "dev:test".exec = "CI_VERBOSE=1 stdbuf -oL -eL scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
 
     "test:all".exec = ''
       devenv tasks run db:setup
