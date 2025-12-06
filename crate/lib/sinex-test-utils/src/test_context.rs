@@ -45,6 +45,8 @@ use crate::timing_utils::TimingUtils;
 use crate::TestResult;
 use async_nats::{jetstream, Client as NatsClient};
 use color_eyre::eyre::eyre;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
@@ -62,6 +64,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinHandle;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -101,6 +104,7 @@ pub struct TestContext {
     test_name: String,
     start_time: Instant,
     created_events: Arc<Mutex<Vec<CreatedEventInfo>>>,
+    background: Arc<AsyncMutex<BackgroundRegistry>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
     baseline_events: i64,
     _tracing_enabled: bool,
@@ -260,6 +264,7 @@ impl TestContext {
             test_name: test_name.to_string(),
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            background: Arc::new(AsyncMutex::new(BackgroundRegistry::default())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
             baseline_events,
             _tracing_enabled: false,
@@ -462,6 +467,7 @@ impl TestContext {
     /// This verifies that the database is empty and ready for use.
     /// If not clean, attempts cleanup and verification.
     pub async fn ensure_clean(&self) -> TestResult<()> {
+        self.quiesce_background_tasks().await?;
         match crate::db_common::verify_clean_state(&self.pool).await {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -470,6 +476,42 @@ impl TestContext {
                 Ok(())
             }
         }
+    }
+
+    /// Register a background task that must complete before the database is returned to the pool.
+    /// Use this for fire-and-forget helpers started inside a test.
+    pub async fn register_background_task(&self, handle: JoinHandle<()>) {
+        let mut guard = self.background.lock().await;
+        guard.tasks.push(handle);
+    }
+
+    /// Spawn and track a background task that will be awaited during cleanup.
+    pub fn spawn_background<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let registry = self.background.clone();
+        let handle = tokio::spawn(fut);
+        tokio::spawn(async move {
+            registry.lock().await.tasks.push(handle);
+        });
+    }
+
+    /// Register a custom shutdown hook to run before the context gives the database back.
+    pub async fn register_shutdown_hook<F>(&self, hook: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let mut guard = self.background.lock().await;
+        guard.shutdown_hooks.push(hook.boxed());
+    }
+
+    /// Wait for background tasks and shutdown hooks to finish. Called automatically on drop,
+    /// but available for tests that want deterministic cleanup points.
+    pub async fn quiesce_background_tasks(&self) -> TestResult<()> {
+        let mut guard = self.background.lock().await;
+        guard.quiesce().await;
+        Ok(())
     }
 
     /// Create and insert a test event
@@ -830,9 +872,52 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
     Ok(())
 }
 
+#[derive(Default)]
+struct BackgroundRegistry {
+    tasks: Vec<JoinHandle<()>>,
+    shutdown_hooks: Vec<BoxFuture<'static, ()>>,
+}
+
+impl BackgroundRegistry {
+    async fn quiesce(&mut self) {
+        // Run shutdown hooks first so tasks can observe the signal.
+        let hooks = std::mem::take(&mut self.shutdown_hooks);
+        for hook in hooks {
+            if let Err(err) = tokio::time::timeout(Duration::from_secs(10), hook).await {
+                warn!(?err, "Timeout waiting for shutdown hook");
+            }
+        }
+
+        // Wait for tracked background tasks to finish, aborting on timeout.
+        let tasks = std::mem::take(&mut self.tasks);
+        for handle in tasks {
+            match tokio::time::timeout(Duration::from_secs(10), handle).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(join_err)) => warn!(error = %join_err, "Background task join failed"),
+                Err(_) => warn!("Background task did not finish within timeout; aborting"),
+            }
+        }
+    }
+}
+
 /// Cleanup implementation for TestContext
 impl Drop for TestContext {
     fn drop(&mut self) {
+        // Ensure any registered background work is flushed before returning the database.
+        if Handle::try_current().is_ok() {
+            let registry = self.background.clone();
+            let _ = tokio::task::block_in_place(|| {
+                futures::executor::block_on(async {
+                    registry.lock().await.quiesce().await;
+                })
+            });
+        } else {
+            let registry = self.background.clone();
+            let _ = futures::executor::block_on(async {
+                registry.lock().await.quiesce().await;
+            });
+        }
+
         let pool = self.pool.clone();
         let records = {
             let mut guard = self.created_events.lock();

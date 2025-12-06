@@ -1652,6 +1652,9 @@ mod tests {
             "Second source should be cleaned"
         );
 
+        // Ensure no background work is still running before handing the DB back to the pool.
+        ctx.quiesce_background_tasks().await?;
+
         Ok(())
     }
 
@@ -2032,6 +2035,9 @@ mod tests {
             crate::db_common::reset_database(ctx.pool()).await?;
             crate::db_common::verify_clean_state(ctx.pool()).await?;
         }
+
+        // Flush any lingering background tasks to avoid cross-test interference.
+        ctx.quiesce_background_tasks().await?;
         Ok(())
     }
 
