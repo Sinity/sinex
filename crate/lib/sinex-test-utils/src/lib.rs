@@ -73,6 +73,7 @@ mod chaos;
 pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
+mod session_guards;
 mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;

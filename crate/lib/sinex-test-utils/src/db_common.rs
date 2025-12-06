@@ -383,96 +383,66 @@ impl Drop for OperationIdGuard {
 /// ```
 pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
+    let config = crate::cleanup_config::CleanupConfig::default();
 
-    // Disable FK checks for the cleanup session
-    let replication_disabled = sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await
-        .is_ok();
-    if !replication_disabled {
-        tracing::warn!("Unable to set session_replication_role (permission denied); cleanup may be limited");
-    }
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security before cleanup");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events during cleanup");
-    }
-    // Also disable temporal_ledger triggers (append-only constraint)
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on raw.temporal_ledger during cleanup");
-    }
+    // Use RAII guards for session state - these will be explicitly restored before function returns
+    let replication_guard = crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
+    let row_security_guard = crate::session_guards::RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
+
+    // Disable triggers for tables that require it (config-driven)
+    let trigger_tables: Vec<_> = config
+        .tables_requiring_trigger_disable()
+        .map(|t| t.table_name)
+        .collect();
+    let triggers_guard = crate::session_guards::TriggersGuard::disable_for_cleanup(&mut conn, trigger_tables).await?;
 
     let pool_for_chunks = pool.clone();
     let operation_guard = OperationIdGuard::apply(&mut conn, "test-cleanup").await?;
     {
         let pool_for_chunks = pool_for_chunks.clone();
-        // Try to use TRUNCATE for non-hypertables (much faster)
-        let truncate_result = sqlx::query(
-            r#"
-                TRUNCATE TABLE 
-                    core.event_annotations,
-                    core.event_relations,
-                    core.event_cluster_members,
-                    core.event_embeddings,
-                    core.entity_relations,
-                    core.revisions,
-                    core.entities,
-                    core.event_clusters,
-                    core.processor_checkpoints,
-                    core.operations_log,
-                    core.transactional_outbox,
-                    core.blobs,
-                    core.tags,
-                    core.tagged_items,
-                    raw.source_material_registry,
-                    raw.temporal_ledger,
-                    core.processor_manifests,
-                    sinex_schemas.event_payload_schemas
-                CASCADE
-            "#,
-        )
-        .execute(conn.as_mut())
-        .await;
 
-        if let Err(e) = truncate_result {
-            tracing::warn!("TRUNCATE failed ({}), falling back to DELETE", e);
+        // TRUNCATE tables that support it (fast path)
+        let truncate_tables: Vec<String> = config
+            .truncatable_tables()
+            .map(|t| t.table_name.to_string())
+            .collect();
 
-            // Fall back to DELETE in dependency order
-            let delete_queries = [
-                "DELETE FROM core.event_annotations",
-                "DELETE FROM core.event_relations",
-                "DELETE FROM core.event_cluster_members",
-                "DELETE FROM core.event_embeddings",
-                "DELETE FROM core.entity_relations",
-                "DELETE FROM core.revisions",
-                "DELETE FROM core.processor_manifests",
-                "DELETE FROM sinex_schemas.event_payload_schemas",
-                "DELETE FROM core.processor_checkpoints",
-                "DELETE FROM core.operations_log",
-                "DELETE FROM core.transactional_outbox",
-                "DELETE FROM core.tags",
-                "DELETE FROM core.tagged_items",
-                "DELETE FROM core.blobs",
-                "DELETE FROM raw.temporal_ledger",
-                "DELETE FROM core.entities",
-                "DELETE FROM core.event_clusters",
-            ];
+        if !truncate_tables.is_empty() {
+            let truncate_list = truncate_tables.join(",\n                    ");
+            let truncate_query = format!(
+                "TRUNCATE TABLE \n                    {}\n                CASCADE",
+                truncate_list
+            );
+            let truncate_result = sqlx::query(&truncate_query)
+                .execute(conn.as_mut())
+                .await;
 
-            for query in delete_queries {
-                if let Err(e) = sqlx::query(query).execute(conn.as_mut()).await {
-                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
-                    tracing::warn!("Failed to delete from {}: {}", table_name, e);
+            if let Err(e) = truncate_result {
+                tracing::warn!("TRUNCATE failed ({}), falling back to DELETE for truncatable tables", e);
+                // Fall back to DELETE for tables that should have been truncated
+                for table in config.truncatable_tables() {
+                    let query = format!("DELETE FROM {}", table.table_name);
+                    if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
+                        tracing::warn!(
+                            error = %e,
+                            table = %table.table_name,
+                            "Failed to delete from table"
+                        );
+                    }
                 }
+            }
+        }
+
+        // DELETE tables that require it (hypertables, tables with special constraints)
+        for table in config.delete_only_tables() {
+            let query = format!("DELETE FROM {}", table.table_name);
+            if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
+                tracing::warn!(
+                    error = %e,
+                    table = %table.table_name,
+                    reason = ?table.reason,
+                    "Failed to delete from table"
+                );
             }
         }
 
@@ -517,16 +487,6 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
         }
     }
     operation_guard.restore(&mut conn).await?;
-
-    // Re-enable FK checks (only if we successfully disabled them)
-    if replication_disabled {
-        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to reset session_replication_role to origin after cleanup");
-        }
-    }
 
     // Ensure no stale bootstrap records remain from prior runs
     // This DELETE needs operation_id for RLS policy
@@ -611,10 +571,7 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     purge_result?;
 
     // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
-    let replication_disabled2 = sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await
-        .is_ok();
+    // (replication role already disabled by outer guard)
     sqlx::query(
         r#"
         DELETE FROM raw.source_material_registry
@@ -625,14 +582,6 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
     .execute(conn.as_mut())
     .await?;
-    if replication_disabled2 {
-        if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to reset session_replication_role after canonical cleanup");
-        }
-    }
 
     // Restore canonical test material record relied upon by Event::test_event.
     sqlx::query(
@@ -663,25 +612,10 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .execute(conn.as_mut())
     .await?;
 
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after cleanup");
-    }
-    // Also re-enable temporal_ledger triggers
-    if let Err(e) = sqlx::query("ALTER TABLE raw.temporal_ledger ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on raw.temporal_ledger after cleanup");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
-    }
+    // Restore all session state via guards (order matters: triggers, then RLS, then replication)
+    triggers_guard.restore(&mut conn).await?;
+    row_security_guard.restore(&mut conn).await?;
+    replication_guard.restore(&mut conn).await?;
 
     sqlx::query("RESET sinex.operation_id")
         .execute(conn.as_mut())
