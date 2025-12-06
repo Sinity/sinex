@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${CI_VERBOSE:-0}" != "0" ]; then
+  set -x
+fi
+
 log_step() {
   printf '[ci-postgres] %s\n' "$*"
 }
@@ -30,11 +34,14 @@ stop_existing_postgres() {
   fi
 }
 
+log_step "Stopping any existing postgres on $PGHOST:$PGPORT (PGDATA=$PGDATA)"
 stop_existing_postgres
 
+log_step "Initializing fresh PGDATA at $PGDATA"
 rm -rf "$PGDATA"
 mkdir -p "$PGDATA"
 
+log_step "Running initdb..."
 initdb --auth=trust --no-locale --encoding=UTF8 >/dev/null
 cat <<EOF >>"$PGDATA/postgresql.conf"
 unix_socket_directories = '$PWD'
@@ -43,8 +50,10 @@ port = $PGPORT
 shared_preload_libraries = 'timescaledb'
 EOF
 
+log_step "Starting postgres on port $PGPORT ..."
 pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT" >/dev/null
 cleanup() {
+  log_step "Stopping postgres (trap cleanup)"
   pg_ctl stop >/dev/null
 }
 trap cleanup EXIT
@@ -118,6 +127,7 @@ grant_schema_access() {
 export -f ensure_extension
 export -f grant_schema_access
 
+log_step "Ensuring extensions (pgx_ulid/ulid, pg_jsonschema, timescaledb, vector)"
 ensure_extension sinex_dev pgx_ulid ulid
 ensure_extension sinex_dev pg_jsonschema
 ensure_extension sinex_dev timescaledb
@@ -137,6 +147,7 @@ SCHEMA_LIST=$(
 for schema in $SCHEMA_LIST; do
   grant_schema_access "$schema"
 done
+log_step "Schema grants complete"
 
 DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
 DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
@@ -177,4 +188,5 @@ run_payload() {
 
 run_payload "$@"
 status=$?
+log_step "Payload finished with status $status"
 exit $status
