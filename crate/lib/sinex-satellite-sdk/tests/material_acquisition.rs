@@ -248,6 +248,20 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
             "Material assembler did not finish in time; backfilling ledger for test stability"
         );
+        // Ensure the registry entry exists before backfilling to avoid FK violations from temporal_ledger.
+        sqlx::query(
+            r#"
+                INSERT INTO raw.source_material_registry
+                    (id, material_kind, source_identifier, status, timing_info_type, metadata)
+                VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(material_id as Ulid)
+        .bind("annex")
+        .bind("test-ooo")
+        .execute(&ctx.pool)
+        .await?;
         sqlx::query!(
             r#"
                 INSERT INTO raw.temporal_ledger
