@@ -46,6 +46,10 @@ impl ReplicationRoleGuard {
         }
         Ok(())
     }
+
+    pub fn was_set(&self) -> bool {
+        self.was_set
+    }
 }
 
 /// Guard that temporarily disables row-level security.
@@ -79,6 +83,10 @@ impl RowSecurityGuard {
             }
         }
         Ok(())
+    }
+
+    pub fn was_disabled(&self) -> bool {
+        self.was_disabled
     }
 }
 
@@ -124,5 +132,9 @@ impl TriggersGuard {
             }
         }
         Ok(())
+    }
+
+    pub fn disabled_tables(&self) -> &[String] {
+        &self.tables
     }
 }

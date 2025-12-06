@@ -113,16 +113,19 @@ impl PermissionGranter {
     async fn connect_to_database(&self, db_name: &str) -> Result<PgPool> {
         // Replace the database name in the URL
         let url = if self.superuser_url.contains("/sinex_dev") {
-            self.superuser_url.replace("/sinex_dev", &format!("/{}", db_name))
+            self.superuser_url
+                .replace("/sinex_dev", &format!("/{}", db_name))
         } else {
             // Handle URLs that might already have a different database
             let base = self.superuser_url.rsplit_once('/').map(|(base, _)| base);
             match base {
                 Some(base) => format!("{}/{}", base, db_name),
-                None => return Err(crate::SinexError::database(format!(
-                    "Invalid DATABASE_URL_SUPERUSER format: {}",
-                    self.superuser_url
-                ))),
+                None => {
+                    return Err(crate::SinexError::database(format!(
+                        "Invalid DATABASE_URL_SUPERUSER format: {}",
+                        self.superuser_url
+                    )))
+                }
             }
         };
 
@@ -162,7 +165,9 @@ mod tests {
             .any(|q| q.contains("GRANT USAGE ON SCHEMA core TO testuser")));
         assert!(queries.iter().any(|q| q.contains("ALL TABLES")));
         assert!(queries.iter().any(|q| q.contains("ALL SEQUENCES")));
-        assert!(queries.iter().any(|q| q.contains("ALTER DEFAULT PRIVILEGES")));
+        assert!(queries
+            .iter()
+            .any(|q| q.contains("ALTER DEFAULT PRIVILEGES")));
     }
 
     #[test]

@@ -92,6 +92,8 @@ jobs:
               --manifest-path crate/lib/sinex-schema/Cargo.toml \
               --bin sinex-schema -- \
               up
+          psql -h "$PGHOST" -p "$PGPORT" -U "$SUPERUSER" -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT to_regclass('core.events') AS reg" | grep -q core.events
+          psql -h "$PGHOST" -p "$PGPORT" -U "$SUPERUSER" -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT to_regclass('sinex_schemas.event_payload_schemas') AS reg" | grep -q sinex_schemas.event_payload_schemas
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"

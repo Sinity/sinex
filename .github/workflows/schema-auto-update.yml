@@ -37,6 +37,8 @@ jobs:
               --manifest-path crate/lib/sinex-schema/Cargo.toml \
               --bin sinex-schema -- \
               up
+          psql -h "$PGHOST" -p "$PGPORT" -U "$SUPERUSER" -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT to_regclass('core.events') AS reg" | grep -q core.events
+          psql -h "$PGHOST" -p "$PGPORT" -U "$SUPERUSER" -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT to_regclass('sinex_schemas.event_payload_schemas') AS reg" | grep -q sinex_schemas.event_payload_schemas
           ./scripts/schema-dev.sh generate
           POSTGRES
           DEVENV

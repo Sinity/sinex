@@ -85,6 +85,8 @@ impl PoolMetrics {
             },
             cleanup_failures: self.cleanup_failures.load(Ordering::Relaxed),
             template_recreations: self.template_recreations.load(Ordering::Relaxed),
+            total_connections: 0,
+            idle_connections: 0,
         }
     }
 }
@@ -96,11 +98,27 @@ pub struct PoolStats {
     pub average_wait_time_ms: u64,
     pub cleanup_failures: usize,
     pub template_recreations: usize,
+    pub total_connections: usize,
+    pub idle_connections: usize,
 }
 
 /// Get current pool statistics
 pub fn get_pool_stats() -> PoolStats {
-    POOL_METRICS.get_stats()
+    // Aggregate connection counts if pool exists.
+    let mut totals = (0usize, 0usize);
+    if let Some(pool) = POOL.blocking_lock().as_ref().cloned() {
+        for slot in &pool.slots {
+            if let Some(p) = slot.pool.lock().clone() {
+                totals.0 += p.size();
+                totals.1 += p.num_idle();
+            }
+        }
+    }
+
+    let mut stats = POOL_METRICS.get_stats();
+    stats.total_connections = totals.0;
+    stats.idle_connections = totals.1;
+    stats
 }
 
 /// Template database name cached for the current test process  
@@ -1137,6 +1155,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             }
 
             eprintln!("  ✅ Database cleanup verified - all tables empty");
+            ensure_default_session_state(pool).await;
             Ok(())
         }
         Err(e) => {
@@ -1158,6 +1177,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
             }
 
             eprintln!("  ✅ Database cleanup recovered after forced truncation");
+            ensure_default_session_state(pool).await;
             Ok(())
         }
     }
@@ -1168,6 +1188,34 @@ async fn log_remaining_rows(pool: &DbPool) {
         for (table, count) in counts {
             if count > 0 {
                 eprintln!("     - {table} has {count} rows remaining");
+            }
+        }
+    }
+}
+
+/// Ensure a pooled connection is returned to default session state; best-effort only.
+async fn ensure_default_session_state(pool: &DbPool) {
+    if let Ok(mut conn) = pool.acquire().await {
+        if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
+            .fetch_one(conn.as_mut())
+            .await
+        {
+            if role != "origin" {
+                let _ = sqlx::query("SET session_replication_role = 'origin'")
+                    .execute(conn.as_mut())
+                    .await;
+                eprintln!("  ⚠️  Reset session_replication_role from {role} to origin");
+            }
+        }
+        if let Ok(row_sec) = sqlx::query_scalar::<_, String>("SHOW row_security")
+            .fetch_one(conn.as_mut())
+            .await
+        {
+            if row_sec.to_lowercase() != "on" {
+                let _ = sqlx::query("SET row_security = on")
+                    .execute(conn.as_mut())
+                    .await;
+                eprintln!("  ⚠️  Reset row_security to on");
             }
         }
     }
@@ -1630,16 +1678,22 @@ async fn ensure_template_database(
         // Grant schema permissions to the non-superuser role for template database operations
         // Uses centralized permissions module which grants on ALL schemas (including public)
         if let Some(granter) = crate::permissions::PermissionGranter::from_env()? {
-            if let Some(username) = std::env::var("DATABASE_URL_APP")
-                .ok()
-                .and_then(|url| url.split("://").nth(1).and_then(|s| s.split('@').next().map(|u| u.to_string())))
-            {
-                eprintln!("  🔑 Granting schema permissions to user '{username}' in template database");
+            if let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
+                url.split("://")
+                    .nth(1)
+                    .and_then(|s| s.split('@').next().map(|u| u.to_string()))
+            }) {
+                eprintln!(
+                    "  🔑 Granting schema permissions to user '{username}' in template database"
+                );
 
                 // Use the centralized granter to grant all schemas
                 use sinex_schema::schema_registry;
                 for schema in schema_registry::SINEX_SCHEMAS {
-                    if let Err(e) = granter.grant_schema_access(&template_pool, schema.name).await {
+                    if let Err(e) = granter
+                        .grant_schema_access(&template_pool, schema.name)
+                        .await
+                    {
                         tracing::warn!(
                             error = %e,
                             schema = schema.name,
