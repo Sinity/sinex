@@ -146,6 +146,9 @@ in {
     "dev:lint".exec = "cargo clippy --workspace --all-targets --all-features -- -D warnings";
     "dev:check".exec = "cargo check --workspace --all-features";
     "dev:build".exec = "cargo build --workspace";
+    "dev:smoke-fixtures".exec = ''
+      cargo nextest run -p sinex-test-utils --retries 0 -E "test_empty_database_fixture|test_concurrent_fixture_access|test_populated_checkpoints_fixture|test_fixture_registry_cleanup"
+    '';
 
     # Stream CI harness output and enable verbose postgres setup logs when running locally.
     "dev:test".exec = "CI_VERBOSE=1 stdbuf -oL -eL scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";

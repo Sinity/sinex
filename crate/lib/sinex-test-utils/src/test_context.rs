@@ -62,7 +62,7 @@ use std::mem;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::runtime::Handle;
+use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -482,30 +482,31 @@ impl TestContext {
 
     /// Register a background task that must complete before the database is returned to the pool.
     /// Use this for fire-and-forget helpers started inside a test.
-    pub async fn register_background_task(&self, handle: JoinHandle<()>) {
+    pub async fn register_background_task(&self, label: impl Into<String>, handle: JoinHandle<()>) {
         let mut guard = self.background.lock().await;
-        guard.tasks.push(handle);
+        guard.add_task(label, handle);
     }
 
     /// Spawn and track a background task that will be awaited during cleanup.
-    pub fn spawn_background<F>(&self, fut: F)
+    pub fn spawn_background<F>(&self, label: impl Into<String>, fut: F)
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         let registry = self.background.clone();
+        let lbl = label.into();
         let handle = tokio::spawn(fut);
         tokio::spawn(async move {
-            registry.lock().await.tasks.push(handle);
+            registry.lock().await.add_task(lbl, handle);
         });
     }
 
     /// Register a custom shutdown hook to run before the context gives the database back.
-    pub async fn register_shutdown_hook<F>(&self, hook: F)
+    pub async fn register_shutdown_hook<F>(&self, label: impl Into<String>, hook: F)
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
         let mut guard = self.background.lock().await;
-        guard.shutdown_hooks.push(hook.boxed());
+        guard.add_hook(label, hook.boxed());
     }
 
     /// Wait for background tasks and shutdown hooks to finish. Called automatically on drop,
@@ -514,6 +515,19 @@ impl TestContext {
         let mut guard = self.background.lock().await;
         guard.quiesce().await;
         Ok(())
+    }
+
+    /// Assert that no background tasks or hooks remain pending.
+    pub async fn assert_idle(&self) -> TestResult<()> {
+        let guard = self.background.lock().await;
+        if guard.pending_count() == 0 {
+            return Ok(());
+        }
+        Err(color_eyre::eyre::eyre!(
+            "Background registry not idle: {} pending ({:?})",
+            guard.pending_count(),
+            guard.labels()
+        ))
     }
 
     /// Create and insert a test event
@@ -876,27 +890,54 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
 
 #[derive(Default)]
 struct BackgroundRegistry {
-    tasks: Vec<JoinHandle<()>>,
-    shutdown_hooks: Vec<BoxFuture<'static, ()>>,
+    tasks: Vec<(String, JoinHandle<()>)>,
+    shutdown_hooks: Vec<(String, BoxFuture<'static, ()>)>,
 }
 
 impl BackgroundRegistry {
+    fn pending_count(&self) -> usize {
+        self.tasks.len() + self.shutdown_hooks.len()
+    }
+
+    fn add_task(&mut self, label: impl Into<String>, handle: JoinHandle<()>) {
+        self.tasks.push((label.into(), handle));
+    }
+
+    fn add_hook(&mut self, label: impl Into<String>, hook: BoxFuture<'static, ()>) {
+        self.shutdown_hooks.push((label.into(), hook));
+    }
+
+    fn labels(&self) -> Vec<String> {
+        self.tasks
+            .iter()
+            .map(|(l, _)| l.clone())
+            .chain(self.shutdown_hooks.iter().map(|(l, _)| l.clone()))
+            .collect()
+    }
+
     async fn quiesce(&mut self) {
+        let timeout_secs: u64 = std::env::var("SINEX_TESTUTILS_BG_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
         // Run shutdown hooks first so tasks can observe the signal.
         let hooks = std::mem::take(&mut self.shutdown_hooks);
-        for hook in hooks {
-            if let Err(err) = tokio::time::timeout(Duration::from_secs(10), hook).await {
-                warn!(?err, "Timeout waiting for shutdown hook");
+        for (label, hook) in hooks {
+            if let Err(err) = tokio::time::timeout(Duration::from_secs(timeout_secs), hook).await {
+                warn!(%label, ?err, "Timeout waiting for shutdown hook");
             }
         }
 
         // Wait for tracked background tasks to finish, aborting on timeout.
         let tasks = std::mem::take(&mut self.tasks);
-        for handle in tasks {
-            match tokio::time::timeout(Duration::from_secs(10), handle).await {
+        for (label, handle) in tasks {
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {
                 Ok(Ok(_)) => {}
-                Ok(Err(join_err)) => warn!(error = %join_err, "Background task join failed"),
-                Err(_) => warn!("Background task did not finish within timeout; aborting"),
+                Ok(Err(join_err)) => {
+                    warn!(%label, error = %join_err, "Background task join failed")
+                }
+                Err(_) => warn!(%label, "Background task did not finish within timeout; aborting"),
             }
         }
     }
@@ -906,13 +947,24 @@ impl BackgroundRegistry {
 impl Drop for TestContext {
     fn drop(&mut self) {
         // Ensure any registered background work is flushed before returning the database.
-        // Note: We cannot use block_in_place here because nextest runs tests with
-        // current_thread runtime, which doesn't support block_in_place.
-        // Always use futures::executor::block_on which works in all contexts.
         let registry = self.background.clone();
-        let _ = futures::executor::block_on(async {
-            registry.lock().await.quiesce().await;
-        });
+        if let Ok(handle) = Handle::try_current() {
+            if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
+                let _ = tokio::task::block_in_place(|| {
+                    handle.block_on(async {
+                        registry.lock().await.quiesce().await;
+                    });
+                });
+            } else {
+                let _ = futures::executor::block_on(async {
+                    registry.lock().await.quiesce().await;
+                });
+            }
+        } else {
+            let _ = futures::executor::block_on(async {
+                registry.lock().await.quiesce().await;
+            });
+        }
 
         let pool = self.pool.clone();
         let records = {

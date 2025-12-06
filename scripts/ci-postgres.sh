@@ -54,7 +54,7 @@ log_step "Starting postgres on port $PGPORT ..."
 pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT" >/dev/null
 cleanup() {
   log_step "Stopping postgres (trap cleanup)"
-  pg_ctl stop >/dev/null
+  pg_ctl stop >/dev/null || true
 }
 trap cleanup EXIT
 

@@ -386,8 +386,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let result = runner.run(&strategy, |value| {
                 let handle = __sinex_prop_handle.clone();
                 tokio::task::block_in_place(|| {
-                    let _guard = handle.enter();
-                    futures::executor::block_on(async {
+                    handle.block_on(async {
                         let fut = async {
                             #tuple_unpack
                             #ctx_binding
