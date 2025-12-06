@@ -1226,71 +1226,62 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
     let mut conn = pool.acquire().await?;
     let config = crate::cleanup_config::CleanupConfig::default();
 
-    // Use RAII guards for session state
-    let replication_guard =
-        crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(&mut conn).await?;
-    let row_security_guard =
-        crate::session_guards::RowSecurityGuard::disable_for_cleanup(&mut conn).await?;
-    let trigger_tables: Vec<_> = config
-        .tables_requiring_trigger_disable()
-        .map(|t| t.table_name)
-        .collect();
-    let triggers_guard =
-        crate::session_guards::TriggersGuard::disable_for_cleanup(&mut conn, trigger_tables)
-            .await?;
+    crate::db_common::with_cleanup_session(&mut conn, &config, |conn| async move {
+        let mut attempts = 0;
+        let mut last_events = 0_i64;
+        let mut last_materials = 0_i64;
 
-    let mut attempts = 0;
-    let mut last_events = 0_i64;
-    let mut last_materials = 0_i64;
+        while attempts < 3 {
+            attempts += 1;
 
-    while attempts < 3 {
-        attempts += 1;
+            // Delete from all tables that need cleanup (config-driven)
+            for table in config.ordered_tables() {
+                let _ = sqlx::query(&format!("DELETE FROM {}", table.table_name))
+                    .execute(conn.as_mut())
+                    .await;
+            }
 
-        // Delete from all tables that need cleanup (config-driven)
-        for table in config.tables_to_clean() {
-            let _ = sqlx::query(&format!("DELETE FROM {}", table.table_name))
+            // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
+            let _ = sqlx::query("DELETE FROM core.events")
+                .execute(conn.as_mut())
+                .await;
+            let _ = sqlx::query(
+                "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
+            )
+            .execute(pool)
+            .await;
+            let _ = sqlx::query("DELETE FROM raw.source_material_registry")
+                .execute(conn.as_mut())
+                .await;
+
+            let counts = crate::db_common::get_row_counts(pool)
+                .await
+                .unwrap_or_default();
+            last_events = *counts.get("core.events").unwrap_or(&0);
+            last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
+            if last_events == 0 && last_materials <= 1 {
+                break;
+            }
+        }
+
+        if last_events != 0 || last_materials > 1 {
+            // Final aggressive delete before giving up.
+            let _ = sqlx::query("DELETE FROM core.events")
+                .execute(conn.as_mut())
+                .await;
+            let _ = sqlx::query("DELETE FROM raw.source_material_registry")
                 .execute(conn.as_mut())
                 .await;
         }
 
-        // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
-        let _ = sqlx::query("DELETE FROM core.events")
-            .execute(conn.as_mut())
-            .await;
-        let _ =
-            sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
-                .execute(pool)
-                .await;
-        let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-            .execute(conn.as_mut())
-            .await;
-
-        let counts = crate::db_common::get_row_counts(pool)
-            .await
-            .unwrap_or_default();
-        last_events = *counts.get("core.events").unwrap_or(&0);
-        last_materials = *counts.get("raw.source_material_registry").unwrap_or(&0);
-        if last_events == 0 && last_materials <= 1 {
-            break;
+        if last_events != 0 || last_materials > 1 {
+            return Err(SinexError::unknown(format!(
+                "Force cleanup left {last_events} events and {last_materials} materials"
+            )));
         }
-    }
 
-    if last_events != 0 || last_materials > 1 {
-        // Final aggressive delete before giving up.
-        let _ = sqlx::query("DELETE FROM core.events")
-            .execute(conn.as_mut())
-            .await;
-        let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-            .execute(conn.as_mut())
-            .await;
-    }
-
-    // Restore session state via guards (order matters)
-    triggers_guard.restore(&mut conn).await?;
-    row_security_guard.restore(&mut conn).await?;
-    replication_guard.restore(&mut conn).await?;
-
-    Ok(())
+        Ok(())
+    })
 }
 
 // Global pool instance - initialized on first use
