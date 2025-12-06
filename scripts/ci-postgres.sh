@@ -83,8 +83,14 @@ psql_exec() {
 }
 
 if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
-  log_step "Creating role sinity"
-  psql_exec postgres "CREATE ROLE sinity LOGIN CREATEDB;"
+  log_step "Creating role sinity with SUPERUSER for test infrastructure"
+  psql_exec postgres "CREATE ROLE sinity SUPERUSER LOGIN CREATEDB;"
+else
+  # Upgrade existing sinity to SUPERUSER if needed
+  if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT rolsuper FROM pg_roles WHERE rolname = 'sinity'" | grep -q t; then
+    log_step "Upgrading sinity to SUPERUSER"
+    psql_exec postgres "ALTER ROLE sinity SUPERUSER;"
+  fi
 fi
 
 # Ensure CI sessions satisfy RLS policies requiring sinex.operation_id
