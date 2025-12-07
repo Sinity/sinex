@@ -988,24 +988,45 @@ impl BackgroundRegistry {
 /// Cleanup implementation for TestContext
 impl Drop for TestContext {
     fn drop(&mut self) {
+        let debug_drop = std::env::var("SINEX_TESTUTILS_DEBUG_DROP").is_ok();
+        let drop_start = std::time::Instant::now();
+        if debug_drop {
+            eprintln!(
+                "TestContext drop start for {} (pool: {})",
+                self.test_name,
+                self.db.name()
+            );
+        }
         // Ensure any registered background work is flushed before returning the database.
         let registry = self.background.clone();
+        let quiesce_fut = async move {
+            let _ = tokio::time::timeout(Duration::from_secs(15), async {
+                registry.lock().await.quiesce().await;
+            })
+            .await;
+        };
         if let Ok(handle) = Handle::try_current() {
-            if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
-                let _ = tokio::task::block_in_place(|| {
-                    handle.block_on(async {
-                        registry.lock().await.quiesce().await;
-                    });
-                });
-            } else {
-                let _ = futures::executor::block_on(async {
-                    registry.lock().await.quiesce().await;
-                });
+            match handle.runtime_flavor() {
+                RuntimeFlavor::MultiThread => {
+                    // Run on the existing runtime but cap the total wait to avoid hangs.
+                    let _ = tokio::task::block_in_place(|| handle.block_on(quiesce_fut));
+                }
+                RuntimeFlavor::CurrentThread => {
+                    // On current-thread runtimes we cannot block; spawn the cleanup and continue.
+                    handle.spawn(quiesce_fut);
+                }
+                _ => {
+                    handle.spawn(quiesce_fut);
+                }
             }
         } else {
-            let _ = futures::executor::block_on(async {
-                registry.lock().await.quiesce().await;
-            });
+            let _ = futures::executor::block_on(quiesce_fut);
+        }
+        if debug_drop {
+            eprintln!(
+                "TestContext drop after quiesce ({:?})",
+                drop_start.elapsed()
+            );
         }
 
         let pool = self.pool.clone();
@@ -1042,6 +1063,14 @@ impl Drop for TestContext {
             {
                 warn!("TestContext cleanup failed without runtime: {}", err);
             }
+        }
+
+        if debug_drop {
+            eprintln!(
+                "TestContext drop complete in {:?} for {}",
+                drop_start.elapsed(),
+                self.test_name
+            );
         }
 
         let duration = self.start_time.elapsed();
