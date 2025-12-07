@@ -385,24 +385,45 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let __sinex_prop_handle = tokio::runtime::Handle::current();
             let result = runner.run(&strategy, |value| {
                 let handle = __sinex_prop_handle.clone();
-                tokio::task::block_in_place(|| {
-                    handle.block_on(async {
-                        let fut = async {
-                            #tuple_unpack
-                            #ctx_binding
-                            #( #destructures )*
-                            #user_body
-                        };
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(#timeout_secs),
-                            fut,
-                        ).await {
-                            Ok(Ok(())) => Ok(()),
-                            Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
-                            Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
-                        }
-                    })
-                })
+                match handle.runtime_flavor() {
+                    tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(|| {
+                        handle.block_on(async {
+                            let fut = async {
+                                #tuple_unpack
+                                #ctx_binding
+                                #( #destructures )*
+                                #user_body
+                            };
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(#timeout_secs),
+                                fut,
+                            ).await {
+                                Ok(Ok(())) => Ok(()),
+                                Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
+                                Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
+                            }
+                        })
+                    }),
+                    _ => {
+                        let _guard = handle.enter();
+                        futures::executor::block_on(async {
+                            let fut = async {
+                                #tuple_unpack
+                                #ctx_binding
+                                #( #destructures )*
+                                #user_body
+                            };
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(#timeout_secs),
+                                fut,
+                            ).await {
+                                Ok(Ok(())) => Ok(()),
+                                Ok(Err(err)) => Err(::proptest::test_runner::TestCaseError::fail(format!("{err:?}"))),
+                                Err(_) => Err(::proptest::test_runner::TestCaseError::fail(format!("case timed out after {}s", #timeout_secs))),
+                            }
+                        })
+                    }
+                }
             });
             let ctx_snapshot_ref = ctx_holder.as_ref();
             let elapsed = start.elapsed();

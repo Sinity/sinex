@@ -493,7 +493,8 @@ pub async fn ensure_source_material(
 
 ```rust
 pub async fn start_test_ingestd_with_config(
-    config: TestIngestdConfig
+    config: TestIngestdConfig,
+    ctx: Option<&TestContext>,
 ) -> Result<TestIngestdHandle> {
     // Starts ingestd service for integration testing
     // Returns handle that stops service on drop
@@ -513,7 +514,8 @@ impl Drop for TestIngestdHandle {
 #[sinex_test]
 async fn test_ingestd_integration(ctx: TestContext) -> Result<()> {
     let ingestd_handle = start_test_ingestd_with_config(
-        TestIngestdConfig::default()
+        TestIngestdConfig::default(),
+        Some(&ctx),
     ).await?;
     
     // Service is running

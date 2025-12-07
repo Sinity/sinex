@@ -26,6 +26,12 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
+    - name: Prepare cache directories
+      run: |
+        mkdir -p ~/.cache/sccache
+        mkdir -p ~/.cargo/registry
+        mkdir -p ~/.cargo/git
+
     - name: Cache sccache
       uses: actions/cache@v4
       with:
@@ -74,6 +80,8 @@ jobs:
           git status schemas
           exit 1
         fi
+        # Fast gate to catch flaky fixture regressions without retries
+        devenv tasks run dev:smoke-fixtures
         devenv tasks run dev:test
         POSTGRES
         rm -rf "$CARGO_TARGET_DIR"

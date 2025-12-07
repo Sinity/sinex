@@ -1654,6 +1654,7 @@ mod tests {
 
         // Ensure no background work is still running before handing the DB back to the pool.
         ctx.quiesce_background_tasks().await?;
+        ctx.assert_idle().await?;
 
         Ok(())
     }
@@ -1680,6 +1681,9 @@ mod tests {
                 "Should have one checkpoint for {name}"
             );
         }
+
+        ctx.quiesce_background_tasks().await?;
+        ctx.assert_idle().await?;
 
         Ok(())
     }
@@ -1769,6 +1773,7 @@ mod tests {
         crate::db_common::reset_database(ctx.pool()).await?;
         crate::db_common::verify_clean_state(ctx.pool()).await?;
         ctx.force_cleanup().await?;
+        ctx.assert_idle().await?;
         Ok(())
     }
 
@@ -1880,11 +1885,15 @@ mod tests {
                 crate::db_common::verify_clean_state(ctx2.pool()).await?;
             }
 
+            ctx1.assert_idle().await?;
+            ctx2.assert_idle().await?;
+
             Ok(())
         })
         .await?;
 
         ctx.force_cleanup().await?;
+        ctx.assert_idle().await?;
         Ok(())
     }
     #[sinex_test]
@@ -1985,6 +1994,7 @@ mod tests {
             }
             crate::db_common::verify_clean_state(ctx.pool()).await?;
             ctx.force_cleanup().await?;
+            ctx.assert_idle().await?;
 
             Ok(())
         })
@@ -2038,6 +2048,7 @@ mod tests {
 
         // Flush any lingering background tasks to avoid cross-test interference.
         ctx.quiesce_background_tasks().await?;
+        ctx.assert_idle().await?;
         Ok(())
     }
 
@@ -2063,6 +2074,7 @@ mod tests {
         crate::db_common::reset_database(ctx.pool()).await?;
         crate::db_common::verify_clean_state(ctx.pool()).await?;
         ctx.force_cleanup().await?;
+        ctx.assert_idle().await?;
         Ok(())
     }
 

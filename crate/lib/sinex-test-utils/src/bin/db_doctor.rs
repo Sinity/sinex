@@ -16,6 +16,23 @@ async fn main() -> color_eyre::Result<()> {
         stats.template_recreations
     );
 
+    println!("\n== Slot Health ==");
+    for slot in sinex_test_utils::get_slot_stats() {
+        println!(
+            "- {name}: conns={total}/{idle}, last_clean={clean:?}, result={result:?}",
+            name = slot.name,
+            total = slot.total_connections,
+            idle = slot.idle_connections,
+            clean = slot.last_clean_time,
+            result = slot.last_clean_result,
+        );
+        if let Some(residuals) = slot.residuals.as_ref() {
+            if !residuals.is_empty() {
+                println!("  residuals: {:?}", residuals);
+            }
+        }
+    }
+
     if std::env::var("DATABASE_URL").is_err() {
         println!("DATABASE_URL not set; skipping database checks.");
         return Ok(());

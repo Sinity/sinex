@@ -1,6 +1,7 @@
 #![doc = include_str!("../docs/database_pool.md")]
 
 use crate::Result;
+use chrono::Utc;
 use futures::{future::BoxFuture, Future};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -108,6 +109,10 @@ pub struct SlotStats {
     pub name: String,
     pub total_connections: usize,
     pub idle_connections: usize,
+    pub last_clean_time: Option<String>,
+    pub last_clean_result: Option<String>,
+    pub residuals: Option<Vec<(String, i64)>>,
+    pub quarantined: bool,
 }
 
 /// Get current pool statistics
@@ -157,17 +162,26 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                 .slots
                 .iter()
                 .map(|slot| {
+                    let (time, result, residuals) = slot.slot_health_snapshot();
                     if let Some(p) = slot.pool.lock().clone() {
                         SlotStats {
                             name: slot.name.clone(),
                             total_connections: p.size() as usize,
                             idle_connections: p.num_idle() as usize,
+                            last_clean_time: time.map(|t| t.to_rfc3339()),
+                            last_clean_result: result.clone(),
+                            residuals: residuals.clone(),
+                            quarantined: slot.quarantined.load(Ordering::SeqCst),
                         }
                     } else {
                         SlotStats {
                             name: slot.name.clone(),
                             total_connections: 0,
                             idle_connections: 0,
+                            last_clean_time: time.map(|t| t.to_rfc3339()),
+                            last_clean_result: result.clone(),
+                            residuals: residuals.clone(),
+                            quarantined: slot.quarantined.load(Ordering::SeqCst),
                         }
                     }
                 })
@@ -469,7 +483,7 @@ impl TestDatabase {
 
     /// Force cleanup of this database (for testing)
     pub async fn force_cleanup(&self) -> Result<()> {
-        clean_database(&self.pool, &self.name, self.url()).await
+        clean_database(&self.slot, &self.pool, &self.name, self.url()).await
     }
 }
 
@@ -596,10 +610,56 @@ struct DatabaseSlot {
     url: String,                 // Store URL instead of pool to create fresh connections
     pool: Mutex<Option<DbPool>>, // Current pool if in use
     in_use: AtomicBool,
+    quarantined: AtomicBool,
     // Track when the slot was acquired to help debug issues
     last_acquired: Mutex<Option<std::time::Instant>>,
     // Track when the slot was released for cooldown
     last_released: Mutex<Option<std::time::Instant>>,
+    // Track last cleanup outcome for diagnostics
+    last_clean_time: Mutex<Option<chrono::DateTime<chrono::Utc>>>,
+    last_clean_result: Mutex<Option<String>>,
+    last_residuals: Mutex<Option<Vec<(String, i64)>>>,
+}
+
+impl DatabaseSlot {
+    fn record_clean_result(
+        &self,
+        result: std::result::Result<(), String>,
+        residuals: Option<Vec<(String, i64)>>,
+    ) {
+        let now = Utc::now();
+        {
+            let mut time_guard = self.last_clean_time.lock();
+            *time_guard = Some(now);
+        }
+        match result {
+            Ok(_) => {
+                let mut res_guard = self.last_clean_result.lock();
+                *res_guard = Some("ok".to_string());
+                let mut residual_guard = self.last_residuals.lock();
+                *residual_guard = residuals;
+            }
+            Err(e) => {
+                let mut res_guard = self.last_clean_result.lock();
+                *res_guard = Some(format!("err: {e}"));
+                let mut residual_guard = self.last_residuals.lock();
+                *residual_guard = residuals;
+            }
+        }
+    }
+
+    fn slot_health_snapshot(
+        &self,
+    ) -> (
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+        Option<Vec<(String, i64)>>,
+    ) {
+        let time = self.last_clean_time.lock().clone();
+        let result = self.last_clean_result.lock().clone();
+        let residuals = self.last_residuals.lock().clone();
+        (time, result, residuals)
+    }
 }
 
 /// The global database pool
@@ -916,6 +976,10 @@ impl DatabasePool {
                 in_use: AtomicBool::new(false),
                 last_acquired: Mutex::new(None),
                 last_released: Mutex::new(None),
+                last_clean_time: Mutex::new(None),
+                last_clean_result: Mutex::new(None),
+                last_residuals: Mutex::new(None),
+                quarantined: AtomicBool::new(false),
             }));
         }
 
@@ -948,6 +1012,14 @@ impl DatabasePool {
             for i in 0..self.slots.len() {
                 let slot_index = (start_index + i) % self.slots.len();
                 let slot = &self.slots[slot_index];
+
+                if slot.quarantined.load(Ordering::SeqCst) {
+                    eprintln!(
+                        "⚠️  Skipping quarantined slot {}; attempting next",
+                        slot.name
+                    );
+                    continue;
+                }
 
                 // Try to connect to this database
                 let pool = match sqlx::postgres::PgPoolOptions::new()
@@ -999,7 +1071,7 @@ impl DatabasePool {
 
                 // Clean it before use
                 let clean_start = std::time::Instant::now();
-                match clean_database(&pool, &slot.name, &slot.url).await {
+                match clean_database(&slot, &pool, &slot.name, &slot.url).await {
                     Ok(_) => {
                         let clean_time = clean_start.elapsed();
                         if clean_time.as_millis() > 100 {
@@ -1155,9 +1227,15 @@ async fn create_database_from_template(
 }
 
 /// Clean a database for reuse
-async fn clean_database(pool: &DbPool, db_name: &str, db_url: &str) -> Result<()> {
+async fn clean_database(
+    slot: &Arc<DatabaseSlot>,
+    pool: &DbPool,
+    db_name: &str,
+    db_url: &str,
+) -> Result<()> {
     eprintln!("🧹 Cleaning database: {db_name}");
     let mut working_pool = pool.clone();
+    let mut residuals: Option<Vec<(String, i64)>> = None;
 
     // Use the shared db_common implementation
     // Relax strict FK that can block synthetic test IDs
@@ -1175,10 +1253,13 @@ async fn clean_database(pool: &DbPool, db_name: &str, db_url: &str) -> Result<()
                 if let Err(verify_err) = crate::db_common::verify_clean_state(&working_pool).await {
                     if attempt >= 2 {
                         POOL_METRICS.record_cleanup_failure();
-                        log_remaining_rows(&working_pool).await;
-                        return Err(SinexError::unknown(format!(
+                        residuals = log_remaining_rows(&working_pool).await;
+                        let err = SinexError::unknown(format!(
                             "Database {db_name} cleanup failed: {verify_err}"
-                        )));
+                        ));
+                        slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                        slot.quarantined.store(true, Ordering::SeqCst);
+                        return Err(err);
                     }
                     eprintln!(
                         "  ⚠️ Database {db_name} failed clean-state verification: {verify_err}. Retrying cleanup once."
@@ -1188,6 +1269,8 @@ async fn clean_database(pool: &DbPool, db_name: &str, db_url: &str) -> Result<()
 
                 eprintln!("  ✅ Database cleanup verified - all tables empty");
                 ensure_default_session_state(&working_pool).await?;
+                slot.quarantined.store(false, Ordering::SeqCst);
+                slot.record_clean_result(Ok(()), residuals.clone());
                 return Ok(());
             }
             Err(e) => {
@@ -1221,36 +1304,50 @@ async fn clean_database(pool: &DbPool, db_name: &str, db_url: &str) -> Result<()
 
                 eprintln!("  ❌ CRITICAL: Database {db_name} cleanup failed: {e}");
                 POOL_METRICS.record_cleanup_failure();
-                log_remaining_rows(&working_pool).await;
+                residuals = log_remaining_rows(&working_pool).await;
 
                 // Attempt one last forced cleanup focusing on stubborn event/material rows.
                 if let Err(force_err) = force_event_material_cleanup(&working_pool).await {
-                    return Err(SinexError::unknown(format!(
+                    let err = SinexError::unknown(format!(
                         "Database {db_name} cleanup failed: {e}; forced cleanup also failed: {force_err}"
-                    )));
+                    ));
+                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                    slot.quarantined.store(true, Ordering::SeqCst);
+                    return Err(err);
                 }
 
                 if let Err(verify_err) = crate::db_common::verify_clean_state(&working_pool).await {
-                    return Err(SinexError::unknown(format!(
+                    let err = SinexError::unknown(format!(
                         "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
-                    )));
+                    ));
+                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                    slot.quarantined.store(true, Ordering::SeqCst);
+                    return Err(err);
                 }
 
                 eprintln!("  ✅ Database cleanup recovered after forced truncation");
                 ensure_default_session_state(&working_pool).await?;
+                slot.quarantined.store(false, Ordering::SeqCst);
+                slot.record_clean_result(Ok(()), residuals.clone());
                 return Ok(());
             }
         }
     }
 }
 
-async fn log_remaining_rows(pool: &DbPool) {
-    if let Ok(counts) = crate::db_common::get_row_counts(pool).await {
-        for (table, count) in counts {
-            if count > 0 {
-                eprintln!("     - {table} has {count} rows remaining");
+async fn log_remaining_rows(pool: &DbPool) -> Option<Vec<(String, i64)>> {
+    match crate::db_common::get_row_counts(pool).await {
+        Ok(counts) => {
+            let mut residuals = Vec::new();
+            for (table, count) in counts {
+                if count > 0 {
+                    eprintln!("     - {table} has {count} rows remaining");
+                    residuals.push((table, count));
+                }
             }
+            Some(residuals)
         }
+        Err(_) => None,
     }
 }
 
@@ -2435,7 +2532,7 @@ mod benches {
         }
 
         // Perform cleanup
-        clean_database(pool, db.name(), db.url()).await?;
+        db.force_cleanup().await?;
         drop(db);
         Ok(())
     }

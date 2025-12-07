@@ -68,6 +68,8 @@ struct ContextSnapshot {
     name: String,
     baseline_events: i64,
     elapsed_ms: u128,
+    background_pending: usize,
+    background_labels: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +77,10 @@ struct SlotSnapshot {
     name: String,
     total_connections: usize,
     idle_connections: usize,
+    last_clean_time: Option<String>,
+    last_clean_result: Option<String>,
+    residuals: Option<Vec<(String, i64)>>,
+    quarantined: bool,
 }
 
 pub enum FailureContext<'a> {
@@ -106,6 +112,8 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                 name: ctx.test_name().to_string(),
                 baseline_events: ctx.baseline_event_count(),
                 elapsed_ms: ctx.elapsed().as_millis(),
+                background_pending: ctx.background_snapshot().pending,
+                background_labels: ctx.background_snapshot().labels,
             }),
             Some(ctx.captured_logs()),
         ),
@@ -114,6 +122,8 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                 name: snapshot.test_name().to_string(),
                 baseline_events: snapshot.baseline_events(),
                 elapsed_ms: snapshot.elapsed_ms(),
+                background_pending: snapshot.background_snapshot().pending,
+                background_labels: snapshot.background_snapshot().labels,
             }),
             Some(snapshot.captured_logs()),
         ),
@@ -131,6 +141,10 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                         name: s.name,
                         total_connections: s.total_connections,
                         idle_connections: s.idle_connections,
+                        last_clean_time: s.last_clean_time,
+                        last_clean_result: s.last_clean_result,
+                        residuals: s.residuals,
+                        quarantined: s.quarantined,
                     })
                     .collect(),
             )

@@ -114,11 +114,18 @@ pub struct TestContext {
 }
 
 #[derive(Clone)]
+pub struct BackgroundSnapshot {
+    pub pending: usize,
+    pub labels: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct TestContextFailureSnapshot {
     test_name: String,
     baseline_events: i64,
     start_time: Instant,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    background: Arc<AsyncMutex<BackgroundRegistry>>,
 }
 
 impl TestContextFailureSnapshot {
@@ -136,6 +143,19 @@ impl TestContextFailureSnapshot {
 
     pub fn captured_logs(&self) -> Vec<String> {
         self.captured_logs.lock().clone()
+    }
+
+    pub fn background_snapshot(&self) -> BackgroundSnapshot {
+        match self.background.try_lock() {
+            Ok(guard) => BackgroundSnapshot {
+                pending: guard.pending_count(),
+                labels: guard.labels(),
+            },
+            Err(_) => BackgroundSnapshot {
+                pending: 0,
+                labels: Vec::new(),
+            },
+        }
     }
 }
 
@@ -281,6 +301,14 @@ impl TestContext {
     pub async fn with_nats(mut self) -> TestResult<Self> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
+        let shutdown_proc = nats.process_handle();
+        self.register_shutdown_hook("nats-shutdown", async move {
+            if let Some(mut child) = shutdown_proc.lock().await.take() {
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+            }
+        })
+        .await;
         self.nats_client = Some(client);
         self.nats = Some(Arc::new(nats));
         Ok(self)
@@ -388,6 +416,7 @@ impl TestContext {
             baseline_events: self.baseline_events,
             start_time: self.start_time,
             captured_logs: Arc::clone(&self.captured_logs),
+            background: self.background.clone(),
         }
     }
 
@@ -528,6 +557,19 @@ impl TestContext {
             guard.pending_count(),
             guard.labels()
         ))
+    }
+
+    pub fn background_snapshot(&self) -> BackgroundSnapshot {
+        match self.background.try_lock() {
+            Ok(guard) => BackgroundSnapshot {
+                pending: guard.pending_count(),
+                labels: guard.labels(),
+            },
+            Err(_) => BackgroundSnapshot {
+                pending: 0,
+                labels: Vec::new(),
+            },
+        }
     }
 
     /// Create and insert a test event

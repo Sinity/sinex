@@ -54,6 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Prepare cache directories
+        run: |
+          mkdir -p ~/.cache/sccache
+          mkdir -p ~/.cargo/registry
+          mkdir -p ~/.cargo/git
+
       - name: Cache sccache
         uses: actions/cache@v4
         with:
@@ -115,6 +121,12 @@ jobs:
       DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v5
+
+      - name: Prepare cache directories
+        run: |
+          mkdir -p ~/.cache/sccache
+          mkdir -p ~/.cargo/registry
+          mkdir -p ~/.cargo/git
 
       - name: Cache sccache
         uses: actions/cache@v4
