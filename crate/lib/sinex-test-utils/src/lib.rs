@@ -29,6 +29,7 @@ pub use jetstream::ensure_material_streams;
 pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
+pub use test_context::TestContextHandle;
 
 pub struct ProptestCasesGuard {
     previous: Option<String>,

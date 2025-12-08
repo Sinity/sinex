@@ -43,8 +43,7 @@
 //!
 //! Custom fixtures can be loaded by name from the `fixtures/datasets/` directory.
 
-use crate::Result;
-use crate::TestResult;
+use crate::{Result, TestContext, TestResult};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
@@ -344,6 +343,11 @@ where
 /// # }
 /// ```
 pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
+    // Pre-clean hook: ensure background tasks are quiesced if the pool was obtained via TestContext.
+    if let Some(ctx) = TestContext::try_current() {
+        let _ = ctx.quiesce_background_tasks().await;
+    }
+
     let mut conn = pool.acquire().await?;
     let config = crate::cleanup_config::CleanupConfig::default();
     let ordered = config.ordered_tables();

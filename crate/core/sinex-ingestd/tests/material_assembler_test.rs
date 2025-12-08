@@ -41,7 +41,6 @@ async fn start_assembler(
         MaterialAssembler::new(nats_client.clone(), ctx.pool.clone(), annex, state_path)?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
-
     Ok((handle, js, annex_dir, state_dir))
 }
 

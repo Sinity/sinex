@@ -60,7 +60,9 @@ use sinex_core::DbPoolExt;
 use std::collections::HashSet;
 use std::mem;
 use std::str::FromStr;
+use std::sync::mpsc;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::Mutex as AsyncMutex;
@@ -159,7 +161,47 @@ impl TestContextFailureSnapshot {
     }
 }
 
+/// Lightweight handle exposing pool and background registry for global hooks.
+#[derive(Clone)]
+pub struct TestContextHandle {
+    pub pool: DbPool,
+    pub(crate) background: Arc<AsyncMutex<BackgroundRegistry>>,
+}
+
+impl TestContextHandle {
+    pub async fn quiesce_background_tasks(&self) {
+        let mut guard = self.background.lock().await;
+        guard.quiesce().await;
+    }
+}
+
 impl TestContext {
+    thread_local! {
+        static CURRENT_CTX: std::cell::RefCell<Option<TestContextHandle>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Attach this context to the current thread for retrieval by helpers.
+    pub(crate) fn install_current(&self) {
+        let handle = TestContextHandle {
+            pool: self.pool.clone(),
+            background: self.background.clone(),
+        };
+        Self::CURRENT_CTX.with(|cell| {
+            *cell.borrow_mut() = Some(handle);
+        });
+    }
+
+    /// Clear the current-thread handle (used on drop).
+    pub(crate) fn clear_current(&self) {
+        Self::CURRENT_CTX.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+
+    /// Best-effort access to the current TestContext handle (pool + background).
+    pub fn try_current() -> Option<TestContextHandle> {
+        Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
+    }
     /// Backwards-compatible accessor for the shared database pool.
     pub fn pool(&self) -> &DbPool {
         &self.pool
@@ -302,6 +344,7 @@ impl TestContext {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let shutdown_proc = nats.process_handle();
+        self.register_background_handle("nats-server", shutdown_proc.clone());
         self.register_shutdown_hook("nats-shutdown", async move {
             if let Some(mut child) = shutdown_proc.lock().await.take() {
                 let _ = child.start_kill();
@@ -311,6 +354,7 @@ impl TestContext {
         .await;
         self.nats_client = Some(client);
         self.nats = Some(Arc::new(nats));
+        self.install_current();
         Ok(self)
     }
 
@@ -516,6 +560,24 @@ impl TestContext {
         guard.add_task(label, handle);
     }
 
+    /// Register a background resource (e.g., process handle) as a tracked task.
+    pub fn register_background_handle<T>(&self, label: impl Into<String>, handle: T)
+    where
+        T: Send + 'static,
+    {
+        let registry = self.background.clone();
+        let lbl = label.into();
+        tokio::spawn(async move {
+            registry.lock().await.add_task(
+                lbl,
+                tokio::spawn(async move {
+                    let _ = handle;
+                    let _ = tokio::task::yield_now().await;
+                }),
+            );
+        });
+    }
+
     /// Spawn and track a background task that will be awaited during cleanup.
     pub fn spawn_background<F>(&self, label: impl Into<String>, fut: F)
     where
@@ -537,6 +599,9 @@ impl TestContext {
         let mut guard = self.background.lock().await;
         guard.add_hook(label, hook.boxed());
     }
+
+    /// Register a background task or handle by name and optional join handle.
+    /// Useful for process handles or runtime-managed resources.
 
     /// Wait for background tasks and shutdown hooks to finish. Called automatically on drop,
     /// but available for tests that want deterministic cleanup points.
@@ -931,7 +996,7 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
 }
 
 #[derive(Default)]
-struct BackgroundRegistry {
+pub(crate) struct BackgroundRegistry {
     tasks: Vec<(String, JoinHandle<()>)>,
     shutdown_hooks: Vec<(String, BoxFuture<'static, ()>)>,
 }
@@ -1005,22 +1070,35 @@ impl Drop for TestContext {
             })
             .await;
         };
-        if let Ok(handle) = Handle::try_current() {
-            match handle.runtime_flavor() {
-                RuntimeFlavor::MultiThread => {
-                    // Run on the existing runtime but cap the total wait to avoid hangs.
-                    let _ = tokio::task::block_in_place(|| handle.block_on(quiesce_fut));
-                }
-                RuntimeFlavor::CurrentThread => {
-                    // On current-thread runtimes we cannot block; spawn the cleanup and continue.
-                    handle.spawn(quiesce_fut);
-                }
-                _ => {
-                    handle.spawn(quiesce_fut);
-                }
+        // Avoid block_in_place on current-thread runtimes; instead enter the runtime if available
+        // so Tokio timers and tasks can make progress while we wait for background shutdown.
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| {
+                    let _guard = handle.enter();
+                    futures::executor::block_on(quiesce_fut);
+                });
             }
-        } else {
-            let _ = futures::executor::block_on(quiesce_fut);
+            Ok(_handle) => {
+                // For current-thread runtimes, move cleanup onto a dedicated thread with its own runtime
+                // to avoid deadlocking the executor.
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(quiesce_fut);
+                    } else {
+                        futures::executor::block_on(quiesce_fut);
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(20));
+            }
+            Err(_) => {
+                futures::executor::block_on(quiesce_fut);
+            }
         }
         if debug_drop {
             eprintln!(
