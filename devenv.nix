@@ -160,78 +160,16 @@ in {
     alias sinex-cli="python3 cli/exo.py"
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
+    echo ""
+    echo "xtask quick reference:"
+    echo "  cargo xtask check        # sqlx check + fmt check + cargo check"
+    echo "  cargo xtask lint         # clippy -D warnings (workspace/all targets)"
+    echo "  cargo xtask test         # nextest workspace (profile=reliable, SQLX_OFFLINE=1)"
+    echo "  cargo xtask sqlx-check   # verify .sqlx vs schema fingerprint"
+    echo "  cargo xtask sqlx-prepare # refresh .sqlx after migrations"
   '';
 
-  tasks = {
-    "dev:fmt".exec = "cargo fmt --all";
-    "dev:lint".exec = "cargo clippy --workspace --all-targets --all-features -- -D warnings";
-    "dev:check".exec = "cargo xtask check";
-    "dev:build".exec = "cargo build --workspace";
-    "dev:smoke-fixtures".exec = ''
-      cargo nextest run -p sinex-test-utils --retries 0 -E "test_empty_database_fixture|test_concurrent_fixture_access|test_populated_checkpoints_fixture|test_fixture_registry_cleanup"
-    '';
-
-    # Stream CI harness output and enable verbose postgres setup logs when running locally.
-    "dev:test".exec = "CI_VERBOSE=1 stdbuf -oL -eL scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
-
-    "test:all".exec = ''
-      devenv tasks run db:setup
-      LD_LIBRARY_PATH="$(pkg-config --variable=libdir dbus-1)''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-      RUST_LOG=''${RUST_LOG:-} cargo nextest run --workspace --profile reliable
-    '';
-
-    "test:vm".exec = "./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke";
-
-    "dev:coverage".exec = ''
-      cargo tarpaulin --workspace --out Html --output-dir target/coverage
-      echo "Coverage report: target/coverage/index.html"
-    '';
-
-    "dev:docs".exec = "cargo doc --workspace --no-deps --open";
-    "dev:watch".exec = "bacon";
-    "dev:stats".exec = "tokei";
-    "dev:update".exec = "cargo update";
-    "dev:audit".exec = "cargo audit";
-    "dev:unused".exec = "cargo machete";
-
-    "db:migrate".exec = ''
-      DATABASE_URL="$DATABASE_URL" \
-        cargo run \
-          --manifest-path crate/lib/sinex-schema/Cargo.toml \
-          --bin sinex-schema -- \
-          up
-    '';
-
-    "db:status".exec = ''
-      DATABASE_URL="$DATABASE_URL" \
-        cargo run \
-          --manifest-path crate/lib/sinex-schema/Cargo.toml \
-          --bin sinex-schema -- \
-          status
-    '';
-
-    "db:reset".exec = ''
-      dropdb --if-exists --force "$DATABASE_NAME"
-      createdb "$DATABASE_NAME"
-      devenv tasks run db:migrate
-    '';
-
-    "db:setup".exec = ''
-      createdb "$DATABASE_NAME" 2>/dev/null || true
-      devenv tasks run db:migrate
-    '';
-
-    "db:psql".exec = "psql \"$DATABASE_URL\"";
-    "db:doctor".exec = "cargo run -p sinex-test-utils --bin db_doctor";
-
-    "sqlx:prepare".exec = "./scripts/sqlx-prepare.sh";
-
-    "sqlx:check".exec = "cargo sqlx prepare --workspace --check -- --all-targets --all-features";
-
-    "cli:query".exec = ''
-      LIMIT="''${LIMIT:-10}" ./cli/exo.py query --limit "$LIMIT"
-    '';
-  };
+  tasks = { };
 
   processes = {
     nats.exec = "${pkgs.nats-server}/bin/nats-server -js";
