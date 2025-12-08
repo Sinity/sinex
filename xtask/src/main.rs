@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
@@ -11,73 +11,120 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Fast correctness checks (sqlx metadata check, fmt, cargo check)
+    /// Fast correctness checks (sqlx check, fmt check, cargo check)
     Check {
         /// Skip sqlx metadata check
         #[arg(long)]
         skip_sqlx: bool,
+        /// Skip fmt check
+        #[arg(long)]
+        skip_fmt: bool,
+        /// Skip cargo check
+        #[arg(long)]
+        skip_check: bool,
     },
-    /// Run full test suite with nextest (reliable profile, SQLX offline by default)
+    /// Clippy lint with -D warnings
+    Lint,
+    /// Run nextest (reliable profile by default)
     Test {
-        /// Disable SQLX_OFFLINE for the run
+        /// Disable SQLX_OFFLINE
         #[arg(long)]
         online_sqlx: bool,
+        /// Nextest profile (default: reliable)
+        #[arg(long, default_value = "reliable")]
+        profile: String,
     },
     /// Regenerate .sqlx metadata (requires DB access)
     SqlxPrepare,
+    /// Check .sqlx metadata without rewriting it
+    SqlxCheck {
+        /// Disable SQLX_OFFLINE
+        #[arg(long)]
+        online: bool,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Check { skip_sqlx } => check(skip_sqlx),
-        Commands::Test { online_sqlx } => test(online_sqlx),
+        Commands::Check {
+            skip_sqlx,
+            skip_fmt,
+            skip_check,
+        } => check(skip_sqlx, skip_fmt, skip_check),
+        Commands::Lint => lint(),
+        Commands::Test {
+            online_sqlx,
+            profile,
+        } => test(online_sqlx, &profile),
         Commands::SqlxPrepare => sqlx_prepare(),
+        Commands::SqlxCheck { online } => sqlx_check(online),
     }
 }
 
+fn heading(title: &str) {
+    println!("========== {title} ==========");
+}
+
 fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
-    println!("→ {name}: {:?}", cmd);
+    heading(name);
     let status = cmd
         .status()
         .with_context(|| format!("{name} failed to spawn"))?;
     if !status.success() {
-        anyhow::bail!("{name} failed with status {status}");
+        return Err(anyhow!("{name} failed with status {status}"));
     }
     Ok(())
 }
 
-fn check(skip_sqlx: bool) -> Result<()> {
+fn sqlx_check(online: bool) -> Result<()> {
+    let mut c = Command::new("cargo");
+    if !online {
+        c.env("SQLX_OFFLINE", "1");
+    }
+    c.arg("sqlx")
+        .arg("prepare")
+        .arg("--workspace")
+        .arg("--check")
+        .arg("--")
+        .arg("--all-targets")
+        .arg("--all-features");
+    run_cmd("sqlx prepare --check", c)
+}
+
+fn check(skip_sqlx: bool, skip_fmt: bool, skip_check: bool) -> Result<()> {
     if !skip_sqlx {
-        run_cmd("sqlx prepare --check", {
-            let mut c = Command::new("cargo");
-            c.env("SQLX_OFFLINE", "1")
-                .arg("sqlx")
-                .arg("prepare")
-                .arg("--workspace")
-                .arg("--check")
-                .arg("--")
-                .arg("--all-targets")
-                .arg("--all-features");
-            c
-        })?;
+        sqlx_check(false)?;
     }
 
-    run_cmd("cargo fmt --check", {
-        let mut c = Command::new("cargo");
-        c.arg("fmt").arg("--all").arg("--").arg("--check");
-        c
-    })?;
+    if !skip_fmt {
+        let mut fmt = Command::new("cargo");
+        fmt.arg("fmt").arg("--all").arg("--").arg("--check");
+        run_cmd("cargo fmt --check", fmt)?;
+    }
 
-    run_cmd("cargo check", {
-        let mut c = Command::new("cargo");
-        c.arg("check").arg("--workspace").arg("--all-features");
-        c
-    })?;
+    if !skip_check {
+        let mut chk = Command::new("cargo");
+        chk.arg("check").arg("--workspace").arg("--all-features");
+        run_cmd("cargo check", chk)?;
+    }
+
     Ok(())
 }
 
-fn test(online_sqlx: bool) -> Result<()> {
+fn lint() -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("clippy")
+        .arg("--workspace")
+        .arg("--all-targets")
+        .arg("--all-features")
+        .arg("--")
+        .arg("-D")
+        .arg("warnings");
+    run_cmd("cargo clippy -D warnings", cmd)
+}
+
+fn test(online_sqlx: bool, profile: &str) -> Result<()> {
     let mut cmd = Command::new("cargo");
     if !online_sqlx {
         cmd.env("SQLX_OFFLINE", "1");
@@ -86,19 +133,17 @@ fn test(online_sqlx: bool) -> Result<()> {
         .arg("run")
         .arg("--workspace")
         .arg("--profile")
-        .arg("reliable");
+        .arg(profile);
     run_cmd("nextest", cmd)
 }
 
 fn sqlx_prepare() -> Result<()> {
-    run_cmd("cargo sqlx prepare", {
-        let mut c = Command::new("cargo");
-        c.arg("sqlx")
-            .arg("prepare")
-            .arg("--workspace")
-            .arg("--")
-            .arg("--all-targets")
-            .arg("--all-features");
-        c
-    })
+    let mut c = Command::new("cargo");
+    c.arg("sqlx")
+        .arg("prepare")
+        .arg("--workspace")
+        .arg("--")
+        .arg("--all-targets")
+        .arg("--all-features");
+    run_cmd("cargo sqlx prepare", c)
 }
