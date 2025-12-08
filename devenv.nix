@@ -132,6 +132,27 @@ in {
     export PATH="$PWD/target/debug:$PATH"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+    # Auto-refresh or validate sqlx metadata based on schema fingerprint.
+    if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
+      SCHEMA_HASH="$(cargo run --package xtask --quiet -- sqlx-check 2>/tmp/sinex-sqlx-check.err || true)"
+      if [ -s /tmp/sinex-sqlx-check.err ]; then
+        echo "sqlx-check reported:" >&2
+        cat /tmp/sinex-sqlx-check.err >&2
+        # Attempt auto-prepare if Postgres is reachable
+        if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
+          echo "Attempting to refresh .sqlx metadata automatically..."
+          if cargo xtask sqlx-prepare; then
+            echo "sqlx metadata refreshed."
+          else
+            echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
+          fi
+        else
+          echo "Postgres not reachable; run 'cargo xtask sqlx-prepare' once DB is available." >&2
+        fi
+      fi
+      rm -f /tmp/sinex-sqlx-check.err
+    fi
+
     if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
       "$PWD/scripts/dev-env-banner.sh" || true
       export SINEX_DEVENV_MOTD_ONCE=1
