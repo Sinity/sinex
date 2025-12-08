@@ -15,6 +15,9 @@ pub mod ulid_conversions;
 // The single source of truth for all schema definitions.
 pub mod schema;
 
+// Centralized registry of all database schemas.
+pub mod schema_registry;
+
 // The directory containing all migration files.
 
 mod migrations;

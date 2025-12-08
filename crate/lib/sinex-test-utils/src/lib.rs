@@ -29,6 +29,7 @@ pub use jetstream::ensure_material_streams;
 pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
+pub use test_context::TestContextHandle;
 
 pub struct ProptestCasesGuard {
     previous: Option<String>,
@@ -70,6 +71,7 @@ mod channel_enhancements;
 #[cfg(feature = "channel-testing")]
 mod channel_helpers;
 mod chaos;
+pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
 mod deployment_scenario_utils;
@@ -79,11 +81,13 @@ pub mod fixtures;
 mod jetstream;
 mod nats;
 mod path_validation;
+pub mod permissions;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
 mod satellite_publisher;
 pub mod satellite_runtime;
+pub mod session_guards;
 mod snapshot;
 pub mod snapshot_helper;
 mod test_context;
@@ -135,8 +139,8 @@ pub mod prelude {
             EVENT_TYPE_FIXTURE_QUERY_SAFETY, EVENT_TYPE_QUERY_SAFETY, SOURCE_FIXTURE_REPO_PRIMARY,
             SOURCE_FIXTURE_REPO_SECONDARY,
         },
-        optional_extension_missing, pool_slot_count, test_context_fixture, test_event_sources,
-        test_event_types, test_paths, test_sources, with_pool_size,
+        optional_extension_missing, pool_slot_count, test_context_fixture, test_db_pool,
+        test_event_sources, test_event_types, test_paths, test_sources, with_pool_size,
     };
 
     // Core sinex imports - now using flattened namespace
@@ -300,9 +304,11 @@ pub use channel_enhancements::{
 };
 pub use database_pool::{
     acquire_admin_connection, acquire_pool_test_guard, acquire_test_database, check_pool_health,
-    get_pool_stats, optional_extension_missing, pool_slot_count, reset_pool, with_pool_size,
-    DatabasePoolTestGuard, DatabaseStats, PoolHealthReport, TestDatabase,
+    ensure_default_session_state, get_pool_stats, get_pool_stats_async, get_slot_stats,
+    optional_extension_missing, pool_slot_count, reset_pool, with_pool_size, DatabasePoolTestGuard,
+    DatabaseStats, PoolHealthReport, TestDatabase,
 };
+pub use db_common::test_db_pool;
 pub use deployment_scenario_utils::{
     CompatibilityResult, CompatibilityTestScenario, ComponentConfig, ConfigCompatibilityTester,
     DependencyAvailability, DependencyType, EnvironmentSetup, EnvironmentType, ExpectedOutcome,

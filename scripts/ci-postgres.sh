@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${CI_VERBOSE:-0}" != "0" ]; then
+  set -x
+fi
+
 log_step() {
   printf '[ci-postgres] %s\n' "$*"
 }
@@ -30,11 +34,14 @@ stop_existing_postgres() {
   fi
 }
 
+log_step "Stopping any existing postgres on $PGHOST:$PGPORT (PGDATA=$PGDATA)"
 stop_existing_postgres
 
+log_step "Initializing fresh PGDATA at $PGDATA"
 rm -rf "$PGDATA"
 mkdir -p "$PGDATA"
 
+log_step "Running initdb..."
 initdb --auth=trust --no-locale --encoding=UTF8 >/dev/null
 cat <<EOF >>"$PGDATA/postgresql.conf"
 unix_socket_directories = '$PWD'
@@ -43,14 +50,31 @@ port = $PGPORT
 shared_preload_libraries = 'timescaledb'
 EOF
 
+log_step "Starting postgres on port $PGPORT ..."
 pg_ctl start -w -l postgres.log -o "-k $PWD -p $PGPORT" >/dev/null
 cleanup() {
-  pg_ctl stop >/dev/null
+  log_step "Stopping postgres (trap cleanup)"
+  pg_ctl stop >/dev/null || true
 }
 trap cleanup EXIT
 
-SUPERUSER=$(id -un)
-export PGHOST PGPORT SUPERUSER
+INITIAL_SUPERUSER=$(id -un)
+export PGHOST PGPORT
+
+psql_exec_as() {
+  local user="$1"
+  local database="$2"
+  shift 2
+  PGUSER="$user" psql -q -h "$PGHOST" -p "$PGPORT" -d "$database" -v ON_ERROR_STOP=1 -c "$*" >/dev/null
+}
+
+if ! PGUSER="$INITIAL_SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'postgres'" | grep -q 1; then
+  log_step "Creating superuser role postgres"
+  psql_exec_as "$INITIAL_SUPERUSER" postgres "CREATE ROLE postgres SUPERUSER CREATEDB LOGIN;"
+fi
+
+SUPERUSER=postgres
+export SUPERUSER
 
 psql_exec() {
   local database="$1"
@@ -59,8 +83,14 @@ psql_exec() {
 }
 
 if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'sinity'" | grep -q 1; then
-  log_step "Creating role sinity"
-  psql_exec postgres "CREATE ROLE sinity LOGIN CREATEDB;"
+  log_step "Creating role sinity with SUPERUSER for test infrastructure"
+  psql_exec postgres "CREATE ROLE sinity SUPERUSER LOGIN CREATEDB;"
+else
+  # Upgrade existing sinity to SUPERUSER if needed
+  if ! PGUSER="$SUPERUSER" psql -h "$PGHOST" -p "$PGPORT" -d postgres -tAc "SELECT rolsuper FROM pg_roles WHERE rolname = 'sinity'" | grep -q t; then
+    log_step "Upgrading sinity to SUPERUSER"
+    psql_exec postgres "ALTER ROLE sinity SUPERUSER;"
+  fi
 fi
 
 # Ensure CI sessions satisfy RLS policies requiring sinex.operation_id
@@ -103,14 +133,27 @@ grant_schema_access() {
 export -f ensure_extension
 export -f grant_schema_access
 
+log_step "Ensuring extensions (pgx_ulid/ulid, pg_jsonschema, timescaledb, vector)"
 ensure_extension sinex_dev pgx_ulid ulid
 ensure_extension sinex_dev pg_jsonschema
 ensure_extension sinex_dev timescaledb
 ensure_extension sinex_dev vector
 
-for schema in core raw audit sinex_schemas metrics; do
+# Grant access to all schemas (dynamically discovered from schema registry)
+# Use explicit manifest/bin to avoid Cargo default-run ambiguity and ensure failures
+# stop the script instead of being swallowed by process substitution.
+SCHEMA_LIST=$(
+  cargo run \
+    --quiet \
+    --manifest-path crate/lib/sinex-schema/Cargo.toml \
+    --bin schema-info -- \
+    list-schemas
+)
+
+for schema in $SCHEMA_LIST; do
   grant_schema_access "$schema"
 done
+log_step "Schema grants complete"
 
 DATABASE_URL_APP="postgresql://sinity@${PGHOST}:${PGPORT}/sinex_dev"
 DATABASE_URL_SUPERUSER="postgresql://${SUPERUSER}@${PGHOST}:${PGPORT}/sinex_dev"
@@ -151,4 +194,5 @@ run_payload() {
 
 run_payload "$@"
 status=$?
+log_step "Payload finished with status $status"
 exit $status

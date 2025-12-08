@@ -45,7 +45,6 @@ async fn start_assembler(
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
-
     Ok((handle, js, annex_dir, state_dir))
 }
 

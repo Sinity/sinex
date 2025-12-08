@@ -1,5 +1,6 @@
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_nats::{
@@ -15,6 +16,7 @@ use rand::Rng;
 use tempfile::TempDir;
 use tokio::{
     process::{Child, Command},
+    sync::Mutex as AsyncMutex,
     time::{sleep, timeout, Instant},
 };
 use tokio_stream::StreamExt;
@@ -22,7 +24,7 @@ use which::which;
 
 /// Ephemeral JetStream-enabled NATS server spawned for tests.
 pub struct EphemeralNats {
-    process: Option<Child>,
+    process: Arc<AsyncMutex<Option<Child>>>,
     url: String,
     _store: TempDir,
     chaos: Option<ChaosConfig>,
@@ -58,7 +60,7 @@ impl EphemeralNats {
         })?;
 
         Ok(Self {
-            process: Some(child),
+            process: Arc::new(AsyncMutex::new(Some(child))),
             url,
             _store: store_dir,
             chaos: None,
@@ -69,6 +71,11 @@ impl EphemeralNats {
     /// Return the client URL (e.g. `127.0.0.1:4222`).
     pub fn client_url(&self) -> &str {
         &self.url
+    }
+
+    /// Expose underlying process for managed shutdown.
+    pub fn process_handle(&self) -> Arc<AsyncMutex<Option<Child>>> {
+        self.process.clone()
     }
 
     /// Connect an async-nats client to this server.
@@ -329,8 +336,10 @@ impl EphemeralNats {
 
 impl Drop for EphemeralNats {
     fn drop(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.start_kill();
+        if let Ok(mut guard) = self.process.try_lock() {
+            if let Some(mut child) = guard.take() {
+                let _ = child.start_kill();
+            }
         }
     }
 }

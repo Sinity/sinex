@@ -26,6 +26,12 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
+    - name: Prepare cache directories
+      run: |
+        mkdir -p ~/.cache/sccache
+        mkdir -p ~/.cargo/registry
+        mkdir -p ~/.cargo/git
+
     - name: Cache sccache
       uses: actions/cache@v4
       with:
@@ -61,9 +67,12 @@ jobs:
         set -euo pipefail
         export CARGO_TARGET_DIR="$PWD/target-ci"
         scripts/ci-postgres.sh <<'POSTGRES'
-        pushd crate/lib/sinex-schema >/dev/null
-        DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-        popd
+        DATABASE_URL="$DATABASE_URL_SUPERUSER" \
+          cargo run \
+            --manifest-path crate/lib/sinex-schema/Cargo.toml \
+            --bin sinex-schema -- \
+            up
+        ./scripts/check-schema-ready.sh
         bash scripts/check_forbidden_patterns.sh
         ./scripts/schema-dev.sh generate
         if ! git diff --quiet -- schemas; then
@@ -71,6 +80,8 @@ jobs:
           git status schemas
           exit 1
         fi
+        # Fast gate to catch flaky fixture regressions without retries
+        devenv tasks run dev:smoke-fixtures
         devenv tasks run dev:test
         POSTGRES
         rm -rf "$CARGO_TARGET_DIR"

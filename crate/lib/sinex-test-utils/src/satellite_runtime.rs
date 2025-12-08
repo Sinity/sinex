@@ -91,6 +91,9 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
 
         let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir);
 
+        // Track the runtime’s background pieces for deterministic teardown.
+        ctx.register_background_handle("satellite-runtime", nats.process_handle());
+
         Ok(TestRuntime {
             runtime,
             event_rx,

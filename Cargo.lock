@@ -4802,6 +4802,7 @@ dependencies = [
  "sinex-core",
  "sinex-ingestd",
  "sinex-satellite-sdk",
+ "sinex-schema",
  "sinex-test-utils-macros",
  "sqlx",
  "sysinfo 0.30.13",
@@ -4812,6 +4813,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+ "url",
  "uuid",
  "which 5.0.0",
 ]

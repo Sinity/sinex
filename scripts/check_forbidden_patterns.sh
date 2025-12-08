@@ -14,6 +14,8 @@ TOKIO_TEST_ALLOW=(
 
 RUST_TEST_ALLOW=(
   "crate/lib/sinex-test-utils/macros/src/lib.rs"
+  "crate/satellites/sinex-desktop-satellite/src/window_manager.rs"
+  "crate/lib/sinex-core/src/db/sanitization.rs"
 )
 
 SQLX_QUERY_ALLOW=(
@@ -25,6 +27,7 @@ SQLX_QUERY_ALLOW=(
   "crate/lib/sinex-test-utils/src/database_pool.rs"
   "crate/lib/sinex-test-utils/src/db_common.rs"
   "crate/lib/sinex-test-utils/src/fixture_generator.rs"
+  "crate/lib/sinex-test-utils/src/fixtures.rs"
 )
 
 SQLX_QUERY_AS_ALLOW=(
@@ -105,8 +108,8 @@ check_pattern_allow_tests() {
 # Guard against #[tokio::test] in normal crates.
 check_pattern_strict "#[tokio::test]" "#\[tokio::test" "${TOKIO_TEST_ALLOW[@]}"
 
-# Guard against plain #[test] (prefer #[sinex_test]); allow macro definitions.
-check_pattern_strict "#[test]" "#\[test\]" "${RUST_TEST_ALLOW[@]}"
+# Guard against plain #[test] (prefer #[sinex_test]); allow macro definitions or tests/ dirs.
+check_pattern_allow_tests "#[test]" "#\[test\]" "${RUST_TEST_ALLOW[@]}"
 
 # Guard against runtime sqlx::query / query_as usage outside allowlist/tests.
 check_pattern_allow_tests "sqlx::query(" "sqlx::query\(" "${SQLX_QUERY_ALLOW[@]}"

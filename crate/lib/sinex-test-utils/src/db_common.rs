@@ -43,12 +43,11 @@
 //!
 //! Custom fixtures can be loaded by name from the `fixtures/datasets/` directory.
 
-use crate::Result;
-use crate::TestResult;
+use crate::{Result, TestContext, TestResult};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
-use futures::Future;
+use futures::{future::BoxFuture, Future};
 use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
@@ -114,26 +113,41 @@ impl OperationIdGuard {
     }
 }
 
+/// Returns a database pool for CI infrastructure tests.
+///
+/// This is a simple pool connection to the DATABASE_URL environment variable,
+/// used by CI tests that need direct database access without the full TestContext
+/// infrastructure.
+///
+/// # Panics
+///
+/// Panics if DATABASE_URL is not set or if connection fails. This is intentional
+/// for CI tests - they should fail fast if the database is not configured.
+pub async fn test_db_pool() -> DbPool {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set for CI infrastructure tests");
+
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("Failed to connect to database for CI tests")
+}
+
 async fn force_purge_events_and_materials(
     conn: &mut PoolConnection<Postgres>,
     pool_for_chunks: &DbPool,
 ) -> TestResult<()> {
-    sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await?;
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security before force purge");
-    }
-    // Explicitly disable triggers to bypass FK enforcement if the replication role toggle is insufficient.
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events during force purge");
-    }
+    let trigger_tables: Vec<String> = crate::cleanup_config::CleanupConfig::default()
+        .tables_requiring_trigger_disable()
+        .map(|t| t.table_name.to_string())
+        .collect();
+    let replication_guard =
+        crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(conn).await?;
+    let row_security_guard =
+        crate::session_guards::RowSecurityGuard::disable_for_cleanup(conn).await?;
+    let triggers_guard =
+        crate::session_guards::TriggersGuard::disable_for_cleanup(conn, &trigger_tables).await?;
 
     let mut attempts = 0;
     let mut last_counts = (0_i64, 0_i64);
@@ -226,27 +240,10 @@ async fn force_purge_events_and_materials(
         );
     }
 
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force purge");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after force purge");
-    }
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
-
-    if let Err(e) = result {
-        return Err(e);
-    }
-
     if last_counts.0 != 0 || last_counts.1 > 1 {
+        triggers_guard.restore(conn).await?;
+        row_security_guard.restore(conn).await?;
+        replication_guard.restore(conn).await?;
         return Err(eyre!(
             "Force purge left {} events and {} materials",
             last_counts.0,
@@ -254,47 +251,20 @@ async fn force_purge_events_and_materials(
         ));
     }
 
-    Ok(())
+    triggers_guard.restore(conn).await?;
+    row_security_guard.restore(conn).await?;
+    replication_guard.restore(conn).await?;
+
+    result
 }
 
 async fn force_clear_events_and_materials(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await?;
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security in force_clear_events_and_materials");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events in force_clear_events_and_materials");
-    }
-
     let pool_for_chunks = pool.clone();
-    force_purge_events_and_materials(&mut conn, &pool_for_chunks).await?;
 
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after force clear");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after force clear");
-    }
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
-
-    Ok(())
+    // force_purge_events_and_materials sets up its own session guards,
+    // so we don't need to duplicate that here
+    force_purge_events_and_materials(&mut conn, &pool_for_chunks).await
 }
 
 impl Drop for OperationIdGuard {
@@ -305,6 +275,36 @@ impl Drop for OperationIdGuard {
             );
         }
     }
+}
+
+/// Run a cleanup block with session guards applied, guaranteeing restoration even on error.
+pub async fn with_cleanup_session<T, F>(
+    conn: &mut PoolConnection<Postgres>,
+    config: &crate::cleanup_config::CleanupConfig,
+    f: F,
+) -> TestResult<T>
+where
+    F: for<'c> FnOnce(&'c mut PoolConnection<Postgres>) -> BoxFuture<'c, TestResult<T>>,
+{
+    let replication_guard =
+        crate::session_guards::ReplicationRoleGuard::disable_for_cleanup(conn).await?;
+    let row_security_guard =
+        crate::session_guards::RowSecurityGuard::disable_for_cleanup(conn).await?;
+    let trigger_tables: Vec<_> = config
+        .tables_requiring_trigger_disable()
+        .map(|t| t.table_name)
+        .collect();
+    let triggers_guard =
+        crate::session_guards::TriggersGuard::disable_for_cleanup(conn, trigger_tables).await?;
+
+    let result = f(conn).await;
+
+    // Always restore in reverse order
+    triggers_guard.restore(conn).await?;
+    row_security_guard.restore(conn).await?;
+    replication_guard.restore(conn).await?;
+
+    result
 }
 
 /// Reset database to clean state by truncating all tables
@@ -343,198 +343,212 @@ impl Drop for OperationIdGuard {
 /// # }
 /// ```
 pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
-    let mut conn = pool.acquire().await?;
+    // Pre-clean hook: ensure background tasks are quiesced if the pool was obtained via TestContext.
+    if let Some(ctx) = TestContext::try_current() {
+        let _ = ctx.quiesce_background_tasks().await;
+    }
 
-    // Disable FK checks for the cleanup session
-    sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await?;
-    if let Err(e) = sqlx::query("SET row_security = off")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable row_security before cleanup");
-    }
-    if let Err(e) = sqlx::query("ALTER TABLE core.events DISABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to disable triggers on core.events during cleanup");
-    }
+    let mut conn = pool.acquire().await?;
+    let config = crate::cleanup_config::CleanupConfig::default();
+    let ordered = config.ordered_tables();
+    let truncate_tables: Vec<_> = ordered
+        .iter()
+        .filter(|t| t.method == crate::cleanup_config::CleanupMethod::Truncate)
+        .map(|t| (*t).clone())
+        .collect();
+    let delete_tables: Vec<_> = ordered
+        .iter()
+        .filter(|t| t.method == crate::cleanup_config::CleanupMethod::Delete)
+        .map(|t| (*t).clone())
+        .collect();
 
     let pool_for_chunks = pool.clone();
-    let operation_guard = OperationIdGuard::apply(&mut conn, "test-cleanup").await?;
-    {
-        let pool_for_chunks = pool_for_chunks.clone();
-        // Try to use TRUNCATE for non-hypertables (much faster)
-        let truncate_result = sqlx::query(
-            r#"
-                TRUNCATE TABLE 
-                    core.event_annotations,
-                    core.event_relations,
-                    core.event_cluster_members,
-                    core.event_embeddings,
-                    core.entity_relations,
-                    core.revisions,
-                    core.entities,
-                    core.event_clusters,
-                    core.processor_checkpoints,
-                    core.operations_log,
-                    core.transactional_outbox,
-                    core.blobs,
-                    core.tags,
-                    core.tagged_items,
-                    raw.source_material_registry,
-                    raw.temporal_ledger,
-                    core.processor_manifests,
-                    sinex_schemas.event_payload_schemas
-                CASCADE
-            "#,
-        )
-        .execute(conn.as_mut())
-        .await;
-
-        if let Err(e) = truncate_result {
-            tracing::warn!("TRUNCATE failed ({}), falling back to DELETE", e);
-
-            // Fall back to DELETE in dependency order
-            let delete_queries = [
-                "DELETE FROM core.event_annotations",
-                "DELETE FROM core.event_relations",
-                "DELETE FROM core.event_cluster_members",
-                "DELETE FROM core.event_embeddings",
-                "DELETE FROM core.entity_relations",
-                "DELETE FROM core.revisions",
-                "DELETE FROM core.processor_manifests",
-                "DELETE FROM sinex_schemas.event_payload_schemas",
-                "DELETE FROM core.processor_checkpoints",
-                "DELETE FROM core.operations_log",
-                "DELETE FROM core.transactional_outbox",
-                "DELETE FROM core.tags",
-                "DELETE FROM core.tagged_items",
-                "DELETE FROM core.blobs",
-                "DELETE FROM raw.temporal_ledger",
-                "DELETE FROM core.entities",
-                "DELETE FROM core.event_clusters",
-            ];
-
-            for query in delete_queries {
-                if let Err(e) = sqlx::query(query).execute(conn.as_mut()).await {
-                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
-                    tracing::warn!("Failed to delete from {}: {}", table_name, e);
-                }
-            }
-        }
-
-        // Handle core.events separately (hypertable cannot be truncated)
-        if let Err(e) = sqlx::query("DELETE FROM core.events")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!("Failed to delete from core.events: {}", e);
-            // Try TimescaleDB-specific cleanup
-            if let Err(e2) =
-                sqlx::query("SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')")
-                    .execute(&pool_for_chunks)
-                    .await
+    with_cleanup_session(&mut conn, &config, |mut conn| {
+        let fut: BoxFuture<'_, TestResult<()>> = Box::pin(async move {
+            let pool_for_chunks = pool_for_chunks.clone();
+            let truncate_tables = truncate_tables.clone();
+            let delete_tables = delete_tables.clone();
+            let operation_guard = OperationIdGuard::apply(&mut conn, "test-cleanup").await?;
             {
-                tracing::warn!("Failed to drop chunks: {}", e2);
-            }
-        }
+                let truncate_names: Vec<String> = truncate_tables
+                    .iter()
+                    .map(|t| t.table_name.to_string())
+                    .collect();
 
-        if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
-            .execute(conn.as_mut())
-            .await
-        {
-            tracing::warn!(
-                "Failed to delete from raw.source_material_registry: {}. Retrying after removing dependent events.",
-                e
-            );
-            // Ensure no events remain that reference lingering source materials before retrying.
-            if let Err(ev_err) =
-                sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+                if !truncate_names.is_empty() {
+                    let truncate_list = truncate_names.join(",\n                    ");
+                    let truncate_query = format!(
+                        "TRUNCATE TABLE \n                    {}\n                CASCADE",
+                        truncate_list
+                    );
+                    let truncate_result = sqlx::query(&truncate_query)
+                        .execute(conn.as_mut())
+                        .await;
+
+                    if let Err(e) = truncate_result {
+                        tracing::warn!(
+                            "TRUNCATE failed ({}), falling back to DELETE for truncatable tables",
+                            e
+                        );
+                        for table in &truncate_tables {
+                            let query = format!("DELETE FROM {}", table.table_name);
+                            if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
+                                tracing::warn!(
+                                    error = %e,
+                                    table = %table.table_name,
+                                    "Failed to delete from table"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                for table in delete_tables
+                    .iter()
+                    .filter(|t| t.table_name != "core.events")
+                {
+                    let query = format!("DELETE FROM {}", table.table_name);
+                    if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
+                        tracing::warn!(
+                            error = %e,
+                            table = %table.table_name,
+                            reason = ?table.reason,
+                            "Failed to delete from table"
+                        );
+                    }
+                }
+
+                if let Err(e) = sqlx::query("DELETE FROM core.events")
                     .execute(conn.as_mut())
                     .await
-            {
-                tracing::warn!(
-                    "Fallback removal of events referencing source materials failed: {}",
-                    ev_err
-                );
+                {
+                    tracing::warn!("Failed to delete from core.events: {}", e);
+                    if let Err(e2) = sqlx::query(
+                        "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
+                    )
+                    .execute(&pool_for_chunks)
+                    .await
+                    {
+                        tracing::warn!("Failed to drop chunks: {}", e2);
+                    }
+                }
+
+                if let Err(e) = sqlx::query("DELETE FROM raw.source_material_registry")
+                    .execute(conn.as_mut())
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to delete from raw.source_material_registry: {}. Retrying after removing dependent events.",
+                        e
+                    );
+                    if let Err(ev_err) =
+                        sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+                            .execute(conn.as_mut())
+                            .await
+                    {
+                        tracing::warn!(
+                            "Fallback removal of events referencing source materials failed: {}",
+                            ev_err
+                        );
+                    }
+                    sqlx::query("DELETE FROM raw.source_material_registry")
+                        .execute(conn.as_mut())
+                        .await?;
+                }
             }
-            sqlx::query("DELETE FROM raw.source_material_registry")
-                .execute(conn.as_mut())
-                .await?;
-        }
-    }
-    operation_guard.restore(&mut conn).await?;
+            operation_guard.restore(&mut conn).await?;
 
-    // Re-enable FK checks
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
-
-    // Ensure no stale bootstrap records remain from prior runs
-    // This DELETE needs operation_id for RLS policy
-    let operation_guard2 = OperationIdGuard::apply(&mut conn, "bootstrap-cleanup").await?;
-    sqlx::query(
-        r#"
-        DELETE FROM core.events
-        WHERE source_material_id = $1::uuid::ulid
-           OR source_material_id IN (
-                SELECT id
-                FROM raw.source_material_registry
-                WHERE source_identifier LIKE 'test-material-%'
+            // Ensure no stale bootstrap records remain from prior runs
+            // This DELETE needs operation_id for RLS policy
+            let operation_guard2 =
+                OperationIdGuard::apply(&mut conn, "bootstrap-cleanup").await?;
+            sqlx::query(
+                r#"
+                DELETE FROM core.events
+                WHERE source_material_id = $1::uuid::ulid
+                   OR source_material_id IN (
+                        SELECT id
+                        FROM raw.source_material_registry
+                        WHERE source_identifier LIKE 'test-material-%'
+                    )
+                "#,
             )
-        "#,
-    )
-    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-    .execute(conn.as_mut())
-    .await?;
-    operation_guard2.restore(&mut conn).await?;
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(conn.as_mut())
+            .await?;
+            operation_guard2.restore(&mut conn).await?;
 
-    // Ensure any stale canonical record is removed before re-seeding to avoid PK/unique conflicts.
-    let delete_canonical = sqlx::query(
-        r#"
-        DELETE FROM raw.source_material_registry
-        WHERE id = $1::uuid::ulid
-           OR source_identifier = 'test-material-bootstrap'
-        "#,
-    )
-    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-    .execute(conn.as_mut())
-    .await;
+            // Ensure any stale canonical record is removed before re-seeding to avoid PK/unique conflicts.
+            let delete_canonical = sqlx::query(
+                r#"
+                DELETE FROM raw.source_material_registry
+                WHERE id = $1::uuid::ulid
+                   OR source_identifier = 'test-material-bootstrap'
+                "#,
+            )
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(conn.as_mut())
+            .await;
 
-    if let Err(e) = delete_canonical {
-        tracing::warn!(
-            error = %e,
-            "Failed to delete canonical bootstrap material, purging dependent events and retrying"
-        );
-        // Remove any events still referencing source materials, then retry.
-        if let Err(ev_err) =
-            sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+            if let Err(e) = delete_canonical {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to delete canonical bootstrap material, purging dependent events and retrying"
+                );
+                // Remove any events still referencing source materials, then retry.
+                if let Err(ev_err) =
+                    sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
+                        .execute(conn.as_mut())
+                        .await
+                {
+                    tracing::warn!(
+                        error = %ev_err,
+                        "Failed to purge events referencing source materials before retry"
+                    );
+                }
+                let retry = sqlx::query(
+                    r#"
+                    DELETE FROM raw.source_material_registry
+                    WHERE id = $1::uuid::ulid
+                       OR source_identifier = 'test-material-bootstrap'
+                    "#,
+                )
+                .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
                 .execute(conn.as_mut())
-                .await
-        {
-            tracing::warn!(error = %ev_err, "Failed to purge events referencing source materials before retry");
-        }
-        let retry = sqlx::query(
-            r#"
-            DELETE FROM raw.source_material_registry
-            WHERE id = $1::uuid::ulid
-               OR source_identifier = 'test-material-bootstrap'
-            "#,
-        )
-        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-        .execute(conn.as_mut())
-        .await;
+                .await;
 
-        if let Err(retry_err) = retry {
-            tracing::warn!(error = %retry_err, "Second attempt to delete canonical bootstrap material failed, forcing purge of events/materials");
-            let force_guard = OperationIdGuard::apply(&mut conn, "canonical-force-purge").await?;
-            let purge = force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
+                if let Err(retry_err) = retry {
+                    tracing::warn!(error = %retry_err, "Second attempt to delete canonical bootstrap material failed, forcing purge of events/materials");
+                    let force_guard =
+                        OperationIdGuard::apply(&mut conn, "canonical-force-purge").await?;
+                    let purge =
+                        force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
+                    force_guard.restore(&mut conn).await?;
+                    purge?;
+
+                    sqlx::query(
+                        r#"
+                        DELETE FROM raw.source_material_registry
+                        WHERE id = $1::uuid::ulid
+                           OR source_identifier = 'test-material-bootstrap'
+                        "#,
+                    )
+                    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+                    .execute(conn.as_mut())
+                    .await?;
+                }
+            }
+
+            // Final sweep to remove any lingering rows that might have been left by mid-test
+            // crashes or RLS quirks. We reinsert the canonical record afterwards.
+            let force_guard = OperationIdGuard::apply(&mut conn, "force-clean").await?;
+            let purge_result =
+                force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
             force_guard.restore(&mut conn).await?;
-            purge?;
+            purge_result?;
 
+            // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
+            // (replication role already disabled by outer guard)
             sqlx::query(
                 r#"
                 DELETE FROM raw.source_material_registry
@@ -545,81 +559,45 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
             .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
             .execute(conn.as_mut())
             .await?;
-        }
-    }
 
-    // Final sweep to remove any lingering rows that might have been left by mid-test
-    // crashes or RLS quirks. We reinsert the canonical record afterwards.
-    let force_guard = OperationIdGuard::apply(&mut conn, "force-clean").await?;
-    let purge_result = force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
-    force_guard.restore(&mut conn).await?;
-    purge_result?;
+            // Restore canonical test material record relied upon by Event::test_event.
+            sqlx::query(
+                r#"
+                INSERT INTO raw.source_material_registry (
+                    id,
+                    material_kind,
+                    source_identifier,
+                    status,
+                    timing_info_type,
+                    metadata
+                ) VALUES (
+                    $1::uuid::ulid,
+                    'annex',
+                    'test-material-bootstrap',
+                    'completed',
+                    'realtime',
+                    '{}'::jsonb
+                )
+                ON CONFLICT (id) DO UPDATE
+                SET id = EXCLUDED.id,
+                    status = EXCLUDED.status,
+                    timing_info_type = EXCLUDED.timing_info_type,
+                    metadata = EXCLUDED.metadata
+                "#,
+            )
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(conn.as_mut())
+            .await?;
 
-    // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
-    sqlx::query("SET session_replication_role = 'replica'")
-        .execute(conn.as_mut())
-        .await?;
-    sqlx::query(
-        r#"
-        DELETE FROM raw.source_material_registry
-        WHERE id = $1::uuid::ulid
-           OR source_identifier = 'test-material-bootstrap'
-        "#,
-    )
-    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-    .execute(conn.as_mut())
-    .await?;
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(conn.as_mut())
-        .await?;
+            sqlx::query("RESET sinex.operation_id")
+                .execute(conn.as_mut())
+                .await?;
 
-    // Restore canonical test material record relied upon by Event::test_event.
-    sqlx::query(
-        r#"
-        INSERT INTO raw.source_material_registry (
-            id,
-            material_kind,
-            source_identifier,
-            status,
-            timing_info_type,
-            metadata
-        ) VALUES (
-            $1::uuid::ulid,
-            'annex',
-            'test-material-bootstrap',
-            'completed',
-            'realtime',
-            '{}'::jsonb
-        )
-        ON CONFLICT (id) DO UPDATE
-        SET id = EXCLUDED.id,
-            status = EXCLUDED.status,
-            timing_info_type = EXCLUDED.timing_info_type,
-            metadata = EXCLUDED.metadata
-        "#,
-    )
-    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-    .execute(conn.as_mut())
-    .await?;
-
-    if let Err(e) = sqlx::query("ALTER TABLE core.events ENABLE TRIGGER ALL")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable triggers on core.events after cleanup");
-    }
-    if let Err(e) = sqlx::query("SET row_security = on")
-        .execute(conn.as_mut())
-        .await
-    {
-        tracing::warn!(error = %e, "Failed to re-enable row_security after cleanup");
-    }
-
-    sqlx::query("RESET sinex.operation_id")
-        .execute(conn.as_mut())
-        .await?;
-
-    Ok(())
+            Ok(())
+        });
+        fut
+    })
+    .await
 }
 
 pub async fn with_operation_id<F, Fut, T>(
@@ -1086,8 +1064,10 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
 mod tests {
     #![allow(unused_imports)]
     use super::*;
-    use crate::database_pool::acquire_test_database;
+    use crate::database_pool::{acquire_test_database, force_event_material_cleanup_for_tests};
     use crate::sinex_test;
+    use crate::test_context::TestContext;
+    use serde_json::json;
     use sinex_core::{DbPoolExt, EventSource, EventType, HostName, Id};
 
     #[sinex_test]
@@ -1125,6 +1105,25 @@ mod tests {
         verify_clean_state(pool).await?;
         db.force_cleanup().await?;
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn force_cleanup_clears_event_and_material_pairs() -> TestResult<()> {
+        let _guard = crate::acquire_pool_test_guard().await;
+        let ctx = TestContext::with_name("force_cleanup_fk").await?;
+        ctx.ensure_clean().await?;
+
+        // Seed a couple of events to ensure both event and source material rows exist.
+        ctx.create_test_event("force-clean", "cleanup.test", json!({"n": 1}))
+            .await?;
+        ctx.create_test_event("force-clean", "cleanup.test", json!({"n": 2}))
+            .await?;
+
+        // Validate force cleanup succeeds and leaves database clean.
+        force_event_material_cleanup_for_tests(ctx.pool()).await?;
+        verify_clean_state(ctx.pool()).await?;
+        ctx.force_cleanup().await?;
         Ok(())
     }
 

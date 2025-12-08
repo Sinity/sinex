@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-nix develop --accept-flake-config --no-pure-eval --command "$@"
+echo "📦 entering dev shell via nix develop..."
+exec nix develop --accept-flake-config --no-pure-eval --command "$@"

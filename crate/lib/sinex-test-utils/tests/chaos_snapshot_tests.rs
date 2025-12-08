@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use color_eyre::Result;
-use sinex_test_utils::{ChaosInjestor, TestSnapshot};
+use sinex_test_utils::{sinex_test, ChaosInjestor, TestSnapshot};
 
-#[tokio::test]
-async fn chaos_injestor_injects_failures() -> Result<()> {
+#[sinex_test]
+async fn chaos_injestor_injects_failures() -> sinex_test_utils::TestResult<()> {
     let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
     chaos
         .with_simulated_failures(|| async { Ok::<_, color_eyre::Report>(42) })

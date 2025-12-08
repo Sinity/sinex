@@ -50,6 +50,7 @@ bon = { workspace = true }
 sinex-core = { path = "../sinex-core", features = ["testing"] }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-ingestd = { path = "../../core/sinex-ingestd" }
+sinex-schema = { path = "../sinex-schema" }
 # Internal macro crate (implementation detail)
 sinex-test-utils-macros = { path = "macros" }
 
@@ -64,6 +65,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 sha2 = "0.10"
 which = { workspace = true }
 blake3 = { workspace = true }
+url = "2.5"
 
 # Benchmarking dependencies (optional)
 divan = { version = "0.1", optional = true }

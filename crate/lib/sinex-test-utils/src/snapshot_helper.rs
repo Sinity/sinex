@@ -3,10 +3,12 @@
 use crate::database_pool::get_pool_stats;
 use crate::{TestContext, TestContextFailureSnapshot};
 use chrono::Utc;
+use futures::Future;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Helper for advanced snapshot testing with custom redactions
 pub struct SnapshotTestHelper {
@@ -56,6 +58,7 @@ struct FailureSnapshot {
     error: String,
     timestamp: String,
     pool: crate::database_pool::PoolStats,
+    pool_detail: Option<Vec<SlotSnapshot>>,
     context: Option<ContextSnapshot>,
     logs: Option<Vec<String>>,
 }
@@ -65,6 +68,19 @@ struct ContextSnapshot {
     name: String,
     baseline_events: i64,
     elapsed_ms: u128,
+    background_pending: usize,
+    background_labels: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SlotSnapshot {
+    name: String,
+    total_connections: usize,
+    idle_connections: usize,
+    last_clean_time: Option<String>,
+    last_clean_result: Option<String>,
+    residuals: Option<Vec<(String, i64)>>,
+    quarantined: bool,
 }
 
 pub enum FailureContext<'a> {
@@ -96,6 +112,8 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                 name: ctx.test_name().to_string(),
                 baseline_events: ctx.baseline_event_count(),
                 elapsed_ms: ctx.elapsed().as_millis(),
+                background_pending: ctx.background_snapshot().pending,
+                background_labels: ctx.background_snapshot().labels,
             }),
             Some(ctx.captured_logs()),
         ),
@@ -104,9 +122,33 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
                 name: snapshot.test_name().to_string(),
                 baseline_events: snapshot.baseline_events(),
                 elapsed_ms: snapshot.elapsed_ms(),
+                background_pending: snapshot.background_snapshot().pending,
+                background_labels: snapshot.background_snapshot().labels,
             }),
             Some(snapshot.captured_logs()),
         ),
+    };
+
+    let slot_detail: Option<Vec<SlotSnapshot>> = {
+        let slots = crate::database_pool::get_slot_stats();
+        if slots.is_empty() {
+            None
+        } else {
+            Some(
+                slots
+                    .into_iter()
+                    .map(|s| SlotSnapshot {
+                        name: s.name,
+                        total_connections: s.total_connections,
+                        idle_connections: s.idle_connections,
+                        last_clean_time: s.last_clean_time,
+                        last_clean_result: s.last_clean_result,
+                        residuals: s.residuals,
+                        quarantined: s.quarantined,
+                    })
+                    .collect(),
+            )
+        }
     };
 
     let snapshot = FailureSnapshot {
@@ -114,6 +156,7 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         error: error.into(),
         timestamp: Utc::now().to_rfc3339(),
         pool: get_pool_stats(),
+        pool_detail: slot_detail,
         context: ctx_snapshot,
         logs,
     };
@@ -137,6 +180,29 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         }
         Err(err) => {
             eprintln!("⚠️  failed to serialize failure snapshot for {test_name}: {err}");
+        }
+    }
+}
+
+/// Retry a fallible async block once, capturing diagnostics on the first failure.
+pub async fn retry_with_snapshot<F, Fut>(
+    test_name: &str,
+    ctx: &crate::TestContext,
+    f: F,
+) -> crate::TestResult<()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = crate::TestResult<()>>,
+{
+    match f().await {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            persist_failure(test_name, err.to_string(), FailureContext::Borrowed(ctx));
+            // Best-effort recovery before retrying.
+            let _ = ctx.force_cleanup().await;
+            let _ = crate::db_common::reset_database(ctx.pool()).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            f().await
         }
     }
 }
