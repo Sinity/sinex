@@ -54,6 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Prepare cache directories
+        run: |
+          mkdir -p ~/.cache/sccache
+          mkdir -p ~/.cargo/registry
+          mkdir -p ~/.cargo/git
+
       - name: Cache sccache
         uses: actions/cache@v4
         with:
@@ -87,9 +93,12 @@ jobs:
           set -euo pipefail
           scripts/ci-postgres.sh <<'POSTGRES_SCHEMA'
           set -euo pipefail
-          pushd crate/lib/sinex-schema >/dev/null
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" cargo run -- up
-          popd
+          DATABASE_URL="$DATABASE_URL_SUPERUSER" \
+            cargo run \
+              --manifest-path crate/lib/sinex-schema/Cargo.toml \
+              --bin sinex-schema -- \
+              up
+          ./scripts/check-schema-ready.sh
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
@@ -112,6 +121,12 @@ jobs:
       DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v5
+
+      - name: Prepare cache directories
+        run: |
+          mkdir -p ~/.cache/sccache
+          mkdir -p ~/.cargo/registry
+          mkdir -p ~/.cargo/git
 
       - name: Cache sccache
         uses: actions/cache@v4

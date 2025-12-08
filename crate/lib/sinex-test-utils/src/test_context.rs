@@ -45,6 +45,8 @@ use crate::timing_utils::TimingUtils;
 use crate::TestResult;
 use async_nats::{jetstream, Client as NatsClient};
 use color_eyre::eyre::eyre;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
@@ -58,10 +60,13 @@ use sinex_core::DbPoolExt;
 use std::collections::HashSet;
 use std::mem;
 use std::str::FromStr;
+use std::sync::mpsc;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
-use tokio::runtime::Handle;
+use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::task::JoinHandle;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -101,6 +106,7 @@ pub struct TestContext {
     test_name: String,
     start_time: Instant,
     created_events: Arc<Mutex<Vec<CreatedEventInfo>>>,
+    background: Arc<AsyncMutex<BackgroundRegistry>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
     baseline_events: i64,
     _tracing_enabled: bool,
@@ -110,11 +116,18 @@ pub struct TestContext {
 }
 
 #[derive(Clone)]
+pub struct BackgroundSnapshot {
+    pub pending: usize,
+    pub labels: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct TestContextFailureSnapshot {
     test_name: String,
     baseline_events: i64,
     start_time: Instant,
     captured_logs: Arc<Mutex<Vec<String>>>,
+    background: Arc<AsyncMutex<BackgroundRegistry>>,
 }
 
 impl TestContextFailureSnapshot {
@@ -133,9 +146,62 @@ impl TestContextFailureSnapshot {
     pub fn captured_logs(&self) -> Vec<String> {
         self.captured_logs.lock().clone()
     }
+
+    pub fn background_snapshot(&self) -> BackgroundSnapshot {
+        match self.background.try_lock() {
+            Ok(guard) => BackgroundSnapshot {
+                pending: guard.pending_count(),
+                labels: guard.labels(),
+            },
+            Err(_) => BackgroundSnapshot {
+                pending: 0,
+                labels: Vec::new(),
+            },
+        }
+    }
+}
+
+/// Lightweight handle exposing pool and background registry for global hooks.
+#[derive(Clone)]
+pub struct TestContextHandle {
+    pub pool: DbPool,
+    pub(crate) background: Arc<AsyncMutex<BackgroundRegistry>>,
+}
+
+impl TestContextHandle {
+    pub async fn quiesce_background_tasks(&self) {
+        let mut guard = self.background.lock().await;
+        guard.quiesce().await;
+    }
 }
 
 impl TestContext {
+    thread_local! {
+        static CURRENT_CTX: std::cell::RefCell<Option<TestContextHandle>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// Attach this context to the current thread for retrieval by helpers.
+    pub(crate) fn install_current(&self) {
+        let handle = TestContextHandle {
+            pool: self.pool.clone(),
+            background: self.background.clone(),
+        };
+        Self::CURRENT_CTX.with(|cell| {
+            *cell.borrow_mut() = Some(handle);
+        });
+    }
+
+    /// Clear the current-thread handle (used on drop).
+    pub(crate) fn clear_current(&self) {
+        Self::CURRENT_CTX.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+
+    /// Best-effort access to the current TestContext handle (pool + background).
+    pub fn try_current() -> Option<TestContextHandle> {
+        Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
+    }
     /// Backwards-compatible accessor for the shared database pool.
     pub fn pool(&self) -> &DbPool {
         &self.pool
@@ -260,6 +326,7 @@ impl TestContext {
             test_name: test_name.to_string(),
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
+            background: Arc::new(AsyncMutex::new(BackgroundRegistry::default())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
             baseline_events,
             _tracing_enabled: false,
@@ -276,8 +343,18 @@ impl TestContext {
     pub async fn with_nats(mut self) -> TestResult<Self> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
+        let shutdown_proc = nats.process_handle();
+        self.register_background_handle("nats-server", shutdown_proc.clone());
+        self.register_shutdown_hook("nats-shutdown", async move {
+            if let Some(mut child) = shutdown_proc.lock().await.take() {
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+            }
+        })
+        .await;
         self.nats_client = Some(client);
         self.nats = Some(Arc::new(nats));
+        self.install_current();
         Ok(self)
     }
 
@@ -383,6 +460,7 @@ impl TestContext {
             baseline_events: self.baseline_events,
             start_time: self.start_time,
             captured_logs: Arc::clone(&self.captured_logs),
+            background: self.background.clone(),
         }
     }
 
@@ -451,6 +529,8 @@ impl TestContext {
 
     /// Force cleanup of the underlying database (use with caution)
     pub async fn force_cleanup(&self) -> TestResult<()> {
+        // Ensure no background work is still touching the database before wiping it.
+        self.quiesce_background_tasks().await?;
         self.db
             .force_cleanup()
             .await
@@ -462,6 +542,7 @@ impl TestContext {
     /// This verifies that the database is empty and ready for use.
     /// If not clean, attempts cleanup and verification.
     pub async fn ensure_clean(&self) -> TestResult<()> {
+        self.quiesce_background_tasks().await?;
         match crate::db_common::verify_clean_state(&self.pool).await {
             Ok(_) => Ok(()),
             Err(_) => {
@@ -469,6 +550,90 @@ impl TestContext {
                 crate::db_common::verify_clean_state(&self.pool).await?;
                 Ok(())
             }
+        }
+    }
+
+    /// Register a background task that must complete before the database is returned to the pool.
+    /// Use this for fire-and-forget helpers started inside a test.
+    pub async fn register_background_task(&self, label: impl Into<String>, handle: JoinHandle<()>) {
+        let mut guard = self.background.lock().await;
+        guard.add_task(label, handle);
+    }
+
+    /// Register a background resource (e.g., process handle) as a tracked task.
+    pub fn register_background_handle<T>(&self, label: impl Into<String>, handle: T)
+    where
+        T: Send + 'static,
+    {
+        let registry = self.background.clone();
+        let lbl = label.into();
+        tokio::spawn(async move {
+            registry.lock().await.add_task(
+                lbl,
+                tokio::spawn(async move {
+                    let _ = handle;
+                    let _ = tokio::task::yield_now().await;
+                }),
+            );
+        });
+    }
+
+    /// Spawn and track a background task that will be awaited during cleanup.
+    pub fn spawn_background<F>(&self, label: impl Into<String>, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let registry = self.background.clone();
+        let lbl = label.into();
+        let handle = tokio::spawn(fut);
+        tokio::spawn(async move {
+            registry.lock().await.add_task(lbl, handle);
+        });
+    }
+
+    /// Register a custom shutdown hook to run before the context gives the database back.
+    pub async fn register_shutdown_hook<F>(&self, label: impl Into<String>, hook: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let mut guard = self.background.lock().await;
+        guard.add_hook(label, hook.boxed());
+    }
+
+    /// Register a background task or handle by name and optional join handle.
+    /// Useful for process handles or runtime-managed resources.
+
+    /// Wait for background tasks and shutdown hooks to finish. Called automatically on drop,
+    /// but available for tests that want deterministic cleanup points.
+    pub async fn quiesce_background_tasks(&self) -> TestResult<()> {
+        let mut guard = self.background.lock().await;
+        guard.quiesce().await;
+        Ok(())
+    }
+
+    /// Assert that no background tasks or hooks remain pending.
+    pub async fn assert_idle(&self) -> TestResult<()> {
+        let guard = self.background.lock().await;
+        if guard.pending_count() == 0 {
+            return Ok(());
+        }
+        Err(color_eyre::eyre::eyre!(
+            "Background registry not idle: {} pending ({:?})",
+            guard.pending_count(),
+            guard.labels()
+        ))
+    }
+
+    pub fn background_snapshot(&self) -> BackgroundSnapshot {
+        match self.background.try_lock() {
+            Ok(guard) => BackgroundSnapshot {
+                pending: guard.pending_count(),
+                labels: guard.labels(),
+            },
+            Err(_) => BackgroundSnapshot {
+                pending: 0,
+                labels: Vec::new(),
+            },
         }
     }
 
@@ -830,9 +995,118 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
     Ok(())
 }
 
+#[derive(Default)]
+pub(crate) struct BackgroundRegistry {
+    tasks: Vec<(String, JoinHandle<()>)>,
+    shutdown_hooks: Vec<(String, BoxFuture<'static, ()>)>,
+}
+
+impl BackgroundRegistry {
+    fn pending_count(&self) -> usize {
+        self.tasks.len() + self.shutdown_hooks.len()
+    }
+
+    fn add_task(&mut self, label: impl Into<String>, handle: JoinHandle<()>) {
+        self.tasks.push((label.into(), handle));
+    }
+
+    fn add_hook(&mut self, label: impl Into<String>, hook: BoxFuture<'static, ()>) {
+        self.shutdown_hooks.push((label.into(), hook));
+    }
+
+    fn labels(&self) -> Vec<String> {
+        self.tasks
+            .iter()
+            .map(|(l, _)| l.clone())
+            .chain(self.shutdown_hooks.iter().map(|(l, _)| l.clone()))
+            .collect()
+    }
+
+    async fn quiesce(&mut self) {
+        let timeout_secs: u64 = std::env::var("SINEX_TESTUTILS_BG_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
+        // Run shutdown hooks first so tasks can observe the signal.
+        let hooks = std::mem::take(&mut self.shutdown_hooks);
+        for (label, hook) in hooks {
+            if let Err(err) = tokio::time::timeout(Duration::from_secs(timeout_secs), hook).await {
+                warn!(%label, ?err, "Timeout waiting for shutdown hook");
+            }
+        }
+
+        // Wait for tracked background tasks to finish, aborting on timeout.
+        let tasks = std::mem::take(&mut self.tasks);
+        for (label, handle) in tasks {
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(join_err)) => {
+                    warn!(%label, error = %join_err, "Background task join failed")
+                }
+                Err(_) => warn!(%label, "Background task did not finish within timeout; aborting"),
+            }
+        }
+    }
+}
+
 /// Cleanup implementation for TestContext
 impl Drop for TestContext {
     fn drop(&mut self) {
+        let debug_drop = std::env::var("SINEX_TESTUTILS_DEBUG_DROP").is_ok();
+        let drop_start = std::time::Instant::now();
+        if debug_drop {
+            eprintln!(
+                "TestContext drop start for {} (pool: {})",
+                self.test_name,
+                self.db.name()
+            );
+        }
+        // Ensure any registered background work is flushed before returning the database.
+        let registry = self.background.clone();
+        let quiesce_fut = async move {
+            let _ = tokio::time::timeout(Duration::from_secs(15), async {
+                registry.lock().await.quiesce().await;
+            })
+            .await;
+        };
+        // Avoid block_in_place on current-thread runtimes; instead enter the runtime if available
+        // so Tokio timers and tasks can make progress while we wait for background shutdown.
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| {
+                    let _guard = handle.enter();
+                    futures::executor::block_on(quiesce_fut);
+                });
+            }
+            Ok(_handle) => {
+                // For current-thread runtimes, move cleanup onto a dedicated thread with its own runtime
+                // to avoid deadlocking the executor.
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(quiesce_fut);
+                    } else {
+                        futures::executor::block_on(quiesce_fut);
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(20));
+            }
+            Err(_) => {
+                futures::executor::block_on(quiesce_fut);
+            }
+        }
+        if debug_drop {
+            eprintln!(
+                "TestContext drop after quiesce ({:?})",
+                drop_start.elapsed()
+            );
+        }
+
         let pool = self.pool.clone();
         let records = {
             let mut guard = self.created_events.lock();
@@ -867,6 +1141,14 @@ impl Drop for TestContext {
             {
                 warn!("TestContext cleanup failed without runtime: {}", err);
             }
+        }
+
+        if debug_drop {
+            eprintln!(
+                "TestContext drop complete in {:?} for {}",
+                drop_start.elapsed(),
+                self.test_name
+            );
         }
 
         let duration = self.start_time.elapsed();

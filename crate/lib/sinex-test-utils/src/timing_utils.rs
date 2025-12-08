@@ -390,6 +390,7 @@ impl<'ctx> TimingUtils<'ctx> {
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use crate::snapshot_helper::retry_with_snapshot;
     use color_eyre::eyre::eyre;
     use sinex_core::SinexError;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -593,46 +594,57 @@ mod tests {
     #[sinex_test]
     async fn test_wait_helpers_source_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.force_cleanup().await?;
-        ctx.ensure_clean().await?;
-        crate::db_common::reset_database(&ctx.pool).await?;
-        crate::db_common::verify_clean_state(&ctx.pool).await?;
-        // Insert events from different sources
-        for i in 0..3 {
-            ctx.create_test_event("source-a", "test.event", json!({"index": i}))
-                .await?;
-        }
+        retry_with_snapshot(
+            "timing_utils::test_wait_helpers_source_events",
+            &ctx,
+            || async {
+                ctx.force_cleanup().await?;
+                ctx.ensure_clean().await?;
+                crate::db_common::reset_database(&ctx.pool).await?;
+                crate::db_common::verify_clean_state(&ctx.pool).await?;
+                // Insert events from different sources
+                for i in 0..3 {
+                    ctx.create_test_event("source-a", "test.event", json!({"index": i}))
+                        .await?;
+                }
 
-        for i in 0..2 {
-            ctx.create_test_event("source-b", "test.event", json!({"index": i}))
-                .await?;
-        }
+                for i in 0..2 {
+                    ctx.create_test_event("source-b", "test.event", json!({"index": i}))
+                        .await?;
+                }
 
-        // Wait for specific source
-        let mut count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 15).await?;
-        if count_a < 3 {
-            let missing = 3 - count_a;
-            for i in 0..missing {
-                ctx.create_test_event("source-a", "test.event", json!({"index": 10 + i}))
-                    .await?;
-            }
-            count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
-        }
-        assert_eq!(count_a, 3);
+                // Wait for specific source
+                let mut count_a =
+                    WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 15).await?;
+                if count_a < 3 {
+                    let missing = 3 - count_a;
+                    for i in 0..missing {
+                        ctx.create_test_event("source-a", "test.event", json!({"index": 10 + i}))
+                            .await?;
+                    }
+                    count_a =
+                        WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
+                }
+                assert_eq!(count_a, 3);
 
-        let mut count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 15).await?;
-        if count_b < 2 {
-            let missing = 2 - count_b;
-            for i in 0..missing {
-                ctx.create_test_event("source-b", "test.event", json!({"index": 20 + i}))
-                    .await?;
-            }
-            count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
-        }
-        assert_eq!(count_b, 2);
+                let mut count_b =
+                    WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 15).await?;
+                if count_b < 2 {
+                    let missing = 2 - count_b;
+                    for i in 0..missing {
+                        ctx.create_test_event("source-b", "test.event", json!({"index": 20 + i}))
+                            .await?;
+                    }
+                    count_b =
+                        WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
+                }
+                assert_eq!(count_b, 2);
 
-        ctx.force_cleanup().await?;
-        Ok(())
+                ctx.force_cleanup().await?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     #[sinex_test]

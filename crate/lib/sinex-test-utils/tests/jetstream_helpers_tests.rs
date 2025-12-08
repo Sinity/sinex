@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
-use color_eyre::{eyre, Result};
+use color_eyre::eyre;
 use serde_json::json;
-use sinex_test_utils::{EphemeralNats, TestSatellitePublisher};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestSatellitePublisher};
 use tokio::time::sleep;
 
-#[tokio::test(flavor = "multi_thread")]
-async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> Result<()> {
+#[sinex_test]
+async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> sinex_test_utils::TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let env = sinex_core::environment();
     let subject_prefix = env.nats_subject("tests.sample");
@@ -44,8 +44,8 @@ async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_satellite_publisher_emits_events_and_confirmations() -> Result<()> {
+#[sinex_test]
+async fn test_satellite_publisher_emits_events_and_confirmations() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let env = sinex_core::environment();
     let events_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
@@ -146,8 +146,8 @@ async fn test_satellite_publisher_emits_events_and_confirmations() -> Result<()>
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn ephemeral_nats_with_chaos_refuses_connections() {
+#[sinex_test]
+async fn ephemeral_nats_with_chaos_refuses_connections() -> TestResult<()> {
     let nats = EphemeralNats::start()
         .await
         .expect("nats should start")
@@ -162,4 +162,5 @@ async fn ephemeral_nats_with_chaos_refuses_connections() {
             .contains("simulated connection failure"),
         "unexpected error: {err}"
     );
+    Ok(())
 }

@@ -1,14 +1,15 @@
 // Satellite test utilities for integration testing
 // Provides test handles for satellites, ingestd, and automata
 
-use crate::Result;
 use crate::TestResult;
+use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService};
 use tokio::process::Child;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
 // Re-export StreamMessage for convenience
@@ -36,7 +37,7 @@ pub struct TestIngestdHandle {
     pub stream_name: String,
     process: Option<Child>,
     service: Option<IngestService>,
-    join_handle: Option<JoinHandle<Result<()>>>,
+    join_handle: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     _work_dir: Option<tempfile::TempDir>,
 }
 
@@ -51,15 +52,11 @@ impl TestIngestdHandle {
             let _ = process.kill().await;
         }
 
-        if let Some(join) = self.join_handle.take() {
-            match join.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => return Err(err.into()),
-                Err(join_err) => {
-                    return Err(
-                        SinexError::service(format!("ingestd task join error: {join_err}")).into(),
-                    )
-                }
+        if let Some(join) = self.join_handle.lock().await.take() {
+            if let Err(join_err) = join.await {
+                return Err(
+                    SinexError::service(format!("ingestd task join error: {join_err}")).into(),
+                );
             }
         }
         Ok(())
@@ -78,6 +75,7 @@ impl Drop for TestIngestdHandle {
 /// Start a test ingestd instance with custom configuration
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
+    ctx: Option<&crate::TestContext>,
 ) -> TestResult<TestIngestdHandle> {
     let work_dir_temp = match &config.work_dir {
         Some(_existing) => None,
@@ -118,7 +116,11 @@ pub async fn start_test_ingestd_with_config(
     let service = IngestService::new(ingest_config.clone()).await?;
 
     let mut service_runner = service.clone();
-    let join_handle = tokio::spawn(async move { service_runner.run().await });
+    let join_handle = tokio::spawn(async move {
+        if let Err(err) = service_runner.run().await {
+            tracing::warn!(error = %err, "ingestd service runner exited with error");
+        }
+    });
 
     // Verify service is ready by checking NATS stream exists
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -132,13 +134,28 @@ pub async fn start_test_ingestd_with_config(
     .await
     .map_err(|_| SinexError::service("ingestd stream did not become ready"))?;
 
-    Ok(TestIngestdHandle {
+    let handle = TestIngestdHandle {
         stream_name: ingest_config.nats_stream_name,
         process: None,
         service: Some(service),
-        join_handle: Some(join_handle),
+        join_handle: Arc::new(AsyncMutex::new(Some(join_handle))),
         _work_dir: work_dir_temp,
-    })
+    };
+
+    if let Some(ctx) = ctx {
+        let join_arc = handle.join_handle.clone();
+        ctx.register_background_task(
+            "ingestd-runner",
+            tokio::spawn(async move {
+                if let Some(join) = join_arc.lock().await.take() {
+                    let _ = join.await;
+                }
+            }),
+        )
+        .await;
+    }
+
+    Ok(handle)
 }
 
 /// Handle for a test satellite process
@@ -257,6 +274,7 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;
+    use crate::snapshot_helper::retry_with_snapshot;
     use crate::SinexError;
 
     #[sinex_test]
@@ -286,7 +304,7 @@ mod tests {
             work_dir: Some(work_dir.path().to_path_buf()),
         };
 
-        let mut handle = start_test_ingestd_with_config(config.clone()).await?;
+        let mut handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
 
         assert!(!handle.stream_name.is_empty());
         handle.stop().await?;
@@ -307,7 +325,7 @@ mod tests {
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
         };
-        let mut handle = start_test_ingestd_with_config(config).await?;
+        let mut handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
 
         // Should be able to stop without error
         handle.stop().await?;
@@ -321,22 +339,29 @@ mod tests {
     #[sinex_test]
     async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
         let _guard = crate::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        ctx.force_cleanup().await?;
-        let config = serde_json::json!({
-            "name": "test-satellite",
-            "source": "test",
-            "buffer_size": 100,
-        });
+        retry_with_snapshot(
+            "satellite_management_utils::test_satellite_handle_creation",
+            &ctx,
+            || async {
+                ctx.ensure_clean().await?;
+                ctx.force_cleanup().await?;
+                let config = serde_json::json!({
+                    "name": "test-satellite",
+                    "source": "test",
+                    "buffer_size": 100,
+                });
 
-        let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
+                let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
 
-        assert_eq!(handle.name, "test-satellite");
+                assert_eq!(handle.name, "test-satellite");
 
-        crate::db_common::reset_database(ctx.pool()).await?;
-        crate::db_common::verify_clean_state(ctx.pool()).await?;
-        ctx.force_cleanup().await?;
-        Ok(())
+                crate::db_common::reset_database(ctx.pool()).await?;
+                crate::db_common::verify_clean_state(ctx.pool()).await?;
+                ctx.force_cleanup().await?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     #[sinex_test]
@@ -523,7 +548,7 @@ mod tests {
             stream_name: "test-stream".to_string(),
             process: None,
             service: None,
-            join_handle: None,
+            join_handle: Arc::new(AsyncMutex::new(None)),
             _work_dir: None,
         };
 

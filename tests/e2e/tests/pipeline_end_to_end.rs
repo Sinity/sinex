@@ -36,7 +36,7 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         work_dir: None,
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     sleep(Duration::from_millis(200)).await;
 
     let (event_tx, event_rx) = mpsc::unbounded_channel();

@@ -48,6 +48,11 @@ sudo mv /tmp/nats/nats-server /usr/local/bin/
 You can override the binary path with `NATS_SERVER_BIN=/custom/path/nats-server`
 if you prefer to keep it outside `$PATH`.
 
+## Diagnostics & Flake Handling
+
+- `devenv tasks run db:doctor` – prints pool stats, normalises session state (RLS/replication/triggers), and dumps table row counts using the CI connection. Use when cleanup is suspected to be stuck or permissions look wrong.
+- `snapshot_helper::retry_with_snapshot` – wrap flaky integration tests to capture failure snapshots (pool stats, context logs) on first failure, attempt cleanup, then retry once. This is now used in fixture, satellite, and timing utilities; mirror the pattern if you add a test that can be sensitive to timing or FK races.
+
 ## Test Layout at a Glance
 
 | Location | What lives here | Notes |

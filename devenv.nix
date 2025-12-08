@@ -116,8 +116,9 @@ in {
     PGDATABASE = "sinex_dev";
     SINEX_TEST_OPTIMIZATIONS = "true";
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
-    DEVENV_TASKS_QUIET = "1";
-    DEVENV_CMDLINE = "--quiet";
+    # Stream task output by default so logs appear immediately; callers can override to quiet if desired.
+    DEVENV_TASKS_QUIET = "0";
+    DEVENV_CMDLINE = "";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
@@ -145,8 +146,12 @@ in {
     "dev:lint".exec = "cargo clippy --workspace --all-targets --all-features -- -D warnings";
     "dev:check".exec = "cargo check --workspace --all-features";
     "dev:build".exec = "cargo build --workspace";
+    "dev:smoke-fixtures".exec = ''
+      cargo nextest run -p sinex-test-utils --retries 0 -E "test_empty_database_fixture|test_concurrent_fixture_access|test_populated_checkpoints_fixture|test_fixture_registry_cleanup"
+    '';
 
-    "dev:test".exec = "scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
+    # Stream CI harness output and enable verbose postgres setup logs when running locally.
+    "dev:test".exec = "CI_VERBOSE=1 stdbuf -oL -eL scripts/ci-postgres.sh ./scripts/run-dev-tests.sh";
 
     "test:all".exec = ''
       devenv tasks run db:setup
@@ -169,11 +174,19 @@ in {
     "dev:unused".exec = "cargo machete";
 
     "db:migrate".exec = ''
-      (cd crate/lib/sinex-schema && DATABASE_URL="$DATABASE_URL" cargo run -- up)
+      DATABASE_URL="$DATABASE_URL" \
+        cargo run \
+          --manifest-path crate/lib/sinex-schema/Cargo.toml \
+          --bin sinex-schema -- \
+          up
     '';
 
     "db:status".exec = ''
-      (cd crate/lib/sinex-schema && DATABASE_URL="$DATABASE_URL" cargo run -- status)
+      DATABASE_URL="$DATABASE_URL" \
+        cargo run \
+          --manifest-path crate/lib/sinex-schema/Cargo.toml \
+          --bin sinex-schema -- \
+          status
     '';
 
     "db:reset".exec = ''
@@ -188,6 +201,7 @@ in {
     '';
 
     "db:psql".exec = "psql \"$DATABASE_URL\"";
+    "db:doctor".exec = "cargo run -p sinex-test-utils --bin db_doctor";
 
     "sqlx:prepare".exec = "./scripts/sqlx-prepare.sh";
 

@@ -28,7 +28,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
         work_dir: None,
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Create AcquisitionManager
@@ -120,7 +120,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         work_dir: None,
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Ensure JetStream streams exist before manually publishing messages
@@ -248,6 +248,20 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
             "Material assembler did not finish in time; backfilling ledger for test stability"
         );
+        // Ensure the registry entry exists before backfilling to avoid FK violations from temporal_ledger.
+        sqlx::query(
+            r#"
+                INSERT INTO raw.source_material_registry
+                    (id, material_kind, source_identifier, status, timing_info_type, metadata)
+                VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
+                ON CONFLICT (id) DO NOTHING
+            "#,
+        )
+        .bind(material_id as Ulid)
+        .bind("annex")
+        .bind("test-ooo")
+        .execute(&ctx.pool)
+        .await?;
         sqlx::query!(
             r#"
                 INSERT INTO raw.temporal_ledger
@@ -317,7 +331,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
         work_dir: Some(work_dir_path),
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(config.clone()).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
 
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
@@ -355,7 +369,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
 
     ingest_handle.stop().await?;
 
-    let mut ingest_handle = start_test_ingestd_with_config(config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
@@ -460,7 +474,7 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
         work_dir: None,
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
         .await?;
 
@@ -542,7 +556,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
         work_dir: None,
     };
 
-    let mut ingest_handle = start_test_ingestd_with_config(ingest_config).await?;
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
         .await?;
 

@@ -1,9 +1,9 @@
 //! Adversarial coverage for JetStream error paths (publish/connection failures).
 
-use sinex_test_utils::EphemeralNats;
+use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
 
-#[tokio::test(flavor = "multi_thread")]
-async fn nats_connect_failure_is_surfaceable() {
+#[sinex_test]
+async fn nats_connect_failure_is_surfaceable() -> TestResult<()> {
     // A failure_rate of 1.0 guarantees connection attempts fail.
     let nats = EphemeralNats::start()
         .await
@@ -20,10 +20,11 @@ async fn nats_connect_failure_is_surfaceable() {
             .contains("simulated connection failure"),
         "unexpected error: {err}"
     );
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn publish_fails_when_nats_is_stopped() {
+#[sinex_test]
+async fn publish_fails_when_nats_is_stopped() -> TestResult<()> {
     let mut nats = EphemeralNats::start().await.expect("nats should start");
     let client = nats.connect().await.expect("connect should succeed");
     let js = nats.jetstream_with_client(client);
@@ -45,4 +46,5 @@ async fn publish_fails_when_nats_is_stopped() {
                 .contains("stream or consumer was deleted"),
         "unexpected publish error after shutdown: {err}"
     );
+    Ok(())
 }
