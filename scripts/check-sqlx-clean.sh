@@ -11,13 +11,10 @@ if ! command -v sqlx >/dev/null 2>&1; then
   exit 1
 fi
 
-# Run prepare in offline mode to refresh metadata quickly.
-SQLX_OFFLINE=1 sqlx prepare --workspace -- --all-targets --all-features >/dev/null
-
-if ! git diff --quiet -- .sqlx; then
-  echo ".sqlx metadata changed. Please commit updated files." >&2
-  git status --short .sqlx
+# Run prepare in offline check-only mode to validate metadata without rewriting it.
+if ! SQLX_OFFLINE=1 cargo sqlx prepare --workspace --check -- --all-targets --all-features; then
+  echo "sqlx prepare --check failed (offline). Regenerate with 'devenv tasks run sqlx:prepare' when schema changes." >&2
   exit 1
 fi
 
-echo "✅ .sqlx cache is up to date."
+echo "✅ .sqlx cache matches current schema."

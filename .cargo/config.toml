@@ -36,6 +36,7 @@ tf = ["nextest", "run", "-E", "test(unit::) or test(property::)"] # Fast tests
 tu = ["nextest", "run", "-E", "test(unit::)"]                     # Unit tests only
 ti = ["nextest", "run", "-E", "test(integration::)"]              # Integration tests
 tp = ["nextest", "run", "-E", "test(property::)"]                 # Property tests
+xtask = ["run", "--package", "xtask", "--"]
 
 # Ultra-fast development aliases
 c = ["check", "--workspace", "--profile", "dev-fast"] # Super fast check
