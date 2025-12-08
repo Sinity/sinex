@@ -139,7 +139,7 @@ in {
         echo "sqlx-check reported:" >&2
         cat /tmp/sinex-sqlx-check.err >&2
         # Attempt auto-prepare if Postgres is reachable
-        if PGPASSWORD='' psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
+        if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
           echo "Attempting to refresh .sqlx metadata automatically..."
           if cargo xtask sqlx-prepare; then
             echo "sqlx metadata refreshed."
