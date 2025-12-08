@@ -132,13 +132,13 @@ in {
     export PATH="$PWD/target/debug:$PATH"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # Auto-refresh or validate sqlx metadata based on schema fingerprint.
-    if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
+    # Skip the slow sqlx auto-check on shell entry by default.
+    # Opt in with SINEX_SQLX_AUTO=1 if you explicitly want it.
+    if [ -n "''${SINEX_SQLX_AUTO:-}" ]; then
       SCHEMA_HASH="$(cargo run --package xtask --quiet -- sqlx-check 2>/tmp/sinex-sqlx-check.err || true)"
       if [ -s /tmp/sinex-sqlx-check.err ]; then
         echo "sqlx-check reported:" >&2
         cat /tmp/sinex-sqlx-check.err >&2
-        # Attempt auto-prepare if Postgres is reachable
         if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
           echo "Attempting to refresh .sqlx metadata automatically..."
           if cargo xtask sqlx-prepare; then
