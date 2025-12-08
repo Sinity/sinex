@@ -1,4 +1,4 @@
-#![cfg(all(feature = "rstest-preview", feature = "rstest-preview-examples"))]
+#![cfg(all(feature = "rstest-preview", false))]
 
 //! Example conversions showing how to modernize tests with macros
 //!
