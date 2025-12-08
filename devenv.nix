@@ -116,8 +116,8 @@ in {
     PGDATABASE = "sinex_dev";
     SINEX_TEST_OPTIMIZATIONS = "true";
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
-    # Keep devenv tasks quiet unless overridden.
-    DEVENV_TASKS_QUIET = "1";
+    # Keep devenv quiet.
+    DEVENV_TASKS_QUIET = "";
     DEVENV_CMDLINE = "";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
@@ -134,38 +134,25 @@ in {
 
     # Auto-refresh or validate sqlx metadata based on schema fingerprint.
     if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
-      SCHEMA_HASH="$(cargo run --package xtask --quiet -- sqlx-check 2>/tmp/sinex-sqlx-check.err || true)"
+      cargo xtask sqlx-check 2>/tmp/sinex-sqlx-check.err || true
       if [ -s /tmp/sinex-sqlx-check.err ]; then
         echo "sqlx-check reported:" >&2
         cat /tmp/sinex-sqlx-check.err >&2
-        # Attempt auto-prepare if Postgres is reachable
-        if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
-          echo "Attempting to refresh .sqlx metadata automatically..."
-          if cargo xtask sqlx-prepare; then
-            echo "sqlx metadata refreshed."
-          else
-            echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
-          fi
-        else
-          echo "Postgres not reachable; run 'cargo xtask sqlx-prepare' once DB is available." >&2
-        fi
       fi
       rm -f /tmp/sinex-sqlx-check.err
     fi
 
-    if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
-      "$PWD/scripts/dev-env-banner.sh" || true
-      export SINEX_DEVENV_MOTD_ONCE=1
-    fi
     alias sinex-cli="python3 cli/exo.py"
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
-    echo ""
-    echo "xtask quick reference:"
-    echo "  xtask check        # sqlx check + fmt check + cargo check"
-    echo "  xtask lint         # clippy -D warnings"
-    echo "  xtask test         # nextest workspace (profile=reliable)"
-    echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
+    if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
+      echo ""
+      echo "xtask quick reference:"
+      echo "  xtask check        # sqlx check + fmt check + cargo check"
+      echo "  xtask lint         # clippy -D warnings"
+      echo "  xtask test         # nextest workspace (profile=reliable)"
+      echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
+    fi
     # Generate shell completions once per shell session (writes to /tmp)
     cargo xtask completions bash > /tmp/xtask-completions.bash
     . /tmp/xtask-completions.bash 2>/dev/null || true
