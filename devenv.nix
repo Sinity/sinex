@@ -116,8 +116,8 @@ in {
     PGDATABASE = "sinex_dev";
     SINEX_TEST_OPTIMIZATIONS = "true";
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
-    # Stream task output by default so logs appear immediately; callers can override to quiet if desired.
-    DEVENV_TASKS_QUIET = "0";
+    # Keep devenv tasks quiet unless overridden.
+    DEVENV_TASKS_QUIET = "1";
     DEVENV_CMDLINE = "";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
@@ -162,17 +162,13 @@ in {
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
     echo ""
     echo "xtask quick reference:"
-    echo "  cargo xtask check        # sqlx check + fmt check + cargo check"
-    echo "  cargo xtask lint         # clippy -D warnings (workspace/all targets)"
-    echo "  cargo xtask test         # nextest workspace (profile=reliable, SQLX_OFFLINE=1)"
-    echo "  cargo xtask sqlx-check   # verify .sqlx vs schema fingerprint"
-    echo "  cargo xtask sqlx-prepare # refresh .sqlx after migrations"
+    echo "  xtask check        # sqlx check + fmt check + cargo check"
+    echo "  xtask lint         # clippy -D warnings"
+    echo "  xtask test         # nextest workspace (profile=reliable)"
+    echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
     # Generate shell completions once per shell session (writes to /tmp)
     cargo xtask completions bash > /tmp/xtask-completions.bash
     . /tmp/xtask-completions.bash 2>/dev/null || true
-    if [ -n "''${SINEX_AUTO_DOCTOR:-}" ]; then
-      cargo xtask doctor || true
-    fi
   '';
 
   tasks = { };
