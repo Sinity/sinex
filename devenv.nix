@@ -167,6 +167,12 @@ in {
     echo "  cargo xtask test         # nextest workspace (profile=reliable, SQLX_OFFLINE=1)"
     echo "  cargo xtask sqlx-check   # verify .sqlx vs schema fingerprint"
     echo "  cargo xtask sqlx-prepare # refresh .sqlx after migrations"
+    # Generate shell completions once per shell session (writes to /tmp)
+    cargo xtask completions bash > /tmp/xtask-completions.bash
+    . /tmp/xtask-completions.bash 2>/dev/null || true
+    if [ -n "''${SINEX_AUTO_DOCTOR:-}" ]; then
+      cargo xtask doctor || true
+    fi
   '';
 
   tasks = { };
