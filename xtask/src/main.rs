@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, shells};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
@@ -46,6 +47,25 @@ enum Commands {
         #[arg(long)]
         online: bool,
     },
+    /// Print current schema fingerprint and cached stamp
+    SqlxStamp,
+    /// Quick CI preflight: sqlx-check, clippy, nextest reliable (offline)
+    CiPreflight,
+    /// Environment/health report (toolchain, sccache, Postgres, schema)
+    Doctor,
+    /// Generate shell completions for xtask
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+    PowerShell,
 }
 
 fn main() -> Result<()> {
@@ -63,6 +83,10 @@ fn main() -> Result<()> {
         } => test(online_sqlx, &profile),
         Commands::SqlxPrepare => sqlx_prepare(),
         Commands::SqlxCheck { online } => sqlx_check(online),
+        Commands::SqlxStamp => sqlx_stamp(),
+        Commands::CiPreflight => ci_preflight(),
+        Commands::Doctor => doctor(),
+        Commands::Completions { shell } => completions(shell),
     }
 }
 
@@ -207,5 +231,79 @@ fn sqlx_prepare() -> Result<()> {
         .arg("--all-features");
     run_cmd("cargo sqlx prepare", c)?;
     write_stamp(&fingerprint)?;
+    Ok(())
+}
+
+fn sqlx_stamp() -> Result<()> {
+    let fingerprint = compute_schema_fingerprint()?;
+    println!("Current schema fingerprint: {fingerprint}");
+    match read_stamp() {
+        Some(stamp) => {
+            println!("Cached .sqlx stamp:      {stamp}");
+            if stamp == fingerprint {
+                println!("Status: ✅ stamp matches schema");
+            } else {
+                println!("Status: ⚠️ stamp differs from schema (run `cargo xtask sqlx-prepare`)");
+            }
+        }
+        None => println!("Cached .sqlx stamp:      (missing)"),
+    }
+    Ok(())
+}
+
+fn ci_preflight() -> Result<()> {
+    sqlx_check(false)?;
+    lint()?;
+    test(false, "reliable")
+}
+
+fn doctor() -> Result<()> {
+    heading("toolchain");
+    run_cmd("rustc --version", {
+        let mut c = Command::new("rustc");
+        c.arg("--version");
+        c
+    })
+    .ok();
+    run_cmd("cargo --version", {
+        let mut c = Command::new("cargo");
+        c.arg("--version");
+        c
+    })
+    .ok();
+
+    heading("sccache");
+    if let Err(err) = run_cmd("sccache --show-stats", {
+        let mut c = Command::new("sccache");
+        c.arg("--show-stats");
+        c
+    }) {
+        eprintln!("sccache not available: {err}");
+    }
+
+    heading("postgres reachability");
+    let pg_ok = Command::new("psql")
+        .args(["-c", "select 1"])
+        .status()
+        .ok()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    println!("Postgres reachable: {}", if pg_ok { "yes" } else { "no" });
+
+    heading("schema fingerprint");
+    sqlx_stamp()?;
+
+    Ok(())
+}
+
+fn completions(shell: Shell) -> Result<()> {
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    match shell {
+        Shell::Bash => generate(shells::Bash, &mut cmd, name, &mut std::io::stdout()),
+        Shell::Zsh => generate(shells::Zsh, &mut cmd, name, &mut std::io::stdout()),
+        Shell::Fish => generate(shells::Fish, &mut cmd, name, &mut std::io::stdout()),
+        Shell::PowerShell => generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout()),
+    }
     Ok(())
 }
