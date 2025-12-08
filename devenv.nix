@@ -117,7 +117,7 @@ in {
     SINEX_TEST_OPTIMIZATIONS = "true";
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
     # Keep devenv quiet.
-    DEVENV_TASKS_QUIET = "";
+    DEVENV_TASKS_QUIET = "1";
     DEVENV_CMDLINE = "";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
