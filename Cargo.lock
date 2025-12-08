@@ -6716,7 +6716,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "hex",
  "once_cell",
+ "sha2",
+ "walkdir",
 ]
 
 [[package]]

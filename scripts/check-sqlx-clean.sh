@@ -11,9 +11,8 @@ if ! command -v sqlx >/dev/null 2>&1; then
   exit 1
 fi
 
-# Run prepare in offline check-only mode to validate metadata without rewriting it.
-if ! SQLX_OFFLINE=1 cargo sqlx prepare --workspace --check -- --all-targets --all-features; then
-  echo "sqlx prepare --check failed (offline). Regenerate with 'devenv tasks run sqlx:prepare' when schema changes." >&2
+# Check .sqlx metadata against current schema hash without rewriting.
+if ! cargo xtask sqlx-check; then
   exit 1
 fi
 

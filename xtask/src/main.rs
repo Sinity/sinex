@@ -1,6 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
+use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(author, version, about = "Developer tasks for the Sinex workspace")]
@@ -66,6 +70,52 @@ fn heading(title: &str) {
     println!("========== {title} ==========");
 }
 
+fn schema_paths() -> Vec<PathBuf> {
+    let candidates = [
+        PathBuf::from("crate/lib/sinex-schema/migrations"),
+        PathBuf::from("schemas"),
+    ];
+    let mut files = Vec::new();
+    for dir in candidates {
+        if dir.exists() {
+            for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    files.push(entry.path().to_path_buf());
+                }
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn compute_schema_fingerprint() -> Result<String> {
+    let mut hasher = Sha256::new();
+    for path in schema_paths() {
+        let content =
+            fs::read(&path).with_context(|| format!("reading schema file {}", path.display()))?;
+        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update(&content);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn stamp_path() -> PathBuf {
+    PathBuf::from(".sqlx/stamp")
+}
+
+fn read_stamp() -> Option<String> {
+    fs::read_to_string(stamp_path()).ok()
+}
+
+fn write_stamp(fingerprint: &str) -> Result<()> {
+    if let Some(parent) = stamp_path().parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(stamp_path(), fingerprint)?;
+    Ok(())
+}
+
 fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
     heading(name);
     let status = cmd
@@ -78,6 +128,15 @@ fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
 }
 
 fn sqlx_check(online: bool) -> Result<()> {
+    let fingerprint = compute_schema_fingerprint()?;
+    if let Some(existing) = read_stamp() {
+        if existing != fingerprint {
+            return Err(anyhow!(
+                "schema fingerprint changed; run `cargo xtask sqlx-prepare` to refresh .sqlx (or ensure DB is reachable)"
+            ));
+        }
+    }
+
     let mut c = Command::new("cargo");
     if !online {
         c.env("SQLX_OFFLINE", "1");
@@ -138,6 +197,7 @@ fn test(online_sqlx: bool, profile: &str) -> Result<()> {
 }
 
 fn sqlx_prepare() -> Result<()> {
+    let fingerprint = compute_schema_fingerprint()?;
     let mut c = Command::new("cargo");
     c.arg("sqlx")
         .arg("prepare")
@@ -145,5 +205,7 @@ fn sqlx_prepare() -> Result<()> {
         .arg("--")
         .arg("--all-targets")
         .arg("--all-features");
-    run_cmd("cargo sqlx prepare", c)
+    run_cmd("cargo sqlx prepare", c)?;
+    write_stamp(&fingerprint)?;
+    Ok(())
 }

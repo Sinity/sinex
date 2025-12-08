@@ -7,3 +7,6 @@ edition = "2021"
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 once_cell = { workspace = true }
+walkdir = "2.5"
+sha2 = "0.10"
+hex = { workspace = true }
