@@ -132,16 +132,10 @@ in {
     export PATH="$PWD/target/debug:$PATH"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # Auto-refresh or validate sqlx metadata based on schema fingerprint.
-    if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
-      cargo xtask sqlx-check 2>/tmp/sinex-sqlx-check.err || true
-      if [ -s /tmp/sinex-sqlx-check.err ]; then
-        echo "sqlx-check reported:" >&2
-        cat /tmp/sinex-sqlx-check.err >&2
-      fi
-      rm -f /tmp/sinex-sqlx-check.err
+    if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
+      "$PWD/scripts/dev-env-banner.sh" || true
+      export SINEX_DEVENV_MOTD_ONCE=1
     fi
-
     alias sinex-cli="python3 cli/exo.py"
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
