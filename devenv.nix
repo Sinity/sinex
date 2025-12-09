@@ -140,7 +140,7 @@ in {
       export SINEX_DEVENV_MOTD_ONCE=1
     fi
     alias sinex-cli="python3 cli/exo.py"
-    alias xt="cargo xtask"
+    xt() { cargo xtask "$@"; }
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
     if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
