@@ -115,7 +115,18 @@ fn schema_paths() -> Vec<PathBuf> {
 
 fn compute_schema_fingerprint() -> Result<String> {
     let mut hasher = Sha256::new();
+    let mut files = Vec::new();
     for path in schema_paths() {
+        for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                files.push(entry.into_path());
+            }
+        }
+    }
+
+    files.sort();
+
+    for path in files {
         let content =
             fs::read(&path).with_context(|| format!("reading schema file {}", path.display()))?;
         hasher.update(path.to_string_lossy().as_bytes());
