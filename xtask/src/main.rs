@@ -208,9 +208,6 @@ fn doctor() -> Result<()> {
         .unwrap_or(false);
     println!("Postgres reachable: {}", if pg_ok { "yes" } else { "no" });
 
-    heading("schema fingerprint");
-    sqlx_stamp()?;
-
     Ok(())
 }
 
