@@ -118,7 +118,6 @@ in {
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
     # Keep devenv quiet.
     DEVENV_TASKS_QUIET = "1";
-    DEVENV_CMDLINE = "";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
