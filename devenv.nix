@@ -133,24 +133,47 @@ in {
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     # Auto-refresh or validate sqlx metadata based on schema fingerprint.
+    # Skip the expensive sqlx check when the fingerprint matches the cached stamp.
     if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
-      SCHEMA_HASH="$(cargo run --package xtask --quiet -- sqlx-check 2>/tmp/sinex-sqlx-check.err || true)"
-      if [ -s /tmp/sinex-sqlx-check.err ]; then
-        echo "sqlx-check reported:" >&2
-        cat /tmp/sinex-sqlx-check.err >&2
-        # Attempt auto-prepare if Postgres is reachable
-        if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
-          echo "Attempting to refresh .sqlx metadata automatically..."
-          if cargo xtask sqlx-prepare; then
-            echo "sqlx metadata refreshed."
+      FINGERPRINT="$(python3 - <<'PY'
+import hashlib, os
+from pathlib import Path
+paths = []
+for base in ("crate/lib/sinex-schema/migrations", "schemas"):
+    p = Path(base)
+    if p.exists():
+        for f in sorted(p.rglob("*")):
+            if f.is_file():
+                paths.append(f)
+hasher = hashlib.sha256()
+for f in paths:
+    hasher.update(str(f).encode())
+    hasher.update(f.read_bytes())
+print(hasher.hexdigest())
+PY
+)"
+      STAMP="$(cat .sqlx/stamp 2>/dev/null || true)"
+      if [ -n "$FINGERPRINT" ] && [ "$STAMP" = "$FINGERPRINT" ]; then
+        true
+      else
+        cargo xtask sqlx-check 2>/tmp/sinex-sqlx-check.err || true
+        if [ -s /tmp/sinex-sqlx-check.err ]; then
+          echo "sqlx-check reported:" >&2
+          cat /tmp/sinex-sqlx-check.err >&2
+          # Attempt auto-prepare if Postgres is reachable
+          if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
+            echo "Attempting to refresh .sqlx metadata automatically..."
+            if cargo xtask sqlx-prepare; then
+              echo "sqlx metadata refreshed."
+            else
+              echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
+            fi
           else
-            echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
+            echo "Postgres not reachable; run 'cargo xtask sqlx-prepare' once DB is available." >&2
           fi
-        else
-          echo "Postgres not reachable; run 'cargo xtask sqlx-prepare' once DB is available." >&2
         fi
+        rm -f /tmp/sinex-sqlx-check.err
       fi
-      rm -f /tmp/sinex-sqlx-check.err
     fi
 
     if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
