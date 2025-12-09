@@ -1,99 +1,32 @@
 # GitHub Actions Workflows
 
-This directory contains CI/CD workflows for the Sinex project.
+This directory documents the live workflows and how to rerun them locally. Everything is driven by `cargo xtask`; CI spins up Postgres via `cargo xtask ci postgres` and runs the same xtask pipelines developers use.
 
-## Workflows
+## Active Workflows
 
-### `ci.yml` - Main CI Pipeline
-- Runs on all pushes and pull requests
-- Builds all packages using Nix flakes
-- Runs test suite
-- Validates code formatting
+- **`ci.yml`** — Main gate on pushes/PRs. Boots Postgres with `cargo xtask ci postgres -- cargo xtask ci workspace`, which migrates with `sinex-schema`, runs `cargo xtask schema check-ready`, `cargo xtask lint-forbidden`, a schema drift check, smoke fixtures (`cargo nextest run -p sinex-e2e-tests --profile fast`), and the reliable Nextest profile (`cargo xtask test --profile reliable`).
+- **`db-checks.yml`** — Path-filtered database checks. When schemas change, runs `cargo xtask schema check-ready` plus a generate/sync smoke. When SQLx inputs change, runs `cargo xtask sqlx-prepare`, verifies `.sqlx/` is clean, and does an offline workspace check.
+- **`schema-compatibility.yml`** — PR guard that runs `cargo xtask schema compat --base ${{ github.base_ref }}` and comments on failures.
+- **`schema-management.yml`** — Validates JSON schemas, regenerates from code, and (on `master` pushes) deploys with `cargo xtask schema deploy` if the production DB secret is present.
+- **`schema-auto-update.yml`** — Scheduled drift catch-up: regenerates schemas and `.sqlx/` via `cargo xtask` and opens auto-PRs against the default branch.
 
-### `sqlx-check.yml` - SQLX Offline Check
-- Validates SQLX queries compile correctly
-- Ensures `.sqlx/` cache is up to date
-- Prevents runtime SQL errors
+## Local Reproduction
 
-### `sqlx-cache.yml` - Update SQLX Cache
-- Automatically updates `.sqlx/` cache when migrations change
-- Creates PR with updated cache files
+Run workflow steps inside `nix develop`:
 
-### `schema-validation.yml` - JSON Schema Validation
-- Validates all JSON schemas in `/schemas/`
-- Checks schema compatibility
-- Ensures event schemas are well-formed
+```bash
+# Main CI gate locally (same as ci.yml body)
+nix develop --accept-flake-config --no-pure-eval --command \
+  cargo xtask ci postgres -- \
+  cargo xtask ci workspace
 
-### `schema-management.yml` - Schema Deployment
-- Deploys validated schemas to production
-- Updates schema registry in database
-- Maintains schema version history
+# Schema compat check (matches schema-compatibility.yml)
+CI_BASE_BRANCH=master cargo xtask schema compat
 
-### `schema-auto-update.yml` - Schema Drift Automation
-- Runs `./scripts/schema-dev.sh generate` on pushes to `main`
-- Opens an automated PR when `schemas/` differs from generated output
-- Requires `contents` + `pull-requests` write permissions so `peter-evans/create-pull-request@v5` can push branches
+# SQLx refresh (matches db-checks/sqlx path)
+nix develop --accept-flake-config --no-pure-eval --command \
+  cargo xtask ci postgres -- \
+  cargo xtask sqlx-prepare
+```
 
-### `sqlx-auto-update.yml` - SQLx Cache Automation
-- Runs `cargo sqlx prepare --workspace -- --all-targets` on pushes to `main`
-- Opens an automated PR when `.sqlx/` changes
-- Also pinned to `contents`/`pull-requests` write permissions for the auto-PR helper
-
-## Local Testing
-
-Workflows are designed to run inside the `nix develop` environment. If you want to execute
-them locally with [`act`](https://github.com/nektos/act), install `act` separately and point
-it at the desired workflow (for example: `act -W .github/workflows/ci.yml`). There is no
-first-class wrapper in the dev shell today.
-
-## Nix Integration
-
-All workflows use Nix for reproducible builds:
-- `cachix/install-nix-action` sets up Nix
-- `cachix/cachix-action` provides build caching
-- All builds use `nix build` with flakes
-
-## Best Practices
-
-1. **Use Nix for all builds** - Ensures reproducibility
-2. **Cache aggressively** - Use Cachix to speed up builds
-3. **Test in CI what runs in production** - Use same Nix derivations
-4. **Keep workflows simple** - Complex logic belongs in Nix
-5. **Validate early** - Run quick checks before expensive builds
-
-## Future Enhancements (Not Yet Implemented)
-
-### Security Scanning Pipeline
-- **SAST Tools**: Integrate Semgrep, SonarQube for static analysis
-- **Dependency Scanning**: 
-  - `cargo audit` for Rust vulnerabilities
-  - `vulnix` for Nix package CVEs
-  - Trivy/Grype for container scanning
-- **License Compliance**: Automated license checking
-- **Secret Detection**: Prevent accidental credential commits
-
-### Release Engineering
-- **Semantic Versioning**: Automated version bumping based on commit messages
-- **Changelog Generation**: Automatic CHANGELOG.md from conventional commits
-- **GitHub Releases**: Automated release creation with artifacts
-- **Binary Distribution**: Pre-built binaries for common platforms
-- **Docker Images**: Build and push container images to GHCR
-
-### Advanced Testing
-- **Performance Benchmarks**: Track performance regressions
-- **Fuzzing**: Automated fuzz testing for parsers
-- **Property-Based Tests**: Run in CI with more iterations
-- **Load Testing**: Stress test event processing pipeline
-- **NixOS VM Tests**: Full integration tests with service orchestration
-
-### Deployment Automation
-- **Staging Environment**: Deploy PRs to preview environments
-- **Blue-Green Deployments**: Zero-downtime production updates
-- **Rollback Automation**: Automatic rollback on health check failures
-- **Monitoring Integration**: Alert on deployment issues
-
-### Developer Experience
-- **PR Previews**: Live preview of changes
-- **Test Coverage Reports**: Automated coverage tracking
-- **Performance Reports**: Benchmark comparisons in PRs
-- **Documentation Preview**: Build and preview docs changes
+Workflows assume `SQLX_OFFLINE=1` for checks unless explicitly testing online generation. Use `cargo xtask check` for the fastest local preflight.

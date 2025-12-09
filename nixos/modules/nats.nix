@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, modulesPath, ... }:
 
 with lib;
 
@@ -9,8 +9,23 @@ let
   dataDir = cfg.dataDir or (stateRoot + "/nats");
   storeDir = cfg.storeDir or (dataDir + "/jetstream");
   natsCli = pkgs.natscli or null; # natscli provides the `nats` CLI
+  envName = lib.toLower (config.environment.variables.SINEX_ENVIRONMENT or "dev");
+  envUpper = lib.toUpper envName;
+  prefixStreamName = name:
+    if lib.hasPrefix "${envUpper}_" name then name else "${envUpper}_" + name;
+  prefixSubject = subject:
+    if lib.hasPrefix "${envName}." subject then subject else "${envName}." + subject;
+  namespacedStreams = map (stream: stream // {
+    name = prefixStreamName stream.name;
+    subjects = map prefixSubject stream.subjects;
+  }) cfg.bootstrapStreams.streams;
 in
 {
+  # Ensure the upstream NATS service options are present even if not pulled in elsewhere.
+  imports = [
+    (modulesPath + "/services/networking/nats.nix")
+  ];
+
   options.services.sinex.nats = with types; {
     enable = mkEnableOption "Manage a local NATS server with JetStream for Sinex";
 
@@ -18,13 +33,6 @@ in
       type = bool;
       default = false;
       description = "Automatically provision NATS/JetStream alongside Sinex.";
-    };
-
-    package = mkOption {
-      type = package;
-      default = pkgs.nats-server;
-      defaultText = literalExpression "pkgs.nats-server";
-      description = "NATS server package to deploy.";
     };
 
     host = mkOption {
@@ -122,10 +130,6 @@ in
   config = mkIf (cfg.enable || cfg.autoSetup) {
     assertions = [
       {
-        assertion = cfg.package != null;
-        message = "services.sinex.nats.package must be set when enabling NATS management.";
-      }
-      {
         assertion = !(cfg.bootstrapStreams.enable && natsCli == null);
         message = "services.sinex.nats.bootstrapStreams requires pkgs.natscli to be available.";
       }
@@ -135,8 +139,8 @@ in
     users.users.${natsUser} = {
       isSystemUser = true;
       group = natsUser;
-      description = "NATS/JetStream service account";
-      home = dataDir;
+      description = mkForce "NATS daemon user";
+      home = mkForce storeDir;
       createHome = true;
     };
 
@@ -147,19 +151,22 @@ in
 
     services.nats = {
       enable = true;
-      package = cfg.package;
       user = natsUser;
       group = natsUser;
-      settings = {
-        server_name = "sinex";
-        host = cfg.host;
-        port = cfg.port;
-        http = cfg.monitoringPort;
-        jetstream = {
-          store_dir = storeDir;
-        } // optionalAttrs (cfg.jetstreamMaxMemory != null) { max_mem = cfg.jetstreamMaxMemory; }
-          // optionalAttrs (cfg.jetstreamMaxStore != null) { max_file = cfg.jetstreamMaxStore; };
-      } // cfg.extraSettings;
+      jetstream = true;
+      port = cfg.port;
+      dataDir = storeDir;
+      settings =
+        {
+          server_name = mkForce "sinex";
+          host = cfg.host;
+          http = cfg.monitoringPort;
+          jetstream = {
+            store_dir = storeDir;
+          } // optionalAttrs (cfg.jetstreamMaxMemory != null) { max_mem = cfg.jetstreamMaxMemory; }
+            // optionalAttrs (cfg.jetstreamMaxStore != null) { max_file = cfg.jetstreamMaxStore; };
+        }
+        // cfg.extraSettings;
     };
 
     systemd.services.sinex-nats-bootstrap = mkIf (cfg.bootstrapStreams.enable && natsCli != null) {
@@ -171,13 +178,16 @@ in
         Type = "oneshot";
         User = natsUser;
         Group = natsUser;
+        Restart = "on-failure";
+        RestartSec = 5;
+        TimeoutStartSec = 60;
         Environment = [
           "NATS_URL=nats://${cfg.host}:${toString cfg.port}"
         ];
         ExecStart = let
           mkStreamCommand = stream:
             let
-              subjArgs = concatStringsSep " " (map (s: "--subjects ${s}") stream.subjects);
+              subjArgs = concatStringsSep " " (map (s: "--subjects ${escapeShellArg s}") stream.subjects);
               maxMsgsPerSubjectArg = optionalString (stream ? maxMsgsPerSubject) "--max-msgs-per-subject ${toString stream.maxMsgsPerSubject}";
             in ''
               if ! ${natsCli}/bin/nats --server "$NATS_URL" stream info ${stream.name} >/dev/null 2>&1; then
@@ -190,7 +200,7 @@ in
                   ${maxMsgsPerSubjectArg}
               fi
             '';
-          script = concatStringsSep "\n" (map mkStreamCommand cfg.bootstrapStreams.streams);
+          script = concatStringsSep "\n" (map mkStreamCommand namespacedStreams);
         in
           pkgs.writeShellScript "sinex-nats-bootstrap" ''
             set -euo pipefail

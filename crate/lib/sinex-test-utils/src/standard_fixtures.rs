@@ -153,9 +153,10 @@ pub static OPERATIONS_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use crate::TestResult;
 
     #[sinex_test]
-    fn test_standard_fixtures_have_unique_seeds() {
+    fn test_standard_fixtures_have_unique_seeds() -> TestResult<()> {
         // Ensure each fixture uses different seeds to avoid correlation
         let fixtures = vec![
             &*TIME_SERIES_FIXTURE,
@@ -172,10 +173,11 @@ mod tests {
                 assert!(seeds.insert(seed), "Duplicate seed found: {}", seed);
             }
         }
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_standard_fixtures_have_appropriate_sizes() {
+    fn test_standard_fixtures_have_appropriate_sizes() -> TestResult<()> {
         // Smoke test should be small
         assert!(SMOKE_TEST_FIXTURE
             .events
@@ -188,6 +190,7 @@ mod tests {
         assert!(QUERY_BENCH_FIXTURE
             .events
             .contains_key(&DatasetSize::Medium));
+        Ok(())
     }
 }
 

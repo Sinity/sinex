@@ -236,13 +236,14 @@ impl AcquisitionManager {
         let metadata = json!({
             "source_type": &self.source_type,
             "source_identifier": source_identifier,
+            "source_path": &self.source_path,
             "material_hint": material_hint,
         });
 
         let record = self
             .db_pool
             .source_materials()
-            .register_in_flight(material_hint, Some(&self.source_path), metadata)
+            .register_in_flight(material_hint, Some(source_identifier), metadata)
             .await
             .context("Failed to register in-flight source material")?;
 
@@ -479,6 +480,7 @@ impl AcquisitionManager {
                 (source_material_id, offset_start, offset_end, offset_kind,
                  ts_capture, precision, clock, source_type)
             VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (source_material_id, offset_start) DO NOTHING
             "#,
             entry.source_material_id.as_uuid(),
             entry.offset_start,

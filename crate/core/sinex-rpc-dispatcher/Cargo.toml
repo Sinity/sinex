@@ -19,4 +19,7 @@ chrono = { workspace = true }
 validator = { workspace = true }
 bon = "2.3"
 clap = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }

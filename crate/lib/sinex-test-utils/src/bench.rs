@@ -182,10 +182,11 @@ pub fn is_significant_change(change_percent: f64, std_dev_percent: Option<f64>) 
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use crate::TestResult;
 
     #[cfg(feature = "bench")]
     #[sinex_test]
-    fn test_extract_suite() {
+    fn test_extract_suite() -> TestResult<()> {
         assert_eq!(
             extract_suite("sinex_core::db::events::bench_insert"),
             "sinex_core::db::events"
@@ -195,28 +196,31 @@ mod tests {
             extract_suite("crate::module::submodule::bench_test"),
             "crate::module::submodule"
         );
+        Ok(())
     }
 
     #[cfg(feature = "bench")]
     #[sinex_test]
-    fn test_format_duration() {
+    fn test_format_duration() -> TestResult<()> {
         assert_eq!(format_duration_ns(500), "500ns");
         assert_eq!(format_duration_ns(1_500), "1.5µs");
         assert_eq!(format_duration_ns(1_500_000), "1.5ms");
         assert_eq!(format_duration_ns(1_500_000_000), "1.50s");
+        Ok(())
     }
 
     #[cfg(feature = "bench")]
     #[sinex_test]
-    fn test_calculate_change() {
+    fn test_calculate_change() -> TestResult<()> {
         assert_eq!(calculate_change_percent(100, 110), 10.0);
         assert_eq!(calculate_change_percent(100, 90), -10.0);
         assert_eq!(calculate_change_percent(0, 100), 0.0); // Avoid division by zero
+        Ok(())
     }
 
     #[cfg(feature = "bench")]
     #[sinex_test]
-    fn test_significance() {
+    fn test_significance() -> TestResult<()> {
         // Without std dev
         assert!(is_significant_change(10.0, None));
         assert!(!is_significant_change(3.0, None));
@@ -224,5 +228,6 @@ mod tests {
         // With std dev
         assert!(is_significant_change(10.0, Some(2.0))); // 10% > 2*2%
         assert!(!is_significant_change(3.0, Some(2.0))); // 3% < 2*2%
+        Ok(())
     }
 }

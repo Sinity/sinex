@@ -31,6 +31,9 @@ members = [
   "crate/satellites/sinex-content-automaton",
   "crate/satellites/sinex-pkm-automaton",
 
+  # Developer tooling
+  "xtask",
+
   # Keep experimental automata disabled until stabilized
   # "crate/satellites/sinex-content-automaton",
   # "crate/satellites/sinex-pkm-automaton",

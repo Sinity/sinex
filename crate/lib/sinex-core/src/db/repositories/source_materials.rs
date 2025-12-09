@@ -654,7 +654,78 @@ impl<'a> SourceMaterialRepository<'a> {
             JsonValue::String(material_kind_hint.to_string()),
         );
 
-        self.register_material(material).await
+        // Ensure we have a start time for the session; reuse on conflicts.
+        let start_time = material.start_time.unwrap_or_else(|| Utc::now());
+        material.start_time = Some(start_time);
+
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id
+            ) VALUES (
+                ($1::uuid)::ulid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                ($11::uuid)::ulid
+            )
+            ON CONFLICT (source_identifier) DO UPDATE SET
+                status = EXCLUDED.status,
+                timing_info_type = EXCLUDED.timing_info_type,
+                metadata = source_material_registry.metadata || EXCLUDED.metadata,
+                start_time = COALESCE(source_material_registry.start_time, EXCLUDED.start_time, NOW()),
+                end_time = NULL,
+                staged_by = COALESCE(EXCLUDED.staged_by, source_material_registry.staged_by),
+                staged_on_host = COALESCE(EXCLUDED.staged_on_host, source_material_registry.staged_on_host),
+                optional_blob_id = source_material_registry.optional_blob_id
+            RETURNING
+                id::uuid as "id!: crate::Ulid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
+            "#,
+            ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()),
+            material.material_kind,
+            material.source_identifier,
+            material.status,
+            material.timing_info_type,
+            material.metadata,
+            material.start_time,
+            material.end_time,
+            material.staged_by,
+            material.staged_on_host,
+            material
+                .optional_blob_id
+                .map(|id| ulid_to_uuid(*id.as_ulid()))
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "register in-flight source material"))
     }
 
     /// Finalize in-flight source material

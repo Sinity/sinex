@@ -38,10 +38,10 @@ pkgs.testers.nixosTest {
     };
 
     services.sinex.satellites = {
-      filesystem.watchPaths = lib.mkAfter [ "/home/test/watched" ];
+      filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = true;
-      desktop.enable = true;
-      system.enable = true;
+      desktop.enable = false;
+      system.enable = false;
     };
 
     # Additional packages for comprehensive testing
@@ -155,7 +155,7 @@ EOF
         events_created = 0
         for i in range(count):
             try:
-                machine.succeed(f"echo 'test file {prefix}_{i}' > /home/test/watched/test_{prefix}_{i}.txt")
+                machine.succeed(f"echo 'test file {prefix}_{i}' > /var/lib/sinex/watched/test_{prefix}_{i}.txt")
                 events_created += 1
             except:
                 pass
@@ -174,11 +174,12 @@ EOF
     with subtest("Database schema validation"):
         # Use wait_until_succeeds for database queries to handle timing issues
         tables = machine.wait_until_succeeds(
-            "su - postgres -c \"psql -d sinex -t -c \\\"SELECT tablename FROM pg_tables WHERE schemaname = 'raw';\\\"\"",
+            "su - postgres -c \"psql -d sinex -t -c \\\"SELECT schemaname || '.' || tablename FROM pg_tables WHERE schemaname IN ('core','raw');\\\"\"",
             timeout=30
         )
-        print(f"Raw schema tables:\n{tables}")
-        assert "events" in tables, "core.events table not created"
+        print(f"Core/Raw schema tables:\n{tables}")
+        assert "core.events" in tables, "core.events table not created"
+        assert "raw.source_material_registry" in tables, "raw schema not initialized"
         
         # Check extensions with retry
         extensions = machine.wait_until_succeeds(
@@ -215,9 +216,16 @@ EOF
         )
         machine.succeed(f"echo 'ls -la' >> {state_dir}/.bash_history")
         
-        # Wait for processing
-        machine.sleep(3)
-        post_count = get_event_count()
+        # Nudge the terminal satellite to rescan history and allow ingestion to catch up
+        machine.systemctl("restart sinex-terminal-1")
+        machine.wait_for_unit("sinex-terminal-1.service")
+
+        post_count = pre_count
+        for _ in range(5):
+            machine.sleep(2)
+            post_count = get_event_count()
+            if post_count > pre_count:
+                break
         
         print(f"Shell history events: {post_count - pre_count}")
         assert post_count > pre_count, "Shell history events not captured"

@@ -162,8 +162,8 @@ let
     # File operations stress
     (
       for ((i=1; i<=DURATION*FILE_OPS_PER_SEC; i++)); do
-        su - test -c "echo 'stress test $i' > /home/test/watched/stress_$i.txt"
-        su - test -c "rm /home/test/watched/stress_$i.txt" 2>/dev/null || true
+        su - test -c "echo 'stress test $i' > /var/lib/sinex/watched/stress_$i.txt"
+        su - test -c "rm /var/lib/sinex/watched/stress_$i.txt" 2>/dev/null || true
         sleep $(echo "scale=3; 1/$FILE_OPS_PER_SEC" | bc)
       done
     ) &
@@ -229,50 +229,22 @@ pkgs.testers.nixosTest {
       stateDir = config.services.sinex.stateRoot;
     in {
       imports = [
-        ../../../../nixos
+        (import ../common/test-base.nix {
+          inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        })
       ];
 
       services.sinex = {
-        enable = true;
-        package = sinexPackage;
-        cliPackage = sinexCliPackage;
-        users.target = "test";
-
-        shell = {
-          asciinema.recordingsPath = "/home/test/.local/share/asciinema";
-          kitty.enable = true;
-        };
-
-        database.autoSetup = true;
-
-        storage = {
-          dlq.path = "/var/lib/sinex/failures";
-          blob = {
-            repositoryPath = "/var/lib/sinex/blob-repo";
-            autoInit = true;
-          };
-        };
-
         satellites = {
-          enable = true;
-          coordination.enable = false;
-          defaults = {
-            logLevel = "info";
-            instances = 1;
-          };
-
           filesystem = {
-            enable = true;
             instances = 2;
-            watchPaths = [ "/home/test/watched" "/tmp/sinex-stress" ];
+            watchPaths = [ "/var/lib/sinex/watched" "/tmp/sinex-stress" ];
           };
-
           terminal.enable = true;
           desktop.enable = true;
           system.enable = true;
 
           automata = {
-            enable = true;
             canonicalizer.enable = true;
             healthAggregator.enable = true;
           };
@@ -280,12 +252,7 @@ pkgs.testers.nixosTest {
       };
 
       # Test user setup with additional stress directories
-      users.users.test = {
-        isNormalUser = true;
-        createHome = true;
-        shell = pkgs.zsh;
-        uid = 1000;
-      };
+      users.users.test.shell = lib.mkForce pkgs.zsh;
       
       # Enhanced Hyprland setup for IPC testing
       services.dbus.enable = true;
@@ -397,7 +364,7 @@ EOF
       # Enhanced tmpfiles for stress testing
       systemd.tmpfiles.rules = [
         # Test directories
-        "d /home/test/watched 0755 test users -"
+        "d /var/lib/sinex/watched 0755 test users -"
         "d /tmp/sinex-stress 0755 test users -"
         
         # Shell history files
@@ -518,7 +485,7 @@ EOF
     with subtest("Initialize all event sources"):
         machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
         machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
-        machine.succeed("su - test -c 'echo initial > /home/test/watched/initial.txt'")
+        machine.succeed("su - test -c 'echo initial > /var/lib/sinex/watched/initial.txt'")
         machine.succeed(f"echo 'initial_cmd' >> {state_dir}/.zsh_history")
         wait_for_event_pattern("initial")
         baseline_count = extract_total_events() or 0
@@ -579,7 +546,7 @@ EOF
         machine.succeed("systemctl is-active sinex-ingestd")
         machine.succeed("systemctl is-active sinex-gateway")
         machine.succeed("systemctl is-active postgresql")
-        machine.succeed("su - test -c 'echo post-stress-test > /home/test/watched/post-stress.txt'")
+        machine.succeed("su - test -c 'echo post-stress-test > /var/lib/sinex/watched/post-stress.txt'")
         wait_for_event_pattern("post-stress")
         print("System remains stable and continues to ingest events after stress testing")
 

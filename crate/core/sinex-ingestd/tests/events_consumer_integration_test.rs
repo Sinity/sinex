@@ -131,7 +131,6 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
 }
 
 #[sinex_test]
-#[ignore = "timing-sensitive transient failure flow; pending deterministic rewrite"]
 async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> TestResult<()> {
     let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
@@ -225,12 +224,14 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     }
 
     handle.abort();
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "timing-sensitive confirmation flow; pending stabilization"]
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("confirm-{}", Ulid::new());
     let (_nats, nats_client, handle, _js, _topology) = start_consumer(
@@ -277,12 +278,14 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
     .await??;
 
     handle.abort();
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "timing-sensitive redelivery flow; pending deterministic rewrite"]
 async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("ackwait-{}", Ulid::new());
     let delivery_counter = Arc::new(AtomicU64::new(0));
@@ -357,12 +360,14 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     );
 
     handle.abort();
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "timing-sensitive validation DLQ flow; pending deterministic rewrite"]
 async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("dlq-{}", Ulid::new());
     let (_nats, nats_client, handle, js, topology) = start_consumer(
@@ -431,12 +436,14 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
     );
 
     handle.abort();
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "timing-sensitive malformed JSON DLQ flow; pending stabilization"]
 async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("malformed-{}", Ulid::new());
     let (_nats, nats_client, handle, js, topology) = start_consumer(
@@ -476,6 +483,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     .await??;
 
     handle.abort();
+    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -577,8 +585,9 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-#[ignore = "chaos scenario remains slow/flaky; pending deterministic rewrite"]
 async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<()> {
+    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().await?;
     let suffix = format!("chaos-{}", Ulid::new());
     let (_nats, nats_client, handle, js, topology) = start_consumer(

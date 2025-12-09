@@ -28,19 +28,9 @@ jobs:
       - name: Regenerate schemas
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash <<'DEVENV'
-          set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES'
-          set -euo pipefail
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" \
-            cargo run \
-              --manifest-path crate/lib/sinex-schema/Cargo.toml \
-              --bin sinex-schema -- \
-              up
-          ./scripts/check-schema-ready.sh
-          ./scripts/schema-dev.sh generate
-          POSTGRES
-          DEVENV
+          nix develop --accept-flake-config --no-pure-eval --command \
+            cargo xtask ci postgres -- \
+            cargo xtask ci schema-only --skip-clean
 
       - name: Create schema update PR
         uses: peter-evans/create-pull-request@v5
@@ -69,12 +59,21 @@ jobs:
       - name: Regenerate SQLx cache
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash <<'DEVENV'
-          set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES'
-          ./scripts/sqlx-prepare.sh
-          POSTGRES
-          DEVENV
+          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+            set -euo pipefail
+            cargo xtask ci postgres -- cargo xtask sqlx-prepare
+            if git diff --quiet .sqlx; then
+              echo "✅ SQLx metadata matches repository"
+            else
+              echo "::error::SQLx metadata is out of date. Run '\''cargo xtask sqlx-prepare'\'' locally and commit the results."
+              git status -sb .sqlx
+              git diff .sqlx || true
+              exit 1
+            fi
+            export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
+            SQLX_OFFLINE=1 cargo check --workspace --all-features
+            rm -rf "$CARGO_TARGET_DIR"
+          '
 
       - name: Create SQLx cache PR
         uses: peter-evans/create-pull-request@v5
