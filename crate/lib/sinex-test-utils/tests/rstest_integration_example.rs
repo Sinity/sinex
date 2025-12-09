@@ -1,27 +1,26 @@
 #![cfg(feature = "rstest-preview")]
 
-//! rstest + TestContext example using tokio runtime.
+//! rstest + TestContext example using `#[sinex_test]`.
 //!
-//! This keeps the test harness simple: rstest drives the cases, tokio::test
-//! supplies the runtime, and we allocate a fresh TestContext per case.
+//! rstest drives the cases and `#[sinex_test]` wires up the Tokio runtime
+//! plus a fresh `TestContext` for each case.
 
 use rstest::rstest;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{prelude::*, sinex_test, TestResult};
 
+#[sinex_test]
 #[rstest(
-    source, event_type,
+    source,
+    event_type,
     case("fs", "file.created"),
     case("shell", "cmd.run"),
-    case("service", "health.check"),
+    case("service", "health.check")
 )]
-#[tokio::test]
 async fn test_event_creation_with_cases(
+    ctx: TestContext,
     source: &str,
     event_type: &str,
 ) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-
     let event = ctx
         .create_test_event(source, event_type, json!({"rstest": true}))
         .await?;
@@ -32,19 +31,21 @@ async fn test_event_creation_with_cases(
     Ok(())
 }
 
+#[sinex_test]
 #[rstest(
-    name, size, expected_valid,
+    name,
+    size,
+    expected_valid,
     case("tiny", 64usize, true),
     case("small", 1024usize, true),
-    case("too-big", 5_000_000usize, false),
+    case("too-big", 5_000_000usize, false)
 )]
-#[tokio::test]
 async fn test_payload_variations(
+    ctx: TestContext,
     name: &str,
     size: usize,
     expected_valid: bool,
 ) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
     let payload = json!({
         "name": name,
         "data": "x".repeat(size),
@@ -66,18 +67,14 @@ async fn test_payload_variations(
     Ok(())
 }
 
-#[rstest(
-    event_type,
-    case("events.created"),
-    case("fs.changed"),
-)]
-#[tokio::test]
-async fn test_with_fixture_and_cases(event_type: &str) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+#[rstest(event_type, case("events.created"), case("fs.changed"))]
+async fn test_with_fixture_and_cases(ctx: TestContext, event_type: &str) -> TestResult<()> {
     let test_sources = vec!["fs", "shell", "service"];
 
     for source in &test_sources {
-        ctx.create_test_event(*source, event_type, json!({})).await?;
+        ctx.create_test_event(*source, event_type, json!({}))
+            .await?;
     }
 
     let counts = ctx.pool.events().count_by_type_all_time(None).await?;

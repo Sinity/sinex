@@ -1,7 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, shells};
-use std::{env, fs, path::Path, process::Command};
+use std::{
+    env, fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use tempfile::NamedTempFile;
 
 #[derive(Parser)]
@@ -65,6 +70,11 @@ enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// CI helpers (Postgres bootstrap, workspace pipelines)
+    Ci {
+        #[command(subcommand)]
+        cmd: CiCommand,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -73,6 +83,55 @@ enum Shell {
     Zsh,
     Fish,
     PowerShell,
+}
+
+#[derive(Subcommand)]
+enum CiCommand {
+    /// Start an ephemeral Postgres and run the given command with env vars set
+    Postgres {
+        /// Port for Postgres
+        #[arg(long, default_value_t = 55432)]
+        port: u16,
+        /// Data directory (defaults to target/ci-pgdata)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// Unix socket directory (defaults to repository root)
+        #[arg(long)]
+        socket_dir: Option<PathBuf>,
+        /// Keep existing PGDATA if present
+        #[arg(long, default_value_t = false)]
+        keep_data: bool,
+        /// Application user to create
+        #[arg(long, default_value = "sinity")]
+        app_user: String,
+        /// Superuser role (created if missing)
+        #[arg(long, default_value = "postgres")]
+        superuser: String,
+        /// Database name
+        #[arg(long, default_value = "sinex_dev")]
+        database: String,
+        /// Default sinex.operation_id for the app user
+        #[arg(long, default_value = "ci-tests")]
+        operation_id: String,
+        /// Command to run once Postgres is ready
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Full CI pipeline (migrate, schema check, lint-forbidden, tests)
+    Workspace {
+        /// Target directory for build artifacts
+        #[arg(long, default_value = "target-ci")]
+        target_dir: String,
+    },
+    /// Schema-only pipeline (migrate, check-ready, regenerate)
+    SchemaOnly {
+        /// Target directory for build artifacts
+        #[arg(long, default_value = "target-ci")]
+        target_dir: String,
+        /// Skip schema cleanliness diff check
+        #[arg(long, default_value_t = false)]
+        skip_clean: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -150,6 +209,7 @@ fn main() -> Result<()> {
         Commands::CiPreflight => ci_preflight(),
         Commands::Doctor => doctor(),
         Commands::Completions { shell } => completions(shell),
+        Commands::Ci { cmd } => ci(cmd),
     }
 }
 
@@ -290,6 +350,425 @@ fn completions(shell: Shell) -> Result<()> {
         Shell::Fish => generate(shells::Fish, &mut cmd, name, &mut std::io::stdout()),
         Shell::PowerShell => generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout()),
     }
+    Ok(())
+}
+
+fn ci(cmd: CiCommand) -> Result<()> {
+    match cmd {
+        CiCommand::Postgres {
+            port,
+            data_dir,
+            socket_dir,
+            keep_data,
+            app_user,
+            superuser,
+            database,
+            operation_id,
+            command,
+        } => ci_postgres(
+            port,
+            data_dir,
+            socket_dir,
+            keep_data,
+            app_user,
+            superuser,
+            database,
+            operation_id,
+            command,
+        ),
+        CiCommand::Workspace { target_dir } => ci_workspace(&target_dir),
+        CiCommand::SchemaOnly {
+            target_dir,
+            skip_clean,
+        } => ci_schema_only(&target_dir, skip_clean),
+    }
+}
+
+struct PgInstance {
+    data_dir: PathBuf,
+}
+
+impl Drop for PgInstance {
+    fn drop(&mut self) {
+        if let Some(data_dir) = self.data_dir.to_str() {
+            let _ = Command::new("pg_ctl")
+                .args(["-D", data_dir, "stop"])
+                .status();
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PgEnv {
+    host: String,
+    port: u16,
+    superuser: String,
+    app_user: String,
+    database: String,
+    operation_id: String,
+}
+
+fn ci_postgres(
+    port: u16,
+    data_dir: Option<PathBuf>,
+    socket_dir: Option<PathBuf>,
+    keep_data: bool,
+    app_user: String,
+    superuser: String,
+    database: String,
+    operation_id: String,
+    command: Vec<String>,
+) -> Result<()> {
+    let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("target/ci-pgdata"));
+    let socket_dir = socket_dir.unwrap_or(env::current_dir()?);
+    let host = "127.0.0.1".to_string();
+
+    if data_dir.exists() && !keep_data {
+        fs::remove_dir_all(&data_dir)?;
+    }
+    fs::create_dir_all(&data_dir)?;
+
+    let initdb_needed = !data_dir.join("PG_VERSION").exists();
+    if initdb_needed {
+        run_cmd("initdb", {
+            let mut c = Command::new("initdb");
+            c.args(["--auth=trust", "--no-locale", "--encoding=UTF8", "-D"])
+                .arg(&data_dir);
+            c
+        })?;
+
+        let mut conf = fs::OpenOptions::new()
+            .append(true)
+            .open(data_dir.join("postgresql.conf"))?;
+        writeln!(conf, "unix_socket_directories = '{}'", socket_dir.display())?;
+        writeln!(conf, "listen_addresses = '127.0.0.1'")?;
+        writeln!(conf, "port = {}", port)?;
+        writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
+    }
+
+    let log_path = data_dir.join("postgres.log");
+    run_cmd("pg_ctl start", {
+        let mut c = Command::new("pg_ctl");
+        c.args(["-D", data_dir.to_str().unwrap(), "start", "-w"])
+            .arg("-l")
+            .arg(&log_path)
+            .arg("-o")
+            .arg(format!("-k {} -p {}", socket_dir.display(), port));
+        c
+    })?;
+    let _guard = PgInstance {
+        data_dir: data_dir.clone(),
+    };
+
+    let env = PgEnv {
+        host: host.clone(),
+        port,
+        superuser: superuser.clone(),
+        app_user: app_user.clone(),
+        database: database.clone(),
+        operation_id: operation_id.clone(),
+    };
+
+    let initial_user = env::var("PGUSER")
+        .or_else(|_| env::var("USER"))
+        .unwrap_or_else(|_| superuser.clone());
+
+    create_role_if_missing(&env, &superuser, true, &initial_user)?;
+    create_role_if_missing(&env, &app_user, true, &superuser)?;
+    set_operation_id_default(&env)?;
+    ensure_database(&env)?;
+    ensure_extensions(&env)?;
+    ensure_schema_grants(&env)?;
+
+    let app_url = format!("postgresql://{app_user}@{host}:{port}/{database}");
+    let super_url = format!("postgresql://{superuser}@{host}:{port}/{database}");
+
+    let Some(program) = command.first() else {
+        bail!("ci postgres requires a command to run");
+    };
+    heading("ci command");
+    let mut cmd = Command::new(program);
+    cmd.args(&command[1..])
+        .env("PGHOST", &host)
+        .env("PGPORT", port.to_string())
+        .env("PGDATA", &data_dir)
+        .env("PGUSER", &app_user)
+        .env("DATABASE_URL", &app_url)
+        .env("DATABASE_URL_APP", &app_url)
+        .env("DATABASE_URL_SUPERUSER", &super_url)
+        .env("SUPERUSER", &superuser)
+        .env("SINEX_OPERATION_ID", &operation_id);
+
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to run {:?}", command))?;
+    if !status.success() {
+        bail!("command {:?} failed with status {status}", command);
+    }
+    Ok(())
+}
+
+fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String> {
+    let output = Command::new("psql")
+        .arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-h")
+        .arg(&env.host)
+        .arg("-p")
+        .arg(env.port.to_string())
+        .arg("-d")
+        .arg(database)
+        .arg("-tAc")
+        .arg(sql)
+        .env("PGUSER", user)
+        .output()
+        .with_context(|| format!("failed to run psql for query {sql}"))?;
+
+    if !output.status.success() {
+        bail!("psql exited with status {} for query {sql}", output.status);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn create_role_if_missing(env: &PgEnv, role: &str, superuser: bool, runner: &str) -> Result<()> {
+    let exists = psql(
+        env,
+        runner,
+        "postgres",
+        &format!("SELECT 1 FROM pg_roles WHERE rolname = '{role}'"),
+    )?;
+    if exists.is_empty() {
+        let mut stmt = format!("CREATE ROLE {role} LOGIN");
+        if superuser {
+            stmt.push_str(" SUPERUSER CREATEDB");
+        }
+        psql(env, runner, "postgres", &stmt)?;
+    }
+    Ok(())
+}
+
+fn set_operation_id_default(env: &PgEnv) -> Result<()> {
+    let stmt = format!(
+        "ALTER ROLE {} SET sinex.operation_id = '{}';",
+        env.app_user, env.operation_id
+    );
+    psql(env, &env.superuser, "postgres", &stmt)?;
+    Ok(())
+}
+
+fn ensure_database(env: &PgEnv) -> Result<()> {
+    let exists = psql(
+        env,
+        &env.superuser,
+        "postgres",
+        &format!(
+            "SELECT 1 FROM pg_database WHERE datname = '{}'",
+            env.database
+        ),
+    )?;
+    if exists.is_empty() {
+        psql(
+            env,
+            &env.superuser,
+            "postgres",
+            &format!("CREATE DATABASE {} OWNER {};", env.database, env.app_user),
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_extensions(env: &PgEnv) -> Result<()> {
+    let candidates = [
+        &["pgx_ulid", "ulid"][..],
+        &["pg_jsonschema"][..],
+        &["timescaledb"][..],
+        &["vector"][..],
+    ];
+    for names in candidates {
+        let mut installed = false;
+        for name in names {
+            let available = psql(
+                env,
+                &env.superuser,
+                &env.database,
+                &format!(
+                    "SELECT 1 FROM pg_available_extensions WHERE name = '{}'",
+                    name
+                ),
+            )?;
+            if available.is_empty() {
+                continue;
+            }
+            psql(
+                env,
+                &env.superuser,
+                &env.database,
+                &format!("CREATE EXTENSION IF NOT EXISTS {name};"),
+            )?;
+            installed = true;
+            break;
+        }
+        if !installed {
+            bail!(
+                "None of the requested extensions {:?} are available in this PostgreSQL build",
+                names
+            );
+        }
+    }
+    Ok(())
+}
+
+fn ensure_schema_grants(env: &PgEnv) -> Result<()> {
+    let schemas = schema_list()?;
+    for schema in schemas {
+        grant_schema(env, &schema)?;
+    }
+    Ok(())
+}
+
+fn schema_list() -> Result<Vec<String>> {
+    let output = Command::new("cargo")
+        .arg("run")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg("crate/lib/sinex-schema/Cargo.toml")
+        .arg("--bin")
+        .arg("schema-info")
+        .arg("--")
+        .arg("list-schemas")
+        .output()
+        .with_context(|| "failed to run schema-info list-schemas")?;
+    if !output.status.success() {
+        bail!(
+            "schema-info list-schemas failed with status {}",
+            output.status
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().map(str::to_string).collect())
+}
+
+fn grant_schema(env: &PgEnv, schema: &str) -> Result<()> {
+    let stmts = [
+        format!("CREATE SCHEMA IF NOT EXISTS {schema};"),
+        format!("GRANT USAGE ON SCHEMA {schema} TO {};", env.app_user),
+        format!(
+            "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schema} TO {};",
+            env.app_user
+        ),
+        format!(
+            "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {schema} TO {};",
+            env.app_user
+        ),
+        format!(
+            "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA {schema} TO {};",
+            env.app_user
+        ),
+        format!(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {schema} GRANT ALL PRIVILEGES ON TABLES TO {};",
+            env.superuser, env.app_user
+        ),
+        format!(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {schema} GRANT ALL PRIVILEGES ON SEQUENCES TO {};",
+            env.superuser, env.app_user
+        ),
+        format!(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {schema} GRANT EXECUTE ON FUNCTIONS TO {};",
+            env.superuser, env.app_user
+        ),
+    ];
+    for stmt in stmts {
+        psql(env, &env.superuser, &env.database, &stmt)?;
+    }
+    Ok(())
+}
+
+fn ci_schema_only(target_dir: &str, skip_clean: bool) -> Result<()> {
+    env::set_var("CARGO_TARGET_DIR", target_dir);
+    let super_url = env::var("DATABASE_URL_SUPERUSER")
+        .or_else(|_| env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+
+    run_cmd("migrate", {
+        let mut c = Command::new("cargo");
+        c.args([
+            "run",
+            "--manifest-path",
+            "crate/lib/sinex-schema/Cargo.toml",
+            "--bin",
+            "sinex-schema",
+            "--",
+            "up",
+        ])
+        .env("DATABASE_URL", &super_url);
+        c
+    })?;
+
+    run_cmd("schema check-ready", {
+        let mut c = Command::new("cargo");
+        c.args(["xtask", "schema", "check-ready"]);
+        c
+    })?;
+
+    run_cmd("schema generate", {
+        let mut c = Command::new("cargo");
+        c.args(["xtask", "schema", "generate"]);
+        c
+    })?;
+
+    if !skip_clean {
+        ensure_schemas_clean()?;
+    }
+    Ok(())
+}
+
+fn ensure_schemas_clean() -> Result<()> {
+    let status = Command::new("git")
+        .args(["diff", "--quiet", "--", "schemas"])
+        .status()
+        .with_context(|| "git diff -- schemas failed")?;
+    if status.success() {
+        return Ok(());
+    }
+    let code = status.code().unwrap_or_default();
+    if code == 1 {
+        bail!("Schema artifacts are stale. Run 'cargo xtask schema generate'.");
+    }
+    bail!("git diff -- schemas failed with status {status}");
+}
+
+fn ci_workspace(target_dir: &str) -> Result<()> {
+    ci_schema_only(target_dir, false)?;
+
+    run_cmd("lint forbidden patterns", {
+        let mut c = Command::new("cargo");
+        c.args(["xtask", "lint-forbidden"]);
+        c
+    })?;
+
+    let sqlx_offline = env::var("SQLX_OFFLINE").unwrap_or_else(|_| "1".to_string());
+
+    run_cmd("nextest e2e fast", {
+        let mut c = Command::new("cargo");
+        c.args([
+            "nextest",
+            "run",
+            "-p",
+            "sinex-e2e-tests",
+            "--profile",
+            "fast",
+        ])
+        .env("SQLX_OFFLINE", &sqlx_offline);
+        c
+    })?;
+
+    run_cmd("xtask test reliable", {
+        let mut c = Command::new("cargo");
+        c.args(["xtask", "test", "--profile", "reliable"])
+            .env("SQLX_OFFLINE", &sqlx_offline);
+        c
+    })?;
+
     Ok(())
 }
 

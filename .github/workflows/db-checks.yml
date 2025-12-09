@@ -89,24 +89,19 @@ jobs:
       - name: Run schema sync
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash <<'DEVENV_SCHEMA'
-          set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES_SCHEMA'
-          set -euo pipefail
-          DATABASE_URL="$DATABASE_URL_SUPERUSER" \
-            cargo run \
-              --manifest-path crate/lib/sinex-schema/Cargo.toml \
-              --bin sinex-schema -- \
-              up
-          cargo xtask schema check-ready
-          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
-          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
-          psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
-
-          TMP_DIR=$(mktemp -d)
-          cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output "$TMP_DIR" --sync
-          POSTGRES_SCHEMA
-          DEVENV_SCHEMA
+          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+            set -euo pipefail
+            cargo xtask ci postgres -- bash -lc "
+              set -euo pipefail
+              cargo run --manifest-path crate/lib/sinex-schema/Cargo.toml --bin sinex-schema -- up
+              cargo xtask schema check-ready
+              psql -h \"$PGHOST\" -p \"$PGPORT\" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c \"INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('\"'\"'test.source'\"'\"', '\"'\"'test.event'\"'\"', '\"'\"'1.0.0'\"'\"', '{}'\"'\"'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;\"
+              psql -h \"$PGHOST\" -p \"$PGPORT\" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c \"UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = '\"'\"'test.source'\"'\"' AND event_type = '\"'\"'test.event'\"'\"';\"
+              psql -h \"$PGHOST\" -p \"$PGPORT\" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c \"SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = '\"'\"'test.source'\"'\"';\"
+              TMP_DIR=\\$(mktemp -d)
+              cargo run -p sinex-core --bin sinex-schema --features schema-manager -- generate --output \"\\$TMP_DIR\" --sync
+            "
+          '
 
   sqlx_validation:
     name: SQLx Validation
@@ -157,23 +152,19 @@ jobs:
       - name: Verify SQLx metadata and offline checks
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash <<'DEVENV_SQLX_VALIDATION'
-          set -euo pipefail
-          scripts/ci-postgres.sh <<'POSTGRES_SQLX'
-          set -euo pipefail
-          cargo xtask sqlx-prepare
-          POSTGRES_SQLX
+          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+            set -euo pipefail
+            cargo xtask ci postgres -- cargo xtask sqlx-prepare
+            if git diff --quiet .sqlx; then
+              echo "✅ SQLx metadata matches repository"
+            else
+              echo "::error::SQLx metadata is out of date. Run '\''cargo xtask sqlx-prepare'\'' locally and commit the results."
+              git status -sb .sqlx
+              git diff .sqlx || true
+              exit 1
+            fi
 
-          if git diff --quiet .sqlx; then
-            echo "✅ SQLx metadata matches repository"
-          else
-            echo "::error::SQLx metadata is out of date. Run 'cargo xtask sqlx-prepare' locally and commit the results."
-            git status -sb .sqlx
-            git diff .sqlx || true
-            exit 1
-          fi
-
-          export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
-          SQLX_OFFLINE=1 cargo check --workspace --all-features
-          rm -rf "$CARGO_TARGET_DIR"
-          DEVENV_SQLX_VALIDATION
+            export CARGO_TARGET_DIR=\"$PWD/target-sqlx-offline\"
+            SQLX_OFFLINE=1 cargo check --workspace --all-features
+            rm -rf \"$CARGO_TARGET_DIR\"
+          '

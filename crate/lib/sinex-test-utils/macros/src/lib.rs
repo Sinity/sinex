@@ -886,10 +886,10 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
 
         return quote! {
-            #[tokio::test]
             #rstest_attr
             #(#case_attrs)*
             #(#other_attrs)*
+            #[tokio::test]
             #fn_vis #new_sig {
                 use std::time::Instant;
 
