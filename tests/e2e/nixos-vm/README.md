@@ -6,17 +6,26 @@ This directory contains NixOS VM-based integration and performance tests for Sin
 
 ```bash
 # Run smoke tests (quick validation)
-just test-vm
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke
 
 # Run all tests
-just test-vm-all
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -c all
 
 # Debug a specific test
-just test-vm-debug basic-flow
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -d basic
 
 # Run tests in parallel (experimental)
-just test-vm-parallel
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -p 2 -c smoke
 ```
+
+## CI Coverage
+
+- Flake checks (and CI) currently build/run only the `basic` smoke and `preflight` coordination suites for fast gating.
+- All other scenarios (`maintenance`, `satellite-matrix`, `multi-source`, `failure-recovery`, `performance`) are manual/optional; run them locally with `./tests/e2e/nixos-vm/run-vm-tests.sh -c integration` or `-c all` before landing changes that touch their areas.
 
 ## Test Runner
 
@@ -26,16 +35,16 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 - **Debugging support**: Keep VMs running after failure with `-d`
 - **Parallel execution**: Run tests concurrently with `-p`
 - **Detailed reporting**: Test results saved to `./test-results/`
-- **Configurable timeouts**: Default 30 minutes per test
+- **Configurable timeouts**: Default 15 minutes per test (override with `-t`)
 
 ### Examples
 
 ```bash
 # List available tests
-./test/nixos-vm/run-vm-tests.sh -l
+./tests/e2e/nixos-vm/run-vm-tests.sh -l
 
 # Run specific category
-./test/nixos-vm/run-vm-tests.sh -c performance
+./tests/e2e/nixos-vm/run-vm-tests.sh -c performance
 
 # Debug mode (keeps VM on failure)
 ./tests/e2e/nixos-vm/run-vm-tests.sh -d basic
@@ -178,10 +187,10 @@ pkgs.testers.nixosTest {
 # Test helpers
 helpers.wait_for_sinex_ready(timeout=60)
 helpers.get_event_count() -> int
-helpers.generate_events(count, prefix="test", path="/home/test/watched") -> int
+helpers.generate_events(count, prefix="test", path="/var/lib/sinex/watched") -> int
 helpers.check_service_health(service_name) -> bool
 helpers.wait_for_event_processing(expected_count, timeout=30) -> bool
-helpers.cleanup_test_data(path="/home/test/watched")
+helpers.cleanup_test_data(path="/var/lib/sinex/watched")
 helpers.check_wayland_available() -> bool
 helpers.measure_operation_time(operation) -> float
 ```
@@ -212,7 +221,8 @@ sinex-monitor [interval_seconds]
 
 ```bash
 # Run test in debug mode
-just test-vm-debug failing-test
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -d failing-test
 
 # When test fails, VM keeps running
 # Find VM build directory in output

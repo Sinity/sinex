@@ -8,7 +8,7 @@ suites are organised, and captures the conventions that the CI gate enforces.
 
 ```bash
 # Fast feedback (unit + library integration)
-devenv tasks run dev:test
+cargo xtask test --profile reliable
 
 # Full workspace matrix (all crates, Nextest)
 cargo nextest run --workspace --profile reliable
@@ -18,7 +18,7 @@ cargo nextest run --workspace --test <binary>
 cargo nextest run --workspace --profile <profile-name>
 
 # Before opening a PR
-devenv tasks run dev:test
+cargo xtask test --profile reliable
 ```
 
 **Prerequisites:** run `nix develop` (or source your local toolchain) so that
@@ -50,7 +50,7 @@ if you prefer to keep it outside `$PATH`.
 
 ## Diagnostics & Flake Handling
 
-- `devenv tasks run db:doctor` – prints pool stats, normalises session state (RLS/replication/triggers), and dumps table row counts using the CI connection. Use when cleanup is suspected to be stuck or permissions look wrong.
+- `cargo xtask doctor` – prints pool stats, normalises session state (RLS/replication/triggers), and dumps table row counts using the CI connection. Use when cleanup is suspected to be stuck or permissions look wrong.
 - `snapshot_helper::retry_with_snapshot` – wrap flaky integration tests to capture failure snapshots (pool stats, context logs) on first failure, attempt cleanup, then retry once. This is now used in fixture, satellite, and timing utilities; mirror the pattern if you add a test that can be sensitive to timing or FK races.
 
 ## Test Layout at a Glance
@@ -147,14 +147,14 @@ Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
 - `tests/e2e/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
   commands.
 - `docs/documentation-guidelines.md` – documentation checklist (ensure
-  `devenv tasks run dev:check` and `cargo nextest run --workspace` pass after
+  `cargo xtask check` and `cargo nextest run --workspace` pass after
   moving or adding tests).
 
 ## If You Only Read One Section
 
 1. Put new tests in the crate that owns the behaviour.
 2. Reach for `TestContext` utilities before writing bespoke scaffolding.
-3. Keep the quick-start commands in muscle memory (`devenv tasks run dev:test`
+3. Keep the quick-start commands in muscle memory (`cargo xtask test --profile reliable`
    and `cargo nextest run --workspace`).
 4. Link back to this handbook (or the crate-level docs above) when opening PRs
    so reviewers know which conventions you followed.

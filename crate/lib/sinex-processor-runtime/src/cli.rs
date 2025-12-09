@@ -573,9 +573,12 @@ impl<
                     warn!("Replay configuration ignored in dry-run mode");
                 }
 
-                // Run service with satellite coordination
-                if dry_run {
-                    // Skip coordination for dry runs
+                let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+
+                // Run service with optional coordination
+                if dry_run || coordination_disabled {
                     runner.run_service().await?;
                 } else {
                     use sinex_satellite_sdk::coordination::SatelliteCoordination;

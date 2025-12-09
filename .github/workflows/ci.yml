@@ -72,17 +72,17 @@ jobs:
             --manifest-path crate/lib/sinex-schema/Cargo.toml \
             --bin sinex-schema -- \
             up
-        ./scripts/check-schema-ready.sh
-        bash scripts/check_forbidden_patterns.sh
-        ./scripts/schema-dev.sh generate
+        cargo xtask schema check-ready
+        cargo xtask lint-forbidden
+        cargo xtask schema generate
         if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' locally."
+          echo "::error::Schema artifacts are stale. Run 'cargo xtask schema generate' locally."
           git status schemas
           exit 1
         fi
         # Fast gate to catch flaky fixture regressions without retries
-        devenv tasks run dev:smoke-fixtures
-        devenv tasks run dev:test
+        cargo nextest run -p sinex-e2e-tests --profile fast
+        cargo xtask test --profile reliable
         POSTGRES
         rm -rf "$CARGO_TARGET_DIR"
         DEVENV

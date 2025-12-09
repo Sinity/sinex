@@ -131,8 +131,6 @@ in
     esac
   '';
 
-  tasks = { };
-
   processes = {
     nats.exec = "${pkgs.nats-server}/bin/nats-server -js";
     ingestd.exec = "cargo run --bin sinex-ingestd";

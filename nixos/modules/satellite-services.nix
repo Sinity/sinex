@@ -41,6 +41,7 @@ let
     "SINEX_SPOOL_SATELLITES=${satelliteSpool}"
     "SINEX_DLQ_PATH=${dlqPath}"
     "SINEX_NATS_SERVERS=${natsUrl}"
+    "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString satellitesCfg.nats.monitoringPort}"
   ] ++ toEnvList satellitesCfg.defaults.env;
 
@@ -86,13 +87,12 @@ let
       ingestArgs = concatStringsSep " " ([
         "--nats-url ${natsUrl}"
         "--batch-size ${toString batch.size}"
-        "--batch-timeout ${toString batch.timeoutSec}"
+        "--batch-timeout-secs ${toString batch.timeoutSec}"
         "--log-level ${coreCfg.ingestd.logLevel}"
       ] ++ coreCfg.ingestd.extraArgs);
       gatewayArgs = concatStringsSep " " ([
         "rpc-server"
         "--database-url ${databaseUrl}"
-        "--log-level ${coreCfg.gateway.logLevel}"
       ] ++ coreCfg.gateway.extraArgs);
       gatewayEnv = mkServiceEnv (
         [ "RUST_LOG=${coreCfg.gateway.logLevel}" ]
@@ -121,6 +121,9 @@ let
         requires = [ "postgresql.service" ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
           {
+            # sinex-gateway does not emit sd_notify, so run it as a simple
+            # service to avoid start timeouts in VM tests and CI.
+            Type = lib.mkForce "simple";
             ExecStart = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
           }
           // optionalAttrs (gatewayAdminTokenFile != null) {
@@ -137,9 +140,10 @@ let
       batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       processorConfig = builtins.toJSON {
-        filesystem = {
-          watch_paths = sat.watchPaths;
-        };
+        watch_paths = sat.watchPaths;
+        max_depth = 10;
+        follow_symlinks = false;
+        max_capture_bytes = 10485760;
       };
       derivedArgs = [ "--processor-config ${escapeShellArg processorConfig}" ];
       extraArgs = derivedArgs ++ sat.extraArgs;
@@ -204,7 +208,6 @@ let
   mkSatelliteUnits = params:
     let
       instances = params.instances;
-      batch = params.batch;
       resources = params.resources;
       extraArgs = params.extraArgs or [];
       envExtras = params.env or [];
@@ -213,9 +216,8 @@ let
       execArgs = concatStringsSep " " ([
         "--service-name sinex-${params.name}"
         "--nats-url ${natsUrl}"
-        "--batch-size ${toString batch.size}"
-        "--batch-timeout ${toString batch.timeoutSec}"
-      ] ++ extraArgs);
+        "--database-url ${databaseUrl}"
+      ] ++ extraArgs ++ [ "service" ]);
       env = mkServiceEnv envExtras;
       mkUnit = instance: {
         description = "${params.description} (instance ${toString instance})";
@@ -241,16 +243,14 @@ let
   mkAutomataUnit = params:
     let
       profile = mkAutomataProfile params.profile;
-      batch = profile.batch;
       resources = profile.resources;
       subjectArgs = map (s: "--subject ${escapeShellArg s}") params.subjects;
       extraArgs = params.extraArgs or [];
       execArgs = concatStringsSep " " ([
         "--service-name sinex-${params.binary}"
         "--nats-url ${natsUrl}"
-        "--batch-size ${toString batch.size}"
-        "--batch-timeout ${toString batch.timeoutSec}"
-      ] ++ extraArgs ++ subjectArgs);
+        "--database-url ${databaseUrl}"
+      ] ++ extraArgs ++ subjectArgs ++ [ "service" ]);
       env = mkServiceEnv ([ "RUST_LOG=${satellitesCfg.defaults.logLevel}" ] ++ toEnvList params.env);
     in
     {

@@ -1207,7 +1207,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 quote! {
                     #[cfg(feature = "bench")]
-                    #[divan::bench(#args_tokens)]
+                    #[divan::bench(args = #args_tokens)]
                     #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
                         use sinex_test_utils::bench::BENCH_CONTEXT;
                         let ctx = &*BENCH_CONTEXT;
@@ -1269,7 +1269,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 quote! {
                     #[cfg(feature = "bench")]
-                    #[divan::bench(#args_tokens)]
+                    #[divan::bench(args = #args_tokens)]
                     #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
                         let runtime = tokio::runtime::Runtime::new().unwrap();
 

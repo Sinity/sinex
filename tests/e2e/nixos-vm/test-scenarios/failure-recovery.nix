@@ -247,7 +247,7 @@ let
     echo "Testing basic functionality..."
     
     # Generate test event
-    su - test -c 'echo "recovery-test-$(date +%s)" > /home/test/watched/recovery-test.txt'
+    su - test -c 'echo "recovery-test-$(date +%s)" > /var/lib/sinex/watched/recovery-test.txt'
     
     # Wait for event to be processed
     sleep 5
@@ -292,7 +292,7 @@ pkgs.testers.nixosTest {
 
           filesystem = {
             enable = true;
-            watchPaths = [ "/home/test/watched" ];
+            watchPaths = [ "/var/lib/sinex/watched" ];
           };
 
           terminal.enable = true;
@@ -343,7 +343,7 @@ pkgs.testers.nixosTest {
       
       # Enhanced tmpfiles for testing
       systemd.tmpfiles.rules = [
-        "d /home/test/watched 0755 test users -"
+        "d /var/lib/sinex/watched 0755 test users -"
         "f ${stateDir}/.zsh_history 0644 sinex sinex -"
         "f ${stateDir}/.bash_history 0644 sinex sinex -"
         "d ${stateDir}/.local 0755 sinex sinex -"
@@ -439,7 +439,7 @@ pkgs.testers.nixosTest {
     with subtest("Initialize baseline system state"):
         machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin init zsh'")
         machine.succeed(f"su - sinex -c 'cd {state_dir} && atuin import auto'")
-        machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
+        machine.succeed("su - test -c 'echo baseline > /var/lib/sinex/watched/baseline.txt'")
         machine.succeed(f"echo 'baseline_cmd' >> {state_dir}/.zsh_history")
         wait_for_event_pattern("baseline")
         baseline_count = extract_total_events() or 0
@@ -449,7 +449,7 @@ pkgs.testers.nixosTest {
     with subtest("Database disconnection recovery"):
         baseline = extract_total_events() or 0
         run_failure('db-disconnect', 12)
-        machine.succeed("su - test -c 'echo during-db-outage > /home/test/watched/db-outage.txt'")
+        machine.succeed("su - test -c 'echo during-db-outage > /var/lib/sinex/watched/db-outage.txt'")
         machine.succeed("sinex-verify 45")
         wait_for_event_pattern("db-outage")
         recovered = extract_total_events() or 0
@@ -461,7 +461,7 @@ pkgs.testers.nixosTest {
         baseline = extract_total_events() or 0
         run_failure('collector-crash', 10)
         machine.succeed("sinex-verify 45")
-        machine.succeed("su - test -c 'echo post-collector-recovery > /home/test/watched/collector-recovery.txt'")
+        machine.succeed("su - test -c 'echo post-collector-recovery > /var/lib/sinex/watched/collector-recovery.txt'")
         wait_for_event_pattern("collector-recovery")
         recovered = extract_total_events() or 0
         print(f"Collector recovery event count: {recovered}")
@@ -472,7 +472,7 @@ pkgs.testers.nixosTest {
         run_failure('worker-crash', 10)
         machine.succeed("sinex-verify 45")
         for i in range(3):
-            machine.succeed(f"su - test -c 'echo worker-crash-{i} > /home/test/watched/worker-crash-{i}.txt'")
+            machine.succeed(f"su - test -c 'echo worker-crash-{i} > /var/lib/sinex/watched/worker-crash-{i}.txt'")
         wait_for_event_pattern("worker-crash-2")
         queue_snapshot = machine.succeed("sinex queue")
         print(f"Work queue after worker recovery:\n{queue_snapshot}")

@@ -9,7 +9,7 @@ on:
     paths:
       - 'schemas/**'
       - 'crate/lib/sinex-core/src/types/events/**'
-      - 'scripts/check-schema-compatibility.sh'
+      - 'xtask/src/main.rs'
 
 jobs:
   check-schemas:
@@ -30,8 +30,7 @@ jobs:
         env:
           SQLX_OFFLINE: '1'
         run: |
-          chmod +x scripts/check-schema-compatibility.sh
-          CI_BASE_BRANCH=${{ github.base_ref }} ./scripts/check-schema-compatibility.sh
+          CI_BASE_BRANCH=${{ github.base_ref }} cargo xtask schema compat
 
       - name: Comment on PR
         if: failure()
@@ -45,7 +44,7 @@ jobs:
             - Any breaking changes get a schema version bump
             - Optional additions remain backward compatible
             
-            Run \`./scripts/check-schema-compatibility.sh\` locally for details.
+            Run \`cargo xtask schema compat --base ${{ github.base_ref }}\` locally for details.
             `;
             
             github.rest.issues.createComment({

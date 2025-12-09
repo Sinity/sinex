@@ -39,7 +39,6 @@ let
     if [ ! -d .git/annex ]; then
       ${gitAnnex} init "Sinex Blob Storage"
       ${gitAnnex} numcopies ${toString blob.numCopies}
-      ${gitAnnex} config annex.backend ${blob.backend}
       echo "# Sinex Blob Storage" > README.md
       ${gitBin} add README.md
       ${gitBin} commit -m "Initial commit"

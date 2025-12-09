@@ -29,7 +29,7 @@ jobs:
               - 'schemas/**'
               - 'crate/lib/sinex-core/src/types/events/**'
               - 'crate/lib/sinex-schema/**'
-              - 'scripts/schema-dev.sh'
+              - 'xtask/src/main.rs'
             sqlx:
               - '.sqlx/**'
               - 'crate/**/migrations/**'
@@ -38,7 +38,7 @@ jobs:
               - '**/*.sql'
               - '**/Cargo.toml'
               - '**/Cargo.lock'
-              - 'scripts/sqlx-prepare.sh'
+              - 'xtask/src/main.rs'
 
   schema_validation:
     name: Schema Validation Pipeline
@@ -98,7 +98,7 @@ jobs:
               --manifest-path crate/lib/sinex-schema/Cargo.toml \
               --bin sinex-schema -- \
               up
-          ./scripts/check-schema-ready.sh
+          cargo xtask schema check-ready
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash) VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text)) ON CONFLICT (source, event_type, schema_version) DO NOTHING;"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "UPDATE sinex_schemas.event_payload_schemas SET is_active = true WHERE source = 'test.source' AND event_type = 'test.event';"
           psql -h "$PGHOST" -p "$PGPORT" -U sinity -d sinex_dev -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';"
@@ -161,13 +161,13 @@ jobs:
           set -euo pipefail
           scripts/ci-postgres.sh <<'POSTGRES_SQLX'
           set -euo pipefail
-          ./scripts/sqlx-prepare.sh
+          cargo xtask sqlx-prepare
           POSTGRES_SQLX
 
           if git diff --quiet .sqlx; then
             echo "✅ SQLx metadata matches repository"
           else
-            echo "::error::SQLx metadata is out of date. Run './scripts/sqlx-prepare.sh' locally and commit the results."
+            echo "::error::SQLx metadata is out of date. Run 'cargo xtask sqlx-prepare' locally and commit the results."
             git status -sb .sqlx
             git diff .sqlx || true
             exit 1

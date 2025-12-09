@@ -37,7 +37,7 @@
 
 - [ ] I have run `cargo fmt` to format my code
 - [ ] I have run `cargo clippy` and addressed all warnings
-- [ ] If schema definitions changed, I ran `./scripts/schema-dev.sh generate` and committed the updated `schemas/` artifacts
+- [ ] If schema definitions changed, I ran `cargo xtask schema generate` and committed the updated `schemas/` artifacts
 - [ ] I have added/updated documentation as needed
 - [ ] My code follows the project's style guidelines
 

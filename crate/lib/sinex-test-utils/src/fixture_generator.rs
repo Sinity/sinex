@@ -470,9 +470,10 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
 mod tests {
     use super::*;
     use crate::sinex_test;
+    use crate::TestResult;
 
     #[sinex_test]
-    fn test_dataset_configs() {
+    fn test_dataset_configs() -> TestResult<()> {
         let small = DatasetConfig::small();
         assert_eq!(small.event_count, 1_000);
         assert_eq!(small.seed, 42);
@@ -482,10 +483,11 @@ mod tests {
 
         let large = DatasetConfig::large();
         assert_eq!(large.event_count, 10_000_000);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_deterministic_generation() {
+    fn test_deterministic_generation() -> TestResult<()> {
         let config = DatasetConfig::small();
 
         // Generate twice with same seed
@@ -502,6 +504,7 @@ mod tests {
             assert_eq!(e1.event_type, e2.event_type);
             assert_eq!(e1.payload, e2.payload);
         }
+        Ok(())
     }
 }
 

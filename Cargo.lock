@@ -4548,6 +4548,7 @@ dependencies = [
  "sinex-core",
  "sinex-processor-runtime",
  "sinex-satellite-sdk",
+ "sinex-test-utils",
  "tokio",
  "tracing",
  "validator",
@@ -6729,6 +6730,7 @@ dependencies = [
  "hex",
  "once_cell",
  "sha2",
+ "tempfile",
  "walkdir",
 ]
 

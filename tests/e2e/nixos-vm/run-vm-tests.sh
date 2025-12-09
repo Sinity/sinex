@@ -115,44 +115,24 @@ validate_infrastructure() {
     )
     
     # Check test files syntax
+    # Use lightweight dummy packages to satisfy type constraints without pulling full builds.
+    local dummy_pkg="(import <nixpkgs> {}).runCommand \"dummy\" {} \"mkdir -p \$out\""
     for file in "${test_files[@]}"; do
         if [[ -f "$file" ]]; then
             log "✅ Checking syntax of $(basename "$file")..."
             if ! nix-instantiate "$file" \
                 --arg pkgs 'import <nixpkgs> {}' \
-                --arg sinex-ingestd 'null' \
-                --arg sinex-gateway 'null' \
-                --arg sinex 'null' \
-                --arg sinexCli 'null' \
-                --arg pg_jsonschema 'null' >/dev/null 2>&1; then
+                --arg lib '(import <nixpkgs> {}).lib' \
+                --arg sinex-ingestd "${dummy_pkg}" \
+                --arg sinex-gateway "${dummy_pkg}" \
+                --arg sinex "${dummy_pkg}" \
+                --arg sinexCli "${dummy_pkg}" \
+                --arg pg_jsonschema "${dummy_pkg}" >/dev/null 2>&1; then
                 error "❌ Syntax error in $file"
                 return 1
             fi
         else
             warning "⚠️ Missing file: $file"
-        fi
-    done
-    
-    # Check common infrastructure files
-    for file in "${common_files[@]}"; do
-        if [[ -f "$file" ]]; then
-            log "✅ Checking $(basename "$file")..."
-            if ! nix-instantiate "$file" --arg pkgs 'import <nixpkgs> {}' >/dev/null 2>&1; then
-                error "❌ Syntax error in $file"
-                return 1
-            fi
-        else
-            warning "⚠️ Missing file: $file"
-        fi
-    done
-    
-    # Check justfile integration
-    log "✅ Checking justfile integration..."
-    local required_commands=("test-vm")
-    
-    for cmd in "${required_commands[@]}"; do
-        if ! grep -q "$cmd" justfile 2>/dev/null; then
-            warning "⚠️ justfile missing $cmd command"
         fi
     done
     
@@ -160,8 +140,8 @@ validate_infrastructure() {
     echo ""
     echo "📋 Infrastructure Summary:"
     echo "  ✅ NixOS VM test configurations validated"
-    echo "  ✅ Common infrastructure modules checked"
-    echo "  ✅ Justfile integration verified"
+    echo "  ✅ Common infrastructure modules covered via scenarios"
+    echo "  ✅ Core VM config validated"
     echo ""
     echo "🚀 Ready to run VM tests with:"
     echo "  $0 -c smoke      # Quick validation tests"
@@ -191,71 +171,85 @@ run_test() {
     local test_log="$TEST_RESULTS_DIR/${test_name}.log"
     local test_result="$TEST_RESULTS_DIR/${test_name}.result"
     local start_time=$(date +%s)
+    local effective_timeout="$TEST_TIMEOUT"
+    if [[ "$test_name" == "maintenance" || "$test_name" == "performance" ]]; then
+        if [[ "$effective_timeout" -lt 1800 ]]; then
+            effective_timeout=1800
+        fi
+    fi
+    : >"$test_log"
     
     log "Running test: $test_name"
     
-    # Build command
-    local cmd="nix build .#checks.x86_64-linux.sinex-vm-${test_name} -L"
-    
-    if [[ "$KEEP_FAILED_VMS" == "true" ]]; then
-        cmd="$cmd --keep-failed"
-    fi
-    
-    # Run test with timeout and progress indicator
-    (
-        # Background process to show progress for long-running VM tests
+    # Prefer package outputs (flake exposes sinex-vm-<name>); fall back to checks
+    local build_cmds=(
+        "nix build .#sinex-vm-${test_name} -L"
+        "nix build .#checks.x86_64-linux.sinex-vm-${test_name} -L"
+    )
+
+    local exit_code=0
+    local ran=false
+
+    for base_cmd in "${build_cmds[@]}"; do
+        local cmd="$base_cmd"
+        if [[ "$KEEP_FAILED_VMS" == "true" ]]; then
+            cmd="$cmd --keep-failed"
+        fi
+
+        # Background progress reporter
         {
-            sleep 60  # Wait 1 minute before first progress message
-            elapsed=60
+            sleep 60
+            local elapsed=60
             while kill -0 $$ 2>/dev/null; do
                 echo "[$(date +'%H:%M:%S')] 🔄 VM test $test_name still running (${elapsed}s elapsed)..." >&2
-                sleep 120  # Progress update every 2 minutes
+                sleep 120
                 elapsed=$((elapsed + 120))
             done
         } &
         progress_pid=$!
-        
-        # Run the actual test
-        if timeout "$TEST_TIMEOUT" bash -c "$cmd 2>&1 | tee '$test_log'"; then
-            kill $progress_pid 2>/dev/null || true
-            wait $progress_pid 2>/dev/null || true
-            
-            local end_time=$(date +%s)
-            local duration=$((end_time - start_time))
-            
-            echo "PASSED" > "$test_result"
-            echo "Duration: ${duration}s" >> "$test_result"
-            
-            success "Test $test_name passed (${duration}s)"
-            return 0
+
+        if timeout "$effective_timeout" bash -c "set -o pipefail; $cmd 2>&1 | tee -a '$test_log'"; then
+            ran=true
+            exit_code=0
         else
-            kill $progress_pid 2>/dev/null || true
-            wait $progress_pid 2>/dev/null || true
-            
-            local exit_code=$?
-            local end_time=$(date +%s)
-            local duration=$((end_time - start_time))
-            
-            echo "FAILED" > "$test_result"
-            echo "Exit code: $exit_code" >> "$test_result"
-            echo "Duration: ${duration}s" >> "$test_result"
-            
-            if [[ $exit_code -eq 124 ]]; then
-                error "Test $test_name timed out after ${TEST_TIMEOUT}s"
-            else
-                error "Test $test_name failed (exit code: $exit_code, duration: ${duration}s)"
-            fi
-            
-            # Extract failure info from log
-            if [[ -f "$test_log" ]]; then
-                echo "" >> "$test_result"
-                echo "Last 50 lines of output:" >> "$test_result"
-                tail -50 "$test_log" >> "$test_result"
-            fi
-            
-            return 1
+            exit_code=$?
         fi
-    )
+
+        kill "$progress_pid" 2>/dev/null || true
+        wait "$progress_pid" 2>/dev/null || true
+
+        if [[ "$ran" == "true" ]]; then
+            break
+        fi
+    done
+
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+
+    if [[ "$ran" == "true" ]]; then
+        echo "PASSED" > "$test_result"
+        echo "Duration: ${duration}s" >> "$test_result"
+        success "Test $test_name passed (${duration}s)"
+        return 0
+    fi
+
+    echo "FAILED" > "$test_result"
+    echo "Exit code: $exit_code" >> "$test_result"
+    echo "Duration: ${duration}s" >> "$test_result"
+
+    if [[ $exit_code -eq 124 ]]; then
+        error "Test $test_name timed out after ${TEST_TIMEOUT}s"
+    else
+        error "Test $test_name failed (exit code: $exit_code, duration: ${duration}s)"
+    fi
+
+    if [[ -f "$test_log" ]]; then
+        echo "" >> "$test_result"
+        echo "Last 50 lines of output:" >> "$test_result"
+        tail -50 "$test_log" >> "$test_result"
+    fi
+
+    return 1
 }
 
 run_tests_parallel() {

@@ -10,16 +10,14 @@ on:
     paths:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
-      - 'scripts/schema-dev.sh'
-      - 'scripts/deploy-schemas.sh'
+      - 'xtask/src/main.rs'
       - '.github/workflows/schema-management.yml'
   pull_request:
     branches: [ master ]
     paths:
       - 'crate/lib/sinex-core/src/types/events/**/*.rs'
       - 'schemas/**/*.json'
-      - 'scripts/schema-dev.sh'
-      - 'scripts/deploy-schemas.sh'
+      - 'xtask/src/main.rs'
       - '.github/workflows/schema-management.yml'
 
 jobs:
@@ -95,8 +93,8 @@ jobs:
               --manifest-path crate/lib/sinex-schema/Cargo.toml \
               --bin sinex-schema -- \
               up
-          ./scripts/check-schema-ready.sh
-          ./scripts/schema-dev.sh generate
+          cargo xtask schema check-ready
+          cargo xtask schema generate
           POSTGRES
           DEVENV
           
@@ -170,4 +168,4 @@ jobs:
           SQLX_OFFLINE: '1'
         shell: bash
         run: |
-          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; ./scripts/deploy-schemas.sh'
+          scripts/ci-devenv.sh bash -lc 'set -euo pipefail; cargo xtask schema deploy'

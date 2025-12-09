@@ -122,7 +122,7 @@
       COUNT="''${2:-1}"
       
       for i in $(seq 1 "$COUNT"); do
-        echo "$TYPE-event-$i-$(date +%s%3N)" > "/home/test/watched/$TYPE-$i.txt"
+        echo "$TYPE-event-$i-$(date +%s%3N)" > "/var/lib/sinex/watched/$TYPE-$i.txt"
       done
       
       echo "Generated $COUNT test events of type '$TYPE'"

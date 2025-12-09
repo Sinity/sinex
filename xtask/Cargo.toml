@@ -11,3 +11,4 @@ walkdir = "2.5"
 sha2 = "0.10"
 hex = { workspace = true }
 clap_complete = "4.5"
+tempfile = "3.14"

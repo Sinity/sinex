@@ -27,7 +27,7 @@ let
         event_type = "file.created";
         count = 10;
         payload_template = {
-          path = "/home/test/watched/test_{{index}}.txt";
+          path = "/var/lib/sinex/watched/test_{{index}}.txt";
           action = "created";
         };
         interval = 100; # ms

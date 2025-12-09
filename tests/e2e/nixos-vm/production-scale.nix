@@ -96,12 +96,12 @@ pkgs.testers.nixosTest {
         print(f"Baseline events: {baseline_events}")
 
     with subtest("Filesystem watcher scalability"):
-        machine.succeed("su - test -c 'mkdir -p /home/test/watched/scale'")
+        machine.succeed("su - test -c 'mkdir -p /var/lib/sinex/watched/scale'")
         for i in range(50):
-            machine.succeed(f"su - test -c 'mkdir -p /home/test/watched/scale/dir{i}'")
+            machine.succeed(f"su - test -c 'mkdir -p /var/lib/sinex/watched/scale/dir{i}'")
 
         before = helpers.get_event_count()
-        produced = helpers.generate_events(200, prefix="scale", path="/home/test/watched/scale")
+        produced = helpers.generate_events(200, prefix="scale", path="/var/lib/sinex/watched/scale")
         assert produced >= 0
         assert helpers.wait_for_event_processing(before + produced, timeout=90)
         recent = helpers.get_event_count_since(30)

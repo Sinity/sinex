@@ -105,7 +105,7 @@ let
                 return 0
             
         def generate_events(self, count: int, prefix: str = "test", 
-                          path: str = "/home/test/watched") -> int:
+                          path: str = "/var/lib/sinex/watched") -> int:
             """Generate filesystem events in batches."""
             batch_size = 50
             events_before = self.get_event_count()
@@ -148,7 +148,7 @@ let
                 
             return False
             
-        def cleanup_test_data(self, path: str = "/home/test/watched") -> None:
+        def cleanup_test_data(self, path: str = "/var/lib/sinex/watched") -> None:
             """Clean up test data files."""
             self.machine.succeed(f"su - test -c 'rm -f {path}/*.txt {path}/*.tmp'")
             
@@ -233,10 +233,10 @@ in
   environment.etc."nixos-test/test_helpers.py".source = testHelpers;
   
   # Configure tmpfs for test directories (faster file operations)
-  fileSystems."/home/test/watched" = {
+  fileSystems."/var/lib/sinex/watched" = {
     device = "tmpfs";
     fsType = "tmpfs";
-    options = [ "size=512M" "mode=755" "uid=1000" "gid=100" ];
+    options = [ "size=512M" "mode=0777" ];
   };
   
   fileSystems."/tmp/perf-test" = {

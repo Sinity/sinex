@@ -37,8 +37,8 @@ jobs:
               --manifest-path crate/lib/sinex-schema/Cargo.toml \
               --bin sinex-schema -- \
               up
-          ./scripts/check-schema-ready.sh
-          ./scripts/schema-dev.sh generate
+          cargo xtask schema check-ready
+          cargo xtask schema generate
           POSTGRES
           DEVENV
 
@@ -72,7 +72,7 @@ jobs:
           scripts/ci-devenv.sh bash <<'DEVENV'
           set -euo pipefail
           scripts/ci-postgres.sh <<'POSTGRES'
-          ./scripts/sqlx-prepare.sh
+          cargo xtask sqlx-prepare
           POSTGRES
           DEVENV
 
