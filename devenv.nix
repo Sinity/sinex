@@ -1,9 +1,17 @@
-{ inputs ? {}, pkgs, lib, config, ... }:
+{
+  inputs ? { },
+  pkgs,
+  lib,
+  config,
+  ...
+}:
 let
   system = pkgs.stdenv.hostPlatform.system;
   fenixInput =
-    if inputs ? fenix then inputs.fenix
-    else builtins.getFlake "github:nix-community/fenix?rev=d4e14d370b4763c67ea02a39f01f5366297d61cb&narHash=sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
+    if inputs ? fenix then
+      inputs.fenix
+    else
+      builtins.getFlake "github:nix-community/fenix?rev=d4e14d370b4763c67ea02a39f01f5366297d61cb&narHash=sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
   fenixPkgs = fenixInput.packages.${system}.complete;
   pythonDeps = with pkgs.python3Packages; [
     click
@@ -11,58 +19,52 @@ let
     rich
     pyyaml
   ];
-  ttok = pkgs.python3Packages.buildPythonPackage rec {
-    pname = "ttok";
-    version = "0.3";
-    format = "setuptools";
-    src = pkgs.python3Packages.fetchPypi {
-      inherit pname version;
-      sha256 = "sha256-BHSgCldHYNsiTSSur6UOG56t9qV056bBMkZYvZuCSbg=";
-    };
-    propagatedBuildInputs = with pkgs.python3Packages; [ tiktoken ];
-  };
   # Postgres extensions are assumed to be installed on the system instance
   # at /run/postgresql; we no longer bundle a Postgres with extensions here.
-  basePackages = with pkgs; [
-    fenixPkgs.toolchain
-    fenixPkgs.rust-analyzer
-    fenixPkgs.clippy
-    fenixPkgs.rustfmt
-    fenixPkgs.llvm-tools
-    fenixPkgs.rust-src
-    fenixPkgs.rustc-codegen-cranelift
-    cargo-watch
-    cargo-nextest
-    cargo-llvm-cov
-    cargo-tarpaulin
-    cargo-modules
-    bacon
-    tokei
-    cargo-audit
-    cargo-machete
-    sqlx-cli
-    mold
-    python3
-    nats-server
-    mprocs
-    btop
-    jq
-    protobuf
-    openssl
-    pkg-config
-    dbus
-    dbus.dev
-    qemu
-    qemu_kvm
-    git-annex
-    fd
-    fzf
-    bat
-    ripgrep
-    sccache
-  ] ++ pythonDeps ++ [ ttok ];
+  basePackages =
+    with pkgs;
+    [
+      fenixPkgs.toolchain
+      fenixPkgs.rust-analyzer
+      fenixPkgs.clippy
+      fenixPkgs.rustfmt
+      fenixPkgs.llvm-tools
+      fenixPkgs.rust-src
+      fenixPkgs.rustc-codegen-cranelift
+      cargo-watch
+      cargo-nextest
+      cargo-llvm-cov
+      cargo-tarpaulin
+      cargo-modules
+      bacon
+      tokei
+      cargo-audit
+      cargo-machete
+      sqlx-cli
+      mold
+      python3
+      nats-server
+      mprocs
+      btop
+      jq
+      protobuf
+      openssl
+      pkg-config
+      dbus
+      dbus.dev
+      qemu
+      qemu_kvm
+      git-annex
+      fd
+      fzf
+      bat
+      ripgrep
+      sccache
+    ]
+    ++ pythonDeps;
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
-in {
+in
+{
   devenv = {
     root = lib.mkDefault (
       let
