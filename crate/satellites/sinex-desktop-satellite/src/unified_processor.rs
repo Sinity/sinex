@@ -453,7 +453,6 @@ impl DesktopProcessor {
                 let _ = sqlx::query!(
                     r#"
                     INSERT INTO raw.temporal_ledger (
-                        id,
                         source_material_id,
                         offset_start,
                         offset_end,
@@ -463,12 +462,11 @@ impl DesktopProcessor {
                         clock,
                         source_type
                     )
-                    VALUES ($1::ulid, $2::ulid, 0, $3, 'byte', $4, 'exact', 'wall', 'realtime_capture')
+                    VALUES ($1::ulid, 0, $2, 'byte', $3, 'exact', 'wall', 'realtime_capture')
                     "#,
-                    Ulid::new() as Ulid,      // id
-                    material_id as Ulid,      // source_material_id
-                    data.len() as i64,        // offset_end
-                    acquired_at               // ts_capture
+                    material_id as Ulid, // source_material_id
+                    data.len() as i64,   // offset_end
+                    acquired_at          // ts_capture
                 )
                 .execute(db_pool)
                 .await;
