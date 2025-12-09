@@ -278,7 +278,7 @@ let
         for ((burst=1; burst<=bursts; burst++)); do
           echo "Burst $burst/$bursts..."
           for ((i=1; i<=events_per_burst; i++)); do
-            su - test -c "echo 'burst-$burst-event-$i-$(date +%s%3N)' > /home/test/watched/burst_''${burst}_''${i}.tmp && mv /home/test/watched/burst_''${burst}_''${i}.tmp /home/test/watched/burst_''${burst}_''${i}.txt" &
+            su - test -c "echo 'burst-$burst-event-$i-$(date +%s%3N)' > /var/lib/sinex/watched/burst_''${burst}_''${i}.tmp && mv /var/lib/sinex/watched/burst_''${burst}_''${i}.tmp /var/lib/sinex/watched/burst_''${burst}_''${i}.txt" &
             if (( i % 20 == 0 )); then
               wait
             fi
@@ -294,7 +294,7 @@ let
         interval=$(calc_interval "$TARGET_EPS")
         echo "Generating $total_events events over $DURATION seconds (interval: $interval)"
         for ((i=1; i<=total_events; i++)); do
-          su - test -c "echo 'sustained-event-$i-$(date +%s%3N)' > /home/test/watched/sustained_$i.txt" &
+          su - test -c "echo 'sustained-event-$i-$(date +%s%3N)' > /var/lib/sinex/watched/sustained_$i.txt" &
           if (( i % 40 == 0 )); then
             wait
           fi
@@ -315,7 +315,7 @@ let
           interval=$(calc_interval "$current_eps")
           echo "Step $step/$steps: $current_eps eps for $step_duration seconds ($events_in_step events)"
           for ((i=1; i<=events_in_step; i++)); do
-            su - test -c "echo 'ramp-step-$step-event-$i-$(date +%s%3N)' > /home/test/watched/ramp_''${step}_''${i}.txt" &
+            su - test -c "echo 'ramp-step-$step-event-$i-$(date +%s%3N)' > /var/lib/sinex/watched/ramp_''${step}_''${i}.txt" &
             if (( i % 20 == 0 )); then
               wait
             fi
@@ -342,7 +342,7 @@ let
             mode_label="base"
           fi
           interval=$(calc_interval "$current_eps")
-          su - test -c "echo '$mode_label-event-$event_counter-$(date +%s%3N)' > /home/test/watched/spike_''${event_counter}.txt" &
+          su - test -c "echo '$mode_label-event-$event_counter-$(date +%s%3N)' > /var/lib/sinex/watched/spike_''${event_counter}.txt" &
           if (( event_counter % 30 == 0 )); then
             wait
           fi
@@ -411,7 +411,7 @@ let
       (
         interval=$(echo "scale=6; 1/$FS_EPS" | bc)
         for ((i=1; i<=DURATION*FS_EPS; i++)); do
-          su - test -c "echo 'load-fs-$i-$(date +%s%3N)' > /home/test/watched/load_fs_$i.txt"
+          su - test -c "echo 'load-fs-$i-$(date +%s%3N)' > /var/lib/sinex/watched/load_fs_$i.txt"
           sleep $interval
         done
       ) &
@@ -633,7 +633,7 @@ pkgs.testers.nixosTest {
     with subtest("Initialize performance testing environment"):
         machine.wait_until_succeeds(f"su - sinex -c 'cd {state_dir} && atuin init zsh'", timeout=45)
         machine.wait_until_succeeds(f"su - sinex -c 'cd {state_dir} && atuin import auto'", timeout=45)
-        machine.succeed("su - test -c 'echo baseline > /home/test/watched/baseline.txt'")
+        machine.succeed("su - test -c 'echo baseline > /var/lib/sinex/watched/baseline.txt'")
         machine.succeed(f"echo 'baseline_cmd' >> {state_dir}/.zsh_history")
         ensure_event("baseline")
         baseline_count = helpers.get_event_count()
@@ -674,7 +674,7 @@ pkgs.testers.nixosTest {
         machine.succeed("systemctl is-active sinex-ingestd")
         machine.succeed("systemctl is-active sinex-gateway")
         pre_final = helpers.get_event_count()
-        machine.succeed("su - test -c 'echo post-load > /home/test/watched/post-load.txt'")
+        machine.succeed("su - test -c 'echo post-load > /var/lib/sinex/watched/post-load.txt'")
         ensure_event("post-load", timeout=45)
         post_final = helpers.get_event_count()
         print(f"Post-load delta: {post_final - pre_final} events")

@@ -23,16 +23,17 @@ let
       user = lib.mkDefault "sinex";
     };
 
-    lifecycle.preflight.enable = lib.mkForce false;
+    lifecycle.preflight.enable = lib.mkDefault false;
 
     satellites = {
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
       defaults.instances = lib.mkDefault 1;
+      defaults.env.SINEX_COORDINATION_DISABLED = lib.mkDefault "1";
 
       filesystem = {
         enable = lib.mkDefault true;
-        watchPaths = lib.mkDefault [ "/home/test/watched" ];
+        watchPaths = lib.mkDefault [ "/var/lib/sinex/watched" ];
       };
 
       terminal.enable = lib.mkDefault false;
@@ -45,7 +46,10 @@ let
         healthAggregator.enable = lib.mkDefault false;
       };
     };
+
+    nats.bootstrapStreams.enable = lib.mkForce false;
   };
+  databaseUrl = "postgresql://${sinexConfigBase.database.user}@${sinexConfigBase.database.host}:${toString sinexConfigBase.database.port}/${sinexConfigBase.database.name}";
 in
 {
   imports = [
@@ -62,7 +66,51 @@ in
   services.sinex = sinexConfigBase
     // lib.optionalAttrs (sinexCliPackage != null) {
       cliPackage = sinexCliPackage;
+    }
+    // {
+      secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
     };
+
+  # Provide dummy secrets expected by the gateway.
+  environment.etc."sinex/gateway-admin-token".text = "test-admin-token";
+
+  # Run migrations before starting Sinex services.
+  systemd.services.sinex-migrations = {
+    description = "Apply Sinex database migrations";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "postgresql.service" "postgresql-setup.service" ];
+    requires = [ "postgresql.service" "postgresql-setup.service" ];
+    serviceConfig =
+      let
+        dbCfg = config.services.sinex.database;
+        dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
+      in {
+        Type = "oneshot";
+        Environment = [ "DATABASE_URL=${dbUrl}" ];
+        ExecStart = "${sinexPackage}/bin/sinex-schema up";
+      };
+  };
+
+  # Ensure core services wait for migrations.
+  systemd.services.sinex-ingestd.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
+  systemd.services.sinex-ingestd.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
+  systemd.services.sinex-gateway.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
+  systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
+  systemd.services.sinex-gateway.environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
+  systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
+  systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
+  systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
+  systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkForce "simple";
+  systemd.services.sinex-filesystem-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
+  systemd.services.sinex-terminal-1.serviceConfig.Type = lib.mkForce "simple";
+  systemd.services.sinex-terminal-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
+
+  # Relax Postgres authentication for disposable VM tests.
+  services.postgresql.authentication = lib.mkForce ''
+local   all             all                                     trust
+host    all             all             127.0.0.1/32            trust
+host    all             all             ::1/128                 trust
+'';
 
   # Test user
   users.users.test = {
@@ -80,6 +128,7 @@ in
     jq
     bc
     time
+    git-annex
     
     # Monitoring tools
     htop
@@ -140,7 +189,7 @@ in
     let
       stateDir = config.services.sinex.stateRoot;
     in [
-      "d /home/test/watched 0755 test users -"
+      "d /var/lib/sinex/watched 0777 sinex sinex -"
       "f ${stateDir}/.zsh_history 0644 sinex sinex -"
       "f ${stateDir}/.bash_history 0644 sinex sinex -"
     ];
@@ -184,13 +233,15 @@ in
   boot.loader.timeout = lib.mkDefault 0;
 
   # Enable native test suites inside the VM so cargo tests don't skip them.
-  environment.variables = (config.environment.variables or {}) // {
+  environment.variables = {
     SINEX_NATIVE_SYSTEM_TESTS = "1";
     SINEX_NATIVE_DESKTOP_TESTS = "1";
+    SINEX_ENVIRONMENT = "dev";
   };
-  environment.sessionVariables = (config.environment.sessionVariables or {}) // {
+  environment.sessionVariables = {
     SINEX_NATIVE_SYSTEM_TESTS = "1";
     SINEX_NATIVE_DESKTOP_TESTS = "1";
+    SINEX_ENVIRONMENT = "dev";
   };
   
   # Disable unnecessary services for tests

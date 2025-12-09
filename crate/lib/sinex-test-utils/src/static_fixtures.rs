@@ -417,7 +417,6 @@ pub async fn ensure_fixture(
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use crate::sinex_test;
 
     #[sinex_test]
     fn test_fixture_set_builder() -> TestResult<()> {

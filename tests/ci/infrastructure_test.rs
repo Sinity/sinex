@@ -36,7 +36,7 @@ async fn ci_setup_grants_all_schemas() -> TestResult<()> {
         assert!(
             has_usage,
             "User '{current_user}' missing USAGE privilege on schema '{}'.\n\
-             This indicates CI setup (scripts/ci-postgres.sh) is not granting access to all schemas.\n\
+             This indicates CI setup (cargo xtask ci postgres) is not granting access to all schemas.\n\
              The schema registry includes this schema, but permissions were not granted.",
             schema.name
         );

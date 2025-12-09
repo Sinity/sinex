@@ -76,3 +76,4 @@ sysinfo = { version = "0.30", optional = true }
 [dev-dependencies]
 # For self-testing
 tokio-test = "0.4"
+async-std = { version = "1", features = ["attributes"] }

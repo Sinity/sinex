@@ -22,37 +22,29 @@ pkgs.testers.nixosTest {
     ];
 
     services.sinex = {
-      serviceManagement.serviceGroups = lib.mkForce {
-        core = true;
-        maintenance = false;
-        monitoring = false;
-      };
-
-      satellite = {
+      satellites = {
         coordination.enable = lib.mkForce true;
 
-        eventSources = {
-          filesystem = {
-            enable = lib.mkForce true;
-            instances = lib.mkForce 2;
-            watchPaths = lib.mkForce [ "/home/test/watched" ];
-          };
-          terminal = {
-            enable = lib.mkForce true;
-            instances = lib.mkForce 1;
-          };
-          desktop = {
-            enable = lib.mkForce true;
-            instances = lib.mkForce 1;
-          };
-          system = {
-            enable = lib.mkForce true;
-            instances = lib.mkForce 1;
-          };
+        filesystem = {
+          enable = lib.mkForce true;
+          instances = lib.mkForce 2;
+          watchPaths = lib.mkForce [ "/var/lib/sinex/watched" ];
+        };
+        terminal = {
+          enable = lib.mkForce true;
+          instances = lib.mkForce 1;
+        };
+        desktop = {
+          enable = lib.mkForce true;
+          instances = lib.mkForce 1;
+        };
+        system = {
+          enable = lib.mkForce true;
+          instances = lib.mkForce 1;
         };
 
         automata = {
-          canonicalCommandSynthesizer.enable = lib.mkForce true;
+          canonicalizer.enable = lib.mkForce true;
           healthAggregator.enable = lib.mkForce true;
         };
       };

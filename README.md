@@ -167,9 +167,9 @@ nix develop                # or: direnv allow && direnv reload
 # Generate an RPC token (gateway refuses to start without one)
 export SINEX_RPC_TOKEN=$(openssl rand -hex 32)   # or: SINEX_RPC_TOKEN_FILE=$HOME/.config/sinex/rpc-token
 
-# Inspect available helper tasks
-devenv tasks help                  # Shows the run/export subcommands
-devenv tasks run --help            # Lists all task labels defined in devenv.nix
+# Helpful aliases (defined in the shell)
+# - xt <args>        -> cargo xtask <args>
+# - vm-smoke         -> ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke
 ```
 
 Direnv users will see a status banner (MOTD) sourced from `scripts/dev-env-banner.sh` whenever the
@@ -193,7 +193,7 @@ and `sqlx` no longer require per-command overrides. If you need to point at anot
 > **SQLx offline mode:** Only the Nix flake build exports `SQLX_OFFLINE=true` (so the sandbox can
 > compile without a database). Leave it unset during normal development; that way every
 > `sqlx::query!` is validated against the live schema. Regenerate the cache with
-> `devenv tasks run sqlx:prepare` whenever SQL changes so the flake build stays in sync.
+> `cargo xtask sqlx-prepare` whenever SQL changes so the flake build stays in sync.
 
 > **PostgreSQL extensions:** Migrations assume the database already has `timescaledb`,
 > `ulid`, `pg_jsonschema`, and `vector` installed. Provision them once as the `postgres`
@@ -208,7 +208,7 @@ and `sqlx` no longer require per-command overrides. If you need to point at anot
 >
 > The NixOS module (`services.postgresql-setup`) runs those statements automatically when
 > `database.autoSetup = true`; for other deployments run them manually before the first
-> `devenv tasks run db:migrate`.
+> `cargo xtask db migrate`.
 
 ### Running Sinex
 ```bash
@@ -224,8 +224,8 @@ cargo run --bin sinex-fs-watcher -- scan /path/to/scan
 cargo run --bin sinex-terminal-satellite -- scan --source kitty
 
 # Query recent events
-devenv tasks run cli:query          # or: python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
-LIMIT=50 devenv tasks run cli:query # Increase result window
+python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
+LIMIT=50 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN" # Increase result window
 
 # Monitor satellites via systemd
 systemctl status sinex-ingestd
@@ -234,13 +234,6 @@ systemctl status sinex-fs-watcher
 
 ### Configuration
 Configuration is managed through the NixOS module system. Each satellite can be enabled/disabled independently. See `nixos/example.nix` for example configuration.
-
-### Combined Bundles (LLM/analysis helpers)
-- `scripts/combine-files-batch.sh` snapshots sources/tests/docs into `combined-bundles/combined-{sources,tests,docs}.md`.
-- The same helper emits `combined-bundles/tokei_plus_gitlog.md` plus eight commit-diff shards (`all_diffs_part_{1-8}.md`).
-- The directory stays gitignored (`.gitignore` keeps `combined-bundles/` out of history); regenerate locally whenever you need a fresh view.
-- Pass a root dir and optional output dir if you need custom slices: `./scripts/combine-files-batch.sh . combined-bundles`.
-- Each bundle includes metadata (timestamp, token estimate) and raw file dumps so AI assistants have deterministic context without touching git history.
 
 ### RPC Authentication
 - `sinex-gateway` **requires** a token via `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) before serving JSON-RPC. The CLI automatically reads the same environment variable or accepts `--rpc-token`.
@@ -253,22 +246,19 @@ The Sinex test suite is optimized for parallel execution, achieving 50%+ faster 
 
 - **Parallel Execution**: Automatically uses all available CPU cores
 - **Database Isolation**: 64-database pool with PostgreSQL advisory locks
-- **Fast Testing**: `devenv tasks run dev:test` for the common dev loop (Nextest-only; `cargo test` is unsupported)
+- **Fast Testing**: `cargo xtask test --profile reliable` for the common dev loop (Nextest-only; `cargo test` is unsupported)
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
 See [`TESTING.md`](TESTING.md) for the detailed testing guide.
 
 Quick commands:
 ```bash
-devenv tasks run dev:check      # cargo check --workspace
-devenv tasks run dev:test       # Library + property suites via nextest (required workflow)
-devenv tasks run test:all       # Full nextest matrix after db:migrate
-devenv tasks run test:vm        # VM smoke tests
+cargo xtask check                         # cargo check --workspace
+cargo xtask test --profile reliable       # Library + property suites via nextest (required workflow)
+cargo nextest run --workspace --profile reliable   # Full nextest matrix after db:migrate
+NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
+  ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke     # VM smoke tests
 ```
-
-> Note: Every `devenv tasks …` invocation spins up a transient shell under the hood, so `direnv`
-> will re-evaluate the environment each time. That’s expected; run the underlying `cargo …` or
-> `scripts/…` command directly if you need maximum turnaround speed.
 
 ### CI expectations
 
@@ -277,14 +267,14 @@ GitHub Actions exercises the exact same scripts you run locally. Before pushing,
 | When you touch… | Run locally | Why |
 | --- | --- | --- |
 | Any Rust code | `SQLX_OFFLINE=1 cargo check --workspace --all-features` | Mirrors the offline check inside `db-checks.yml` / `ci.yml`. |
-| Event payloads or schema helpers | `./scripts/schema-dev.sh generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
-| SQL queries, migrations, or SeaORM files | `./scripts/sqlx-prepare.sh` | Rebuilds `.sqlx/` metadata for every crate; `db-checks.yml` enforces a clean diff. |
-| Nothing but want a fast sanity sweep | `devenv tasks run dev:test` | Matches the single Nextest run in CI. |
+| Event payloads or schema helpers | `cargo xtask schema generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
+| SQL queries, migrations, or SeaORM files | `cargo xtask sqlx-prepare` | Rebuilds `.sqlx/` metadata for every crate; `db-checks.yml` enforces a clean diff. |
+| Nothing but want a fast sanity sweep | `cargo xtask test --profile reliable` | Matches the single Nextest run in CI. |
 
 Additional notes:
 
 - The dev shell automatically wires `scripts/rustc_wrapper.sh` through `sccache`. CI caches both `~/.cache/sccache` and Cargo registries, so you get the same benefit locally if you keep the cache warm.
-- A single “Auto Update” workflow (cron + manual) now opens PRs for both schema bundles and `.sqlx` metadata by running the scripts above on `master`. You should rarely need to push straight to `master`; let the workflow generate refresh PRs whenever possible.
+- A single “Auto Update” workflow (cron + manual) now opens PRs for both schema bundles and `.sqlx` metadata by running the xtask commands above on `master`. You should rarely need to push straight to `master`; let the workflow generate refresh PRs whenever possible.
 
 ## 📚 Documentation
 
@@ -297,7 +287,7 @@ Additional notes:
 ### Key Components
 - **Core Architecture**: [`docs/current/architecture/Core_Architecture.md`](docs/current/architecture/Core_Architecture.md)
 - **Schema & Taxonomy**: [`crate/lib/sinex-schema/docs/overview.md`](crate/lib/sinex-schema/docs/overview.md), [`docs/current/architecture/event-taxonomy.md`](docs/current/architecture/event-taxonomy.md)
-  - When any `EventPayload` changes, run `./scripts/schema-dev.sh generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
+  - When any `EventPayload` changes, run `cargo xtask schema generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
 - **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](crate/lib/sinex-satellite-sdk/docs/overview.md)
 
 ### For Contributors

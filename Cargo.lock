@@ -708,6 +708,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.5.61"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39615915e2ece2550c0149addac32fb5bd312c657f43845bb9088cb9c8a7c992"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.5.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4539,6 +4548,7 @@ dependencies = [
  "sinex-core",
  "sinex-processor-runtime",
  "sinex-satellite-sdk",
+ "sinex-test-utils",
  "tokio",
  "tracing",
  "validator",
@@ -4774,6 +4784,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "async-nats",
+ "async-std",
  "async-trait",
  "blake3",
  "bon",
@@ -6709,6 +6720,20 @@ name = "xkeysym"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "hex",
+ "once_cell",
+ "sha2",
+ "tempfile",
+ "walkdir",
+]
 
 [[package]]
 name = "yansi"

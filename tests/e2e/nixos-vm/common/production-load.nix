@@ -13,7 +13,7 @@
         "--filesystem")
           echo "Generating filesystem load: ''$RATE ops/sec for ''$DURATION seconds"
 
-          WATCH_BASE="/home/test/watched/production"
+          WATCH_BASE="/var/lib/sinex/watched/production"
           install -d -o test -g users "$WATCH_BASE"
           for i in {1..50}; do
             install -d -o test -g users "$WATCH_BASE/dir''$i"
@@ -26,7 +26,7 @@ import random
 import threading
 from pathlib import Path
 
-watch_base = os.environ.get("WATCH_BASE", "/home/test/watched")
+watch_base = os.environ.get("WATCH_BASE", "/var/lib/sinex/watched")
 
 def generate_operations(dir_num, rate_per_dir, duration):
     base_dir = f"{watch_base}/dir{dir_num}"

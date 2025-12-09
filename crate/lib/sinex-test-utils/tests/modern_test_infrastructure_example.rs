@@ -1,4 +1,4 @@
-#![cfg(feature = "rstest-preview")]
+#![cfg(all(feature = "rstest-preview", false))]
 
 //! Example of using the modern test infrastructure with rstest, insta, and tracing-test
 

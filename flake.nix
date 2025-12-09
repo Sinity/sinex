@@ -69,6 +69,7 @@
               nativeBuildInputs = with pkgs; [
                 pkg-config
                 protobuf
+                mold
               ];
               cargoBuildFlags = [
                 "--manifest-path"
@@ -81,6 +82,10 @@
               auditable = false;
               doCheck = false;
               SQLX_OFFLINE = "true";
+              postPatch = ''
+                # Ensure helper scripts (e.g., rustc wrapper) use in-sandbox interpreters
+                patchShebangs scripts
+              '';
               preBuild = ''
                 if [ ! -d ".sqlx" ]; then
                   echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
@@ -247,6 +252,10 @@ PY
             name = "sinex-document-ingestor";
             manifestPath = "crate/satellites/sinex-document-ingestor/Cargo.toml";
           };
+          sinexSchema = buildRustPackage {
+            name = "sinex-schema";
+            manifestPath = "crate/lib/sinex-schema/Cargo.toml";
+          };
 
           # Automaton satellites & support
           sinexTerminalCommandCanonicalizer = buildRustPackage {
@@ -274,6 +283,7 @@ PY
               sinexTerminalCommandCanonicalizer
               healthAggregator
               sinexCli
+              sinexSchema
             ];
           };
 
@@ -290,6 +300,7 @@ PY
               sinexTerminalCommandCanonicalizer
               healthAggregator
               sinexHealthAggregator
+              sinexSchema
               sinexCli;
             sinex = sinexSuite;
             sinexPreflight = sinexSatelliteSdk;
@@ -311,8 +322,12 @@ PY
         let
           limitedVmTests = pkgs.lib.filterAttrs (name: _: pkgs.lib.elem name [ "basic" "preflight" ]) vmTests;
         in
-        {
-          packages = sinexPackages;
+        rec {
+          vmPackages = pkgs.lib.mapAttrs' (name: value:
+            pkgs.lib.nameValuePair "sinex-vm-${name}" value
+          ) vmTests;
+
+          packages = sinexPackages // vmPackages;
 
           formatter = pkgs.nixpkgs-fmt;
 

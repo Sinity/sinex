@@ -63,26 +63,6 @@ jobs:
         SQLX_OFFLINE: '1'
       shell: bash
       run: |
-        scripts/ci-devenv.sh bash <<'DEVENV'
-        set -euo pipefail
-        export CARGO_TARGET_DIR="$PWD/target-ci"
-        scripts/ci-postgres.sh <<'POSTGRES'
-        DATABASE_URL="$DATABASE_URL_SUPERUSER" \
-          cargo run \
-            --manifest-path crate/lib/sinex-schema/Cargo.toml \
-            --bin sinex-schema -- \
-            up
-        ./scripts/check-schema-ready.sh
-        bash scripts/check_forbidden_patterns.sh
-        ./scripts/schema-dev.sh generate
-        if ! git diff --quiet -- schemas; then
-          echo "::error::Schema artifacts are stale. Run './scripts/schema-dev.sh generate' locally."
-          git status schemas
-          exit 1
-        fi
-        # Fast gate to catch flaky fixture regressions without retries
-        devenv tasks run dev:smoke-fixtures
-        devenv tasks run dev:test
-        POSTGRES
-        rm -rf "$CARGO_TARGET_DIR"
-        DEVENV
+        nix develop --accept-flake-config --no-pure-eval --command \
+          cargo xtask ci postgres -- \
+          cargo xtask ci workspace

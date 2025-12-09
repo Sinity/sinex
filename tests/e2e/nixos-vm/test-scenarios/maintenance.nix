@@ -22,18 +22,10 @@ pkgs.testers.nixosTest {
     ];
 
     services.sinex = {
-      serviceManagement.serviceGroups = lib.mkForce {
-        core = true;
-        maintenance = true;
-        monitoring = true;
-      };
-
-      monitoring.enable = lib.mkForce true;
-      blobStorage.enable = lib.mkForce true;
-      blobStorage.maintenance = {
-        enableAutoGc = lib.mkForce true;
-        enablePeriodicFsck = lib.mkForce true;
-      };
+      observability.monitoring.enable = lib.mkForce true;
+      storage.blob.enable = lib.mkForce true;
+      storage.blob.maintenance.gc.enable = lib.mkForce true;
+      storage.blob.maintenance.fsck.enable = lib.mkForce true;
     };
   };
 
