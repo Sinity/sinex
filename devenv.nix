@@ -152,8 +152,16 @@ in {
       echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
     fi
     # Generate shell completions once per shell session (writes to /tmp)
-    cargo xtask completions bash > /tmp/xtask-completions.bash
-    . /tmp/xtask-completions.bash 2>/dev/null || true
+    case "''${SHELL:-bash}" in
+      *zsh)
+        cargo xtask completions zsh > /tmp/xtask-completions.zsh 2>/dev/null || true
+        . /tmp/xtask-completions.zsh 2>/dev/null || true
+        ;;
+      *)
+        cargo xtask completions bash > /tmp/xtask-completions.bash 2>/dev/null || true
+        . /tmp/xtask-completions.bash 2>/dev/null || true
+        ;;
+    esac
   '';
 
   tasks = { };
