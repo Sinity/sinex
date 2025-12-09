@@ -156,6 +156,7 @@ PY
       if [ -n "$FINGERPRINT" ] && [ "$STAMP" = "$FINGERPRINT" ]; then
         true
       else
+        echo "sqlx fingerprint mismatch (stamp=${STAMP:-missing}, current=${FINGERPRINT:-empty})" >&2
         cargo xtask sqlx-check 2>/tmp/sinex-sqlx-check.err || true
         if [ -s /tmp/sinex-sqlx-check.err ]; then
           echo "sqlx-check reported:" >&2
