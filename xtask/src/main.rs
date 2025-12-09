@@ -43,6 +43,11 @@ enum Commands {
         #[arg(long)]
         online: bool,
     },
+    /// Database utilities (setup/migrate/status/sqlx-prepare)
+    Db {
+        #[command(subcommand)]
+        cmd: DbCommand,
+    },
     /// Quick CI preflight: sqlx-check, clippy, nextest reliable (offline)
     CiPreflight,
     /// Environment/health report (toolchain, sccache, Postgres, schema)
@@ -62,6 +67,23 @@ enum Shell {
     PowerShell,
 }
 
+#[derive(Subcommand)]
+enum DbCommand {
+    /// Check Postgres reachability and report current database
+    Status,
+    /// Apply migrations using sinex-schema migrator
+    Migrate,
+    /// Create database if missing, then migrate
+    Setup,
+    /// Drop and recreate database, then migrate (dangerous; requires --yes)
+    Reset {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Regenerate .sqlx metadata
+    PrepareSqlx,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -77,6 +99,7 @@ fn main() -> Result<()> {
         } => test(online_sqlx, &profile),
         Commands::SqlxPrepare => sqlx_prepare(),
         Commands::SqlxCheck { online } => sqlx_check(online),
+        Commands::Db { cmd } => db(cmd),
         Commands::CiPreflight => ci_preflight(),
         Commands::Doctor => doctor(),
         Commands::Completions { shell } => completions(shell),
@@ -221,4 +244,56 @@ fn completions(shell: Shell) -> Result<()> {
         Shell::PowerShell => generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout()),
     }
     Ok(())
+}
+
+fn db(cmd: DbCommand) -> Result<()> {
+    match cmd {
+        DbCommand::Status => {
+            heading("psql status");
+            let status = Command::new("psql")
+                .args(["-c", "select current_database(), current_user"])
+                .status();
+            match status {
+                Ok(s) if s.success() => println!("Postgres reachable"),
+                Ok(s) => anyhow::bail!("psql exited with status {s}"),
+                Err(e) => anyhow::bail!("psql not available: {e}"),
+            }
+        }
+        DbCommand::Migrate => run_db_migrate()?,
+        DbCommand::Setup => {
+            // Create DB if missing, then migrate.
+            let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
+            let mut create = Command::new("createdb");
+            create.arg(&db);
+            if let Err(e) = create.status() {
+                eprintln!("createdb failed or missing: {e}");
+            }
+            run_db_migrate()?;
+        }
+        DbCommand::Reset { yes } => {
+            if !yes {
+                anyhow::bail!("Refusing to drop DB without --yes");
+            }
+            let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
+            let mut drop = Command::new("psql");
+            drop.args(["-c", &format!("DROP DATABASE IF EXISTS {db}")]);
+            run_cmd("dropdb", drop)?;
+            let mut create = Command::new("createdb");
+            create.arg(&db);
+            if let Err(e) = create.status() {
+                eprintln!("createdb failed or missing: {e}");
+            }
+            run_db_migrate()?;
+        }
+        DbCommand::PrepareSqlx => {
+            sqlx_prepare()?;
+        }
+    }
+    Ok(())
+}
+
+fn run_db_migrate() -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["run", "--package", "sinex-schema", "--", "up"]);
+    run_cmd("cargo run -p sinex-schema -- up", cmd)
 }
