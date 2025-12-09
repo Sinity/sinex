@@ -133,15 +133,14 @@ in {
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     # sqlx: no auto-check on entry to keep shell startup fast.
-    # Manual commands:
-    #   cargo run --package xtask --quiet -- sqlx-stamp    # view status
-    #   cargo xtask sqlx-prepare                           # refresh .sqlx
+    # Run `xt sqlx-prepare` (alias below) when queries/migrations change.
 
     if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
       "$PWD/scripts/dev-env-banner.sh" || true
       export SINEX_DEVENV_MOTD_ONCE=1
     fi
     alias sinex-cli="python3 cli/exo.py"
+    alias xt="cargo xtask"
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
     if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
