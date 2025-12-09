@@ -59,8 +59,8 @@ printf 'Database:    %b  %s\n' "${db_status_symbol}" "${db_status_message}"
 printf 'Toolchain:   %s\n' "${toolchain}"
 printf 'Processes:   start via '\''%s'\''\n' "${process_hint}"
 printf '%sQuick commands:%s\n' "${COLOR_DIM}" "${COLOR_RESET}"
-printf '  devenv tasks run --help    -> list available tasks\n'
-printf '  devenv tasks run dev:check -> cargo check --workspace\n'
-printf '  devenv tasks run dev:test  -> cargo nextest (lib + property)\n'
-printf '  devenv tasks run db:migrate\n'
+printf '  xt           # cargo xtask (alias)\n'
+printf '  xt sqlx-prepare  # refresh .sqlx after migrations/queries\n'
+printf '  xt check     # sqlx check + fmt check + cargo check\n'
+printf '  xt test      # nextest (profile=reliable)\n'
 printf '  devenv up nats ingestd gateway\n\n'
