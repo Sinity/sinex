@@ -132,37 +132,10 @@ in {
     export PATH="$PWD/target/debug:$PATH"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # Auto-refresh .sqlx only when schema fingerprint differs; skip heavy checks otherwise.
-    if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
-      FINGERPRINT="$(python3 - <<'PY'
-import hashlib
-from pathlib import Path
-paths = []
-for base in ("crate/lib/sinex-schema/migrations", "schemas"):
-    p = Path(base)
-    if p.exists():
-        for f in sorted(p.rglob("*")):
-            if f.is_file():
-                paths.append(f)
-h = hashlib.sha256()
-for f in paths:
-    h.update(str(f).encode())
-    h.update(f.read_bytes())
-print(h.hexdigest())
-PY
-)"
-      STAMP="$(cat .sqlx/stamp 2>/dev/null || true)"
-      if [ -n "$FINGERPRINT" ] && [ "$STAMP" = "$FINGERPRINT" ]; then
-        echo "sqlx stamp up-to-date" >&2
-      else
-        echo "sqlx fingerprint mismatch (stamp=${STAMP:-missing}, current=${FINGERPRINT:-empty}); running sqlx-prepare" >&2
-        cargo xtask sqlx-prepare >/tmp/sinex-sqlx-prepare.log 2>&1 || {
-          cat /tmp/sinex-sqlx-prepare.log >&2
-          echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
-        }
-        rm -f /tmp/sinex-sqlx-prepare.log
-      fi
-    fi
+    # sqlx: no auto-check on entry to keep shell startup fast.
+    # Manual commands:
+    #   cargo run --package xtask --quiet -- sqlx-stamp    # view status
+    #   cargo xtask sqlx-prepare                           # refresh .sqlx
 
     if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
       "$PWD/scripts/dev-env-banner.sh" || true
