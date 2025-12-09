@@ -132,11 +132,10 @@ in {
     export PATH="$PWD/target/debug:$PATH"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # Auto-refresh or validate sqlx metadata based on schema fingerprint.
-    # Skip the expensive sqlx check when the fingerprint matches the cached stamp.
+    # Auto-refresh .sqlx only when schema fingerprint differs; skip heavy checks otherwise.
     if [ -z "''${SINEX_SKIP_SQLX_AUTO:-}" ]; then
       FINGERPRINT="$(python3 - <<'PY'
-import hashlib, os
+import hashlib
 from pathlib import Path
 paths = []
 for base in ("crate/lib/sinex-schema/migrations", "schemas"):
@@ -145,35 +144,23 @@ for base in ("crate/lib/sinex-schema/migrations", "schemas"):
         for f in sorted(p.rglob("*")):
             if f.is_file():
                 paths.append(f)
-hasher = hashlib.sha256()
+h = hashlib.sha256()
 for f in paths:
-    hasher.update(str(f).encode())
-    hasher.update(f.read_bytes())
-print(hasher.hexdigest())
+    h.update(str(f).encode())
+    h.update(f.read_bytes())
+print(h.hexdigest())
 PY
 )"
       STAMP="$(cat .sqlx/stamp 2>/dev/null || true)"
       if [ -n "$FINGERPRINT" ] && [ "$STAMP" = "$FINGERPRINT" ]; then
-        true
+        echo "sqlx stamp up-to-date" >&2
       else
-        echo "sqlx fingerprint mismatch (stamp=${STAMP:-missing}, current=${FINGERPRINT:-empty})" >&2
-        cargo xtask sqlx-check 2>/tmp/sinex-sqlx-check.err || true
-        if [ -s /tmp/sinex-sqlx-check.err ]; then
-          echo "sqlx-check reported:" >&2
-          cat /tmp/sinex-sqlx-check.err >&2
-          # Attempt auto-prepare if Postgres is reachable
-          if psql -h "''${PGHOST:-/run/postgresql}" -U "''${PGUSER:-}" -d "''${PGDATABASE:-}" -c 'select 1' >/dev/null 2>&1; then
-            echo "Attempting to refresh .sqlx metadata automatically..."
-            if cargo xtask sqlx-prepare; then
-              echo "sqlx metadata refreshed."
-            else
-              echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
-            fi
-          else
-            echo "Postgres not reachable; run 'cargo xtask sqlx-prepare' once DB is available." >&2
-          fi
-        fi
-        rm -f /tmp/sinex-sqlx-check.err
+        echo "sqlx fingerprint mismatch (stamp=${STAMP:-missing}, current=${FINGERPRINT:-empty}); running sqlx-prepare" >&2
+        cargo xtask sqlx-prepare >/tmp/sinex-sqlx-prepare.log 2>&1 || {
+          cat /tmp/sinex-sqlx-prepare.log >&2
+          echo "Automatic sqlx prepare failed; please run 'cargo xtask sqlx-prepare' manually." >&2
+        }
+        rm -f /tmp/sinex-sqlx-prepare.log
       fi
     fi
 
