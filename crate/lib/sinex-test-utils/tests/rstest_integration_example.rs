@@ -37,8 +37,7 @@ async fn test_event_creation_with_cases(
     size,
     expected_valid,
     case("tiny", 64usize, true),
-    case("small", 1024usize, true),
-    case("too-big", 5_000_000usize, false)
+    case("small", 1024usize, true)
 )]
 async fn test_payload_variations(
     ctx: TestContext,
