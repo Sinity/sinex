@@ -715,12 +715,24 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut other_attrs = Vec::new();
     let mut test_attrs = Vec::new(); // For #[ignore], #[should_panic], etc.
     let mut has_rstest_cases = false;
+    let mut has_rstest_attr = false;
 
     // Separate #[case] attributes from others, preserve test attributes
     for attr in &input.attrs {
-        if attr.path().is_ident("case") {
+        let is_case = attr
+            .path()
+            .segments
+            .last()
+            .map(|seg| seg.ident == "case")
+            .unwrap_or(false);
+
+        if is_case {
             has_rstest_cases = true;
             case_attrs.push(attr.clone());
+        } else if attr.path().is_ident("rstest") {
+            has_rstest_attr = true;
+            has_rstest_cases = true;
+            other_attrs.push(attr.clone());
         } else if attr.path().is_ident("ignore") || attr.path().is_ident("should_panic") {
             test_attrs.push(attr.clone());
             other_attrs.push(attr.clone());
@@ -733,7 +745,13 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     for arg in &input.sig.inputs {
         if let syn::FnArg::Typed(pat_type) = arg {
             for attr in &pat_type.attrs {
-                if attr.path().is_ident("case") {
+                let is_case = attr
+                    .path()
+                    .segments
+                    .last()
+                    .map(|seg| seg.ident == "case")
+                    .unwrap_or(false);
+                if is_case {
                     has_rstest_cases = true;
                 }
             }
@@ -861,11 +879,17 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
 
+        let rstest_attr = if has_rstest_attr {
+            quote! {}
+        } else {
+            quote! { #[::rstest::rstest] }
+        };
+
         return quote! {
-            #[::rstest::rstest]
+            #[tokio::test]
+            #rstest_attr
             #(#case_attrs)*
             #(#other_attrs)*
-            #[tokio::test]
             #fn_vis #new_sig {
                 use std::time::Instant;
 

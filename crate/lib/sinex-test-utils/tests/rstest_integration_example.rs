@@ -1,23 +1,24 @@
 #![cfg(feature = "rstest-preview")]
 
-//! Example showing rstest cases with the Sinex test utilities.
+//! rstest + TestContext example using tokio runtime.
 //!
-//! We keep this thin: rstest supplies the table-driven inputs, tokio::test
-//! provides the runtime, and `TestContext::new()` from sinex-test-utils
-//! provisions a fresh database sandbox for each case.
+//! This keeps the test harness simple: rstest drives the cases, tokio::test
+//! supplies the runtime, and we allocate a fresh TestContext per case.
 
 use rstest::rstest;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::TestResult;
 
-#[rstest]
-#[case("fs", "file.created")]
-#[case("shell", "cmd.run")]
-#[case("service", "health.check")]
+#[rstest(
+    source, event_type,
+    case("fs", "file.created"),
+    case("shell", "cmd.run"),
+    case("service", "health.check"),
+)]
 #[tokio::test]
 async fn test_event_creation_with_cases(
-    #[case] source: &str,
-    #[case] event_type: &str,
+    source: &str,
+    event_type: &str,
 ) -> TestResult<()> {
     let ctx = TestContext::new().await?;
 
@@ -31,15 +32,17 @@ async fn test_event_creation_with_cases(
     Ok(())
 }
 
-#[rstest]
-#[case("tiny", 64usize, true)]
-#[case("small", 1024usize, true)]
-#[case("too-big", 5_000_000usize, false)]
+#[rstest(
+    name, size, expected_valid,
+    case("tiny", 64usize, true),
+    case("small", 1024usize, true),
+    case("too-big", 5_000_000usize, false),
+)]
 #[tokio::test]
 async fn test_payload_variations(
-    #[case] name: &str,
-    #[case] size: usize,
-    #[case] expected_valid: bool,
+    name: &str,
+    size: usize,
+    expected_valid: bool,
 ) -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let payload = json!({
@@ -63,11 +66,13 @@ async fn test_payload_variations(
     Ok(())
 }
 
-#[rstest]
-#[case("events.created")]
-#[case("fs.changed")]
+#[rstest(
+    event_type,
+    case("events.created"),
+    case("fs.changed"),
+)]
 #[tokio::test]
-async fn test_with_fixture_and_cases(#[case] event_type: &str) -> TestResult<()> {
+async fn test_with_fixture_and_cases(event_type: &str) -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let test_sources = vec!["fs", "shell", "service"];
 

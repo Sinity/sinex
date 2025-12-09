@@ -23,6 +23,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** All current docs must reflect the JetStream-only ingestion described in `docs/way.md`. Transactional outbox references move to historical sections.
 
 ### Tasks
+
 - [x] Sweep docs for “transactional outbox,” “sensd,” or “gRPC ingestion” references and either delete or mark as historical context. (Historical banners added to the remaining references in reports/TODO files.)
 - [x] Add short banners to historical docs (e.g., `/docs/historical/**`) to clarify their status.
 - [x] Update `README.md` and satellite guides to mention JetStream confirmations, DLQ subjects, and the confirmation-aware automaton flow.
@@ -36,7 +37,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Follow the staging-stream guidance: satellites publish immediately to JetStream; local channels remain bounded/test-only.
 
 ### Tasks
-- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing. *(System satellite watchers and BlobManager emissions now use bounded 1024-capacity channels; desktop/window watchers still need direct JetStream or bounded adapters. Filesystem/terminal now upsert source materials instead of re-registering.)*
+
+- [ ] Audit satellites for in-process `Vec` accumulation or unbounded channel drains (e.g., `journal_watcher.rs`, clipboard watcher) and replace with streaming publishes/chunked processing. _(System satellite watchers and BlobManager emissions now use bounded 1024-capacity channels; desktop/window watchers still need direct JetStream or bounded adapters. Filesystem/terminal now upsert source materials instead of re-registering.)_
 - [x] Annotate helper utilities like `ChannelReceiverExt::drain_all` as test-only, or move them under a testing feature so production code doesn’t rely on them. (Done: channel helper modules gated behind the `channel-testing` feature in `sinex-test-utils`.)
 - [x] Ensure `docs/vision/streaming-architecture.md` explicitly links to the staging-stream implementation and references this policy.
 
@@ -49,6 +51,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Keep CI deterministic and aligned with dev workflows.
 
 ### Tasks
+
 - ✅ `.github/workflows/ci.yml` / `sqlx-cache.yml` / `sqlx-check.yml` run migrations from `crate/lib/sinex-schema` and all Postgres images are pinned to `timescale/timescaledb:2.15.2-pg16`.
 - [x] Ensure the Nextest profile used in CI matches the documented “reliable” profile (or document the difference if we stick with default). (CI now runs `cargo nextest … --profile reliable` and coverage inherits it.)
 - [x] Add linters/checks that fail CI when `#[tokio::test]` is used in workspace crates (outside proc-macro/test-harness contexts); everything should use `#[sinex_test]`.
@@ -65,6 +68,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Gateway RPC endpoints must require authentication when exposed beyond localhost; CLI already expects `SINEX_RPC_TOKEN`.
 
 ### Tasks
+
 - [x] Implement token-based auth in `sinex-gateway` (Axum layer): reject unauthenticated JSON-RPC calls, allow binding to `127.0.0.1` without a token for dev shells.
 - [x] Extend CLI (`cli/exo.py`) to send the token header automatically when `SINEX_RPC_TOKEN` or `--rpc-token` are set (already partially wired).
 - [x] Add integration tests that exercise authenticated/unauthenticated flows.
@@ -79,7 +83,8 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** `HotlogAutomaton` is deprecated—everything must implement `StatefulStreamProcessor`.
 
 ### Tasks
-- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.) *(Shim since removed after migration completed.)*
+
+- [x] Mark the Hotlog trait as `#[deprecated(note = "...")]` and add a lint/check to fail CI on new uses. (Added `deprecated` shim + crate-level `#![deny(deprecated)]` in `sinex-satellite-sdk`.) _(Shim since removed after migration completed.)_
 - [x] Port remaining automata to `StatefulStreamProcessor` + `processor_main!`. (Health, content, and PKM automata now have processor_main! binaries; search/analytics already on the unified runner.)
 - [x] Remove legacy Hotlog implementation artifacts once no crate depends on them. (Deleted unused `automaton.rs` in `sinex-health-aggregator`; removed Hotlog shim from `sinex-satellite-sdk`.)
 - [x] Update docs/tests to reflect the unified processor model. (Health/content/PKM automaton docs now note processor_main! and SSP entrypoints.)
@@ -93,8 +98,9 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** `sinex-rpc-dispatcher` must implement scan/explore modes per the SSP interface so CLI “scan/explore” commands work end-to-end.
 
 ### Tasks
-- [ ] Flesh out the `scan` method for historical and continuous horizons (pull from Postgres logs or JetStream subjects as designed). *(In-memory checkpoints/history now recorded during scans; still needs real RPC metrics and JetStream/DB wiring.)*
-- [ ] Implement the `ExplorationProvider` methods (source state, ingestion history, coverage analysis, exports) with real data. *(Stub now surfaces scan history/export paths; replace with live dispatcher insights.)*
+
+- [ ] Flesh out the `scan` method for historical and continuous horizons (pull from Postgres logs or JetStream subjects as designed). _(In-memory checkpoints/history now recorded during scans; still needs real RPC metrics and JetStream/DB wiring.)_
+- [ ] Implement the `ExplorationProvider` methods (source state, ingestion history, coverage analysis, exports) with real data. _(Stub now surfaces scan history/export paths; replace with live dispatcher insights.)_
 - [ ] Add integration tests covering pagination, checkpoint updates, and restart/resume scenarios.
 - [ ] Wire dispatcher CLI to the new scan/explore implementation and document expected flags/subjects in `cli/README.md`.
 
@@ -107,6 +113,7 @@ _Status: working draft. Captures all currently agreed technical decisions and th
 **Decision:** Resolve the issues listed in `docs/ANALYSIS_INDEX.md` (sensd tense, broken links, missing status markers).
 
 ### Tasks
+
 - [x] Fix tense/temporal markers in `project-target-state.md`.
 - [x] Repair or remove references to deleted files (`docs/plan_v3.txt`, `docs/TARGET_final.md`, etc.).
 - [x] Add current-phase indicators to `way.md` or replace with an explicit “Completed” note.
@@ -132,12 +139,14 @@ Use this list when prioritizing the next batch of engineering work; update both 
 ---
 
 ## Change Control
+
 - Update this file whenever a section is completed or new work is added.
 - When a decision graduates from “plan” to “complete,” move details into the relevant canonical doc (e.g., `docs/way.md`, README, component guides) and trim this file accordingly.
 
 ## Completed Initiatives (Reference)
 
 ### Developer Environment & Tooling Baseline
+
 - `.env` is no longer tracked; developers copy from `.env.example`.
 - `.cargo/config.toml` now lets Cargo auto-detect parallelism and only adds the `--check-cfg` flag by default.
 - `.config/nextest.toml` uses `num-cpus` for the `ci-parallel` profile to avoid hardcoded thread counts.
@@ -147,6 +156,7 @@ Use this list when prioritizing the next batch of engineering work; update both 
 - The legacy `scripts/test-analytics.sh` helper was removed—run `cargo nextest` (and `cargo llvm-cov`) directly.
 
 ### Repository Hygiene & Narrative Alignment
+
 - `README.md` now documents the actual crate layout (core/lib/satellites) and calls out sinex-core as the home of database code.
 - `.github/pull_request_template.md` references the current abstractions (sinex-core repositories, `sqlx::query!`, shared validators) instead of legacy crates.
 - Remaining references to `crate/sinex-db` in docs/scripts were updated to point at `crate/lib/sinex-core` / `sinex-schema`.
