@@ -877,7 +877,11 @@ fn schema_deploy(input: &str) -> Result<()> {
 }
 
 fn schema_compat(base: Option<String>, glob: &str) -> Result<()> {
-    let base_branch = base.or_else(|| env::var("CI_BASE_BRANCH").ok());
+    // CI sometimes passes an empty base ref on branch pushes; treat that as "unspecified"
+    let base_branch = base
+        .or_else(|| env::var("CI_BASE_BRANCH").ok())
+        .filter(|s| !s.trim().is_empty());
+
     let base = match base_branch {
         Some(b) => b,
         None => resolve_default_base_branch()?,
