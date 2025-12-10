@@ -32,19 +32,21 @@ The consumer re-implements batching, conversion to UUID/JSON, and conflict handl
 rest of the codebase goes through `EventRepository`.
 
 ### Status / changes
+
 - Added `scope_window tstzrange` column to `core.operations_log` plus optional parameter on `core.start_operation`.
 - `StateRepository::start_replay_operation` now converts `ReplayScope::time_window` into a `tstzrange`, so every replay operation records its window with native Postgres range semantics.
 - Existing readers continue to work (column is nullable) while we plumb richer accessors later.
+- Introduced `SourceMaterialRepository::register_external_in_flight(material_id, …)` so ingestd can register JetStream materials with the ULID minted at the edge; satellites now publish begin/slice/end via `AcquisitionManager` instead of writing directly to `raw.source_material_registry`.
 
 ### Proposed change (remaining)
 
-* Add `EventRepository::insert_stream_batch(batch: &[PreparedEventRow]) -> DbResult<Vec<Ulid>>`.
+- Add `EventRepository::insert_stream_batch(batch: &[PreparedEventRow]) -> DbResult<Vec<Ulid>>`.
   - The repository will own the UNNEST SQL (or switch to `INSERT ... SELECT FROM UNNEST`) and be the
     only place aware of the `core.events` column list.
   - `PreparedEventRow` should be a lightweight DTO (ids, source, event_type, ts_orig, host, payload)
     to avoid pulling in the entire `PreparedEvent` type tree into sinex-core.
   - The repository handles `ON CONFLICT DO NOTHING` and returns the persisted ULIDs.
-* `persist_batch_optimized` becomes:
+- `persist_batch_optimized` becomes:
 
 ```rust
 let persisted = self.pool
@@ -56,7 +58,7 @@ let persisted = self.pool
 
 ### Testing
 
-* Reuse the existing consumer integration tests; add a focused unit test under `sinex-core` that
+- Reuse the existing consumer integration tests; add a focused unit test under `sinex-core` that
   feeds a couple of DTOs into the repository method to ensure UUID ↔ ULID conversion still works.
 
 ## 2. Material assembler ledger writes (`crate/core/sinex-ingestd/src/material_assembler.rs:620-650`)
@@ -87,49 +89,50 @@ sqlx::query!(
 
 ### Proposed change
 
-* Extend `SourceMaterialRepository` (or introduce a narrow `LedgerRepository`) with
+- Extend `SourceMaterialRepository` (or introduce a narrow `LedgerRepository`) with
   `append_temporal_ledger(entry: LedgerEntry)`.
   - `LedgerEntry` carries the ULID, offsets, capture metadata, and source type (enforced via enums).
   - The repository handles ULID ↔ UUID conversion and the constant strings (`byte`, `bounded`, `wall`)
     live next to the schema definition.
-* `record_ledger_entry` simply builds the DTO and calls the repository.
+- `record_ledger_entry` simply builds the DTO and calls the repository.
 
 ### Testing
 
-* Move the existing assertions from `material_assembler` tests into a repository test so that we
+- Move the existing assertions from `material_assembler` tests into a repository test so that we
   exercise the SQL in isolation.
 
 ## 3. Cascade analyzer orchestration (`crate/core/sinex-gateway/src/cascade_analyzer.rs`)
 
 ### Pain points
 
-* Rust code currently assembles dynamic strings for:
+- Rust code currently assembles dynamic strings for:
   - Creating/Dropping session temp tables (`CREATE TEMP TABLE ...`, `DROP TABLE ...`).
   - Populating seeds and walking dependencies.
   - Calculating histograms and integrity checks (multiple SELECT statements built via `format!`).
-* The module repeats `quote_ident` gymnastics everywhere and re-runs the same SQL across both the
+- The module repeats `quote_ident` gymnastics everywhere and re-runs the same SQL across both the
   transactional and non-transactional paths.
 
 ### Status / changes
+
 - Introduced PL/pgSQL helpers: `core.prepare_cascade_session`, `core.cascade_populate_roots`, `core.cascade_depth_histogram`, `core.cascade_count_nodes`, `core.cascade_find_integrity_violations`, and `core.cleanup_cascade_session`.
 - Added `CascadeRepository` (+ tx variant) in `sinex-core`, and rewired `StreamingCascadeAnalyzer` to call those functions instead of emitting raw SQL / temp-table DDL.
 - Temp-table creation, population, histogram/count queries, integrity checks, and cleanup now live fully inside Postgres.
 
 ### Remaining follow-up
 
-* Move the session management + graph walk entirely into PL/pgSQL living in `core` schema. The
+- Move the session management + graph walk entirely into PL/pgSQL living in `core` schema. The
   working theory is one or two cohesive functions rather than four micro helpers:
   - Option A (preferred pending spike): a single `core.cascade_analyze(session_id text, seed_ids ulid[], max_depth integer)` that prepares the temp table, runs the traversal, emits depth histogram + cycle info, and returns the derived table name for any follow-up inspection.
   - Option B: two functions (`prepare_session` and `analyze_session`) if we prove that splitting seed preparation from heavy analysis materially simplifies error handling.
-* Whatever interface we choose will be exposed via methods on `EventRepository` (e.g.,
+- Whatever interface we choose will be exposed via methods on `EventRepository` (e.g.,
   `cascade_prepare`, `cascade_run`, `cascade_cleanup`) rather than a brand new repository. This keeps
   graph analysis co-located with other event-topology queries.
-* Rust no longer formats identifiers or SQL snippets; it calls repository methods that in turn invoke
+- Rust no longer formats identifiers or SQL snippets; it calls repository methods that in turn invoke
   the PL/pgSQL function with simple bind parameters.
 
 ### Testing
 
-* Unit-test the PL/pgSQL functions with fixtures (see existing gateway tests) and add repository
+- Unit-test the PL/pgSQL functions with fixtures (see existing gateway tests) and add repository
   tests under `sinex-core` that exercise a full session using temp schemas.
 
 ## 4. Replay helpers (`crate/core/sinex-gateway/src/replay_control.rs:518-529`)
@@ -148,19 +151,20 @@ let exists = sqlx::query_scalar!(
 ```
 
 ### Status / changes
+
 - `StateRepository` now stores replay windows via `scope_window`, so downstream consumers can query range coverage.
 - Cascade helper functions expose integrity/census queries via repositories; alias-heavy ad-hoc SQL was replaced with stored procedures and strongly-typed repository methods.
 
 ### Proposed change (next)
 
-* Extend `StateRepository` with `operation_exists(id: Ulid) -> DbResult<bool>` and optionally
+- Extend `StateRepository` with `operation_exists(id: Ulid) -> DbResult<bool>` and optionally
   `load_operation(id: Ulid) -> DbResult<Option<OperationRecord>>`.
-* Replay tests (`drive_to_state`, `wait_for_operation`) call the repository instead of issuing raw
+- Replay tests (`drive_to_state`, `wait_for_operation`) call the repository instead of issuing raw
   SQL; production code can reuse the same helpers when we add telemetry.
 
 ### Testing
 
-* `state.rs` already has coverage for recent operations; add another case that verifies
+- `state.rs` already has coverage for recent operations; add another case that verifies
   `operation_exists` toggles the right value as we insert/delete records.
 
 ## Follow-up list (not tackled in this pass)

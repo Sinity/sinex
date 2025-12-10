@@ -33,6 +33,10 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - Checkpoints can persist to NATS KV; ingestd broadcasts active schemas to `system.schemas.active`.
 - Satellites subscribe to `system.schemas.active` broadcasts in edge mode to cache active schemas.
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
+- `core.events.ts_orig_subnano` now stores full nanosecond precision via INT4 storage and repository fixes; ingestion no longer truncates timestamp data.
+- Advisory lock IDs use big-endian conversion across replay state machine and distributed locking, preventing mismatched lock acquisition.
+- Removed unsafe unique indexes from `core.entities`/`core.entity_relations` so multiple entities per type and fan-out relations are supported; migration drops the legacy indexes.
+- `SourceMaterialRepository::register_external_in_flight` plus ingestd’s `MaterialAssembler` make JetStream the single writer for source materials: begin/end metadata is published over NATS, ingestd registers the ULID in `raw.source_material_registry`, and finalization merges metadata before writing temporal ledger rows.
 
 ## 1. Critical & Immediate Actions (Week 1)
 
@@ -124,9 +128,11 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Complete Stage-as-You-Go JetStream Migration (TODO #49, 51, 64, 88)**
   - **Context:** Satellites still write directly to `raw.source_material_registry` and `raw.temporal_ledger`, causing race conditions with ingestd.
   - **Action:**
-        1. Remove `PgPool` dependency from `StageAsYouGoContext`.
-        2. Emit `MaterialSlice` events via JetStream.
-        3. Let ingestd's `MaterialAssembler` be the *single writer* to the database.
+        1. ✅ `StageAsYouGoContext` gained an optional `AcquisitionManager` so satellites can publish begin/slice/end without touching Postgres (fallback DB path retained for dry-run/tests).
+        2. ✅ `AcquisitionManager` now carries metadata on begin/end; ingestd receives the same JSON the satellite would have written.
+        3. ✅ `SourceMaterialRepository::register_external_in_flight` lets ingestd create/update `raw.source_material_registry` rows using the ULID minted at the edge; `MaterialAssembler` registers records on begin and finalizes them (including merged metadata + ledger writes) on end.
+        4. ⏳ Roll the updated `StageAsYouGoContext::with_acquisition_manager(...)` into every satellite/processor so they stop constructing the context with a `PgPool` (terminal/desktop/FS ingestors still default to DB mode).
+        5. ⏳ Add an integration test that exercises the full JetStream path (satellite publishes begin/slice/end, ingestd writes DB, gateway reads provenance) to prevent regressions.
 - **Consolidate HTTP Dependency Stacks (NEW)**
   - **Context:** Workspace uses duplicate versions of `hyper` (0.14/1.0), `tower`, and `reqwest`.
   - **Action:** Align all crates to `axum 0.7` stack (hyper 1.0, http 1.0, reqwest 0.12).
@@ -954,6 +960,7 @@ let (tx, rx) = tokio::sync::mpsc::channel(100);
 #### Assessment: **MOSTLY CONSISTENT** ⚠️
 
 Backpressure is well-coordinated, but there's a configuration mismatch:
+
 - Config allows `batch_size: 1000` but consumer pulls only 100 messages
 - `max_ack_pending` is hardcoded and should be configurable
 
@@ -1360,6 +1367,7 @@ pub struct ProcessorCapabilities {
 ```
 
 Different satellites implement different capability sets:
+
 - **File ingestor**: snapshot + historical + continuous
 - **Desktop events**: continuous only
 - **Health automaton**: continuous + requires_confirmation
@@ -1388,6 +1396,7 @@ Different satellites implement different capability sets:
 #### Option Coverage Assessment
 
 Most production-critical options are exposed, but some are missing:
+
 - `max_ack_pending` not configurable (hardcoded)
 - `shutdown_timeout` not exposed
 - Individual satellite enable/disable flags

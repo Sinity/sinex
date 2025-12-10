@@ -10,7 +10,7 @@ use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value as JsonValue};
 use sinex_core::{environment::SinexEnvironment, types::Ulid};
 use std::{
     path::PathBuf,
@@ -91,7 +91,7 @@ struct MaterialBeginMessage {
     material_id: String,
     material_kind: String,
     source_identifier: String,
-    metadata: serde_json::Value,
+    metadata: JsonValue,
     started_at: String,
 }
 
@@ -103,6 +103,7 @@ struct MaterialEndMessage {
     content_hash: String,
     total_slices: usize,
     total_size_bytes: i64,
+    metadata: JsonValue,
 }
 
 impl AcquisitionManager {
@@ -207,6 +208,15 @@ impl AcquisitionManager {
     ///
     /// Ported from TemporalLedger::create_material + MaterialRotationManager logic
     pub async fn begin_material(&self, source_identifier: &str) -> Result<SourceMaterialHandle> {
+        self.begin_material_with_metadata(source_identifier, json!({}))
+            .await
+    }
+
+    pub async fn begin_material_with_metadata(
+        &self,
+        source_identifier: &str,
+        metadata: JsonValue,
+    ) -> Result<SourceMaterialHandle> {
         self.ensure_streams_ready().await?;
 
         // Generate a new material id locally; ingestd is the sole database writer.
@@ -227,7 +237,8 @@ impl AcquisitionManager {
         );
 
         // Publish begin message to NATS
-        self.publish_begin(material_id, source_identifier).await?;
+        self.publish_begin(material_id, source_identifier, metadata)
+            .await?;
 
         // Update rotation state
         let mut state = self.state.write().await;
@@ -259,12 +270,17 @@ impl AcquisitionManager {
     }
 
     /// Publish material begin event to NATS
-    async fn publish_begin(&self, material_id: Ulid, source_identifier: &str) -> Result<()> {
+    async fn publish_begin(
+        &self,
+        material_id: Ulid,
+        source_identifier: &str,
+        metadata: JsonValue,
+    ) -> Result<()> {
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
             material_kind: self.source_type.clone(),
             source_identifier: source_identifier.to_string(),
-            metadata: json!({}),
+            metadata,
             started_at: Utc::now().to_rfc3339(),
         };
 
@@ -357,7 +373,16 @@ impl AcquisitionManager {
     /// Finalize material and publish end event
     ///
     /// Ported from TemporalLedger::finalize_material
-    pub async fn finalize(&self, mut handle: SourceMaterialHandle, _reason: &str) -> Result<()> {
+    pub async fn finalize(&self, handle: SourceMaterialHandle, reason: &str) -> Result<()> {
+        self.finalize_with_metadata(handle, reason, json!({})).await
+    }
+
+    pub async fn finalize_with_metadata(
+        &self,
+        mut handle: SourceMaterialHandle,
+        _reason: &str,
+        metadata: JsonValue,
+    ) -> Result<()> {
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
             file.flush().await?;
@@ -373,6 +398,7 @@ impl AcquisitionManager {
             handle.slice_count,
             handle.bytes_written,
             &hash_hex,
+            metadata,
         )
         .await?;
 
@@ -399,6 +425,7 @@ impl AcquisitionManager {
         total_slices: usize,
         total_bytes: i64,
         content_hash: &str,
+        metadata: JsonValue,
     ) -> Result<()> {
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
@@ -406,6 +433,7 @@ impl AcquisitionManager {
             content_hash: content_hash.to_string(),
             total_slices,
             total_size_bytes: total_bytes,
+            metadata,
         };
 
         let subject = self.env.nats_subject("source_material.end");

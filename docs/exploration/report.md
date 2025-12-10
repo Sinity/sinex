@@ -276,6 +276,11 @@ The previous implementation held a write lock on the entire state map while perf
 
 **Status:** ✅ Completed — Stage-as-You-Go and AcquisitionManager no longer write source material/temporal ledger rows directly; they publish begin/slice/end via JetStream and rely on ingestd as the sole database writer.
 
+* `StageAsYouGoContext` gained an optional `AcquisitionManager`. When configured, `register_in_flight` publishes `source_material.begin` events (metadata normalized + `legacy_material_type` hints) and skips DB access entirely. If Postgres is still available (tests/offline modes), the old path is retained.
+* `AcquisitionManager::begin_material_with_metadata` and `finalize_with_metadata` now carry the satellite-provided metadata, so ingestd sees the exact same shape it used to write via `PgPool`.
+* `SourceMaterialRepository` exposes `register_external_in_flight(material_id, …)` so ingestd can insert/update rows using the ULID minted on the satellite. This avoids race conditions and removes the dependency on satellite-side SQL.
+* `MaterialAssembler` registers the in-flight record when it observes `source_material.begin`, assembles slices, and merges begin/end metadata when finalizing the record (metadata is appended before calling `finalize_in_flight`). The ingestion daemon is now the only writer touching `raw.source_material_registry` and `raw.temporal_ledger`.
+
 Satellites are writing directly to `raw.source_material_registry` via `PgPool`. They must use NATS.
 
 ### Steps

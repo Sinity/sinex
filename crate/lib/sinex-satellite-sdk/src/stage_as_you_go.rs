@@ -1,5 +1,6 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 
+use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
 use crate::annex::blob_manager::BLOB_EVENT_CHANNEL_CAPACITY;
 use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
+use serde_json::{json, Map as JsonMap};
 use sinex_core::db::models::Event;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::events::LogLinePayload;
@@ -23,6 +25,9 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+const MAX_SLICE_BYTES: usize = 512 * 1024;
+const MATERIAL_FINALIZE_REASON: &str = "stage-as-you-go";
+
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
@@ -33,6 +38,8 @@ pub struct StageAsYouGoContext {
     _allow_offline_registration: bool,
     record_temporal_ledger: bool,
     material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
+    acquisition_manager: Option<Arc<AcquisitionManager>>,
+    acquisition_handles: Arc<Mutex<HashMap<Ulid, SourceMaterialHandle>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,12 +48,14 @@ struct StageMaterialInfo {
     source_uri: Option<String>,
     started_at: DateTime<Utc>,
     backend: MaterialBackend,
+    metadata: JsonValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MaterialBackend {
     Database,
     Offline,
+    JetStream,
 }
 
 impl StageAsYouGoContext {
@@ -65,6 +74,12 @@ impl StageAsYouGoContext {
             Some(runtime.db_pool().clone()),
             runtime.event_emitter().clone(),
         )
+    }
+
+    /// Attach an acquisition manager so Stage-as-You-Go can publish materials via JetStream.
+    pub fn with_acquisition_manager(mut self, acquisition: Arc<AcquisitionManager>) -> Self {
+        self.acquisition_manager = Some(acquisition);
+        self
     }
 
     /// Create a Stage-as-You-Go context directly from processor handles
@@ -105,6 +120,8 @@ impl StageAsYouGoContext {
             _allow_offline_registration: allow_offline_registration,
             record_temporal_ledger,
             material_registry: Arc::new(Mutex::new(HashMap::new())),
+            acquisition_manager: None,
+            acquisition_handles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -124,6 +141,8 @@ impl StageAsYouGoContext {
             _allow_offline_registration: allow_offline_registration,
             record_temporal_ledger: Self::ledger_recording_enabled(),
             material_registry: Arc::new(Mutex::new(HashMap::new())),
+            acquisition_manager: None,
+            acquisition_handles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -183,8 +202,76 @@ impl StageAsYouGoContext {
         &self,
         material_type: &str,
         source_uri: Option<&str>,
-        _initial_metadata: serde_json::Value,
+        initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
+        let metadata = Self::prepare_initial_metadata(material_type, source_uri, initial_metadata);
+        if let Some(manager) = &self.acquisition_manager {
+            let identifier = source_uri.unwrap_or(material_type);
+            let handle = manager
+                .begin_material_with_metadata(identifier, metadata.clone())
+                .await
+                .map_err(|e| SatelliteError::General(eyre!("Failed to begin material: {}", e)))?;
+            let material_id = handle.material_id;
+            self.acquisition_handles
+                .lock()
+                .await
+                .insert(material_id, handle);
+
+            info!(
+                blob_id = %material_id,
+                material_type = material_type,
+                "Registered in-flight source material via JetStream"
+            );
+
+            let info = StageMaterialInfo {
+                material_type: material_type.to_string(),
+                source_uri: source_uri.map(|s| s.to_string()),
+                started_at: Utc::now(),
+                backend: MaterialBackend::JetStream,
+                metadata,
+            };
+
+            self.material_registry
+                .lock()
+                .await
+                .insert(material_id, info);
+
+            return Ok(material_id);
+        }
+
+        if let Some(pool) = &self.db_pool {
+            let record = pool
+                .source_materials()
+                .register_in_flight(material_type, source_uri, metadata.clone())
+                .await
+                .map_err(|e| {
+                    SatelliteError::General(eyre!("Failed to register source material: {}", e))
+                })?;
+
+            let material_id = record.id;
+
+            info!(
+                blob_id = %material_id,
+                material_type = material_type,
+                "Registered in-flight source material via Postgres"
+            );
+
+            let info = StageMaterialInfo {
+                material_type: material_type.to_string(),
+                source_uri: source_uri.map(|s| s.to_string()),
+                started_at: record.start_time.unwrap_or_else(|| record.staged_at.into()),
+                backend: MaterialBackend::Database,
+                metadata,
+            };
+
+            self.material_registry
+                .lock()
+                .await
+                .insert(material_id, info);
+
+            return Ok(material_id);
+        }
+
         let material_id = Ulid::new();
         let backend = MaterialBackend::Offline;
 
@@ -199,6 +286,7 @@ impl StageAsYouGoContext {
             source_uri: source_uri.map(|s| s.to_string()),
             started_at: Utc::now(),
             backend,
+            metadata,
         };
 
         self.material_registry
@@ -290,17 +378,49 @@ impl StageAsYouGoContext {
             None
         };
 
-        let material_info = {
+        let mut material_info = {
             let mut registry = self.material_registry.lock().await;
             registry.remove(&id)
         };
+
+        if let Some(manager) = &self.acquisition_manager {
+            if let Some(handle) = self.acquisition_handles.lock().await.remove(&id) {
+                self.finalize_via_acquisition(
+                    manager.clone(),
+                    handle,
+                    material_info.as_ref(),
+                    content,
+                    mime_type,
+                    encoding,
+                    content_preview.clone(),
+                )
+                .await?;
+                info!(
+                    material_id = %id,
+                    bytes = content.len(),
+                    "Finalized source material via JetStream"
+                );
+                return Ok(());
+            } else {
+                warn!(
+                    material_id = %id,
+                    "Missing acquisition handle for material; falling back to database finalize"
+                );
+                if let Some(info) = material_info.as_mut() {
+                    info.backend = MaterialBackend::Database;
+                }
+            }
+        }
 
         let backend = material_info
             .as_ref()
             .map(|info| info.backend)
             .unwrap_or(MaterialBackend::Database);
 
-        if backend == MaterialBackend::Offline || self.db_pool.is_none() {
+        if backend == MaterialBackend::Offline
+            || backend == MaterialBackend::JetStream
+            || self.db_pool.is_none()
+        {
             info!(
                 material_id = %id,
                 "Finalize skipped database updates because Stage-as-You-Go is running without Postgres connectivity"
@@ -386,6 +506,32 @@ impl StageAsYouGoContext {
         );
 
         Ok(())
+    }
+
+    async fn finalize_via_acquisition(
+        &self,
+        manager: Arc<AcquisitionManager>,
+        mut handle: SourceMaterialHandle,
+        info: Option<&StageMaterialInfo>,
+        content: &[u8],
+        _mime_type: Option<&str>,
+        encoding: Option<&str>,
+        content_preview: Option<String>,
+    ) -> SatelliteResult<()> {
+        for chunk in content.chunks(MAX_SLICE_BYTES) {
+            manager
+                .append_slice(&mut handle, chunk)
+                .await
+                .map_err(|e| SatelliteError::General(eyre!("Failed to append slice: {}", e)))?;
+        }
+
+        let metadata =
+            Self::build_finalize_metadata(info, content.len() as i64, content_preview, encoding);
+
+        manager
+            .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to finalize material: {}", e)))
     }
 
     fn ledger_recording_enabled() -> bool {
@@ -498,6 +644,29 @@ impl StageAsYouGoContext {
         format!("material-{}.bin", material_id)
     }
 
+    fn build_finalize_metadata(
+        info: Option<&StageMaterialInfo>,
+        total_bytes: i64,
+        content_preview: Option<String>,
+        encoding: Option<&str>,
+    ) -> JsonValue {
+        let mut base = info
+            .map(|i| i.metadata.clone())
+            .unwrap_or_else(|| json!({}));
+        if !base.is_object() {
+            base = json!({});
+        }
+        let map = base.as_object_mut().expect("metadata normalized to object");
+        map.insert("total_bytes".to_string(), JsonValue::from(total_bytes));
+        if let Some(preview) = content_preview {
+            map.insert("content_preview".to_string(), JsonValue::String(preview));
+        }
+        if let Some(enc) = encoding {
+            map.insert("encoding".to_string(), JsonValue::String(enc.to_string()));
+        }
+        JsonValue::Object(map.clone())
+    }
+
     async fn record_ledger_entry(
         &self,
         material_id: Ulid,
@@ -550,6 +719,38 @@ impl LogFileStageProcessor {
             context,
             log_source: log_source.into(),
         }
+    }
+}
+
+fn normalize_metadata(value: JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(_) => value,
+        JsonValue::Null => json!({}),
+        other => {
+            let mut map = JsonMap::new();
+            map.insert("value".to_string(), other);
+            JsonValue::Object(map)
+        }
+    }
+}
+
+impl StageAsYouGoContext {
+    fn prepare_initial_metadata(
+        material_type: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+    ) -> JsonValue {
+        let mut normalized = normalize_metadata(metadata);
+        let map = normalized
+            .as_object_mut()
+            .expect("metadata normalized to object");
+        map.entry("legacy_material_type".to_string())
+            .or_insert_with(|| JsonValue::String(material_type.to_string()));
+        if let Some(uri) = source_uri {
+            map.entry("source_uri".to_string())
+                .or_insert_with(|| JsonValue::String(uri.to_string()));
+        }
+        normalized
     }
 }
 

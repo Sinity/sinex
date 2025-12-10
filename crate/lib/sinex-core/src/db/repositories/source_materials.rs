@@ -633,11 +633,13 @@ impl<'a> SourceMaterialRepository<'a> {
     }
 
     /// Register in-flight source material (Stage-as-you-go)
-    pub async fn register_in_flight(
+    async fn register_in_flight_internal(
         &self,
+        id: Id<SourceMaterial>,
         material_kind_hint: &str,
         source_uri: Option<&str>,
         metadata: JsonValue,
+        start_time_override: Option<DateTime<Utc>>,
     ) -> DbResult<SourceMaterialRecord> {
         let mut material =
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
@@ -655,7 +657,9 @@ impl<'a> SourceMaterialRepository<'a> {
         );
 
         // Ensure we have a start time for the session; reuse on conflicts.
-        let start_time = material.start_time.unwrap_or_else(|| Utc::now());
+        let start_time = start_time_override
+            .or(material.start_time)
+            .unwrap_or_else(Utc::now);
         material.start_time = Some(start_time);
 
         // Prefer a single upsert when the canonical unique constraint exists.
@@ -716,7 +720,7 @@ impl<'a> SourceMaterialRepository<'a> {
             .map(|id| ulid_to_uuid(*id.as_ulid()));
 
         let upsert_result = sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
-            .bind(ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()))
+            .bind(ulid_to_uuid(*id.as_ulid()))
             .bind(material.material_kind.clone())
             .bind(material.source_identifier.clone())
             .bind(material.status.clone())
@@ -777,7 +781,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 "#;
 
                 let insert_result = sqlx::query_as::<_, SourceMaterialRecord>(insert_sql)
-                    .bind(ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()))
+                    .bind(ulid_to_uuid(*id.as_ulid()))
                     .bind(material.material_kind)
                     .bind(material.source_identifier.clone())
                     .bind(material.status.clone())
@@ -841,6 +845,36 @@ impl<'a> SourceMaterialRepository<'a> {
             }
             Err(e) => Err(db_error(e, "register in-flight source material")),
         }
+    }
+
+    pub async fn register_in_flight(
+        &self,
+        material_kind_hint: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+    ) -> DbResult<SourceMaterialRecord> {
+        let id = Id::<SourceMaterial>::new();
+        self.register_in_flight_internal(id, material_kind_hint, source_uri, metadata, None)
+            .await
+    }
+
+    pub async fn register_external_in_flight(
+        &self,
+        material_id: crate::Ulid,
+        material_kind_hint: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+        started_at: DateTime<Utc>,
+    ) -> DbResult<SourceMaterialRecord> {
+        let id = Id::<SourceMaterial>::from_ulid(material_id);
+        self.register_in_flight_internal(
+            id,
+            material_kind_hint,
+            source_uri,
+            metadata,
+            Some(started_at),
+        )
+        .await
     }
 
     /// Finalize in-flight source material
@@ -964,6 +998,25 @@ impl<'a> SourceMaterialRepositoryTx<'a> {
     ) -> DbResult<SourceMaterialRecord> {
         SourceMaterialRepository::new(self.pool)
             .register_in_flight(material_kind_hint, source_uri, metadata)
+            .await
+    }
+
+    pub async fn register_external_in_flight(
+        &self,
+        material_id: crate::Ulid,
+        material_kind_hint: &str,
+        source_uri: Option<&str>,
+        metadata: JsonValue,
+        started_at: DateTime<Utc>,
+    ) -> DbResult<SourceMaterialRecord> {
+        SourceMaterialRepository::new(self.pool)
+            .register_external_in_flight(
+                material_id,
+                material_kind_hint,
+                source_uri,
+                metadata,
+                started_at,
+            )
             .await
     }
 
