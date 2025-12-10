@@ -176,6 +176,10 @@ impl GatewayAuth {
             mode: GatewayAuthMode::StaticToken(token.to_string()),
         }
     }
+
+    fn is_disabled(&self) -> bool {
+        matches!(self.mode, GatewayAuthMode::Disabled)
+    }
 }
 
 fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
@@ -451,6 +455,26 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     Err(eyre!(
         "Invalid TCP listen specification '{spec}'. Expected host:port."
     ))
+}
+
+fn guard_tcp_auth(bind_address: &BindAddress, auth: &GatewayAuth) -> color_eyre::eyre::Result<()> {
+    if let BindAddress::Tcp { host, .. } = bind_address {
+        if auth.is_disabled() {
+            return Err(eyre!(
+                "TCP binding requires SINEX_RPC_TOKEN; insecure mode (SINEX_GATEWAY_ALLOW_INSECURE) is only allowed for Unix socket bindings"
+            ));
+        }
+
+        // Disallow obvious remote exposure on insecure hosts even with token defaults.
+        if host != "127.0.0.1" && host != "localhost" {
+            warn!(
+                bind_host = %host,
+                "Gateway TCP binding is exposed beyond loopback; ensure TLS termination/mTLS is configured"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
@@ -730,6 +754,29 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn tcp_binding_disallows_insecure_mode() -> color_eyre::eyre::Result<()> {
+        let bind = BindAddress::Tcp {
+            host: "127.0.0.1".into(),
+            port: 8080,
+        };
+        let insecure = GatewayAuth {
+            mode: GatewayAuthMode::Disabled,
+        };
+        let secure = GatewayAuth::with_test_token("secret");
+
+        assert!(
+            guard_tcp_auth(&bind, &insecure).is_err(),
+            "TCP binding should reject disabled auth"
+        );
+        assert!(
+            guard_tcp_auth(&bind, &secure).is_ok(),
+            "TCP binding should allow static token auth"
+        );
+
+        Ok(())
+    }
+
     #[sinex_test]
     async fn gateway_auth_blocks_missing_token() -> color_eyre::eyre::Result<()> {
         let auth = GatewayAuth::with_test_token("secret");
@@ -770,6 +817,7 @@ pub async fn run(
         BindAddress::from_env_or_socket_path(Utf8PathBuf::from(socket_path.as_str()), tcp_listen)?;
 
     let auth = GatewayAuth::from_env()?;
+    guard_tcp_auth(&bind_address, &auth)?;
     let state = AppState { services, auth };
 
     let limits = RpcServerLimits::from_env();

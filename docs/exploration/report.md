@@ -317,6 +317,10 @@ Satellites are writing directly to `raw.source_material_registry` via `PgPool`. 
 
 Services run with default privileges. They must be sandboxed.
 
+## Gateway TCP Security
+
+**Status:** ✅ TCP bindings now reject insecure mode (SINEX_GATEWAY_ALLOW_INSECURE) and require tokens; Unix sockets remain the default.
+
 ### Steps
 
 1. **Define Hardening Overlay**
