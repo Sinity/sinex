@@ -28,7 +28,7 @@ use tracing::{debug, error, info, warn};
 #[derive(Clone)]
 pub struct StageAsYouGoContext {
     #[allow(dead_code)]
-    db_pool: PgPool,
+    db_pool: Option<PgPool>,
     event_emitter: EventEmitter,
     blob_manager: Option<Arc<BlobManager>>,
     allow_offline_registration: bool,
@@ -62,19 +62,39 @@ impl StageAsYouGoContext {
 
     /// Create a Stage-as-You-Go context from processor runtime handles
     pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
-        Self::from_emitter(runtime.db_pool().clone(), runtime.event_emitter().clone())
+        Self::from_optional_emitter(Some(runtime.db_pool().clone()), runtime.event_emitter().clone())
     }
 
     /// Create a Stage-as-You-Go context directly from processor handles
     pub fn from_handles(handles: &ProcessorHandles) -> Self {
-        Self::from_emitter(handles.db_pool().clone(), handles.emitter().clone())
+        Self::from_optional_emitter(Some(handles.db_pool().clone()), handles.emitter().clone())
     }
 
     /// Create a Stage-as-You-Go context from explicit components
     pub fn from_emitter(db_pool: PgPool, event_emitter: EventEmitter) -> Self {
-        let blob_manager = Self::init_blob_manager(&db_pool, &event_emitter);
+        Self::from_optional_emitter(Some(db_pool), event_emitter)
+    }
+
+    /// Convenience helper to build a context from a sender channel (tests/tooling)
+    pub fn from_sender(
+        db_pool: PgPool,
+        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
+        dry_run: bool,
+    ) -> Self {
+        Self::from_optional_emitter(Some(db_pool), EventEmitter::new(event_sender, dry_run))
+    }
+
+    /// Create a Stage-as-You-Go context without a database (JetStream-only mode)
+    pub fn from_emitter_without_db(event_emitter: EventEmitter) -> Self {
+        Self::from_optional_emitter(None, event_emitter)
+    }
+
+    fn from_optional_emitter(db_pool: Option<PgPool>, event_emitter: EventEmitter) -> Self {
+        let blob_manager = Self::init_blob_manager(db_pool.as_ref(), &event_emitter);
         let allow_offline_registration =
-            event_emitter.dry_run() || Self::offline_registration_env_enabled();
+            event_emitter.dry_run()
+                || Self::offline_registration_env_enabled()
+                || db_pool.is_none();
         let record_temporal_ledger = Self::ledger_recording_enabled();
 
         Self {
@@ -87,15 +107,6 @@ impl StageAsYouGoContext {
         }
     }
 
-    /// Convenience helper to build a context from a sender channel (tests/tooling)
-    pub fn from_sender(
-        db_pool: PgPool,
-        event_sender: mpsc::UnboundedSender<Event<JsonValue>>,
-        dry_run: bool,
-    ) -> Self {
-        Self::from_emitter(db_pool, EventEmitter::new(event_sender, dry_run))
-    }
-
     /// Create a Stage-as-You-Go context with an explicitly provided blob manager
     pub fn with_blob_manager(
         db_pool: PgPool,
@@ -106,7 +117,7 @@ impl StageAsYouGoContext {
             event_emitter.dry_run() || Self::offline_registration_env_enabled();
 
         Self {
-            db_pool,
+            db_pool: Some(db_pool),
             event_emitter,
             blob_manager: Some(blob_manager),
             allow_offline_registration,
@@ -115,10 +126,12 @@ impl StageAsYouGoContext {
         }
     }
 
-    fn init_blob_manager(
-        db_pool: &PgPool,
-        event_emitter: &EventEmitter,
-    ) -> Option<Arc<BlobManager>> {
+    fn init_blob_manager(db_pool: Option<&PgPool>, event_emitter: &EventEmitter) -> Option<Arc<BlobManager>> {
+        let Some(db_pool) = db_pool else {
+            // JetStream-only mode: skip BlobManager initialization.
+            return None;
+        };
+
         let path = match std::env::var("SINEX_ANNEX_PATH") {
             Ok(path) => path,
             Err(_) => return None,
@@ -168,46 +181,56 @@ impl StageAsYouGoContext {
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
-        let source_material_repo = self.db_pool.source_materials();
-        let register_future =
-            source_material_repo.register_in_flight(material_type, source_uri, initial_metadata);
-        let result = match timeout(Self::db_registration_timeout(), register_future).await {
-            Ok(res) => res.map_err(|err| err.to_string()),
-            Err(_) => Err("register_in_flight timed out while waiting for database".to_string()),
-        };
-
         let env_offline_enabled = Self::offline_registration_env_enabled();
         let offline_allowed = self.allow_offline_registration || env_offline_enabled;
 
-        let (material_id, backend) = match result {
-            Ok(record) => (record.id, MaterialBackend::Database),
-            Err(err) if offline_allowed => {
-                let fallback = Ulid::new();
-                warn!(
-                    material_type = material_type,
-                    source_uri = ?source_uri,
-                    "Stage-as-You-Go running without Postgres connectivity (reason: {err}); generating offline material id {fallback}"
-                );
-                (fallback, MaterialBackend::Offline)
+        let (material_id, backend) = if let Some(pool) = &self.db_pool {
+            let source_material_repo = pool.source_materials();
+            let register_future =
+                source_material_repo.register_in_flight(material_type, source_uri, initial_metadata);
+            let result = match timeout(Self::db_registration_timeout(), register_future).await {
+                Ok(res) => res.map_err(|err| err.to_string()),
+                Err(_) => Err("register_in_flight timed out while waiting for database".to_string()),
+            };
+
+            match result {
+                Ok(record) => (record.id, MaterialBackend::Database),
+                Err(err) if offline_allowed => {
+                    let fallback = Ulid::new();
+                    warn!(
+                        material_type = material_type,
+                        source_uri = ?source_uri,
+                        "Stage-as-You-Go running without Postgres connectivity (reason: {err}); generating offline material id {fallback}"
+                    );
+                    (fallback, MaterialBackend::Offline)
+                }
+                Err(err) => {
+                    error!(
+                        allow_offline = self.allow_offline_registration,
+                        env_offline_enabled,
+                        "Stage-as-You-Go failed to register in-flight material: {}",
+                        err
+                    );
+                    eprintln!(
+                        "Stage-as-You-Go offline registration disabled (allow_offline={}, env_offline={}): {}",
+                        self.allow_offline_registration,
+                        env_offline_enabled,
+                        err
+                    );
+                    return Err(SatelliteError::General(eyre!(
+                        "Failed to register in-flight source material: {}",
+                        err
+                    )));
+                }
             }
-            Err(err) => {
-                error!(
-                    allow_offline = self.allow_offline_registration,
-                    env_offline_enabled,
-                    "Stage-as-You-Go failed to register in-flight material: {}",
-                    err
-                );
-                eprintln!(
-                    "Stage-as-You-Go offline registration disabled (allow_offline={}, env_offline={}): {}",
-                    self.allow_offline_registration,
-                    env_offline_enabled,
-                    err
-                );
-                return Err(SatelliteError::General(eyre!(
-                    "Failed to register in-flight source material: {}",
-                    err
-                )));
-            }
+        } else {
+            let fallback = Ulid::new();
+            info!(
+                material_type = material_type,
+                source_uri = ?source_uri,
+                "Stage-as-You-Go running without database pool; generating offline material id {fallback}"
+            );
+            (fallback, MaterialBackend::Offline)
         };
 
         info!(
@@ -321,7 +344,7 @@ impl StageAsYouGoContext {
             .map(|info| info.backend)
             .unwrap_or(MaterialBackend::Database);
 
-        if backend == MaterialBackend::Offline {
+        if backend == MaterialBackend::Offline || self.db_pool.is_none() {
             info!(
                 material_id = %id,
                 "Finalize skipped database updates because Stage-as-You-Go is running without Postgres connectivity"
@@ -329,7 +352,18 @@ impl StageAsYouGoContext {
             return Ok(());
         }
 
-        let source_material_repo = self.db_pool.source_materials();
+        let pool = match &self.db_pool {
+            Some(pool) => pool,
+            None => {
+                warn!(
+                    material_id = %id,
+                    "Database pool missing during finalize; skipping DB updates"
+                );
+                return Ok(());
+            }
+        };
+
+        let source_material_repo = pool.source_materials();
 
         let mut blob_id = None;
         let mut total_bytes = content.len() as i64;
@@ -514,6 +548,17 @@ impl StageAsYouGoContext {
         info: Option<&StageMaterialInfo>,
         total_bytes: i64,
     ) -> SatelliteResult<()> {
+        let pool = match &self.db_pool {
+            Some(pool) => pool,
+            None => {
+                debug!(
+                    material_id = %material_id,
+                    "Skipping temporal ledger entry because no database pool is available"
+                );
+                return Ok(());
+            }
+        };
+
         let (source_type, started_at) = info
             .map(|info| (info.material_type.as_str(), info.started_at))
             .unwrap_or(("stage-as-you-go", Utc::now()));
@@ -535,7 +580,7 @@ impl StageAsYouGoContext {
             "wall",
             ledger_source_type
         )
-        .execute(&self.db_pool)
+        .execute(pool)
         .await
         .map_err(|e| SatelliteError::General(eyre!("Failed to append temporal ledger entry: {}", e)))?;
 
