@@ -456,32 +456,62 @@ impl CheckpointManager {
 
     /// Reset checkpoint (for testing or manual intervention)
     pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-        // CheckpointQueries doesn't have delete_checkpoint method in the new API
-        // For now, just log a warning
-        warn!(
-            processor = %self.processor_name,
-            "Reset checkpoint not implemented in new API"
-        );
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+        let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        warn!(
-            processor = %self.processor_name,
-            consumer_group = %self.consumer_group,
-            consumer_name = %self.consumer_name,
-            "Reset checkpoint"
-        );
+        let deleted = self
+            .pool
+            .checkpoints()
+            .delete(&processor_name, &consumer_group, &consumer_name)
+            .await?;
+
+        if deleted {
+            info!(
+                processor = %self.processor_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "Checkpoint reset"
+            );
+        } else {
+            warn!(
+                processor = %self.processor_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "No checkpoint found to reset"
+            );
+        }
 
         Ok(())
     }
 
     /// Get checkpoint statistics
     pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
-        // CheckpointQueries doesn't have get_checkpoint_stats method in the new API
-        // For now, return default stats
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+
+        let stats = sqlx::query_as!(
+            CheckpointStatsRecord,
+            r#"
+            SELECT 
+                COUNT(*) as total_checkpoints,
+                MAX(processed_count) as max_processed,
+                MAX(updated_at) as last_update,
+                MIN(created_at) as first_checkpoint
+            FROM core.processor_checkpoints
+            WHERE processor_name = $1 AND consumer_group = $2
+            "#,
+            processor_name.as_ref(),
+            consumer_group.as_ref()
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
         Ok(CheckpointStats {
-            total_checkpoints: 0,
-            max_processed: 0,
-            last_update: None,
-            first_checkpoint: None,
+            total_checkpoints: stats.total_checkpoints as u64,
+            max_processed: stats.max_processed.unwrap_or(0) as u64,
+            last_update: stats.last_update,
+            first_checkpoint: stats.first_checkpoint,
         })
     }
 }
