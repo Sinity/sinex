@@ -224,7 +224,9 @@ write standalone implementation plan for a coding agent to make most important f
 **Severity:** **CRITICAL** (Performance/Deadlock Risk)
 **File:** `crate/core/sinex-ingestd/src/material_assembler.rs`
 
-The current implementation holds a write lock on the entire state map while performing disk I/O. This serializes all ingestion.
+**Status:** ✅ Completed — assembler state now uses per-material mutexes so I/O for different materials no longer serializes on the global map.
+
+The previous implementation held a write lock on the entire state map while performing disk I/O, which serialized all ingestion.
 
 ### Steps
 

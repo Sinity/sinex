@@ -22,6 +22,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 **Recent Fixes (current branch)**
 
 - Material assembler panic paths hardened (removed `expect` and return errors).
+- Material assembler state map now uses per-material locks so concurrent materials no longer serialize on a global lock.
 - Ingestion shutdown now waits for background tasks before closing DB pools.
 - Native messaging secret comparison uses constant-time equality.
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
