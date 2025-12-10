@@ -26,6 +26,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - Ingestion shutdown now waits for background tasks before closing DB pools.
 - Native messaging secret comparison uses constant-time equality.
 - Systemd hardening applied to ingestd, gateway, and satellite units (ProtectSystem strict, PrivateTmp, NoNewPrivileges, AF restriction).
+- Checkpoint reset/stats implemented for satellites (no-op stubs removed).
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
 
 ## 1. Critical & Immediate Actions (Week 1)
