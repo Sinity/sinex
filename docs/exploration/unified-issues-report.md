@@ -29,7 +29,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - Checkpoint reset/stats implemented for satellites (no-op stubs removed).
 - Stage-as-You-Go now supports JetStream-only mode (DB-optional registration/finalization paths).
 - Stage-as-You-Go and AcquisitionManager no longer write source material/ledger rows directly; ingestd is the single database writer.
-- Gateway TCP bindings now require tokens; insecure mode is limited to Unix sockets.
+- Gateway TCP bindings now require tokens and TLS; insecure mode is limited to Unix sockets.
+- Checkpoints can persist to NATS KV; ingestd broadcasts active schemas to `system.schemas.active`.
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
 
 ## 1. Critical & Immediate Actions (Week 1)

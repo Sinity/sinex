@@ -244,7 +244,8 @@ impl From<LegacyCheckpointState> for CheckpointState {
 /// Database operations are atomic and handle concurrent access.
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
-    pool: PgPool,
+    pool: Option<PgPool>,
+    kv: Option<async_nats::jetstream::kv::Store>,
     processor_name: String,
     consumer_group: String,
     consumer_name: String,
@@ -258,8 +259,20 @@ impl CheckpointManager {
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
+        Self::new_with_backends(Some(pool), None, processor_name, consumer_group, consumer_name)
+    }
+
+    /// Create a checkpoint manager with optional NATS KV and/or database backends.
+    pub fn new_with_backends(
+        pool: Option<PgPool>,
+        kv: Option<async_nats::jetstream::kv::Store>,
+        processor_name: String,
+        consumer_group: String,
+        consumer_name: String,
+    ) -> Self {
         Self {
             pool,
+            kv,
             processor_name,
             consumer_group,
             consumer_name,
@@ -280,22 +293,55 @@ impl CheckpointManager {
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
+        if let Some(kv) = &self.kv {
+            if let Some(entry) = kv
+                .get(&self.kv_key())
+                .await
+                .map_err(|e| SatelliteError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))? {
+                if !entry.value.is_empty() {
+                    match serde_json::from_slice::<CheckpointState>(&entry.value) {
+                        Ok(state) => {
+                            debug!(
+                                processor = %self.processor_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                "Loaded checkpoint from KV"
+                            );
+                            return Ok(state);
+                        }
+                        Err(err) => {
+                            warn!(
+                                processor = %self.processor_name,
+                                error = %err,
+                                "Failed to decode checkpoint from KV; falling back to database if available"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let checkpoint_result = self
-            .pool
-            .checkpoints()
-            .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
-            .await?;
+        let checkpoint_result = match &self.pool {
+            Some(pool) => pool
+                .checkpoints()
+                .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
+                .await?,
+            None => None,
+        };
         let checkpoint_result = if checkpoint_result.is_some() {
             checkpoint_result
         } else {
-            self.pool
-                .checkpoints()
-                .get_latest_for_processor_group(&processor_name, &consumer_group)
-                .await?
+            match &self.pool {
+                Some(pool) => pool
+                    .checkpoints()
+                    .get_latest_for_processor_group(&processor_name, &consumer_group)
+                    .await?,
+                None => None,
+            }
         };
 
         let checkpoint = if let Some(row) = checkpoint_result {
@@ -406,21 +452,31 @@ impl CheckpointManager {
             )
         })?;
 
-        self.pool
-            .checkpoints()
-            .upsert(
-                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
-                    processor: &processor_name,
-                    consumer_group: &consumer_group,
-                    consumer_name: &consumer_name,
-                },
-                last_processed_id.map(|id| {
-                    sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
-                }),
-                processed_count,
-                Some(checkpoint_data),
-            )
-            .await?;
+        if let Some(pool) = &self.pool {
+            pool.checkpoints()
+                .upsert(
+                    sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                        processor: &processor_name,
+                        consumer_group: &consumer_group,
+                        consumer_name: &consumer_name,
+                    },
+                    last_processed_id.map(|id| {
+                        sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
+                    }),
+                    processed_count,
+                    Some(checkpoint_data.clone()),
+                )
+                .await?;
+        }
+
+        if let Some(kv) = &self.kv {
+            let encoded = serde_json::to_vec(state).map_err(SatelliteError::Serialization)?;
+            kv.put(&self.kv_key(), encoded.into())
+                .await
+                .map_err(|e| {
+                    SatelliteError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
+                })?;
+        }
 
         debug!(
             processor = %self.processor_name,
@@ -432,6 +488,13 @@ impl CheckpointManager {
         );
 
         Ok(())
+    }
+
+    fn kv_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.processor_name, self.consumer_group, self.consumer_name
+        )
     }
 
     /// Get checkpoint history for debugging
@@ -460,11 +523,17 @@ impl CheckpointManager {
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let deleted = self
-            .pool
-            .checkpoints()
-            .delete(&processor_name, &consumer_group, &consumer_name)
-            .await?;
+        let deleted = match &self.pool {
+            Some(pool) => pool
+                .checkpoints()
+                .delete(&processor_name, &consumer_group, &consumer_name)
+                .await?,
+            None => false,
+        };
+
+        if let Some(kv) = &self.kv {
+            let _ = kv.delete(&self.kv_key()).await;
+        }
 
         if deleted {
             info!(
@@ -490,22 +559,31 @@ impl CheckpointManager {
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
 
-        let stats = sqlx::query_as!(
-            CheckpointStatsRecord,
-            r#"
-            SELECT 
-                COUNT(*) as total_checkpoints,
-                MAX(processed_count) as max_processed,
-                MAX(updated_at) as last_update,
-                MIN(created_at) as first_checkpoint
-            FROM core.processor_checkpoints
-            WHERE processor_name = $1 AND consumer_group = $2
-            "#,
-            processor_name.as_ref(),
-            consumer_group.as_ref()
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let stats = if let Some(pool) = &self.pool {
+            sqlx::query_as!(
+                CheckpointStatsRecord,
+                r#"
+                SELECT 
+                    COUNT(*) as total_checkpoints,
+                    MAX(processed_count) as max_processed,
+                    MAX(updated_at) as last_update,
+                    MIN(created_at) as first_checkpoint
+                FROM core.processor_checkpoints
+                WHERE processor_name = $1 AND consumer_group = $2
+                "#,
+                processor_name.as_ref(),
+                consumer_group.as_ref()
+            )
+            .fetch_one(pool)
+            .await?
+        } else {
+            CheckpointStatsRecord {
+                total_checkpoints: 0,
+                max_processed: Some(0),
+                last_update: None,
+                first_checkpoint: None,
+            }
+        };
 
         Ok(CheckpointStats {
             total_checkpoints: stats.total_checkpoints as u64,

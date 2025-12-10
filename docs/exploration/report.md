@@ -319,7 +319,11 @@ Services run with default privileges. They must be sandboxed.
 
 ## Gateway TCP Security
 
-**Status:** ✅ TCP bindings now reject insecure mode (SINEX_GATEWAY_ALLOW_INSECURE) and require tokens; Unix sockets remain the default.
+**Status:** ✅ TCP bindings now reject insecure mode (SINEX_GATEWAY_ALLOW_INSECURE), require tokens, and enforce TLS; Unix sockets remain the default.
+
+## Edge-mode Checkpoints & Schema Broadcast
+
+**Status:** ✅ Checkpoints can persist to NATS KV (opt-in via env), and ingestd broadcasts active schemas to `system.schemas.active` for edge satellites.
 
 ### Steps
 

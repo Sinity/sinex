@@ -21,6 +21,9 @@ use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tower::{
     limit::ConcurrencyLimitLayer,
@@ -31,6 +34,9 @@ use tower::{
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tokio_rustls::{rustls, TlsAcceptor};
+use tokio_rustls::rustls::server::AllowAnyAuthenticatedClient;
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 
 // Standard library
 use thiserror::Error;
@@ -457,6 +463,74 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     ))
 }
 
+fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<String>)> {
+    let cert = std::env::var("SINEX_GATEWAY_TLS_CERT")
+        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_CERT is required for TCP bindings"))?;
+    let key = std::env::var("SINEX_GATEWAY_TLS_KEY")
+        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_KEY is required for TCP bindings"))?;
+    let client_ca = std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").ok();
+    Ok((cert, key, client_ca))
+}
+
+fn load_rustls_config(
+    cert_path: &str,
+    key_path: &str,
+    client_ca_path: Option<&str>,
+) -> color_eyre::eyre::Result<rustls::ServerConfig> {
+    let cert_file = &mut BufReader::new(File::open(cert_path)?);
+    let key_file = &mut BufReader::new(File::open(key_path)?);
+
+    let cert_chain = certs(cert_file)
+        .map_err(|_| eyre!("Failed to read TLS certificate"))?
+        .into_iter()
+        .map(rustls::Certificate)
+        .collect::<Vec<_>>();
+
+    let mut keys = pkcs8_private_keys(key_file)
+        .map_err(|_| eyre!("Failed to read TLS private key (pkcs8)"))?
+        .into_iter()
+        .map(rustls::PrivateKey)
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
+        let mut key_file = BufReader::new(File::open(key_path)?);
+        keys = rsa_private_keys(&mut key_file)
+            .map_err(|_| eyre!("Failed to read TLS private key (rsa)"))?
+            .into_iter()
+            .map(rustls::PrivateKey)
+            .collect();
+    }
+
+    let key = keys
+        .into_iter()
+        .next()
+        .ok_or_else(|| eyre!("No private keys found in {}", key_path))?;
+
+    let mut cfg = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
+        .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))?;
+
+    if let Some(ca_path) = client_ca_path {
+        let mut ca_reader = BufReader::new(File::open(ca_path)?);
+        let client_certs = certs(&mut ca_reader)
+            .map_err(|_| eyre!("Failed to read client CA bundle"))?
+            .into_iter()
+            .map(rustls::Certificate)
+            .collect::<Vec<_>>();
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in client_certs {
+            roots
+                .add(&cert)
+                .map_err(|e| eyre!("Failed to add client CA cert: {:?}", e))?;
+        }
+        let verifier = rustls::server::AllowAnyAuthenticatedClient::new(roots);
+        cfg.verifier = Arc::new(verifier);
+    }
+
+    Ok(cfg)
+}
+
 fn guard_tcp_auth(bind_address: &BindAddress, auth: &GatewayAuth) -> color_eyre::eyre::Result<()> {
     if let BindAddress::Tcp { host, .. } = bind_address {
         if auth.is_disabled() {
@@ -832,8 +906,32 @@ pub async fn run(
         BindAddress::Tcp { host, port } => {
             let addr = format!("{}:{}", host, port);
             let listener = tokio::net::TcpListener::bind(&addr).await?;
-            info!("RPC server listening on TCP {}", addr);
-            axum::serve(listener, app).await?;
+            let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
+            let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
+            let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+            info!("RPC server listening on TLS {}", addr);
+
+            loop {
+                let (stream, peer) = listener.accept().await?;
+                let app_clone = app.clone();
+                let acceptor = acceptor.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(app_clone);
+                            let io = TokioIo::new(tls_stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "TLS handshake failed for {:?}", peer);
+                        }
+                    }
+                });
+            }
         }
         BindAddress::UnixSocket { path } => {
             let path_str = path.as_str();

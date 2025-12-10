@@ -14,6 +14,7 @@ use sinex_core::environment as sinex_environment;
 use sinex_core::types::utils::ResourceGuard;
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sqlx::PgPool;
+use serde::Serialize;
 
 // Standard library and common crates
 use std::{
@@ -136,6 +137,12 @@ impl IngestService {
             EventValidator::new(false)
         };
 
+        if let Some(ref nats_client) = nats_client {
+            if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client).await {
+                warn!("Failed to broadcast schemas: {}", e);
+            }
+        }
+
         // Initialize telemetry (we'll set up the channel after service is created)
 
         let service = Self {
@@ -200,7 +207,7 @@ impl IngestService {
 
         // Schema reload task
         if let Some(ref pool) = self.db_pool {
-            let handle = self.start_schema_reload_task(pool.clone()).await;
+            let handle = self.start_schema_reload_task(pool.clone(), self.nats_client.clone()).await;
             self.track_task(handle).await;
         }
 
@@ -311,7 +318,7 @@ impl IngestService {
     }
 
     /// Start schema reload task
-    async fn start_schema_reload_task(&self, pool: PgPool) -> JoinHandle<()> {
+    async fn start_schema_reload_task(&self, pool: PgPool, nats_client: Option<NatsClient>) -> JoinHandle<()> {
         let validator = self.validator.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
@@ -324,6 +331,10 @@ impl IngestService {
                         let mut validator_guard = validator.write().await;
                         if let Err(e) = validator_guard.reload_schemas(&pool).await {
                             warn!("Failed to reload schemas: {}", e);
+                        } else if let Some(nc) = &nats_client {
+                            if let Err(e) = Self::broadcast_active_schemas(&validator_guard, nc).await {
+                                warn!("Failed to broadcast active schemas: {}", e);
+                            }
                         }
                     }
                     _ = shutdown_signal(&shutdown_flag) => {
@@ -467,6 +478,46 @@ pub async fn try_acquire_migration_lock(
             SinexError::service(format!("Failed to acquire migration lock: {err}"))
                 .with_operation("service.migration_lock"),
         ),
+    }
+}
+
+#[derive(Serialize)]
+struct SchemaBroadcastEntry {
+    name: String,
+    version: String,
+    schema_id: String,
+}
+
+impl IngestService {
+    async fn broadcast_active_schemas(
+        validator: &EventValidator,
+        nats_client: &NatsClient,
+    ) -> IngestdResult<()> {
+        let env = sinex_environment();
+        let subject = env.nats_subject("system.schemas.active");
+        let js = jetstream::new(nats_client.clone());
+
+        let entries: Vec<SchemaBroadcastEntry> = validator
+            .get_available_schemas()
+            .into_iter()
+            .map(|s| SchemaBroadcastEntry {
+                name: s.name,
+                version: (*s.version).clone(),
+                schema_id: s.schema_id.to_string(),
+            })
+            .collect();
+
+        js.publish(subject, serde_json::to_vec(&entries)?.into())
+            .await?
+            .await
+            .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
+
+        info!(
+            count = entries.len(),
+            "Broadcasted active schemas snapshot to JetStream"
+        );
+
+        Ok(())
     }
 }
 

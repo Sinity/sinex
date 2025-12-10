@@ -21,6 +21,7 @@ use crate::{
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     SatelliteError, SatelliteResult,
 };
+use async_nats::jetstream::kv;
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
@@ -90,6 +91,43 @@ impl Default for ScanArgs {
             config: HashMap::new(),
         }
     }
+}
+
+async fn maybe_create_checkpoint_kv(
+    transport: &EventTransport,
+) -> SatelliteResult<Option<kv::Store>> {
+    let enabled = matches!(
+        std::env::var("SINEX_CHECKPOINT_KV")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    ) || matches!(
+        std::env::var("SINEX_EDGE_MODE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    );
+
+    if !enabled {
+        return Ok(None);
+    }
+
+    let client = match transport {
+        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+    };
+
+    let js = async_nats::jetstream::new(client);
+    let bucket = "KV_sinex_checkpoints";
+    let kv_store = js
+        .create_key_value(kv::Config {
+            bucket: bucket.to_string(),
+            ..Default::default()
+        })
+        .await?;
+
+    Ok(Some(kv_store))
 }
 
 /// Report from a completed scan operation
@@ -454,6 +492,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
+        let kv_store = maybe_create_checkpoint_kv(&transport).await?;
         // Initialize checkpoint manager
         let checkpoint_manager = Arc::new(CheckpointManager::new(
             db_pool.clone(),
@@ -461,6 +500,17 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             "default".to_string(), // Default consumer group
             consumer_name.clone(), // Unique consumer name
         ));
+        let checkpoint_manager = if let Some(kv) = kv_store {
+            Arc::new(CheckpointManager::new_with_backends(
+                Some(db_pool.clone()),
+                Some(kv),
+                service_name.clone(),
+                "default".to_string(),
+                consumer_name.clone(),
+            ))
+        } else {
+            checkpoint_manager
+        };
 
         // NATS is the only transport
         let transport_type = "NATS";
