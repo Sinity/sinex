@@ -31,15 +31,14 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Create AcquisitionManager
-    let rotation_policy = RotationPolicy::default();
-    let manager = AcquisitionManager::new(
-        nats_client.clone(),
-        ctx.pool.clone(),
-        rotation_policy,
-        "test-source".to_string(),
-        "/test/path".to_string(),
-    );
+// Create AcquisitionManager
+let rotation_policy = RotationPolicy::default();
+let manager = AcquisitionManager::new(
+    nats_client.clone(),
+    rotation_policy,
+    "test-source".to_string(),
+    "/test/path".to_string(),
+);
 
     // Begin material
     let mut handle = manager.begin_material("test-identifier").await?;
@@ -336,7 +335,6 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
         nats_client.clone(),
-        ctx.pool.clone(),
         rotation_policy,
         "restart-test".to_string(),
         "/restart".to_string(),
@@ -483,7 +481,6 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
         let policy = rotation_policy.clone();
         let manager = AcquisitionManager::new(
             nats_client.clone(),
-            ctx.pool.clone(),
             policy,
             format!("concurrent-{idx}"),
             format!("/concurrent/{idx}"),
@@ -569,7 +566,6 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
 
     let manager = AcquisitionManager::new(
         nats_client.clone(),
-        ctx.pool.clone(),
         rotation_policy,
         "test-rotation".to_string(),
         "/test/rotation".to_string(),

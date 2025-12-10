@@ -862,7 +862,6 @@ mod tests {
 
         let acquisition = Arc::new(AcquisitionManager::new(
             nats_client,
-            ctx.pool.clone(),
             RotationPolicy::default(),
             "filesystem".to_string(),
             "/tmp".to_string(),

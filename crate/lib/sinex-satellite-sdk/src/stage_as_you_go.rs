@@ -181,57 +181,8 @@ impl StageAsYouGoContext {
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
-        let env_offline_enabled = Self::offline_registration_env_enabled();
-        let offline_allowed = self.allow_offline_registration || env_offline_enabled;
-
-        let (material_id, backend) = if let Some(pool) = &self.db_pool {
-            let source_material_repo = pool.source_materials();
-            let register_future =
-                source_material_repo.register_in_flight(material_type, source_uri, initial_metadata);
-            let result = match timeout(Self::db_registration_timeout(), register_future).await {
-                Ok(res) => res.map_err(|err| err.to_string()),
-                Err(_) => Err("register_in_flight timed out while waiting for database".to_string()),
-            };
-
-            match result {
-                Ok(record) => (record.id, MaterialBackend::Database),
-                Err(err) if offline_allowed => {
-                    let fallback = Ulid::new();
-                    warn!(
-                        material_type = material_type,
-                        source_uri = ?source_uri,
-                        "Stage-as-You-Go running without Postgres connectivity (reason: {err}); generating offline material id {fallback}"
-                    );
-                    (fallback, MaterialBackend::Offline)
-                }
-                Err(err) => {
-                    error!(
-                        allow_offline = self.allow_offline_registration,
-                        env_offline_enabled,
-                        "Stage-as-You-Go failed to register in-flight material: {}",
-                        err
-                    );
-                    eprintln!(
-                        "Stage-as-You-Go offline registration disabled (allow_offline={}, env_offline={}): {}",
-                        self.allow_offline_registration,
-                        env_offline_enabled,
-                        err
-                    );
-                    return Err(SatelliteError::General(eyre!(
-                        "Failed to register in-flight source material: {}",
-                        err
-                    )));
-                }
-            }
-        } else {
-            let fallback = Ulid::new();
-            info!(
-                material_type = material_type,
-                source_uri = ?source_uri,
-                "Stage-as-You-Go running without database pool; generating offline material id {fallback}"
-            );
-            (fallback, MaterialBackend::Offline)
-        };
+        let material_id = Ulid::new();
+        let backend = MaterialBackend::Offline;
 
         info!(
             blob_id = %material_id,

@@ -274,7 +274,7 @@ The previous implementation held a write lock on the entire state map while perf
 * `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`
 * `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs`
 
-**Status:** 🔄 Partial — Stage-as-You-Go can now operate without a database (offline/JetStream-only registration/finalization paths). Satellites still publish slices via NATS, but begin/end DB writes remain to be removed in favor of JetStream-only.
+**Status:** ✅ Completed — Stage-as-You-Go and AcquisitionManager no longer write source material/temporal ledger rows directly; they publish begin/slice/end via JetStream and rely on ingestd as the sole database writer.
 
 Satellites are writing directly to `raw.source_material_registry` via `PgPool`. They must use NATS.
 

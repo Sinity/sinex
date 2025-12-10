@@ -28,6 +28,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - Systemd hardening applied to ingestd, gateway, and satellite units (ProtectSystem strict, PrivateTmp, NoNewPrivileges, AF restriction).
 - Checkpoint reset/stats implemented for satellites (no-op stubs removed).
 - Stage-as-You-Go now supports JetStream-only mode (DB-optional registration/finalization paths).
+- Stage-as-You-Go and AcquisitionManager no longer write source material/ledger rows directly; ingestd is the single database writer.
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
 
 ## 1. Critical & Immediate Actions (Week 1)

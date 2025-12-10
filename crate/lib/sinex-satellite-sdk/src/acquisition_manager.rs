@@ -11,12 +11,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
 use serde_json::json;
-use sinex_core::{
-    db::{DbPool, DbPoolExt},
-    environment::SinexEnvironment,
-    types::Ulid,
-    Id, SourceMaterialRecord,
-};
+use sinex_core::{environment::SinexEnvironment, types::Ulid};
 use std::{
     path::PathBuf,
     sync::{
@@ -71,7 +66,6 @@ enum RotationState {
 /// Material acquisition manager
 pub struct AcquisitionManager {
     nats_client: NatsClient,
-    db_pool: DbPool,
     rotation_policy: RotationPolicy,
     env: SinexEnvironment,
     state: Arc<RwLock<RotationState>>,
@@ -109,19 +103,6 @@ struct MaterialEndMessage {
     content_hash: String,
     total_slices: usize,
     total_size_bytes: i64,
-}
-
-/// Ledger entry matching raw.temporal_ledger schema
-#[derive(Debug, Clone)]
-struct LedgerEntry {
-    source_material_id: Ulid,
-    offset_start: i64,
-    offset_end: i64,
-    offset_kind: String,
-    ts_capture: DateTime<Utc>,
-    precision: String,
-    clock: String,
-    source_type: String,
 }
 
 impl AcquisitionManager {
@@ -178,7 +159,6 @@ impl AcquisitionManager {
     /// Create new acquisition manager
     pub fn new(
         nats_client: NatsClient,
-        db_pool: DbPool,
         rotation_policy: RotationPolicy,
         source_type: String,
         source_path: String,
@@ -193,7 +173,6 @@ impl AcquisitionManager {
 
         Self {
             nats_client,
-            db_pool,
             rotation_policy,
             env,
             state,
@@ -218,7 +197,6 @@ impl AcquisitionManager {
 
         Ok(Self::new(
             nats_client,
-            handles.db_pool().clone(),
             rotation_policy,
             source_type.into(),
             source_path.into(),
@@ -231,23 +209,8 @@ impl AcquisitionManager {
     pub async fn begin_material(&self, source_identifier: &str) -> Result<SourceMaterialHandle> {
         self.ensure_streams_ready().await?;
 
-        // Register in-flight material in database
-        let material_hint = "stream"; // Default, can be parameterized
-        let metadata = json!({
-            "source_type": &self.source_type,
-            "source_identifier": source_identifier,
-            "source_path": &self.source_path,
-            "material_hint": material_hint,
-        });
-
-        let record = self
-            .db_pool
-            .source_materials()
-            .register_in_flight(material_hint, Some(source_identifier), metadata)
-            .await
-            .context("Failed to register in-flight source material")?;
-
-        let material_id = record.id;
+        // Generate a new material id locally; ingestd is the sole database writer.
+        let material_id = Ulid::new();
 
         // Create temporary file for local buffering
         let temp_dir = std::env::temp_dir();
@@ -404,35 +367,6 @@ impl AcquisitionManager {
         let content_hash = handle.hasher.finalize();
         let hash_hex = content_hash.to_hex();
 
-        // Update database
-        let repo = self.db_pool.source_materials();
-
-        let finalize_metadata = json!({
-            "finalize_reason": reason,
-            "finalized_at": Utc::now().to_rfc3339(),
-            "content_hash": hash_hex.as_str(),
-        });
-
-        let id: Id<SourceMaterialRecord> = Id::from_ulid(handle.material_id);
-        repo.update_metadata(id, finalize_metadata).await?;
-
-        let id: Id<SourceMaterialRecord> = Id::from_ulid(handle.material_id);
-        repo.finalize_in_flight(id, None, None, None, Some(handle.bytes_written))
-            .await?;
-
-        // Record ledger entry
-        self.record_ledger_entry(LedgerEntry {
-            source_material_id: handle.material_id,
-            offset_start: 0,
-            offset_end: handle.bytes_written,
-            offset_kind: "byte".to_string(),
-            ts_capture: handle.started_at,
-            precision: "bounded".to_string(),
-            clock: "wall".to_string(),
-            source_type: "realtime_capture".to_string(),
-        })
-        .await?;
-
         // Publish end message
         self.publish_end(
             handle.material_id,
@@ -489,31 +423,6 @@ impl AcquisitionManager {
             total_bytes,
             "Published material end"
         );
-        Ok(())
-    }
-
-    /// Record ledger entry (ported from TemporalLedger)
-    async fn record_ledger_entry(&self, entry: LedgerEntry) -> Result<()> {
-        sqlx::query!(
-            r#"
-            INSERT INTO raw.temporal_ledger
-                (source_material_id, offset_start, offset_end, offset_kind,
-                 ts_capture, precision, clock, source_type)
-            VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (source_material_id, offset_start) DO NOTHING
-            "#,
-            entry.source_material_id.as_uuid(),
-            entry.offset_start,
-            entry.offset_end,
-            &entry.offset_kind,
-            entry.ts_capture,
-            &entry.precision,
-            &entry.clock,
-            &entry.source_type
-        )
-        .execute(&self.db_pool)
-        .await?;
-
         Ok(())
     }
 

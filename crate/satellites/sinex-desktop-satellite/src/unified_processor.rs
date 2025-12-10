@@ -306,7 +306,6 @@ impl DesktopProcessor {
             })?;
         let acquisition = Arc::new(AcquisitionManager::new(
             nats_client,
-            db_pool.clone(),
             RotationPolicy::default(),
             "desktop".to_string(),
             "/desktop".to_string(),
