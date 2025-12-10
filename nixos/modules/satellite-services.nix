@@ -112,10 +112,14 @@ let
       gatewayArgs = concatStringsSep " " ([
         "rpc-server"
         "--database-url ${databaseUrl}"
+        # Force TCP bindings to use TLS by providing cert/key env vars; flags remain optional.
       ] ++ coreCfg.gateway.extraArgs);
       gatewayEnv = mkServiceEnv (
         [ "RUST_LOG=${coreCfg.gateway.logLevel}" ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
+        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
+        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${cfg.core.gateway.tlsKeyFile}"
+        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${cfg.core.gateway.tlsClientCAFile}"
       );
       commonAfter = [ "postgresql.service" ];
     in
