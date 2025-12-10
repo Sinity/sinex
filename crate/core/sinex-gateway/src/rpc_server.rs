@@ -851,6 +851,19 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn tls_paths_must_be_set_for_tcp() {
+        // Ensure env is clean
+        let _guard = ENV_LOCK.blocking_lock();
+        std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
+        std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+
+        assert!(
+            tls_paths_from_env().is_err(),
+            "TLS paths should be required when binding TCP"
+        );
+    }
+
     #[sinex_test]
     async fn gateway_auth_blocks_missing_token() -> color_eyre::eyre::Result<()> {
         let auth = GatewayAuth::with_test_token("secret");

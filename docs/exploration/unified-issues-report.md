@@ -31,6 +31,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - Stage-as-You-Go and AcquisitionManager no longer write source material/ledger rows directly; ingestd is the single database writer.
 - Gateway TCP bindings now require tokens and TLS; insecure mode is limited to Unix sockets.
 - Checkpoints can persist to NATS KV; ingestd broadcasts active schemas to `system.schemas.active`.
+- Satellites subscribe to `system.schemas.active` broadcasts in edge mode to cache active schemas.
 - git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
 
 ## 1. Critical & Immediate Actions (Week 1)

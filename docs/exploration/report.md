@@ -323,7 +323,7 @@ Services run with default privileges. They must be sandboxed.
 
 ## Edge-mode Checkpoints & Schema Broadcast
 
-**Status:** ✅ Checkpoints can persist to NATS KV (opt-in via env), and ingestd broadcasts active schemas to `system.schemas.active` for edge satellites.
+**Status:** ✅ Checkpoints can persist to NATS KV (opt-in via env), ingestd broadcasts active schemas to `system.schemas.active`, and edge-mode satellites subscribe to cache schemas without DB.
 
 ### Steps
 
