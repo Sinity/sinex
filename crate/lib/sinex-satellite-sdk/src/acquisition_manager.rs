@@ -340,6 +340,15 @@ impl AcquisitionManager {
         handle.bytes_written = offset_end;
         handle.slice_count += 1;
 
+        debug!(
+            material_id = %handle.material_id,
+            slice_index = handle.slice_count - 1,
+            bytes = data.len(),
+            offset_start,
+            offset_end,
+            "Appended material slice"
+        );
+
         Ok(())
     }
 
@@ -372,7 +381,13 @@ impl AcquisitionManager {
             .await
             .context("Failed to publish material slice")?;
 
-        debug!(material_id = %material_id, slice_index, offset, "Published material slice");
+        debug!(
+            material_id = %material_id,
+            slice_index,
+            offset,
+            bytes = data.len(),
+            "Published material slice"
+        );
         Ok(())
     }
 
@@ -468,7 +483,12 @@ impl AcquisitionManager {
             .await
             .context("Failed to publish material end")?;
 
-        debug!(material_id = %material_id, "Published material end");
+        debug!(
+            material_id = %material_id,
+            total_slices,
+            total_bytes,
+            "Published material end"
+        );
         Ok(())
     }
 

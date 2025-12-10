@@ -401,14 +401,14 @@ impl StageAsYouGoContext {
     fn ledger_recording_enabled() -> bool {
         static ENABLED: OnceLock<bool> = OnceLock::new();
         *ENABLED.get_or_init(|| {
-            std::env::var("SINEX_STAGE_LEDGER_WRITES")
-                .map(|value| {
-                    matches!(
-                        value.trim(),
-                        "1" | "true" | "TRUE" | "True" | "yes" | "YES" | "Yes"
-                    )
-                })
-                .unwrap_or(false)
+            // Satellites should not write directly to temporal_ledger in the JetStream pipeline; ingestd is the single writer.
+            if let Ok(value) = std::env::var("SINEX_STAGE_LEDGER_WRITES") {
+                warn!(
+                    env_value = %value,
+                    "SINEX_STAGE_LEDGER_WRITES is deprecated; ignoring to avoid duplicate temporal_ledger entries"
+                );
+            }
+            false
         })
     }
 }

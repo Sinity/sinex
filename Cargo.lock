@@ -4330,7 +4330,13 @@ name = "sinex-e2e-tests"
 version = "0.4.2"
 dependencies = [
  "async-nats",
+ "axum",
+ "base64 0.22.1",
+ "camino",
+ "chrono",
  "color-eyre",
+ "futures",
+ "parking_lot",
  "serde_json",
  "sinex-core",
  "sinex-gateway",
@@ -4338,8 +4344,12 @@ dependencies = [
  "sinex-satellite-sdk",
  "sinex-services",
  "sinex-test-utils",
+ "sqlx",
  "tempfile",
  "tokio",
+ "tracing",
+ "uuid",
+ "validator",
 ]
 
 [[package]]
@@ -4397,6 +4407,7 @@ dependencies = [
  "sinex-services",
  "sinex-test-utils",
  "sqlx",
+ "subtle",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",

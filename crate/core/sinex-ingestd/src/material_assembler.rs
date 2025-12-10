@@ -22,15 +22,15 @@ use sinex_core::{
     Id, JsonValue, SourceMaterialRecord,
 };
 use sinex_satellite_sdk::annex::{AnnexKey, GitAnnex};
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::{BTreeMap, HashMap}, path::PathBuf, str::FromStr, sync::Arc};
 
 use libc;
-use tokio::{fs, fs::File, io::AsyncWriteExt, sync::RwLock};
+use tokio::{
+    fs,
+    fs::File,
+    io::AsyncWriteExt,
+    sync::{Mutex, RwLock},
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{IngestdResult, SinexError};
@@ -110,13 +110,25 @@ impl AssemblerState {
     }
 }
 
+fn take_buffered_slice(
+    state: &mut AssemblerState,
+    material_id: Ulid,
+    offset: i64,
+) -> IngestdResult<PathBuf> {
+    state.buffered_slices.remove(&offset).ok_or_else(|| {
+        SinexError::service(format!(
+            "Missing buffered slice for {material_id} at offset {offset}"
+        ))
+    })
+}
+
 /// Material assembler service
 pub struct MaterialAssembler {
     js: jetstream::Context,
     pool: DbPool,
     env: SinexEnvironment,
     annex: Arc<GitAnnex>,
-    assembler_state: Arc<RwLock<HashMap<Ulid, AssemblerState>>>,
+    assembler_state: Arc<RwLock<HashMap<Ulid, Arc<Mutex<AssemblerState>>>>>,
     state_root: PathBuf,
     dlq_subject: String,
 }
@@ -311,10 +323,7 @@ impl MaterialAssembler {
                 hasher,
             };
 
-            self.assembler_state
-                .write()
-                .await
-                .insert(material_id, state);
+            self.insert_state_handle(material_id, state).await;
 
             info!(material_id = %material_id, "Restored in-flight material state");
         }
@@ -366,6 +375,66 @@ impl MaterialAssembler {
         }
     }
 
+    /// Fetch a handle to an existing assembler state for a material.
+    async fn get_state_handle(
+        &self,
+        material_id: &Ulid,
+    ) -> Option<Arc<Mutex<AssemblerState>>> {
+        self.assembler_state
+            .read()
+            .await
+            .get(material_id)
+            .cloned()
+    }
+
+    /// Insert a new assembler state if one does not already exist.
+    async fn insert_state_handle(
+        &self,
+        material_id: Ulid,
+        state: AssemblerState,
+    ) -> Arc<Mutex<AssemblerState>> {
+        let state_handle = Arc::new(Mutex::new(state));
+
+        let mut states = self.assembler_state.write().await;
+        if let Some(existing) = states.get(&material_id) {
+            existing.clone()
+        } else {
+            states.insert(material_id, state_handle.clone());
+            state_handle
+        }
+    }
+
+    /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
+    async fn create_placeholder_state(
+        &self,
+        material_id: Ulid,
+    ) -> IngestdResult<AssemblerState> {
+        let state_dir = self.state_root.join(material_id.to_string());
+        fs::create_dir_all(&state_dir)
+            .await
+            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
+
+        let temp_path = state_dir.join(TEMP_FILE_NAME);
+        let temp_file = File::create(&temp_path)
+            .await
+            .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
+
+        Ok(AssemblerState {
+            material_id,
+            temp_path,
+            temp_file: Some(temp_file),
+            expected_offset: 0,
+            slice_count: 0,
+            buffered_slices: BTreeMap::new(),
+            state_dir,
+            started_at: Utc::now(),
+            material_kind: "unknown".to_string(),
+            source_identifier: "unknown".to_string(),
+            metadata: JsonValue::Null,
+            hasher: Hasher::new(),
+        })
+    }
+
     /// Handle a begin message
     async fn handle_begin(&self, msg: jetstream::Message) -> IngestdResult<()> {
         let begin: MaterialBeginMessage = serde_json::from_slice(&msg.payload).map_err(|e| {
@@ -379,11 +448,20 @@ impl MaterialAssembler {
             ))
         })?;
 
-        let mut states = self.assembler_state.write().await;
-        if states.contains_key(&material_id) {
+        if let Some(existing_handle) = self.get_state_handle(&material_id).await {
+            let mut existing = existing_handle.lock().await;
+            // We may have created a placeholder state from slices arriving first; enrich it.
+            existing.material_kind = begin.material_kind;
+            existing.source_identifier = begin.source_identifier;
+            existing.metadata = begin.metadata;
+            existing.started_at = DateTime::parse_from_rfc3339(&begin.started_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| existing.started_at);
+
+            self.persist_state(existing).await?;
             debug!(
                 material_id = %material_id,
-                "Begin message received for material that already has assembler state"
+                "Begin message updated existing assembler state"
             );
             return Ok(());
         }
@@ -418,7 +496,7 @@ impl MaterialAssembler {
         };
 
         self.persist_state(&state).await?;
-        states.insert(material_id, state);
+        self.insert_state_handle(material_id, state).await;
         info!(material_id = %material_id, "Initialized material assembler state");
 
         Ok(())
@@ -431,17 +509,17 @@ impl MaterialAssembler {
         offset: i64,
         data: Vec<u8>,
     ) -> IngestdResult<()> {
-        let mut states = self.assembler_state.write().await;
-        let state = match states.get_mut(&material_id) {
-            Some(state) => state,
-            None => {
-                warn!(
-                    material_id = %material_id,
-                    "Slice received for unknown material (missing begin)"
-                );
-                return Ok(());
-            }
+        let state_handle = if let Some(existing) = self.get_state_handle(&material_id).await {
+            existing
+        } else {
+            // Slices may arrive before the begin message due to JetStream scheduling.
+            // Create a placeholder state so we can buffer slices and let the later
+            // begin message fill in metadata.
+            let placeholder = self.create_placeholder_state(material_id).await?;
+            self.insert_state_handle(material_id, placeholder).await
         };
+
+        let mut state = state_handle.lock().await;
 
         if offset == state.expected_offset {
             if let Some(file) = state.temp_file.as_mut() {
@@ -468,10 +546,18 @@ impl MaterialAssembler {
                     break;
                 }
 
-                let buf_path = state
-                    .buffered_slices
-                    .remove(&next_offset)
-                    .expect("buffer entry must exist");
+                let buf_path = match take_buffered_slice(state, material_id, next_offset) {
+                    Ok(path) => path,
+                    Err(err) => {
+                        warn!(
+                            material_id = %material_id,
+                            offset = next_offset,
+                            error = %err,
+                            "Buffered slice vanished while flushing; aborting material assembly"
+                        );
+                        return Err(err);
+                    }
+                };
 
                 let buffered_data = fs::read(&buf_path).await.map_err(|e| {
                     SinexError::io(format!(
@@ -630,7 +716,7 @@ impl MaterialAssembler {
             state.started_at,
             "bounded",
             "wall",
-            state.material_kind
+            "realtime_capture"
         )
         .execute(&self.pool)
         .await
@@ -757,17 +843,28 @@ impl MaterialAssembler {
             ))
         })?;
 
-        let mut states = self.assembler_state.write().await;
-        let mut state = match states.remove(&material_id) {
-            Some(state) => state,
-            None => {
-                warn!(
-                    material_id = %material_id,
-                    "End message received for unknown material"
-                );
-                return Ok(());
-            }
+        let state_handle = {
+            let mut states = self.assembler_state.write().await;
+            states.remove(&material_id)
         };
+        let Some(state_handle) = state_handle else {
+            warn!(
+                material_id = %material_id,
+                "End message received for unknown material"
+            );
+            return Ok(());
+        };
+        let mut state = state_handle.lock().await;
+
+        let assembled_bytes = state.expected_offset;
+        debug!(
+            material_id = %material_id,
+            assembled_bytes,
+            slice_count = state.slice_count,
+            reported_total = end.total_size_bytes,
+            temp_path = %state.temp_path.display(),
+            "Processing end message"
+        );
 
         if let Some(mut file) = state.temp_file.take() {
             if let Err(e) = file.flush().await {
@@ -779,6 +876,50 @@ impl MaterialAssembler {
             }
         }
 
+        // If no slices were processed or the payload claims zero bytes, avoid annex/blob work
+        // and treat this as an empty material. Persist a DLQ entry so publishers can diagnose.
+        if state.slice_count == 0 || end.total_size_bytes == 0 {
+            warn!(
+                material_id = %material_id,
+                slices = state.slice_count,
+                total_size = end.total_size_bytes,
+                "Material ended with no content; skipping annex import and routing to DLQ"
+            );
+
+            self.route_material_error(
+                material_id,
+                "empty_material",
+                json!({
+                    "slice_count": state.slice_count,
+                    "expected_size": end.total_size_bytes
+                }),
+            )
+            .await;
+
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        // Ensure the assembled file exists even if no slices were processed (e.g., out-of-order messages).
+        if !state.temp_path.exists() {
+            if let Some(parent) = state.temp_path.parent() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    SinexError::io(format!(
+                        "Failed to create temp file parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+            }
+            File::create(&state.temp_path).await.map_err(|e| {
+                SinexError::io(format!(
+                    "Failed to recreate missing assembled file {}: {}",
+                    state.temp_path.display(),
+                    e
+                ))
+            })?;
+        }
+
         // Ensure no buffered slices remain
         if !state.buffered_slices.is_empty() {
             warn!(
@@ -786,6 +927,49 @@ impl MaterialAssembler {
                 buffered = state.buffered_slices.len(),
                 "Buffered slices remain when end message arrived; forcing flush"
             );
+        }
+
+        // Sanity checks: ensure we assembled something and sizes line up before annex import.
+        if assembled_bytes == 0 || end.total_size_bytes <= 0 {
+            warn!(
+                material_id = %material_id,
+                assembled_bytes,
+                reported_total = end.total_size_bytes,
+                "Material ended empty; routing to DLQ instead of annex import"
+            );
+            self.route_material_error(
+                material_id,
+                "empty_material",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "reported_total": end.total_size_bytes,
+                    "slice_count": state.slice_count
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        if assembled_bytes != end.total_size_bytes {
+            warn!(
+                material_id = %material_id,
+                assembled_bytes,
+                reported_total = end.total_size_bytes,
+                "Material size mismatch between assembled bytes and end message; routing to DLQ"
+            );
+            self.route_material_error(
+                material_id,
+                "material_size_mismatch",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "reported_total": end.total_size_bytes,
+                    "slice_count": state.slice_count
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
         }
 
         let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
@@ -811,6 +995,32 @@ impl MaterialAssembler {
             return Ok(());
         }
 
+        // Verify the staged file size matches expectations before annex import.
+        let file_size = fs::metadata(&state.temp_path)
+            .await
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+        if file_size != assembled_bytes {
+            warn!(
+                material_id = %material_id,
+                file_size,
+                assembled_bytes,
+                "Assembled file size on disk does not match assembled bytes; routing to DLQ"
+            );
+            self.route_material_error(
+                material_id,
+                "material_size_mismatch_disk",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "file_size": file_size,
+                    "reported_total": end.total_size_bytes,
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
         let (annex_key, final_path) = match self.import_into_annex(&state).await {
             Ok(result) => result,
             Err(e) => {
@@ -820,7 +1030,9 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                states.insert(material_id, state); // Reinsert state for potential retry
+                drop(state);
+                let mut states = self.assembler_state.write().await;
+                states.insert(material_id, state_handle.clone()); // Reinsert state for potential retry
                 return Err(e);
             }
         };
@@ -837,7 +1049,9 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                states.insert(material_id, state); // Reinsert for retry
+                drop(state);
+                let mut states = self.assembler_state.write().await;
+                states.insert(material_id, state_handle.clone()); // Reinsert for retry
                 return Err(e);
             }
         };
@@ -852,7 +1066,9 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            states.insert(material_id, state); // Reinsert for retry
+            drop(state);
+            let mut states = self.assembler_state.write().await;
+            states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
@@ -863,10 +1079,14 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            states.insert(material_id, state); // Reinsert for retry
+            drop(state);
+            let mut states = self.assembler_state.write().await;
+            states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
+        let slice_count = state.slice_count;
+        drop(state);
         self.cleanup_state(material_id).await;
 
         info!(
@@ -874,7 +1094,7 @@ impl MaterialAssembler {
             annex_key = %annex_key.key,
             path = %final_path.display(),
             size_bytes = end.total_size_bytes,
-            slices = state.slice_count,
+            slices = slice_count,
             "Material assembly complete and persisted to annex"
         );
 
@@ -1211,5 +1431,53 @@ impl MaterialAssembler {
                 "{task_name} panicked: {join_err}"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeMap, str::FromStr};
+    use tempfile::tempdir;
+
+    fn test_state(material_id: Ulid) -> AssemblerState {
+        let temp_dir = tempdir().expect("temp dir should be creatable");
+        AssemblerState {
+            material_id,
+            temp_path: temp_dir.path().join(TEMP_FILE_NAME),
+            temp_file: None,
+            expected_offset: 0,
+            slice_count: 0,
+            buffered_slices: BTreeMap::new(),
+            state_dir: temp_dir.path().to_path_buf(),
+            started_at: Utc::now(),
+            material_kind: "test".to_string(),
+            source_identifier: "test".to_string(),
+            metadata: JsonValue::Null,
+            hasher: Hasher::new(),
+        }
+    }
+
+    #[test]
+    fn missing_buffered_slice_returns_error_instead_of_panic() {
+        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let mut state = test_state(material_id);
+
+        let result = take_buffered_slice(&mut state, material_id, 42);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn buffered_slice_is_removed_and_returned() {
+        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let mut state = test_state(material_id);
+        let buffer_path = state.state_dir.join("buffers/42.bin");
+        state.buffered_slices.insert(42, buffer_path.clone());
+
+        let result = take_buffered_slice(&mut state, material_id, 42).unwrap();
+
+        assert_eq!(result, buffer_path);
+        assert!(state.buffered_slices.is_empty());
     }
 }

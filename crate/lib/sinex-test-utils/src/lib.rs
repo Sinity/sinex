@@ -80,7 +80,7 @@ mod fixture_config;
 pub mod fixtures;
 mod jetstream;
 mod nats;
-mod path_validation;
+pub mod path_validation;
 pub mod permissions;
 mod property_testing;
 pub mod resources;

@@ -77,3 +77,4 @@ sysinfo = { version = "0.30", optional = true }
 # For self-testing
 tokio-test = "0.4"
 async-std = { version = "1", features = ["attributes"] }
+tempfile = "3.10"

@@ -9,7 +9,9 @@ use crate::{
 
 // External crates
 use async_nats::{jetstream, Client as NatsClient};
+use sinex_core::db::distributed_locking::AdvisoryLock;
 use sinex_core::environment as sinex_environment;
+use sinex_core::types::utils::ResourceGuard;
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sqlx::PgPool;
 
@@ -23,7 +25,9 @@ use std::{
     time::SystemTime,
 };
 use tokio::{
+    sync::Mutex,
     sync::RwLock,
+    task::JoinHandle,
     time::{interval, Duration},
 };
 use tracing::{error, info, warn};
@@ -47,6 +51,7 @@ pub struct IngestService {
     validator: Arc<RwLock<EventValidator>>,
     stats: Arc<IngestStats>,
     shutdown_flag: Arc<AtomicBool>,
+    task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
 }
 
 impl IngestService {
@@ -105,23 +110,25 @@ impl IngestService {
 
         // Initialize event validator
         let validator = if let Some(ref pool) = db_pool {
+            // Ensure only one instance performs migration/schema sync at a time.
+            let _migration_lock = try_acquire_migration_lock(pool).await?;
+
             // First, synchronize schemas from codebase to database
             if !config.dry_run && !config.skip_schema_sync {
-                match crate::schema_sync::synchronize_schemas(pool).await {
-                    Ok(sync_result) => {
-                        info!(
-                            discovered = sync_result.discovered,
-                            created = sync_result.created,
-                            updated = sync_result.updated,
-                            unchanged = sync_result.unchanged,
-                            "Schema synchronization completed"
-                        );
-                    }
-                    Err(e) => {
-                        error!("Failed to synchronize schemas: {}", e);
-                        // Continue anyway - we can still use existing schemas
-                    }
-                }
+                let sync_result = crate::schema_sync::synchronize_schemas(pool)
+                    .await
+                    .map_err(|e| {
+                        SinexError::service(format!("Failed to synchronize schemas: {e}"))
+                            .with_operation("service.schema_sync")
+                    })?;
+
+                info!(
+                    discovered = sync_result.discovered,
+                    created = sync_result.created,
+                    updated = sync_result.updated,
+                    unchanged = sync_result.unchanged,
+                    "Schema synchronization completed"
+                );
             }
 
             EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
@@ -139,6 +146,7 @@ impl IngestService {
             validator: Arc::new(RwLock::new(validator)),
             stats: Arc::new(IngestStats::new()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            task_handles: Arc::new(Mutex::new(Vec::new())),
         };
 
         info!("Ingestion service initialized successfully");
@@ -156,16 +164,20 @@ impl IngestService {
         // Start JetStream consumer task
         if let Some(ref nats_client) = self.nats_client {
             if let Some(ref pool) = self.db_pool {
-                self.start_jetstream_consumer_task(nats_client.clone(), pool.clone())
+                let handle = self
+                    .start_jetstream_consumer_task(nats_client.clone(), pool.clone())
                     .await;
+                self.track_task(handle).await;
             }
         }
 
         // Start MaterialAssembler task
         if let Some(ref nats_client) = self.nats_client {
             if let Some(ref pool) = self.db_pool {
-                self.start_material_assembler_task(nats_client.clone(), pool.clone())
+                let handle = self
+                    .start_material_assembler_task(nats_client.clone(), pool.clone())
                     .await;
+                self.track_task(handle).await;
             }
         }
 
@@ -184,17 +196,12 @@ impl IngestService {
                 }
             }
         });
-
-        // Monitor the stats task for panics
-        tokio::spawn(async move {
-            if let Err(e) = stats_handle.await {
-                error!("Stats logging task panicked: {:?}", e);
-            }
-        });
+        self.track_task(stats_handle).await;
 
         // Schema reload task
         if let Some(ref pool) = self.db_pool {
-            self.start_schema_reload_task(pool.clone()).await;
+            let handle = self.start_schema_reload_task(pool.clone()).await;
+            self.track_task(handle).await;
         }
 
         // Notify systemd that we're ready
@@ -205,12 +212,19 @@ impl IngestService {
         // Wait for shutdown signal
         shutdown_signal(&self.shutdown_flag).await;
 
+        // Ensure background tasks have a chance to shut down before closing resources.
+        self.wait_for_tasks(Duration::from_secs(5)).await;
+
         info!("Ingestion service stopped");
         Ok(())
     }
 
     /// Start the JetStream consumer task
-    async fn start_jetstream_consumer_task(&self, nats_client: NatsClient, pool: PgPool) {
+    async fn start_jetstream_consumer_task(
+        &self,
+        nats_client: NatsClient,
+        pool: PgPool,
+    ) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
         let env = sinex_environment();
@@ -239,11 +253,15 @@ impl IngestService {
                     info!("JetStream consumer shutting down");
                 }
             }
-        });
+        })
     }
 
     /// Start the MaterialAssembler task
-    async fn start_material_assembler_task(&self, nats_client: NatsClient, pool: PgPool) {
+    async fn start_material_assembler_task(
+        &self,
+        nats_client: NatsClient,
+        pool: PgPool,
+    ) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
@@ -289,11 +307,11 @@ impl IngestService {
                     info!("MaterialAssembler shutting down");
                 }
             }
-        });
+        })
     }
 
     /// Start schema reload task
-    async fn start_schema_reload_task(&self, pool: PgPool) {
+    async fn start_schema_reload_task(&self, pool: PgPool) -> JoinHandle<()> {
         let validator = self.validator.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
@@ -313,7 +331,37 @@ impl IngestService {
                     }
                 }
             }
-        });
+        })
+    }
+
+    async fn track_task(&self, handle: JoinHandle<()>) {
+        let mut handles = self.task_handles.lock().await;
+        handles.push(handle);
+    }
+
+    async fn wait_for_tasks(&self, timeout: Duration) {
+        let mut handles = self.task_handles.lock().await;
+        for mut handle in handles.drain(..) {
+            let timeout_sleep = tokio::time::sleep(timeout);
+            tokio::pin!(timeout_sleep);
+
+            tokio::select! {
+                result = &mut handle => {
+                    if let Err(join_err) = result {
+                        error!("Background task panicked: {:?}", join_err);
+                    }
+                }
+                _ = &mut timeout_sleep => {
+                    warn!("Background task did not shutdown in time; aborting");
+                    handle.abort();
+                    if let Err(join_err) = handle.await {
+                        if !join_err.is_cancelled() {
+                            error!("Background task failed after abort: {:?}", join_err);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Graceful shutdown
@@ -321,6 +369,9 @@ impl IngestService {
         info!("Initiating graceful shutdown");
 
         self.shutdown_flag.store(true, Ordering::Relaxed);
+
+        // Let background tasks observe the flag and finish before tearing down shared state.
+        self.wait_for_tasks(Duration::from_secs(5)).await;
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
@@ -342,6 +393,7 @@ impl Clone for IngestService {
             validator: self.validator.clone(),
             stats: self.stats.clone(),
             shutdown_flag: self.shutdown_flag.clone(),
+            task_handles: self.task_handles.clone(),
         }
     }
 }
@@ -397,5 +449,67 @@ impl IngestStats {
             events_per_sec = format!("{:.2}", events_per_sec),
             "Ingestion service statistics"
         );
+    }
+}
+
+const MIGRATION_LOCK_KEY: &str = "ingestd:migrations";
+
+pub async fn try_acquire_migration_lock(
+    pool: &PgPool,
+) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
+    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
+        Ok(Some(guard)) => Ok(guard),
+        Ok(None) => Err(SinexError::service(
+            "Another ingestd instance is already applying migrations",
+        )
+        .with_operation("service.migration_lock")),
+        Err(err) => Err(
+            SinexError::service(format!("Failed to acquire migration lock: {err}"))
+                .with_operation("service.migration_lock"),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_service() -> IngestService {
+        IngestService {
+            config: IngestdConfig::builder().build(),
+            db_pool: None,
+            nats_client: None,
+            jetstream: None,
+            validator: Arc::new(RwLock::new(EventValidator::new(false))),
+            stats: Arc::new(IngestStats::new()),
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            task_handles: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() {
+        struct CancelFlag(Arc<AtomicBool>);
+
+        impl Drop for CancelFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let service = test_service();
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        let handle_cancelled = cancelled.clone();
+        let handle = tokio::spawn(async move {
+            let _guard = CancelFlag(handle_cancelled);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        service.task_handles.lock().await.push(handle);
+
+        service.wait_for_tasks(Duration::from_millis(10)).await;
+
+        assert!(cancelled.load(Ordering::SeqCst));
     }
 }

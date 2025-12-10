@@ -1459,25 +1459,27 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
             while attempts < 3 {
                 attempts += 1;
 
-                // Delete from all tables that need cleanup (config-driven)
+                // Truncate high-churn tables with CASCADE to avoid FK deadlocks.
+                let _ = sqlx::query("TRUNCATE TABLE core.events CASCADE")
+                    .execute(conn.as_mut())
+                    .await;
+                let _ = sqlx::query("TRUNCATE TABLE raw.source_material_registry CASCADE")
+                    .execute(conn.as_mut())
+                    .await;
+
+                // Delete from remaining tables (config-driven) after cascades to catch ancillary rows.
                 for table in &cleanup_tables {
                     let _ = sqlx::query(&format!("DELETE FROM {}", table))
                         .execute(conn.as_mut())
                         .await;
                 }
 
-                // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
-                let _ = sqlx::query("DELETE FROM core.events")
-                    .execute(conn.as_mut())
-                    .await;
+                // Hypertable cleanup via drop_chunks for events.
                 let _ = sqlx::query(
                     "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
                 )
                 .execute(&pool_for_chunks)
                 .await;
-                let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-                    .execute(conn.as_mut())
-                    .await;
 
                 let counts = crate::db_common::get_row_counts(&pool_for_chunks)
                     .await

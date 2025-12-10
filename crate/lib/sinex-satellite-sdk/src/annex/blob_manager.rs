@@ -222,7 +222,11 @@ impl BlobManager {
         let mime_type = Self::detect_mime_type(&validated_path)?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(&validated_path).await?;
+        let annex_key = self
+            .annex
+            .add_file(&validated_path)
+            .await
+            .wrap_err("Failed to add file to git-annex")?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         // Create blob record in database
@@ -332,7 +336,11 @@ impl BlobManager {
             .map_err(|_| eyre!("Temp file path is not UTF-8"))?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(&utf8_temp_file).await?;
+        let annex_key = self
+            .annex
+            .add_file(&utf8_temp_file)
+            .await
+            .wrap_err("Failed to add buffered upload to git-annex")?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         // Create blob record in database

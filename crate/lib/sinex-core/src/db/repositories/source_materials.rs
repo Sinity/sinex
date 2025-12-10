@@ -658,9 +658,8 @@ impl<'a> SourceMaterialRepository<'a> {
         let start_time = material.start_time.unwrap_or_else(|| Utc::now());
         material.start_time = Some(start_time);
 
-        sqlx::query_as!(
-            SourceMaterialRecord,
-            r#"
+        // Prefer a single upsert when the canonical unique constraint exists.
+        let upsert_sql = r#"
             INSERT INTO raw.source_material_registry (
                 id,
                 material_kind,
@@ -686,17 +685,18 @@ impl<'a> SourceMaterialRepository<'a> {
                 $10,
                 ($11::uuid)::ulid
             )
-            ON CONFLICT (source_identifier) DO UPDATE SET
+            ON CONFLICT (source_identifier) DO UPDATE
+            SET
                 status = EXCLUDED.status,
                 timing_info_type = EXCLUDED.timing_info_type,
-                metadata = source_material_registry.metadata || EXCLUDED.metadata,
-                start_time = COALESCE(source_material_registry.start_time, EXCLUDED.start_time, NOW()),
+                metadata = raw.source_material_registry.metadata || EXCLUDED.metadata,
+                start_time = COALESCE(raw.source_material_registry.start_time, EXCLUDED.start_time, NOW()),
                 end_time = NULL,
-                staged_by = COALESCE(EXCLUDED.staged_by, source_material_registry.staged_by),
-                staged_on_host = COALESCE(EXCLUDED.staged_on_host, source_material_registry.staged_on_host),
-                optional_blob_id = source_material_registry.optional_blob_id
+                staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
+                staged_on_host = COALESCE(EXCLUDED.staged_on_host, raw.source_material_registry.staged_on_host),
+                optional_blob_id = raw.source_material_registry.optional_blob_id
             RETURNING
-                id::uuid as "id!: crate::Ulid",
+                id::uuid as id,
                 material_kind,
                 source_identifier,
                 status,
@@ -707,25 +707,140 @@ impl<'a> SourceMaterialRepository<'a> {
                 end_time,
                 staged_by,
                 staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
-            "#,
-            ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()),
-            material.material_kind,
-            material.source_identifier,
-            material.status,
-            material.timing_info_type,
-            material.metadata,
-            material.start_time,
-            material.end_time,
-            material.staged_by,
-            material.staged_on_host,
-            material
-                .optional_blob_id
-                .map(|id| ulid_to_uuid(*id.as_ulid()))
-        )
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "register in-flight source material"))
+                optional_blob_id::uuid as optional_blob_id
+        "#;
+
+        let optional_blob_uuid = material
+            .optional_blob_id
+            .as_ref()
+            .map(|id| ulid_to_uuid(*id.as_ulid()));
+
+        let upsert_result = sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
+            .bind(ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()))
+            .bind(material.material_kind.clone())
+            .bind(material.source_identifier.clone())
+            .bind(material.status.clone())
+            .bind(material.timing_info_type.clone())
+            .bind(material.metadata.clone())
+            .bind(material.start_time)
+            .bind(material.end_time)
+            .bind(material.staged_by.clone())
+            .bind(material.staged_on_host.clone())
+            .bind(optional_blob_uuid.clone())
+            .fetch_one(self.pool)
+            .await;
+
+        match upsert_result {
+            Ok(record) => Ok(record),
+            // If a deployment lacks the unique constraint, fall back to a forgiving two-step path.
+            Err(sqlx::Error::Database(db_err))
+                if db_err.code().as_deref() == Some("42P10") =>
+            {
+                let insert_sql = r#"
+                    INSERT INTO raw.source_material_registry (
+                        id,
+                        material_kind,
+                        source_identifier,
+                        status,
+                        timing_info_type,
+                        metadata,
+                        start_time,
+                        end_time,
+                        staged_by,
+                        staged_on_host,
+                        optional_blob_id
+                    ) VALUES (
+                        ($1::uuid)::ulid,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        $8,
+                        $9,
+                        $10,
+                        ($11::uuid)::ulid
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING
+                        id::uuid as id,
+                        material_kind,
+                        source_identifier,
+                        status,
+                        timing_info_type,
+                        metadata,
+                        staged_at,
+                        start_time,
+                        end_time,
+                        staged_by,
+                        staged_on_host,
+                        optional_blob_id::uuid as optional_blob_id
+                "#;
+
+                let insert_result = sqlx::query_as::<_, SourceMaterialRecord>(insert_sql)
+                    .bind(ulid_to_uuid(*Id::<SourceMaterial>::new().as_ulid()))
+                    .bind(material.material_kind)
+                    .bind(material.source_identifier.clone())
+                    .bind(material.status.clone())
+                    .bind(material.timing_info_type.clone())
+                    .bind(material.metadata.clone())
+                    .bind(material.start_time)
+                    .bind(material.end_time)
+                    .bind(material.staged_by.clone())
+                    .bind(material.staged_on_host.clone())
+                    .bind(optional_blob_uuid.clone())
+                    .fetch_optional(self.pool)
+                    .await
+                    .map_err(|e| db_error(e, "register in-flight source material"))?;
+
+                if let Some(record) = insert_result {
+                    return Ok(record);
+                }
+
+                let update_sql = r#"
+                    UPDATE raw.source_material_registry
+                    SET
+                        status = $2,
+                        timing_info_type = $3,
+                        metadata = raw.source_material_registry.metadata || $4,
+                        start_time = COALESCE(raw.source_material_registry.start_time, $5, NOW()),
+                        end_time = NULL,
+                        staged_by = COALESCE($6, raw.source_material_registry.staged_by),
+                        staged_on_host = COALESCE($7, raw.source_material_registry.staged_on_host),
+                        optional_blob_id = raw.source_material_registry.optional_blob_id
+                    WHERE source_identifier = $1
+                    RETURNING
+                        id::uuid as id,
+                        material_kind,
+                        source_identifier,
+                        status,
+                        timing_info_type,
+                        metadata,
+                        staged_at,
+                        start_time,
+                        end_time,
+                        staged_by,
+                        staged_on_host,
+                        optional_blob_id::uuid as optional_blob_id
+                "#;
+
+                let existing = sqlx::query_as::<_, SourceMaterialRecord>(update_sql)
+                    .bind(material.source_identifier.clone())
+                    .bind(material.status.clone())
+                    .bind(material.timing_info_type.clone())
+                    .bind(material.metadata)
+                    .bind(material.start_time)
+                    .bind(material.staged_by)
+                    .bind(material.staged_on_host)
+                    .fetch_one(self.pool)
+                    .await
+                    .map_err(|e| db_error(e, "register in-flight source material (update existing)"))?;
+
+                Ok(existing)
+            }
+            Err(e) => Err(db_error(e, "register in-flight source material")),
+        }
     }
 
     /// Finalize in-flight source material
