@@ -21,8 +21,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
@@ -31,7 +30,7 @@ pub struct StageAsYouGoContext {
     db_pool: Option<PgPool>,
     event_emitter: EventEmitter,
     blob_manager: Option<Arc<BlobManager>>,
-    allow_offline_registration: bool,
+    _allow_offline_registration: bool,
     record_temporal_ledger: bool,
     material_registry: Arc<Mutex<HashMap<Ulid, StageMaterialInfo>>>,
 }
@@ -62,7 +61,10 @@ impl StageAsYouGoContext {
 
     /// Create a Stage-as-You-Go context from processor runtime handles
     pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
-        Self::from_optional_emitter(Some(runtime.db_pool().clone()), runtime.event_emitter().clone())
+        Self::from_optional_emitter(
+            Some(runtime.db_pool().clone()),
+            runtime.event_emitter().clone(),
+        )
     }
 
     /// Create a Stage-as-You-Go context directly from processor handles
@@ -91,17 +93,16 @@ impl StageAsYouGoContext {
 
     fn from_optional_emitter(db_pool: Option<PgPool>, event_emitter: EventEmitter) -> Self {
         let blob_manager = Self::init_blob_manager(db_pool.as_ref(), &event_emitter);
-        let allow_offline_registration =
-            event_emitter.dry_run()
-                || Self::offline_registration_env_enabled()
-                || db_pool.is_none();
+        let allow_offline_registration = event_emitter.dry_run()
+            || Self::offline_registration_env_enabled()
+            || db_pool.is_none();
         let record_temporal_ledger = Self::ledger_recording_enabled();
 
         Self {
             db_pool,
             event_emitter,
             blob_manager,
-            allow_offline_registration,
+            _allow_offline_registration: allow_offline_registration,
             record_temporal_ledger,
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -120,13 +121,16 @@ impl StageAsYouGoContext {
             db_pool: Some(db_pool),
             event_emitter,
             blob_manager: Some(blob_manager),
-            allow_offline_registration,
+            _allow_offline_registration: allow_offline_registration,
             record_temporal_ledger: Self::ledger_recording_enabled(),
             material_registry: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    fn init_blob_manager(db_pool: Option<&PgPool>, event_emitter: &EventEmitter) -> Option<Arc<BlobManager>> {
+    fn init_blob_manager(
+        db_pool: Option<&PgPool>,
+        event_emitter: &EventEmitter,
+    ) -> Option<Arc<BlobManager>> {
         let Some(db_pool) = db_pool else {
             // JetStream-only mode: skip BlobManager initialization.
             return None;
@@ -179,7 +183,7 @@ impl StageAsYouGoContext {
         &self,
         material_type: &str,
         source_uri: Option<&str>,
-        initial_metadata: serde_json::Value,
+        _initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
         let material_id = Ulid::new();
         let backend = MaterialBackend::Offline;
@@ -216,6 +220,7 @@ impl StageAsYouGoContext {
         })
     }
 
+    #[allow(dead_code)]
     fn db_registration_timeout() -> Duration {
         Duration::from_secs(2)
     }

@@ -70,7 +70,7 @@ pub struct AcquisitionManager {
     env: SinexEnvironment,
     state: Arc<RwLock<RotationState>>,
     source_type: String,
-    source_path: String,
+    _source_path: String,
     streams_ready: Arc<AtomicBool>,
 }
 
@@ -177,7 +177,7 @@ impl AcquisitionManager {
             env,
             state,
             source_type,
-            source_path,
+            _source_path: source_path,
             streams_ready: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -357,7 +357,7 @@ impl AcquisitionManager {
     /// Finalize material and publish end event
     ///
     /// Ported from TemporalLedger::finalize_material
-    pub async fn finalize(&self, mut handle: SourceMaterialHandle, reason: &str) -> Result<()> {
+    pub async fn finalize(&self, mut handle: SourceMaterialHandle, _reason: &str) -> Result<()> {
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
             file.flush().await?;

@@ -259,7 +259,13 @@ impl CheckpointManager {
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
-        Self::new_with_backends(Some(pool), None, processor_name, consumer_group, consumer_name)
+        Self::new_with_backends(
+            Some(pool),
+            None,
+            processor_name,
+            consumer_group,
+            consumer_name,
+        )
     }
 
     /// Create a checkpoint manager with optional NATS KV and/or database backends.
@@ -294,12 +300,11 @@ impl CheckpointManager {
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
         if let Some(kv) = &self.kv {
-            if let Some(entry) = kv
-                .get(&self.kv_key())
-                .await
-                .map_err(|e| SatelliteError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))? {
-                if !entry.value.is_empty() {
-                    match serde_json::from_slice::<CheckpointState>(&entry.value) {
+            if let Some(data) = kv.get(&self.kv_key()).await.map_err(|e| {
+                SatelliteError::Checkpoint(format!("Failed to read checkpoint KV: {e}"))
+            })? {
+                if !data.is_empty() {
+                    match serde_json::from_slice::<CheckpointState>(&data) {
                         Ok(state) => {
                             debug!(
                                 processor = %self.processor_name,
@@ -326,20 +331,22 @@ impl CheckpointManager {
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
         let checkpoint_result = match &self.pool {
-            Some(pool) => pool
-                .checkpoints()
-                .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
-                .await?,
+            Some(pool) => {
+                pool.checkpoints()
+                    .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
+                    .await?
+            }
             None => None,
         };
         let checkpoint_result = if checkpoint_result.is_some() {
             checkpoint_result
         } else {
             match &self.pool {
-                Some(pool) => pool
-                    .checkpoints()
-                    .get_latest_for_processor_group(&processor_name, &consumer_group)
-                    .await?,
+                Some(pool) => {
+                    pool.checkpoints()
+                        .get_latest_for_processor_group(&processor_name, &consumer_group)
+                        .await?
+                }
                 None => None,
             }
         };
@@ -471,11 +478,9 @@ impl CheckpointManager {
 
         if let Some(kv) = &self.kv {
             let encoded = serde_json::to_vec(state).map_err(SatelliteError::Serialization)?;
-            kv.put(&self.kv_key(), encoded.into())
-                .await
-                .map_err(|e| {
-                    SatelliteError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
-                })?;
+            kv.put(&self.kv_key(), encoded.into()).await.map_err(|e| {
+                SatelliteError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
+            })?;
         }
 
         debug!(
@@ -524,10 +529,11 @@ impl CheckpointManager {
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
         let deleted = match &self.pool {
-            Some(pool) => pool
-                .checkpoints()
-                .delete(&processor_name, &consumer_group, &consumer_name)
-                .await?,
+            Some(pool) => {
+                pool.checkpoints()
+                    .delete(&processor_name, &consumer_group, &consumer_name)
+                    .await?
+            }
             None => false,
         };
 
@@ -564,10 +570,10 @@ impl CheckpointManager {
                 CheckpointStatsRecord,
                 r#"
                 SELECT 
-                    COUNT(*) as total_checkpoints,
-                    MAX(processed_count) as max_processed,
-                    MAX(updated_at) as last_update,
-                    MIN(created_at) as first_checkpoint
+                    COUNT(*)::bigint as "total_checkpoints!",
+                    MAX(processed_count) as "max_processed?",
+                    MAX(updated_at) as "last_update?",
+                    MIN(created_at) as "first_checkpoint?"
                 FROM core.processor_checkpoints
                 WHERE processor_name = $1 AND consumer_group = $2
                 "#,

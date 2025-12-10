@@ -19,11 +19,16 @@ use color_eyre::eyre::{eyre, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
+use tokio_rustls::{rustls, TlsAcceptor};
 use tokio_stream::StreamExt;
 use tower::{
     limit::ConcurrencyLimitLayer,
@@ -34,9 +39,6 @@ use tower::{
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
-use tokio_rustls::{rustls, TlsAcceptor};
-use tokio_rustls::rustls::server::AllowAnyAuthenticatedClient;
-use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 
 // Standard library
 use thiserror::Error;
@@ -480,24 +482,30 @@ fn load_rustls_config(
     let cert_file = &mut BufReader::new(File::open(cert_path)?);
     let key_file = &mut BufReader::new(File::open(key_path)?);
 
-    let cert_chain = certs(cert_file)
+    let cert_chain: Vec<CertificateDer<'static>> = certs(cert_file)
         .map_err(|_| eyre!("Failed to read TLS certificate"))?
         .into_iter()
-        .map(rustls::Certificate)
-        .collect::<Vec<_>>();
+        .map(CertificateDer::from)
+        .collect();
 
-    let mut keys = pkcs8_private_keys(key_file)
+    let mut keys: Vec<PrivateKeyDer<'static>> = pkcs8_private_keys(key_file)
         .map_err(|_| eyre!("Failed to read TLS private key (pkcs8)"))?
         .into_iter()
-        .map(rustls::PrivateKey)
-        .collect::<Vec<_>>();
+        .map(|raw| {
+            PrivateKeyDer::try_from(raw)
+                .map_err(|_| eyre!("Failed to parse TLS private key (pkcs8): invalid DER"))
+        })
+        .collect::<Result<_, _>>()?;
     if keys.is_empty() {
         let mut key_file = BufReader::new(File::open(key_path)?);
         keys = rsa_private_keys(&mut key_file)
             .map_err(|_| eyre!("Failed to read TLS private key (rsa)"))?
             .into_iter()
-            .map(rustls::PrivateKey)
-            .collect();
+            .map(|raw| {
+                PrivateKeyDer::try_from(raw)
+                    .map_err(|_| eyre!("Failed to parse TLS private key (rsa): invalid DER"))
+            })
+            .collect::<Result<_, _>>()?;
     }
 
     let key = keys
@@ -505,30 +513,33 @@ fn load_rustls_config(
         .next()
         .ok_or_else(|| eyre!("No private keys found in {}", key_path))?;
 
-    let mut cfg = rustls::ServerConfig::builder()
-        .with_safe_defaults()
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, key)
-        .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))?;
-
     if let Some(ca_path) = client_ca_path {
         let mut ca_reader = BufReader::new(File::open(ca_path)?);
-        let client_certs = certs(&mut ca_reader)
+        let client_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
             .map_err(|_| eyre!("Failed to read client CA bundle"))?
             .into_iter()
-            .map(rustls::Certificate)
-            .collect::<Vec<_>>();
+            .map(CertificateDer::from)
+            .collect();
         let mut roots = rustls::RootCertStore::empty();
-        for cert in client_certs {
-            roots
-                .add(&cert)
-                .map_err(|e| eyre!("Failed to add client CA cert: {:?}", e))?;
+        let (added, _ignored) = roots.add_parsable_certificates(client_certs);
+        if added == 0 {
+            return Err(eyre!("No valid client CA certs found in {}", ca_path));
         }
-        let verifier = rustls::server::AllowAnyAuthenticatedClient::new(roots);
-        cfg.verifier = Arc::new(verifier);
-    }
 
-    Ok(cfg)
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .map_err(|e| eyre!("Failed to build client verifier: {}", e))?;
+
+        rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(cert_chain, key)
+            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+    } else {
+        rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+    }
 }
 
 fn guard_tcp_auth(bind_address: &BindAddress, auth: &GatewayAuth) -> color_eyre::eyre::Result<()> {
@@ -936,7 +947,10 @@ pub async fn run(
                             let service = TowerToHyperService::new(app_clone);
                             let io = TokioIo::new(tls_stream);
                             if let Err(err) = builder.serve_connection(io, service).await {
-                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                                error!(
+                                    ?err,
+                                    "TLS RPC connection from {:?} closed with error", peer
+                                );
                             }
                         }
                         Err(err) => {

@@ -733,9 +733,7 @@ impl<'a> SourceMaterialRepository<'a> {
         match upsert_result {
             Ok(record) => Ok(record),
             // If a deployment lacks the unique constraint, fall back to a forgiving two-step path.
-            Err(sqlx::Error::Database(db_err))
-                if db_err.code().as_deref() == Some("42P10") =>
-            {
+            Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42P10") => {
                 let insert_sql = r#"
                     INSERT INTO raw.source_material_registry (
                         id,
@@ -835,7 +833,9 @@ impl<'a> SourceMaterialRepository<'a> {
                     .bind(material.staged_on_host)
                     .fetch_one(self.pool)
                     .await
-                    .map_err(|e| db_error(e, "register in-flight source material (update existing)"))?;
+                    .map_err(|e| {
+                        db_error(e, "register in-flight source material (update existing)")
+                    })?;
 
                 Ok(existing)
             }

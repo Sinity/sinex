@@ -150,7 +150,10 @@ async fn maybe_create_checkpoint_kv(
             bucket: bucket.to_string(),
             ..Default::default()
         })
-        .await?;
+        .await
+        .map_err(|e| {
+            SatelliteError::General(eyre!("Failed to create checkpoint KV bucket: {e}"))
+        })?;
 
     Ok(Some(kv_store))
 }
@@ -175,8 +178,9 @@ async fn maybe_start_schema_listener(
     };
     let env = sinex_core::environment();
     let subject = env.nats_subject("system.schemas.active");
-    let js = async_nats::jetstream::new(client);
-    let mut sub = js.subscribe(subject.clone()).await?;
+    let mut sub = client.subscribe(subject.clone()).await.map_err(|e| {
+        SatelliteError::General(eyre!("Failed to subscribe to schema broadcasts: {e}"))
+    })?;
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
 

@@ -22,7 +22,12 @@ use sinex_core::{
     Id, JsonValue, SourceMaterialRecord,
 };
 use sinex_satellite_sdk::annex::{AnnexKey, GitAnnex};
-use std::{collections::{BTreeMap, HashMap}, path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+};
 
 use libc;
 use tokio::{
@@ -376,15 +381,8 @@ impl MaterialAssembler {
     }
 
     /// Fetch a handle to an existing assembler state for a material.
-    async fn get_state_handle(
-        &self,
-        material_id: &Ulid,
-    ) -> Option<Arc<Mutex<AssemblerState>>> {
-        self.assembler_state
-            .read()
-            .await
-            .get(material_id)
-            .cloned()
+    async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<AssemblerState>>> {
+        self.assembler_state.read().await.get(material_id).cloned()
     }
 
     /// Insert a new assembler state if one does not already exist.
@@ -405,10 +403,7 @@ impl MaterialAssembler {
     }
 
     /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
-    async fn create_placeholder_state(
-        &self,
-        material_id: Ulid,
-    ) -> IngestdResult<AssemblerState> {
+    async fn create_placeholder_state(&self, material_id: Ulid) -> IngestdResult<AssemblerState> {
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
@@ -458,7 +453,7 @@ impl MaterialAssembler {
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| existing.started_at);
 
-            self.persist_state(existing).await?;
+            self.persist_state(&existing).await?;
             debug!(
                 material_id = %material_id,
                 "Begin message updated existing assembler state"
@@ -546,7 +541,7 @@ impl MaterialAssembler {
                     break;
                 }
 
-                let buf_path = match take_buffered_slice(state, material_id, next_offset) {
+                let buf_path = match take_buffered_slice(&mut state, material_id, next_offset) {
                     Ok(path) => path,
                     Err(err) => {
                         warn!(
@@ -620,7 +615,7 @@ impl MaterialAssembler {
             );
         }
 
-        self.persist_state(state).await?;
+        self.persist_state(&state).await?;
         Ok(())
     }
 

@@ -281,7 +281,7 @@ impl DesktopProcessor {
         _from_checkpoint: Checkpoint,
     ) -> SatelliteResult<()> {
         info!("Starting continuous desktop monitoring via AcquisitionManager");
-        let db_pool = self.db_pool()?;
+        let _db_pool = self.db_pool()?;
 
         // Acquire NATS client from the runtime transport (JetStream path is required).
         let nats_client =

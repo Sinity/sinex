@@ -9,12 +9,12 @@ use crate::{
 
 // External crates
 use async_nats::{jetstream, Client as NatsClient};
+use serde::Serialize;
 use sinex_core::db::distributed_locking::AdvisoryLock;
 use sinex_core::environment as sinex_environment;
 use sinex_core::types::utils::ResourceGuard;
 use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
 use sqlx::PgPool;
-use serde::Serialize;
 
 // Standard library and common crates
 use std::{
@@ -207,7 +207,9 @@ impl IngestService {
 
         // Schema reload task
         if let Some(ref pool) = self.db_pool {
-            let handle = self.start_schema_reload_task(pool.clone(), self.nats_client.clone()).await;
+            let handle = self
+                .start_schema_reload_task(pool.clone(), self.nats_client.clone())
+                .await;
             self.track_task(handle).await;
         }
 
@@ -318,7 +320,11 @@ impl IngestService {
     }
 
     /// Start schema reload task
-    async fn start_schema_reload_task(&self, pool: PgPool, nats_client: Option<NatsClient>) -> JoinHandle<()> {
+    async fn start_schema_reload_task(
+        &self,
+        pool: PgPool,
+        nats_client: Option<NatsClient>,
+    ) -> JoinHandle<()> {
         let validator = self.validator.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
@@ -508,7 +514,8 @@ impl IngestService {
             .collect();
 
         js.publish(subject, serde_json::to_vec(&entries)?.into())
-            .await?
+            .await
+            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
             .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
 
