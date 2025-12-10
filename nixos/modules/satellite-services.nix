@@ -67,6 +67,15 @@ let
     CPUQuota = resources.cpuQuota;
   };
 
+  readWritePaths = [
+    stateRoot
+    runtimeDir
+    ingestSpool
+    satelliteSpool
+    logDir
+    dlqPath
+  ];
+
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
 
   mkBaseServiceConfig = resources: env: extra:
@@ -77,6 +86,16 @@ let
       Restart = "on-failure";
       RestartSec = 10;
       Environment = env;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+      ProtectKernelTunables = true;
+      ProtectControlGroups = true;
+      RestrictRealtime = true;
+      LockPersonality = true;
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ReadWritePaths = readWritePaths;
     }
     // renderResources resources
     // extra;

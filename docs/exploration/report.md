@@ -311,6 +311,8 @@ Satellites are writing directly to `raw.source_material_registry` via `PgPool`. 
 **Severity:** **CRITICAL** (Security)
 **Files:** `nixos/modules/*.nix`
 
+**Status:** ✅ Hardening defaults added to ingestd/gateway/satellite units (ProtectSystem=strict, ProtectHome, PrivateTmp, NoNewPrivileges, AF restrictions, kernel/CG protection, read/write paths constrained).
+
 Services run with default privileges. They must be sandboxed.
 
 ### Steps
