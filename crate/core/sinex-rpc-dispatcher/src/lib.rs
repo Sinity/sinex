@@ -6,6 +6,7 @@
 // External crates
 use async_trait::async_trait;
 use chrono::Utc;
+use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -283,12 +284,11 @@ impl ExplorationProvider for RpcDispatcherProcessor {
         // Use provided time range or default to configured historical scan hours
         let now = chrono::Utc::now();
         let default_hours = self.config.historical_scan_hours.unwrap_or(24);
-        let (start, end) = time_range.unwrap_or_else(|| {
-            let default_hours_i64: i64 = default_hours
-                .try_into()
-                .unwrap_or_else(|_| panic!("historical_scan_hours {default_hours} overflows i64"));
-            (now - chrono::Duration::hours(default_hours_i64), now)
-        });
+        let default_hours_i64 = i64::try_from(default_hours)
+            .map_err(|_| eyre!("historical_scan_hours {} exceeds i64 range", default_hours))?;
+
+        let (start, end) =
+            time_range.unwrap_or_else(|| (now - chrono::Duration::hours(default_hours_i64), now));
 
         let source_total: u64 = self.history.iter().map(|h| h.events_generated).sum();
         let sinex_total: u64 = self
