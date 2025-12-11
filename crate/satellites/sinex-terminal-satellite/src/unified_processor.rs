@@ -469,11 +469,11 @@ impl TerminalProcessor {
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
-            let acquisition = runtime.acquisition_manager(
+            let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "terminal-history",
                 source.path.to_string(),
-            )?;
+            )?);
 
             let state_path = state_dir.as_ref().map(|dir| {
                 let hash = blake3::hash(source.path.as_str().as_bytes())
@@ -482,9 +482,13 @@ impl TerminalProcessor {
                 dir.join(format!("{}.json", hash))
             });
 
+            let stage_context = stage
+                .clone()
+                .with_acquisition_manager(Arc::clone(&acquisition));
+
             contexts.push(HistoryWatcherContext {
-                acquisition: Arc::new(acquisition),
-                stage_context: stage.clone(),
+                acquisition,
+                stage_context,
                 shell: source.shell.clone(),
                 path: source.path.clone(),
                 max_capture_bytes: self.config.max_capture_bytes,
@@ -763,7 +767,8 @@ mod tests {
             "/home/test/.bash_history",
         )?);
 
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
             acquisition,
@@ -866,7 +871,8 @@ mod tests {
             "terminal-history",
             "/tmp/history",
         )?);
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
 
         let temp_dir = tempfile::tempdir()?;
         let history_path = temp_dir.path().join("history.txt");

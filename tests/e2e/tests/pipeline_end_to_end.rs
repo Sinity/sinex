@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use async_nats::jetstream;
 use serde_json::json;
+use sinex_satellite_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_satellite_sdk::event_processor::{
     spawn_event_processor, EventProcessorConfig, EventTransport,
 };
@@ -25,6 +26,7 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
     let jetstream = jetstream::new(nats_client.clone());
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
     let ingest_config = TestIngestdConfig {
         nats_url: format!(
@@ -54,7 +56,16 @@ async fn pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         shutdown_rx,
     );
 
-    let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
+    let stage_context = StageAsYouGoContext::from_sender(
+        Arc::new(AcquisitionManager::new(
+            nats_client.clone(),
+            RotationPolicy::default(),
+            "integration-e2e".to_string(),
+            "/tmp/e2e.log".to_string(),
+        )),
+        event_tx,
+        false,
+    );
     let mut processor = LogFileStageProcessor::new(stage_context, "integration-e2e");
 
     let content = b"alpha\nbeta\ngamma\n";

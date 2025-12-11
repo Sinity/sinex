@@ -274,12 +274,13 @@ The previous implementation held a write lock on the entire state map while perf
 * `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`
 * `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs`
 
-**Status:** ✅ Completed — Stage-as-You-Go and AcquisitionManager no longer write source material/temporal ledger rows directly; they publish begin/slice/end via JetStream and rely on ingestd as the sole database writer.
+**Status:** ✅ Completed — Stage-as-You-Go and AcquisitionManager no longer write source material/temporal ledger rows directly; they publish begin/slice/end via JetStream and rely on ingestd as the sole database writer. The integration suite (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) boots ingestd + a log processor to guard the JetStream-only flow.
 
-* `StageAsYouGoContext` gained an optional `AcquisitionManager`. When configured, `register_in_flight` publishes `source_material.begin` events (metadata normalized + `legacy_material_type` hints) and skips DB access entirely. If Postgres is still available (tests/offline modes), the old path is retained.
+* `StageAsYouGoContext` now requires an `AcquisitionManager`; the `PgPool`/blob-ingest fallback and annex helpers were deleted so `register_in_flight`/`finalize_source_material` always publish begin/slice/end via JetStream.
 * `AcquisitionManager::begin_material_with_metadata` and `finalize_with_metadata` now carry the satellite-provided metadata, so ingestd sees the exact same shape it used to write via `PgPool`.
 * `SourceMaterialRepository` exposes `register_external_in_flight(material_id, …)` so ingestd can insert/update rows using the ULID minted on the satellite. This avoids race conditions and removes the dependency on satellite-side SQL.
 * `MaterialAssembler` registers the in-flight record when it observes `source_material.begin`, assembles slices, and merges begin/end metadata when finalizing the record (metadata is appended before calling `finalize_in_flight`). The ingestion daemon is now the only writer touching `raw.source_material_registry` and `raw.temporal_ledger`.
+* All satellites/tests constructing `StageAsYouGoContext` now chain `.with_acquisition_manager(...)` (or use `from_sender(acquisition, …)`), and the obsolete Postgres-only regression test was removed to keep JetStream as the only supported path.
 
 Satellites are writing directly to `raw.source_material_registry` via `PgPool`. They must use NATS.
 

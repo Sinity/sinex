@@ -224,17 +224,20 @@ impl FilesystemProcessor {
 
         let mut contexts = HashMap::new();
         for path in &self.config.watch_paths {
-            let acquisition = runtime.acquisition_manager(
+            let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "fs-watcher",
                 path.clone(),
-            )?;
+            )?);
+            let stage_with_acquisition = stage_context
+                .clone()
+                .with_acquisition_manager(Arc::clone(&acquisition));
 
             contexts.insert(
                 path.clone(),
                 WatchContext {
-                    acquisition: Arc::new(acquisition),
-                    stage_context: stage_context.clone(),
+                    acquisition,
+                    stage_context: stage_with_acquisition,
                     max_capture_bytes: self.config.max_capture_bytes,
                     security_policy: if self.config.follow_symlinks {
                         FileWatchingSecurityPolicy::permissive()
@@ -868,7 +871,8 @@ mod tests {
         ));
 
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-        let stage_context = StageAsYouGoContext::from_sender(ctx.pool.clone(), event_tx, false);
+        let stage_context =
+            StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 
         let watch_ctx = WatchContext {
             acquisition,

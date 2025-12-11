@@ -121,7 +121,8 @@ impl DocumentProcessor {
             "document",
             "document-ingestor",
         )?);
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
 
         self.runtime = Some(runtime);
         self.config = config;
