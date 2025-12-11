@@ -112,7 +112,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Add database query timeouts (NEW)** — ✅ `persist_batch_optimized` now awaits the multi-row insert with a 5s `tokio::time::timeout`, turning hung queries into surfaced database errors (`cargo nextest run -p sinex-ingestd`, run `b1b0a7ce-9e22-411c-b22f-475259f301b9` — JetStream consumer suites pass while the pre-existing `assembler_rejects_corrupted_slice_and_records_dlq` failure remains).
   - **Context:** Queries in `jetstream_consumer.rs` can hang indefinitely, blocking the consumer.
   - **Action:** Wrap critical `fetch_all` calls in `tokio::time::timeout`.
-- **Fix RwLock held during I/O (NEW)**
+- **Fix RwLock held during I/O (NEW)** — ✅ `handle_end` now snapshots assembler state, drops the map/Mutex guards before annex imports or DB writes, and reinserts the Arc on retries (`cargo nextest run -p sinex-ingestd material_assembler::tests::buffered_slice_is_removed_and_returned`, run `7c02139f-d90e-49f5-b16b-b69e08d8e92d`).
   - **File:** `material_assembler.rs`
   - **Issue:** Async RwLock held across file operations blocks all material processing.
   - **Action:** Load necessary data, drop lock, perform I/O, re-acquire if needed.

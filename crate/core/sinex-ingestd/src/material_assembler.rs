@@ -106,6 +106,19 @@ struct AssemblerState {
     hasher: Hasher,
 }
 
+#[derive(Clone)]
+struct FinalizationState {
+    material_id: Ulid,
+    temp_path: PathBuf,
+    expected_offset: i64,
+    slice_count: usize,
+    buffered_count: usize,
+    metadata: JsonValue,
+    material_kind: String,
+    source_identifier: String,
+    started_at: DateTime<Utc>,
+}
+
 impl AssemblerState {
     fn buffers_dir(&self) -> PathBuf {
         self.state_dir.join(BUFFER_DIR_NAME)
@@ -113,6 +126,20 @@ impl AssemblerState {
 
     fn state_file(&self) -> PathBuf {
         self.state_dir.join(STATE_FILE_NAME)
+    }
+
+    fn finalization_view(&self) -> FinalizationState {
+        FinalizationState {
+            material_id: self.material_id,
+            temp_path: self.temp_path.clone(),
+            expected_offset: self.expected_offset,
+            slice_count: self.slice_count,
+            buffered_count: self.buffered_slices.len(),
+            metadata: self.metadata.clone(),
+            material_kind: self.material_kind.clone(),
+            source_identifier: self.source_identifier.clone(),
+            started_at: self.started_at,
+        }
     }
 }
 
@@ -159,7 +186,7 @@ fn merge_metadata(base: &JsonValue, updates: &JsonValue) -> JsonValue {
 }
 
 fn build_finalize_metadata(
-    state: &AssemblerState,
+    state: &FinalizationState,
     end_metadata: &JsonValue,
     ended_at: DateTime<Utc>,
     total_bytes: i64,
@@ -741,7 +768,7 @@ impl MaterialAssembler {
     /// Insert or fetch blob metadata for the assembled material
     async fn upsert_blob(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
         annex_key: &AnnexKey,
         content_hash: &str,
     ) -> IngestdResult<Id<Blob>> {
@@ -782,7 +809,7 @@ impl MaterialAssembler {
     /// Finalize source material registry and ledger
     async fn finalize_material_record(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
         blob_id: Id<Blob>,
         total_size_bytes: i64,
         metadata: JsonValue,
@@ -819,7 +846,7 @@ impl MaterialAssembler {
     }
 
     /// Append entry in raw.temporal_ledger
-    async fn record_ledger_entry(&self, state: &AssemblerState) -> IngestdResult<()> {
+    async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger
@@ -896,7 +923,7 @@ impl MaterialAssembler {
     /// Import the assembled material into git-annex
     async fn import_into_annex(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
     ) -> IngestdResult<(AnnexKey, PathBuf)> {
         let relative_utf8 = Utf8PathBuf::from(format!("materials/{}.bin", state.material_id));
         let repo_path = self.annex.repo_path();
@@ -977,16 +1004,6 @@ impl MaterialAssembler {
         };
         let mut state = state_handle.lock().await;
 
-        let assembled_bytes = state.expected_offset;
-        debug!(
-            material_id = %material_id,
-            assembled_bytes,
-            slice_count = state.slice_count,
-            reported_total = end.total_size_bytes,
-            temp_path = %state.temp_path.display(),
-            "Processing end message"
-        );
-
         if let Some(mut file) = state.temp_file.take() {
             if let Err(e) = file.flush().await {
                 warn!(
@@ -997,12 +1014,27 @@ impl MaterialAssembler {
             }
         }
 
+        let final_state = state.finalization_view();
+        let assembled_bytes = final_state.expected_offset;
+        let slice_count = final_state.slice_count;
+        let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
+        drop(state);
+
+        debug!(
+            material_id = %material_id,
+            assembled_bytes,
+            slice_count,
+            reported_total = end.total_size_bytes,
+            temp_path = %final_state.temp_path.display(),
+            "Processing end message"
+        );
+
         // If no slices were processed or the payload claims zero bytes, avoid annex/blob work
         // and treat this as an empty material. Persist a DLQ entry so publishers can diagnose.
-        if state.slice_count == 0 || end.total_size_bytes == 0 {
+        if slice_count == 0 || end.total_size_bytes == 0 {
             warn!(
                 material_id = %material_id,
-                slices = state.slice_count,
+                slices = slice_count,
                 total_size = end.total_size_bytes,
                 "Material ended with no content; skipping annex import and routing to DLQ"
             );
@@ -1011,7 +1043,7 @@ impl MaterialAssembler {
                 material_id,
                 "empty_material",
                 json!({
-                    "slice_count": state.slice_count,
+                    "slice_count": slice_count,
                     "expected_size": end.total_size_bytes
                 }),
             )
@@ -1022,8 +1054,8 @@ impl MaterialAssembler {
         }
 
         // Ensure the assembled file exists even if no slices were processed (e.g., out-of-order messages).
-        if !state.temp_path.exists() {
-            if let Some(parent) = state.temp_path.parent() {
+        if !final_state.temp_path.exists() {
+            if let Some(parent) = final_state.temp_path.parent() {
                 fs::create_dir_all(parent).await.map_err(|e| {
                     SinexError::io(format!(
                         "Failed to create temp file parent directory {}: {}",
@@ -1032,20 +1064,20 @@ impl MaterialAssembler {
                     ))
                 })?;
             }
-            File::create(&state.temp_path).await.map_err(|e| {
+            File::create(&final_state.temp_path).await.map_err(|e| {
                 SinexError::io(format!(
                     "Failed to recreate missing assembled file {}: {}",
-                    state.temp_path.display(),
+                    final_state.temp_path.display(),
                     e
                 ))
             })?;
         }
 
         // Ensure no buffered slices remain
-        if !state.buffered_slices.is_empty() {
+        if final_state.buffered_count > 0 {
             warn!(
                 material_id = %material_id,
-                buffered = state.buffered_slices.len(),
+                buffered = final_state.buffered_count,
                 "Buffered slices remain when end message arrived; forcing flush"
             );
         }
@@ -1064,7 +1096,7 @@ impl MaterialAssembler {
                 json!({
                     "assembled_bytes": assembled_bytes,
                     "reported_total": end.total_size_bytes,
-                    "slice_count": state.slice_count
+                    "slice_count": slice_count
                 }),
             )
             .await;
@@ -1085,7 +1117,7 @@ impl MaterialAssembler {
                 json!({
                     "assembled_bytes": assembled_bytes,
                     "reported_total": end.total_size_bytes,
-                    "slice_count": state.slice_count
+                    "slice_count": slice_count
                 }),
             )
             .await;
@@ -1093,7 +1125,6 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
         if computed_hash != end.content_hash {
             warn!(
                 material_id = %material_id,
@@ -1117,7 +1148,7 @@ impl MaterialAssembler {
         }
 
         // Verify the staged file size matches expectations before annex import.
-        let file_size = fs::metadata(&state.temp_path)
+        let file_size = fs::metadata(&final_state.temp_path)
             .await
             .map(|m| m.len() as i64)
             .unwrap_or(0);
@@ -1142,7 +1173,7 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let (annex_key, final_path) = match self.import_into_annex(&state).await {
+        let (annex_key, final_path) = match self.import_into_annex(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 self.route_material_error(
@@ -1151,7 +1182,6 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                drop(state);
                 let mut states = self.assembler_state.write().await;
                 states.insert(material_id, state_handle.clone()); // Reinsert state for potential retry
                 return Err(e);
@@ -1159,7 +1189,7 @@ impl MaterialAssembler {
         };
 
         let blob_id = match self
-            .upsert_blob(&state, &annex_key, &end.content_hash)
+            .upsert_blob(&final_state, &annex_key, &end.content_hash)
             .await
         {
             Ok(id) => id,
@@ -1170,7 +1200,6 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                drop(state);
                 let mut states = self.assembler_state.write().await;
                 states.insert(material_id, state_handle.clone()); // Reinsert for retry
                 return Err(e);
@@ -1178,7 +1207,7 @@ impl MaterialAssembler {
         };
 
         let finalize_metadata = build_finalize_metadata(
-            &state,
+            &final_state,
             &end.metadata,
             ended_at,
             end.total_size_bytes,
@@ -1186,7 +1215,12 @@ impl MaterialAssembler {
         );
 
         if let Err(e) = self
-            .finalize_material_record(&state, blob_id, end.total_size_bytes, finalize_metadata)
+            .finalize_material_record(
+                &final_state,
+                blob_id,
+                end.total_size_bytes,
+                finalize_metadata,
+            )
             .await
         {
             self.route_material_error(
@@ -1195,27 +1229,23 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            drop(state);
             let mut states = self.assembler_state.write().await;
             states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
-        if let Err(e) = self.record_ledger_entry(&state).await {
+        if let Err(e) = self.record_ledger_entry(&final_state).await {
             self.route_material_error(
                 material_id,
                 "ledger_append_failed",
                 json!({ "error": e.to_string() }),
             )
             .await;
-            drop(state);
             let mut states = self.assembler_state.write().await;
             states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
-        let slice_count = state.slice_count;
-        drop(state);
         self.cleanup_state(material_id).await;
 
         info!(
