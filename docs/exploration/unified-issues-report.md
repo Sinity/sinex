@@ -258,15 +258,11 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs`.
     - **Status:** `ingest_file` now accepts raw `&str` inputs and validates/sanitizes them via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, temporary files are removed explicitly, and path traversal coverage lives under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`.
 
-44. **Native messaging auth not fully exercised**
-    - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`.
-    - **Steps:** Add end-to-end tests with a fake browser extension manifest to prove allow/deny semantics beyond unit auth checks; ensure logging isn’t the only guard.
-    - **Tests:** Integration test that simulates real native messaging payloads and asserts rejections/acceptance per configured IDs/secrets.
+44. **Native messaging auth not fully exercised** — ✅
+    - **Status:** `native_messaging.rs` enforces allowlists via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS` (optional shared secrets) and emits structured `native_messaging.auth` logs for both allow/deny decisions. The regression tests `native_messaging_rejects_untrusted_extensions`, `native_messaging_accepts_trusted_extension_with_secret`, and `native_messaging_rejects_missing_secret` (`crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`) cover the real manifest/payload flow, and `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`) confirms the suite.
 
-45. **Gateway insecure bypass remains enabled**
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, docs.
-    - **Steps:** Gate or remove `SINEX_GATEWAY_ALLOW_INSECURE=1` in production profiles; document dev-only usage and add a test that fails when the env is set in non-dev mode.
-    - **Tests:** Integration test that asserts RPC startup fails without a token unless explicitly in dev/insecure mode.
+45. **Gateway insecure bypass remains enabled** — ✅
+    - **Status:** `guard_tcp_auth` rejects any TCP bind when `GatewayAuth` is disabled (`crate/core/sinex-gateway/src/rpc_server.rs:545-569`), so `SINEX_GATEWAY_ALLOW_INSECURE=1` only applies to Unix-socket bindings. Tests `tcp_binding_disallows_insecure_mode`, `gateway_auth_blocks_missing_token`, and `gateway_auth_accepts_bearer_header` exercise the guardrails as part of `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`).
 
 46. **Build stamping is hardcoded**
     - **Files:** `crate/lib/sinex-satellite-sdk/src/version.rs`, build scripts.
@@ -310,10 +306,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Introduce a composable step/middleware chain (tower-like) for validation → enrichment → transformation → side effects, and migrate all event processing paths to it to standardize metrics/tracing/error handling. Make the chain the default pattern for new processors; eliminate ad-hoc inline pipelines.
     - **Tests:** Unit tests for individual steps and composition; integration tests showing a migrated pipeline (e.g., ingestd event/material consumers, one satellite) behaves identically with the chain.
 
-54. **Paths still passed as raw strings**
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs`, `blob_manager.rs`, related callers.
-    - **Steps:** Introduce a `VerifiedPath` newtype with a private constructor that enforces validation; update blob/path consumers to accept `VerifiedPath` instead of raw strings/PathBuf.
-    - **Tests:** Extend path validation/security tests to require `VerifiedPath` and ensure traversal/symlink cases are rejected at compile-time API boundaries.
+54. **Paths still passed as raw strings** — ✅
+    - **Status:** `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs:6-48` now exposes a `VerifiedPath` newtype; `BlobManager::ingest_file` accepts only `&VerifiedPath` and callers must parse/validate upfront (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:163-270`). The security regression tests under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs` construct VerifiedPath instances before ingestion. Locally, `cargo nextest run -p sinex-satellite-sdk --test security` still fails to compile because the shared Postgres instance lacks the TimescaleDB extension needed for sqlx offline metadata; once TimescaleDB is available the suite can be rerun to capture a run ID.
 
 55. **Stateful automata lack sharding/affinity**
     - **Files:** stateful automata (analytics, session-aware processors), routing helpers.
