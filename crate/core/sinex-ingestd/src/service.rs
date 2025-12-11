@@ -392,6 +392,7 @@ impl IngestService {
 
         // Close database connections
         if let Some(pool) = &self.db_pool {
+            info!("Closing ingestd database pool");
             pool.close().await;
         }
 

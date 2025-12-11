@@ -451,6 +451,14 @@ impl MaterialAssembler {
             ))
         })?;
 
+        fs::create_dir_all(&state.state_dir).await.map_err(|e| {
+            SinexError::io(format!(
+                "Failed to ensure assembler state dir {}: {}",
+                state.state_dir.display(),
+                e
+            ))
+        })?;
+
         fs::write(state.state_file(), serialized)
             .await
             .map_err(|e| {
@@ -777,7 +785,18 @@ impl MaterialAssembler {
         if let Some(existing) = repo
             .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
             .await
-            .map_err(|e| SinexError::database(format!("Failed to query blob store: {}", e)))?
+            .map_err(|e| {
+                error!(
+                    material_id = %state.material_id,
+                    backend = %annex_key.backend,
+                    hash = %annex_key.hash,
+                    size = annex_key.size,
+                    error = %e,
+                    error_debug = ?e,
+                    "Failed to query blob store"
+                );
+                SinexError::database(format!("Failed to query blob store: {}", e))
+            })?
         {
             return Ok(Id::from_ulid(existing.id.as_ulid().clone()));
         }
@@ -801,7 +820,18 @@ impl MaterialAssembler {
         let stored = repo
             .insert(blob)
             .await
-            .map_err(|e| SinexError::database(format!("Failed to insert blob metadata: {}", e)))?;
+            .map_err(|e| {
+                error!(
+                    material_id = %state.material_id,
+                    backend = %annex_key.backend,
+                    hash = %annex_key.hash,
+                    size = annex_key.size,
+                    error = %e,
+                    error_debug = ?e,
+                    "Failed to insert blob metadata"
+                );
+                SinexError::database(format!("Failed to insert blob metadata: {}", e))
+            })?;
 
         Ok(Id::from_ulid(stored.id.as_ulid().clone()))
     }
@@ -991,6 +1021,16 @@ impl MaterialAssembler {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
+        if self.pool.is_closed() {
+            error!(
+                material_id = %material_id,
+                "Database pool closed before handling end message"
+            );
+            return Err(SinexError::database(
+                "database pool closed before end processing".to_string(),
+            ));
+        }
+
         let state_handle = {
             let mut states = self.assembler_state.write().await;
             states.remove(&material_id)
@@ -1000,7 +1040,9 @@ impl MaterialAssembler {
                 material_id = %material_id,
                 "End message received for unknown material"
             );
-            return Ok(());
+            return Err(SinexError::service(format!(
+                "end message received before begin for material {material_id}"
+            )));
         };
         let mut state = state_handle.lock().await;
 
