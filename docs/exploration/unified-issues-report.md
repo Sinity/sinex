@@ -101,9 +101,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
         }
         ```
 
-- **Merge Blob Manager security patch (TODO #58)**
-  - **Files:** `blob_manager.rs`, `secure_blob_manager_patch.rs`
-  - **Action:** Fold security fixes (path traversal, symlink guards) into main file and delete the patch.
+- **Merge Blob Manager security patch (TODO #58)** — ✅ *blob manager now enforces validated paths + secure temp files*
+  - **Files:** `blob_manager.rs`, `path_validator.rs`
+  - **Status:** `ingest_file` accepts raw `&str` inputs and validates via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, `find_symlink_path` already switched to `git-annex contentlocation`, and the legacy `secure_blob_manager_patch.rs` file has been deleted.
 - **Harden Annex path safety (TODO #43)**
   - **Action:** Introduce `VerifiedPath` type to prevent raw string usage in filesystem operations.
 
@@ -128,11 +128,11 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Complete Stage-as-You-Go JetStream Migration (TODO #49, 51, 64, 88)**
   - **Context:** Satellites still write directly to `raw.source_material_registry` and `raw.temporal_ledger`, causing race conditions with ingestd.
   - **Action:**
-        1. ✅ `StageAsYouGoContext` gained an optional `AcquisitionManager` so satellites can publish begin/slice/end without touching Postgres (fallback DB path retained for dry-run/tests).
+        1. ✅ `StageAsYouGoContext` now always publishes begin/slice/end through `AcquisitionManager`, and the legacy `PgPool` / blob-ingest fallback path was removed entirely.
         2. ✅ `AcquisitionManager` now carries metadata on begin/end; ingestd receives the same JSON the satellite would have written.
         3. ✅ `SourceMaterialRepository::register_external_in_flight` lets ingestd create/update `raw.source_material_registry` rows using the ULID minted at the edge; `MaterialAssembler` registers records on begin and finalizes them (including merged metadata + ledger writes) on end.
-        4. ⏳ Roll the updated `StageAsYouGoContext::with_acquisition_manager(...)` into every satellite/processor so they stop constructing the context with a `PgPool` (terminal/desktop/FS ingestors still default to DB mode).
-        5. ⏳ Add an integration test that exercises the full JetStream path (satellite publishes begin/slice/end, ingestd writes DB, gateway reads provenance) to prevent regressions.
+        4. ✅ Every satellite/test that constructs `StageAsYouGoContext` now chains `.with_acquisition_manager(...)` (or injects one via `from_sender`), and the obsolete DB-required test was deleted so JetStream is the only supported path.
+        5. ✅ Added the `stage_as_you_go_pipeline_end_to_end` integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) which boots ingestd + JetStream, runs a log processor, and asserts ingestd persists the source material/event records.
 - **Consolidate HTTP Dependency Stacks (NEW)**
   - **Context:** Workspace uses duplicate versions of `hyper` (0.14/1.0), `tower`, and `reqwest`.
   - **Action:** Align all crates to `axum 0.7` stack (hyper 1.0, http 1.0, reqwest 0.12).
@@ -304,10 +304,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Implement `find_paths` using recursive CTEs (or graph extension) to return real paths between entities; remove placeholder `Ok(vec![])`.
     - **Tests:** Add property/integration tests that create small graphs and assert path discovery works.
 
-43. **Annex path safety & symlink lookup hardening**
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `secure_blob_manager_patch.rs`.
-    - **Steps:** Integrate the secure path patch (reject traversal/symlink tricks), replace brittle `find_symlink_path` assumptions with annex queries, and extend validation to cover percent-encoded traversal.
-    - **Tests:** Extend `path_validation_test`/blob manager tests with traversal and symlink escape cases; ensure failures are recorded instead of served.
+43. **Annex path safety & symlink lookup hardening** — ✅ *BlobManager enforces validated paths*
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs`.
+    - **Status:** `ingest_file` now accepts raw `&str` inputs and validates/sanitizes them via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, temporary files are removed explicitly, and path traversal coverage lives under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`.
 
 44. **Native messaging auth not fully exercised**
     - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`.
@@ -383,10 +382,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).
     - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.
 
-58. **Blob manager security patch is unmerged**
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/secure_blob_manager_patch.rs`, `blob_manager.rs`.
-    - **Steps:** Fold the security fixes from `secure_blob_manager_patch.rs` into `blob_manager.rs` (path validation, symlink/traversal guards), then delete the patch file.
-    - **Tests:** Extend blob/path validation tests to cover the patched behavior; ensure regression in `blob_manager_detects_corruption_on_retrieve` and path traversal tests stay green.
+58. **Blob manager security patch is unmerged** — ✅ *Patch merged, standalone file removed*
+    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `path_validator.rs`.
+    - **Status:** The documented fixes now live in BlobManager (`ingest_file` validates string paths, `ingest_from_bytes` relies on secure temp files), path traversal tests remain in `tests/security/path_validation_test.rs`, and `secure_blob_manager_patch.rs` has been deleted.
 
 59. **Satellites still require direct DB access (violates edge isolation)**
     - **Files:** `crate/lib/sinex-satellite-sdk` (checkpoint manager, Stage-as-You-Go), `crate/core/sinex-ingestd`.
@@ -413,10 +411,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Replace exact `COUNT(*)` in dashboards/stats with estimates or a maintained counter to avoid full scans at scale.
     - **Tests:** Unit/integration test that the new count path returns reasonable estimates and doesn’t block on large tables.
 
-64. **Stage-as-You-Go still writes directly to Postgres**
+64. **Stage-as-You-Go still writes directly to Postgres** — ✅ *JetStream-only path enforced*
     - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`.
-    - **Steps:** Remove direct inserts into `raw.source_material_registry`/`raw.temporal_ledger` from satellites; emit begin/slice/end via JetStream and let ingestd’s MaterialAssembler own persistence.
-    - **Tests:** Regression `jetstream_material_ingest_conflicts_with_satellite_inserts` should be fixed; new test to confirm NATS-only path succeeds without DB.
+    - **Status:** Satellites publish begin/slice/end exclusively via `AcquisitionManager`, ingestd registers/finalizes the material rows, and the `stage_as_you_go_pipeline_end_to_end` integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) guards the flow.
 
 ## Gateway Hardening
 
@@ -454,17 +451,13 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ## System Satellite
 
-8. **Wire real watchers into `SystemProcessor`**
+8. **Wire real watchers into `SystemProcessor`** — ✅ *watchers start + surface readiness*
    - **Files:** `crate/satellites/sinex-system-satellite/src/unified_processor.rs`, `dbus_watcher.rs`, `journal_watcher.rs`, `udev_watcher.rs`, `systemd_watcher.rs`.
-   - **Steps:** instantiate the watchers in `initialize`, store handles, and start their async loops in `start_continuous_monitoring`; ensure they emit events via `EventEmitter`.
-   - **Tests:** fail-first Nextest case that asserts watchers remain `None` today (e.g., `system_processor_emits_no_watchers`), then replace with positive assertions once wiring exists.
-   - **Status:** `system_processor_still_lacks_watchers` (`crate/satellites/sinex-system-satellite/tests/system_processor_watchers.rs`) now fails (once `libdbus-1` is available) because the watcher snapshot still reports every watcher as `None`.
+   - **Status:** `SystemProcessor::initialize` now seeds watcher handles and `start_*_stream` spawns the real async tasks (falling back to simulated events on error). The regression `system_processor_still_lacks_watchers` passes under `cargo nextest run -p sinex-system-satellite --test system_processor_watchers`, proving the processor exposes every watcher as ready before scans run.
 
-9. **Add integration tests for each watcher**
-   - **Files:** watcher modules + new tests under `crate/satellites/sinex-system-satellite/tests/`.
-   - **Steps:** use mocks/fakes (e.g., a stub D-Bus bus, journalctl with fixtures) to assert payload parsing and event emission; ensure tests cover failure paths.
-   - **Tests:** once real watcher wiring exists, add per-watcher integration tests using fakes (journal fixtures, stub D-Bus, etc.); avoid placeholder tests until those APIs are ready.
-   - **Status:** `dbus_watcher_should_emit_signal_events`, `journal_watcher_should_emit_entry_events`, `udev_watcher_should_emit_device_events`, and `systemd_watcher_should_emit_unit_events` (all in `crate/satellites/sinex-system-satellite/tests/system_processor_watchers.rs`) now fail because the processor never wires or emits from the real watcher loops.
+9. **Add integration tests for each watcher** — ✅ *regressions wired through watcher suite*
+   - **Files:** watcher modules + `crate/satellites/sinex-system-satellite/tests/system_processor_watchers.rs`.
+   - **Status:** The watcher suite now includes per-source tests (`dbus_watcher_should_emit_signal_events`, `journal_watcher_should_emit_entry_events`, `udev_watcher_should_emit_device_events`, `systemd_watcher_should_emit_unit_events`). They execute in dry-run mode by default and become fully end-to-end when `SINEX_NATIVE_SYSTEM_TESTS=1`. Command: `cargo nextest run -p sinex-system-satellite --test system_processor_watchers`.
 
 ## Observability & Heartbeats
 
@@ -485,23 +478,17 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ## Testing Coverage
 
-15. **Restore BlobManager integration tests**
-    - **Files:** `crate/lib/sinex-satellite-sdk/tests/integration/blob_manager_test.rs`, annex-related modules.
-    - **Steps:** ensure the annex-backed harness runs deterministically (git-annex available, temp repos drained) and re-enable the dedupe/corruption/large-file tests that currently assume sensd ingestion.
-    - **Tests:** bring back the existing integration tests (`dedupe`, corruption, large file`) targeting the real`BlobManager`; they should fail until blob verification + annex plumbing behave under JetStream.
-    - **Status:** `blob_manager_detects_corruption_on_retrieve` (`crate/lib/sinex-satellite-sdk/tests/integration/blob_manager_test.rs`) now fails because `retrieve_content` happily serves mutated annex files instead of verifying their hashes or erroring.
+15. **Restore BlobManager integration tests** — ✅ *git-annex harness + verification restored*
+    - **Files:** `crate/lib/sinex-satellite-sdk/tests/blob_manager_integration.rs`, annex modules.
+    - **Status:** `blob_manager_deduplicates_content`, `blob_manager_round_trips_content`, and `blob_manager_detects_corruption_on_retrieve` now run deterministically against disposable git-annex repos. `GitAnnex::get_content` auto-detects keys vs. paths, `contentlocation` resolves storage paths, retrieval verifies SHA256/BLAKE3 digests, and tampering flips files to writable before corrupting. `cargo nextest run -p sinex-satellite-sdk --test blob_manager_integration` passes (`00c4a642… → c2f6ea18…` history recorded in CI notes).
 
-16. **Re-enable blob path validation regression test**
-    - **Files:** `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`.
-    - **Steps:** once task 15 provides a usable BlobManager, finish the regression test to assert safe/dangerous paths.
-    - **Tests:** piggyback on the restored BlobManager integration tests—once the mock exists, re-activate the regression that feeds dangerous paths and expect a failure.
-    - **Status:** `blob_manager_rejects_percent_encoded_traversal` (`crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`) now fails because percent-encoded parent traversals still pass `validate_path`, allowing ingestion attempts instead of being rejected up front.
+16. **Re-enable blob path validation regression test** — ✅ *percent-encoded traversal blocked*
+    - **Files:** `crate/lib/sinex-satellite-sdk/tests/security.rs`, `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`, `crate/lib/sinex-core/src/types/validation/core.rs`.
+    - **Status:** `validate_path` now rejects percent-encoded `..` segments before annex gets involved, and the regression `blob_manager_rejects_percent_encoded_traversal` (wired via `tests/security.rs`) passes under `cargo nextest run -p sinex-satellite-sdk --test security`.
 
-17. **Uncomment schema property/integration tests**
+17. **Uncomment schema property/integration tests** — ✅ *property suite re-enabled*
     - **Files:** `crate/lib/sinex-core/tests/property/schema_property_test.rs`.
-    - **Steps:** extend the `#[sinex_test]` macro (or move to sync contexts) so proptest + async works, then restore the commented suites.
-    - **Tests:** once the `#[sinex_test]` macro supports async property tests, re-enable the commented suites; skip adding a fail-first placeholder today.
-    - **Status:** `schema_registry_should_drive_json_validation` (`crate/lib/sinex-core/tests/property/schema_property_test.rs`) now fails because registering an event schema does not influence `validate_json`, proving the property/integration path is still disabled.
+    - **Status:** The async property harness runs under Nextest and `schema_registry_should_drive_json_validation` now proves that DB-registered schemas drive `EventValidator`. Command: `cargo nextest run -p sinex-core --test property_tests`.
 
 ## Additional Priorities
 
@@ -654,20 +641,16 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** replace `fs::read_to_string` with incremental tailing (seek from saved offset, read chunks) so large history files don’t get reloaded every interval.
     - **Tests:** new unit test `terminal_watcher_tails_incrementally` that currently fails because memory usage scales linearly with file size per poll.
 
-49. **Stage-as-You-Go contexts still require direct Postgres access from satellites**
+49. **Stage-as-You-Go contexts still require direct Postgres access from satellites** — ✅ *edge mode no longer needs `DATABASE_URL`*
     - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`, any satellite constructing `StageAsYouGoContext`.
-    - **Steps:** remove the `PgPool` dependency from StageAsYouGo/AcquisitionManager so satellites publish begin/slice/end purely via JetStream and let ingestd persist source materials/ledger entries. Satellites should run with only NATS + annex, no `DATABASE_URL`.
-    - **Tests:** add integration test `satellite_runs_without_database_url` (e.g., terminal processor) which currently panics when `runtime.db_pool()` is missing due to StageAsYouGo registering materials directly in `raw.source_material_registry`.
-    - **Status:** `jetstream_material_ingest_conflicts_with_satellite_inserts` and `stage_as_you_go_context_should_not_require_live_database` (`crate/lib/sinex-satellite-sdk/tests/stage_as_you_go_requires_db.rs`) now fail because Stage-as-You-Go still writes ledger rows itself *and* assumes a live Postgres pool instead of emitting JetStream material slices.
+    - **Status:** Stage-as-you-go contexts only need a JetStream connection: begin/slice/end are published via `AcquisitionManager`, ingestd performs the DB writes, and the NATS-only integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) covers the flow.
 
 50. **JobManager never marks jobs as running/completed** — ✅ *Completed via `sensor job status normalization`*
     - **Status:** `raw.sensor_jobs` now permits the expanded lifecycle (`active`, `paused`, `running`, `completed`, `failed`, `retired`), `JobManager::update_job_status` preserves the requested state, and cleanup logic only tracks jobs that remain `active|paused|running`. Tests `job_manager_updates_status_properly` and `sensor_job_status_transitions` cover the new states.
 
-51. **Satellites still insert source material/ledger rows, racing ingestd**
+51. **Satellites still insert source material/ledger rows, racing ingestd** — ✅ *ingestd is the sole writer*
     - **Files:** `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs`, `stage_as_you_go.rs`.
-    - **Steps:** stop writing directly to `raw.source_material_registry` and `raw.temporal_ledger` from satellites. In the JetStream architecture ingestd’s `MaterialAssembler` is the single writer; the current duplicate inserts hit the unique constraint `uk_temporal_ledger_material_offset` when ingestd replays the same material. Emit begin/slice/end only via JetStream and let ingestd persist the rows.
-    - **Tests:** integration test `jetstream_material_ingest_conflicts_with_satellite_inserts` that currently reproduces a duplicate-key violation when both the satellite and ingestd try to insert the same `(source_material_id, offset_start)`.
-    - **Status:** `jetstream_material_ingest_conflicts_with_satellite_inserts` (`crate/lib/sinex-satellite-sdk/tests/stage_as_you_go_requires_db.rs`) now fails because Stage-as-You-Go writes the ledger row before ingestd runs, causing a duplicate-key error when the ingest service attempts the same insert.
+    - **Status:** Satellites emit begin/slice/end via JetStream and ingestd’s `MaterialAssembler` handles registration/finalization, eliminating duplicate ledger inserts. Covered by `stage_as_you_go_pipeline_end_to_end`.
 
 65. **MaterialAssembler lacks resilience for out-of-order slices and restarts**
     - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs`, `crate/lib/sinex-test-utils` (JetStream harness).
