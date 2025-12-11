@@ -170,8 +170,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Implement `get_checkpoint_stats()` (NEW)**
   - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
   - **Action:** Implement stats retrieval (currently returns empty/zero stats).
-- **Fix Shutdown Polling (NEW)**
-  - **File:** `crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs`
+- **Fix Shutdown Polling (NEW)** — ✅ `LifecycleManager::shutdown_future` now clones a `tokio::sync::watch` receiver so shutdown notifications propagate instantly (no 100 ms sleep loop) and signals/Ctrl+C send through the channel (`cargo nextest run -p sinex-satellite-sdk lifecycle::tests::shutdown_future_notifies_without_polling`, run `61b444c1-2bf7-4cd1-bad0-39f37af1dd17`).
+  - **File:** `crate/lib/sinex-satellite-sdk/src/lifecycle.rs`
   - **Action:** Replace 100ms polling loop with `tokio::sync::watch` channel for immediate shutdown.
   - **Snippet:**
 
