@@ -846,7 +846,8 @@ impl DatabasePool {
 
                                 let events_has_subnano = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                     WHERE table_schema = 'core' AND table_name = 'events' \
+                                       AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
                                 )
                                 .fetch_one(&db_pool)
                                 .await;
@@ -883,7 +884,7 @@ impl DatabasePool {
                                     (_, Ok(false), _, _) => {
                                         needs_recreate = true;
                                         eprintln!(
-                                            "  Database {name} missing core.events.ts_orig_subnano; recreating"
+                                            "  Database {name} missing or mis-typed core.events.ts_orig_subnano; recreating"
                                         );
                                     }
                                     (_, _, Ok(false), _) => {
@@ -1703,7 +1704,8 @@ async fn ensure_template_database(
 
                                 let events_has_subnano = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                     WHERE table_schema = 'core' AND table_name = 'events' \
+                                       AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
                                 )
                                 .fetch_one(&pool)
                                 .await;
@@ -1743,7 +1745,7 @@ async fn ensure_template_database(
                                     }
                                     (_, Ok(false), _, _) => {
                                         eprintln!(
-                                            "♻️  Template {template_name} missing core.events.ts_orig_subnano; recreating"
+                                            "♻️  Template {template_name} missing or mis-typed core.events.ts_orig_subnano; recreating"
                                         );
                                     }
                                     (_, _, Ok(false), _) => {
