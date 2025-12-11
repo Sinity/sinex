@@ -109,7 +109,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ### 1.4 Database & Concurrency
 
-- **Add database query timeouts (NEW)**
+- **Add database query timeouts (NEW)** — ✅ `persist_batch_optimized` now awaits the multi-row insert with a 5s `tokio::time::timeout`, turning hung queries into surfaced database errors (`cargo nextest run -p sinex-ingestd`, run `b1b0a7ce-9e22-411c-b22f-475259f301b9` — JetStream consumer suites pass while the pre-existing `assembler_rejects_corrupted_slice_and_records_dlq` failure remains).
   - **Context:** Queries in `jetstream_consumer.rs` can hang indefinitely, blocking the consumer.
   - **Action:** Wrap critical `fetch_all` calls in `tokio::time::timeout`.
 - **Fix RwLock held during I/O (NEW)**
