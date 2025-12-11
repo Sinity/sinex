@@ -76,8 +76,8 @@ A comprehensive path validation security review has been completed for the core 
 #### 1. Input Validation at API Boundaries
 ```rust
 // SECURE: Validate user input immediately
-pub async fn ingest_file(file_path: &str) -> Result<BlobMetadata> {
-    let validated_path = validate_and_convert_path(file_path)?;
+pub async fn ingest_file(file_path: &VerifiedPath) -> Result<BlobMetadata> {
+    let validated_path = file_path.as_path();
     // ... rest of function uses validated_path
 }
 ```
@@ -135,23 +135,14 @@ let sanitized = validate_test_path(path)?;
 
 1. **Update Function Signatures**
    ```rust
-   // Change from:
-   pub async fn ingest_file(&self, file_path: &Utf8Path, ...) -> Result<BlobMetadata>
-   
-   // To:
-   pub async fn ingest_file(&self, file_path: &str, ...) -> Result<BlobMetadata> {
-       let validated_path = validate_and_convert_path(file_path)?;
-       // ... rest of function
-   }
+   // Require a VerifiedPath everywhere user input reaches the filesystem.
+   pub async fn ingest_file(&self, file_path: &VerifiedPath, ...) -> Result<BlobMetadata>;
    ```
 
-2. **Update Test Callers**
+2. **Update Callers**
    ```rust
-   // Update test calls from:
-   manager.ingest_file(&file_path, Some("test.txt"))
-   
-   // To:
-   manager.ingest_file(file_path.as_str(), Some("test.txt"))
+   let verified = VerifiedPath::parse(user_supplied_path)?;
+   manager.ingest_file(&verified, Some("test.txt")).await?;
    ```
 
 ### Security Testing

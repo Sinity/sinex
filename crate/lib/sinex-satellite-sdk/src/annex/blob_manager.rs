@@ -22,7 +22,7 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 use super::{
-    path_validator::{create_secure_temp_path, validate_and_convert_path, validate_path_exists},
+    path_validator::{create_secure_temp_path, validate_path_exists, VerifiedPath},
     AnnexConfig, GitAnnex,
 };
 use tokio::io::AsyncWriteExt;
@@ -162,13 +162,12 @@ impl BlobManager {
     /// Ingest a file into the blob management system
     pub async fn ingest_file(
         &self,
-        file_path: &str,
+        file_path: &VerifiedPath,
         original_filename: Option<&str>,
     ) -> Result<BlobMetadata> {
         // Validate file path before processing to prevent path traversal attacks
-        let validated_path =
-            validate_and_convert_path(file_path).map_err(|e| eyre!("Invalid file path: {}", e))?;
-        validate_path_exists(&validated_path)?;
+        validate_path_exists(file_path.as_path())?;
+        let validated_path = file_path.as_path();
 
         info!("Ingesting file: {:?}", validated_path);
         let _start = Instant::now();

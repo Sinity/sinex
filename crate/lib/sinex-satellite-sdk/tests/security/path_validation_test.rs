@@ -7,9 +7,9 @@ use camino::Utf8PathBuf;
 use sinex_core::db::security::{SecurityError, SecurityValidator};
 use sinex_core::types::validate_path;
 use sinex_core::{Event, JsonValue};
-use sinex_satellite_sdk::annex::blob_manager::BLOB_EVENT_CHANNEL_CAPACITY;
-use sinex_satellite_sdk::annex::AnnexConfig;
-use sinex_satellite_sdk::annex::BlobManager;
+use sinex_satellite_sdk::annex::{
+    blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, VerifiedPath,
+};
 use sinex_test_utils::prelude::*;
 use std::path::Path;
 use tempfile::TempDir;
@@ -128,7 +128,8 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre
 
     // This might fail due to git-annex setup, but it should fail with a different error
     // than path validation (it should pass path validation)
-    let result = blob_manager.ingest_file(safe_path.as_str(), None).await;
+    let verified = VerifiedPath::parse(safe_path.as_str())?;
+    let result = blob_manager.ingest_file(&verified, None).await;
 
     // Check that the error is NOT a path validation error
     if let Err(e) = result {
@@ -165,15 +166,13 @@ async fn blob_manager_rejects_percent_encoded_traversal(
     let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
 
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
-
-    let result = blob_manager.ingest_file(encoded_path.as_str(), None).await;
-
+    let verification = VerifiedPath::parse(encoded_path.as_str());
     assert!(
-        result
+        verification
             .as_ref()
             .map(|_| false)
-            .unwrap_or_else(|err| err.to_string().contains("Invalid file path")),
-        "BlobManager should reject percent-encoded traversal paths instead of attempting ingestion"
+            .unwrap_or_else(|err| err.to_string().contains("Path validation failed")),
+        "Percent-encoded traversal paths must be rejected before ingestion"
     );
 
     Ok(())

@@ -702,7 +702,10 @@ mod tests {
     use sinex_core::Id;
     use sinex_satellite_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::sinex_test;
-    use sinex_test_utils::{prelude::*, TestRuntime, TestRuntimeBuilder};
+    use sinex_test_utils::{
+        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
+        TestRuntimeBuilder,
+    };
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
@@ -752,7 +755,13 @@ mod tests {
             .with_dry_run(false)
             .build()
             .await?;
-        let _ = nats.client_url();
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
@@ -844,6 +853,7 @@ mod tests {
             .expect("payload command present");
         assert_eq!(payload_command, command);
 
+        ingest_handle.stop().await?;
         sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
         sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
         ctx.force_cleanup().await?;
@@ -857,7 +867,13 @@ mod tests {
                 .with_dry_run(false)
                 .build()
                 .await?;
-        let _ = nats.client_url();
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
@@ -930,6 +946,7 @@ mod tests {
             );
         }
 
+        ingest_handle.stop().await?;
         Ok(())
     }
 }

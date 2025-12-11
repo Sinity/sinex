@@ -11,11 +11,13 @@ use serde::{Deserialize, Serialize};
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
-use sinex_satellite_sdk::stream_processor::{
-    Checkpoint, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-    TimeHorizon,
+use sinex_satellite_sdk::{
+    stream_processor::{
+        Checkpoint, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport,
+        StatefulStreamProcessor, TimeHorizon,
+    },
+    SatelliteError, SatelliteResult,
 };
-use sinex_satellite_sdk::SatelliteResult;
 use validator::Validate;
 
 // Standard library
@@ -124,6 +126,10 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
         init: ProcessorInitContext<Self::Config>,
     ) -> SatelliteResult<()> {
         let (config, _raw_config, service_info, _handles, _work_dir) = init.into_parts();
+        config.validate().map_err(|err| {
+            SatelliteError::Configuration(format!("rpc dispatcher config invalid: {}", err))
+        })?;
+
         self.config = config;
         self.service_name = service_info.service_name().to_string();
         info!(service = %service_info.service_name(), "Initializing RPC dispatcher processor");

@@ -55,8 +55,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 - **Fix panics in hot paths (NEW-C5, C6, C7)** — ✅
   - **Status:** `MaterialAssembler::handle_end`/`persist_state` now bubble errors instead of unwrapping (`crate/core/sinex-ingestd/src/material_assembler.rs:991-1055`), `EventRepository::insert_event`/`insert_many` derive subnanoseconds via safe `map_err` paths (`crate/lib/sinex-core/src/db/repositories/events.rs:455-524,897-938`), and terminal satellite watcher/tests keep unwraps inside test scaffolding only. Regression `cargo nextest run -p sinex-ingestd material_assembler::tests::buffered_slice_is_removed_and_returned` (run `20174d86-f1f7-4041-bfbd-65a72e26d007`) covers the assembler buffer hot path without panics.
-- **Prevent config integer overflow (NEW-C8)** — ⚠️ Pending
-  - **Status:** Although `RpcDispatcherConfig` derives `validator::Validate` with bounds (`crate/core/sinex-rpc-dispatcher/src/lib.rs:30-78`), the processor’s `initialize` path never calls `config.validate()` before using the values (`crate/core/sinex-rpc-dispatcher/src/lib.rs:124-156`). Extreme CLI/env overrides can still overflow at runtime, so the guardrails remain unimplemented.
+- **Prevent config integer overflow (NEW-C8)** — ✅
+  - **Status:** `RpcDispatcherProcessor::initialize` now runs `config.validate()` and surfaces a `SatelliteError::Configuration` before touching any limits (`crate/core/sinex-rpc-dispatcher/src/lib.rs:30-154`), so oversized CLI/env overrides are rejected at startup. Local `cargo nextest run -p sinex-rpc-dispatcher` attempts currently fail because the shared Postgres instance lacks the TimescaleDB extension required for sqlx compile-time checks; once that extension is available the dispatcher suite can run end to end.
 
 - **Apply systemd security hardening to all services (NEW)** — ✅
   - **Status:** `nixos/modules/satellite-services.nix:78-110` defines the shared `mkBaseServiceConfig` with `ProtectSystem="strict"`, `ProtectHome=true`, `PrivateTmp=true`, `NoNewPrivileges=true`, AF restrictions, and constrained `ReadWritePaths`, and every ingestd/gateway/satellite unit consumes that helper (`nixos/modules/satellite-services.nix:134-220`). The hardened overlay is now part of the default module set.
@@ -67,8 +67,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Merge Blob Manager security patch (TODO #58)** — ✅ *blob manager now enforces validated paths + secure temp files*
   - **Files:** `blob_manager.rs`, `path_validator.rs`
   - **Status:** `ingest_file` accepts raw `&str` inputs and validates via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, `find_symlink_path` already switched to `git-annex contentlocation`, and the legacy `secure_blob_manager_patch.rs` file has been deleted.
-- **Harden Annex path safety (TODO #43)** — ⚠️ Pending
-  - **Status:** `BlobManager` continues to accept `Utf8Path`/`Utf8PathBuf` directly (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:1-120`), and no `VerifiedPath` newtype exists yet—callers still pass arbitrary paths after ad-hoc validation. The stricter typed guard described in the backlog has not been implemented.
+- **Harden Annex path safety (TODO #43)** — ✅
+  - **Status:** The `VerifiedPath` newtype (`crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs:6-48`) now encapsulates sanitized paths and `BlobManager::ingest_file` only accepts `&VerifiedPath` (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:163-267`), forcing callers to validate inputs at compile time. The `security` test binary (path validation suite) compiles once sqlx can operate offline; current runs on this host are blocked by the TimescaleDB extension missing from the dev Postgres instance.
 
 ### 1.4 Database & Concurrency
 
