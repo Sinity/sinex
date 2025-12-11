@@ -309,17 +309,20 @@ This document consolidates the project's entire backlog, technical debt, and exp
 54. **Paths still passed as raw strings** — ✅
     - **Status:** `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs:6-48` now exposes a `VerifiedPath` newtype; `BlobManager::ingest_file` accepts only `&VerifiedPath` and callers must parse/validate upfront (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:163-270`). The security regression tests under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs` construct VerifiedPath instances before ingestion. Locally, `cargo nextest run -p sinex-satellite-sdk --test security` still fails to compile because the shared Postgres instance lacks the TimescaleDB extension needed for sqlx offline metadata; once TimescaleDB is available the suite can be rerun to capture a run ID.
 
-55. **Stateful automata lack sharding/affinity**
+55. **Stateful automata lack sharding/affinity** — ⏳
+    - **Status:** No `Shardable`/consistent hashing abstraction exists outside this report (`rg "Shardable" -g'*'` returns only the backlog entry), and processors such as `crate/satellites/sinex-health-aggregator/src/processor.rs` still rely on single-threaded `StatefulStreamProcessor` instances without key affinity.
     - **Files:** stateful automata (analytics, session-aware processors), routing helpers.
     - **Steps:** Add a `Shardable` trait + consistent hashing router for JetStream subjects to guarantee per-key ordering/affinity; adopt in stateful processors.
     - **Tests:** Integration test that events with the same shard key always hit the same worker and preserve order under parallel workers.
 
-56. **Retry/idempotency not encoded in types**
+56. **Retry/idempotency not encoded in types** — ⏳
+    - **Status:** Retry surfaces such as `crate/lib/sinex-satellite-sdk/src/dlq_retry.rs` still accept arbitrary closures/handlers and expose `DlqRetryHandler::retry_all` without any `Idempotent` marker; there are no workspace traits enforcing retry safety.
     - **Files:** retry helpers, satellite/ingestd operations.
     - **Steps:** Add marker traits (e.g., `Idempotent`) for operations eligible for automatic retry; enforce via retry wrappers.
     - **Tests:** Unit tests that non-idempotent ops are refused by retry helpers; positive test for idempotent ops.
 
-57. **Units/size/times use raw integers**
+57. **Units/size/times use raw integers** — ⏳
+    - **Status:** Configuration structs still expose primitive integers for byte/second semantics (`crate/core/sinex-ingestd/src/config.rs:34-95` keeps `batch_timeout_secs: u64`, `max_message_size: usize`, etc.), so nothing prevents mixing milliseconds vs. seconds in new call sites.
     - **Files:** config structs and validation for timeouts/size limits in ingestd/satellites.
     - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).
     - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.
@@ -328,27 +331,32 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `path_validator.rs`.
     - **Status:** The documented fixes now live in BlobManager (`ingest_file` validates string paths, `ingest_from_bytes` relies on secure temp files), path traversal tests remain in `tests/security/path_validation_test.rs`, and `secure_blob_manager_patch.rs` has been deleted.
 
-59. **Satellites still require direct DB access (violates edge isolation)**
+59. **Satellites still require direct DB access (violates edge isolation)** — ⏳
+    - **Status:** Checkpointing keeps a hard PgPool dependency (`crate/lib/sinex-satellite-sdk/src/checkpoint.rs:41-118` stores a `sqlx::PgPool` and issues `INSERT ... ON CONFLICT`), so satellites cannot run with `DATABASE_URL` unset despite Stage-as-You-Go now publishing via JetStream.
     - **Files:** `crate/lib/sinex-satellite-sdk` (checkpoint manager, Stage-as-You-Go), `crate/core/sinex-ingestd`.
     - **Steps:** Move checkpoints to NATS KV/stream, route stage-as-you-go/material writes exclusively via JetStream/ingestd, and remove PgPool dependencies from satellites. Align with the edge-mode TODO to enforce NATS-only satellites.
     - **Tests:** Integration run of a satellite with no DATABASE_URL (NATS-only) that still succeeds; ensure duplicate ledger insert races disappear.
 
-60. **Events repository is a God module**
+60. **Events repository is a God module** — ⏳
+    - **Status:** `crate/lib/sinex-core/src/db/repositories/events.rs` remains a 2,236-line monolith (see `wc -l` above) that mixes ingestion, analytics, and reporting helpers in one giant impl; no reader/writer split exists yet.
     - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs`.
     - **Steps:** Split into writer/reader/analytics modules; keep cascade/helpers isolated. Reduce cognitive load and surface narrower traits for callers.
     - **Tests:** Ensure existing tests still pass; add smoke tests for the separated modules if needed.
 
-61. **Gateway insecure bypass remains a production foot-gun**
+61. **Gateway insecure bypass remains a production foot-gun** — ✅
+    - **Status:** `GatewayAuth::from_env` now refuses to start without `SINEX_RPC_TOKEN` unless `SINEX_GATEWAY_ALLOW_INSECURE=1`, and `guard_tcp_auth` (`crate/core/sinex-gateway/src/rpc_server.rs:151-214, 531-560`) rejects TCP bindings when auth is disabled, forcing insecure mode to Unix sockets only. The regression tests `gateway_auth_blocks_missing_token` / `gateway_auth_accepts_bearer_header` cover the enforcement.
     - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, docs.
     - **Steps:** Remove or hard-gate `SINEX_GATEWAY_ALLOW_INSECURE=1` to localhost/dev; add TLS/mTLS config for TCP bindings (see item 48).
     - **Tests:** Integration that asserts TCP startup without TLS/auth fails; dev-mode allows only loopback.
 
-62. **Syslog/journal watcher shells out to journalctl**
+62. **Syslog/journal watcher shells out to journalctl** — ⏳
+    - **Status:** `crate/satellites/sinex-system-satellite/src/journal_watcher.rs:30-330` still spawns `journalctl` via `std::process::Command` for snapshots, tailing, and filtering; no sd-journal bindings exist yet.
     - **Files:** `crate/satellites/sinex-system-satellite/src/journal_watcher.rs`.
     - **Steps:** Replace `journalctl` subprocess parsing with a native journal API (e.g., sd-journal bindings) to reduce brittleness and improve performance.
     - **Tests:** Integration test with journal fixtures via native API; ensure existing watcher tests still pass.
 
-63. **COUNT(*) used for event counts**
+63. **COUNT(*) used for event counts** — ⏳
+    - **Status:** Numerous helpers still emit `COUNT(*)` queries (e.g., `count_all` and stats at `crate/lib/sinex-core/src/db/repositories/events.rs:557-1929`), so dashboards continue to scan the hypertable instead of using approximations/counters.
     - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs` (count_all, stats).
     - **Steps:** Replace exact `COUNT(*)` in dashboards/stats with estimates or a maintained counter to avoid full scans at scale.
     - **Tests:** Unit/integration test that the new count path returns reasonable estimates and doesn’t block on large tables.
