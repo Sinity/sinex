@@ -130,9 +130,23 @@ host    all             all             ::/0                    reject
   migrationPackage =
     if db.migration.package != null then db.migration.package else cfg.package;
 
+  databaseExtensionsOverlay = import ../../nix/overlays/database-extensions.nix;
+  sinexAllowUnfreePredicate =
+    pkg:
+    let
+      name = lib.getName pkg;
+    in
+    elem name [ "timescaledb" "pg_jsonschema" ];
+
 in
 {
   config = mkMerge [
+    (mkIf (db.enable && db.autoSetup) {
+      nixpkgs.overlays = mkAfter [ databaseExtensionsOverlay ];
+      nixpkgs.config.allowUnfree = mkDefault true;
+      nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
+    })
+
     (mkIf (db.enable && db.autoSetup) {
       services.postgresql = {
         enable = true;
