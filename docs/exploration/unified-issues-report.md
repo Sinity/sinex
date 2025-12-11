@@ -44,68 +44,31 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ### 1.1 Data Integrity & Corruption
 
-- **Fix subnano precision loss (NEW-C1)**
-  - **Context:** `events.rs` stores nanoseconds in `i16` columns but retrieves them as full nanoseconds, losing 99.99% of precision.
-  - **File:** `crate/lib/sinex-core/src/db/repositories/events.rs`
-  - **Action:** Audit `ts_orig_subnano` usage. Ensure storage and retrieval logic matches.
-- **Standardize lock ID endianness (NEW-C2)**
-  - **Context:** `distributed_locking.rs` uses BigEndian while `state_machine.rs` uses LittleEndian for `i64` conversions.
-  - **Action:** Pick one standard (BigEndian recommended for network/DB sortability) and apply consistently.
-- **Remove dangerous UNIQUE indexes (NEW-C3, NEW-C4)**
-  - **File:** `crate/lib/sinex-schema/src/schema/entities.rs`
-  - **Action:** Remove `ix_entities_type` (prevents >1 entity per type) and entity relation unique indexes (prevents graph edges).
-  - **Migration:** Create a new migration to drop these indexes immediately.
+- **Fix subnano precision loss (NEW-C1)** — ✅
+  - **Status:** `core.events.ts_orig_subnano` now uses an `INTEGER` column (see `crate/lib/sinex-schema/src/schema/events.rs:92-118`), and the repositories consistently persist/extract the nanosecond remainder via `ts.nanosecond() as i32` (`crate/lib/sinex-core/src/db/repositories/events.rs:455,897`). The ingest path no longer truncates to `i16`, so nanosecond precision is preserved end to end.
+- **Standardize lock ID endianness (NEW-C2)** — ✅
+  - **Status:** Both advisory-lock helpers convert ULIDs with `i64::from_be_bytes(...)` (`crate/lib/sinex-core/src/db/distributed_locking.rs:138-145` and `crate/lib/sinex-core/src/db/replay/state_machine.rs:14-27`), so every consumer now hashes lock IDs with the same Big-Endian ordering. Replay control + distributed locking integration tests pass under `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`).
+- **Remove dangerous UNIQUE indexes (NEW-C3, NEW-C4)** — ✅
+  - **Status:** The schema generator no longer creates `ix_entities_type` or relation-level `UNIQUE` indexes that prevented fan-out (`crate/lib/sinex-schema/src/schema/entities.rs:124-210`). The only remaining uniqueness constraint is on `(entity_type, name)` plus the scoped `uk_entity_relations_triple` tuple, which preserves graph integrity while allowing multiple entities per type and arbitrary edge fan-out.
 
 ### 1.2 Production Stability (Crashes/Panics)
 
-- **Fix panics in hot paths (NEW-C5, C6, C7)**
-  - **Files:** `material_assembler.rs:474` (unwrap on buffer), `events.rs:1051` (unwrap in loop), `terminal_satellite.rs` (expects).
-  - **Action:** Replace `.expect()`/`.unwrap()` with proper `Result` propagation and error logging.
-- **Prevent config integer overflow (NEW-C8)**
-  - **File:** `rpc_dispatcher.rs:289`
-  - **Action:** Validate config values at load time; return error instead of panicking at runtime.
+- **Fix panics in hot paths (NEW-C5, C6, C7)** — ✅
+  - **Status:** `MaterialAssembler::handle_end`/`persist_state` now bubble errors instead of unwrapping (`crate/core/sinex-ingestd/src/material_assembler.rs:991-1055`), `EventRepository::insert_event`/`insert_many` derive subnanoseconds via safe `map_err` paths (`crate/lib/sinex-core/src/db/repositories/events.rs:455-524,897-938`), and terminal satellite watcher/tests keep unwraps inside test scaffolding only. Regression `cargo nextest run -p sinex-ingestd material_assembler::tests::buffered_slice_is_removed_and_returned` (run `20174d86-f1f7-4041-bfbd-65a72e26d007`) covers the assembler buffer hot path without panics.
+- **Prevent config integer overflow (NEW-C8)** — ⚠️ Pending
+  - **Status:** Although `RpcDispatcherConfig` derives `validator::Validate` with bounds (`crate/core/sinex-rpc-dispatcher/src/lib.rs:30-78`), the processor’s `initialize` path never calls `config.validate()` before using the values (`crate/core/sinex-rpc-dispatcher/src/lib.rs:124-156`). Extreme CLI/env overrides can still overflow at runtime, so the guardrails remain unimplemented.
 
-### 1.3 Security & Hardening
+- **Apply systemd security hardening to all services (NEW)** — ✅
+  - **Status:** `nixos/modules/satellite-services.nix:78-110` defines the shared `mkBaseServiceConfig` with `ProtectSystem="strict"`, `ProtectHome=true`, `PrivateTmp=true`, `NoNewPrivileges=true`, AF restrictions, and constrained `ReadWritePaths`, and every ingestd/gateway/satellite unit consumes that helper (`nixos/modules/satellite-services.nix:134-220`). The hardened overlay is now part of the default module set.
 
-- **Apply systemd security hardening to all services (NEW)**
-  - **Context:** Currently only `preflight-verification.nix` is hardened. Ingestd, Gateway, and Satellites run exposed.
-  - **Files:** `nixos/modules/*.nix`
-  - **Snippet:**
-
-        ```nix
-        serviceConfig = {
-            ProtectSystem = "strict";
-            ProtectHome = true;
-            PrivateTmp = true;
-            NoNewPrivileges = true;
-            ProtectKernelTunables = true;
-            ProtectControlGroups = true;
-            RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-            LockPersonality = true;
-        };
-        ```
-
-- **Add SIGTERM handler to ingestd (NEW)**
-  - **File:** `crate/core/sinex-ingestd/src/main.rs`
-  - **Issue:** ingestd only catches `SIGINT`. systemd uses `SIGTERM` for stop, causing unclean shutdowns.
-  - **Action:** Use `tokio::signal::unix::SignalKind` to catch both.
-  - **Snippet:**
-
-        ```rust
-        // Replace ctrl_c() with:
-        let mut sigterm = signal(SignalKind::terminate())?;
-        let mut sigint = signal(SignalKind::interrupt())?;
-        tokio::select! {
-            _ = sigterm.recv() => {}
-            _ = sigint.recv() => {}
-        }
-        ```
+- **Add SIGTERM handler to ingestd (NEW)** — ✅
+  - **Status:** `crate/core/sinex-ingestd/src/main.rs:105-160` wires `tokio::signal::unix::signal(SignalKind::terminate)` alongside SIGINT so systemd stop targets trigger an orderly `service.shutdown()`. The shutdown future logs transitions and prevents abrupt pool closures.
 
 - **Merge Blob Manager security patch (TODO #58)** — ✅ *blob manager now enforces validated paths + secure temp files*
   - **Files:** `blob_manager.rs`, `path_validator.rs`
   - **Status:** `ingest_file` accepts raw `&str` inputs and validates via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, `find_symlink_path` already switched to `git-annex contentlocation`, and the legacy `secure_blob_manager_patch.rs` file has been deleted.
-- **Harden Annex path safety (TODO #43)**
-  - **Action:** Introduce `VerifiedPath` type to prevent raw string usage in filesystem operations.
+- **Harden Annex path safety (TODO #43)** — ⚠️ Pending
+  - **Status:** `BlobManager` continues to accept `Utf8Path`/`Utf8PathBuf` directly (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:1-120`), and no `VerifiedPath` newtype exists yet—callers still pass arbitrary paths after ad-hoc validation. The stricter typed guard described in the backlog has not been implemented.
 
 ### 1.4 Database & Concurrency
 
@@ -319,10 +282,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
         4. Once KV + schema broadcast are in place, delete/disable redundant DB-only satellite codepaths and drop their backing tables from the base schema (no new migration—update the squashed schema and reset DB) to avoid parallel modes.
     - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
 
-48. **RPC transport security for TCP bindings is missing**
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, NixOS module defaults, docs/current/architecture/security-architecture.md.
-    - **Steps:** Require TLS/mTLS when the gateway binds to TCP (Unix socket remains default); disallow `SINEX_GATEWAY_ALLOW_INSECURE=1` outside dev; add cert/key options (agenix-delivered) and enforce token + TLS for any non-localhost binding.
-    - **Tests:** Integration test that TCP startup fails without TLS; test that with cert/key the server accepts TLS and rejects unauthenticated clients.
+48. **RPC transport security for TCP bindings is missing** — ✅
+    - **Status:** `rpc_server.rs` now refuses to bind TCP unless `SINEX_GATEWAY_TLS_CERT`/`SINEX_GATEWAY_TLS_KEY` are set, wraps the listener in `tokio-rustls`, and calls `guard_tcp_auth` so `SINEX_GATEWAY_ALLOW_INSECURE` is only permitted on Unix sockets. Optional client CA support enables mTLS. Tests `tcp_binding_disallows_insecure_mode`, `tls_paths_must_be_set_for_tcp`, and `gateway_auth_blocks_missing_token` cover the guardrails, and `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`) passed the suite.
 
 49. **Browser activity capture is missing**
     - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.
