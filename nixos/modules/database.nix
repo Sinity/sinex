@@ -47,15 +47,23 @@ let
   baselineConnections = totalServiceCount * perServiceConnections + 50;
   computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
 
-  postgresqlPkg = db.package;
+  postgresqlPkgBase = db.package;
   postgresqlPackages = pkgs.postgresql16Packages;
 
-  extensionPackages = unique (
-    optionals (postgresqlPackages ? timescaledb) [ postgresqlPackages.timescaledb ]
-    ++ optionals (postgresqlPackages ? pgvector) [ postgresqlPackages.pgvector ]
-    ++ optionals (postgresqlPackages ? pg_jsonschema) [ postgresqlPackages.pg_jsonschema ]
-    ++ optionals (postgresqlPackages ? pgx_ulid) [ postgresqlPackages.pgx_ulid ]
-  );
+  extensionPackageBuilder =
+    ps:
+    unique (
+      optionals (ps ? timescaledb) [ ps.timescaledb ]
+      ++ optionals (ps ? pgvector) [ ps.pgvector ]
+      ++ optionals (ps ? pg_jsonschema) [ ps.pg_jsonschema ]
+      ++ optionals (ps ? pgx_ulid) [ ps.pgx_ulid ]
+    );
+
+  postgresqlPkg =
+    if lib.hasAttr "withPackages" postgresqlPkgBase then
+      postgresqlPkgBase.withPackages extensionPackageBuilder
+    else
+      postgresqlPkgBase;
 
   sharedPreloadLibraries =
     let
@@ -154,7 +162,6 @@ in
         ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
-        extensions = extensionPackages;
         settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
       };
     })
