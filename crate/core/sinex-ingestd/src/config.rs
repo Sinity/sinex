@@ -11,10 +11,10 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use sinex_core::{
     environment::environment,
-    types::{deserialize_validated_utf8_path, validate_path},
+    types::{deserialize_validated_utf8_path, validate_path, Bytes, Seconds},
 };
 use tracing::{debug, error, info, warn};
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 /// Configuration for the ingestion daemon
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
@@ -45,9 +45,10 @@ pub struct IngestdConfig {
     pub batch_size: usize,
 
     /// Batch timeout in seconds
-    #[validate(range(min = 1, message = "Batch timeout must be greater than 0"))]
-    #[builder(default = 5)]
-    pub batch_timeout_secs: u64,
+    #[serde(default = "default_batch_timeout_secs")]
+    #[builder(default = default_batch_timeout_secs())]
+    #[validate(custom(function = "validate_batch_timeout_secs"))]
+    pub batch_timeout_secs: Seconds,
 
     /// Enable dry-run mode (no database writes)
     #[builder(default = false)]
@@ -68,13 +69,10 @@ pub struct IngestdConfig {
     pub work_dir: Utf8PathBuf,
 
     /// Maximum message size in bytes
-    #[validate(range(
-        min = 1024,
-        max = 1073741824,
-        message = "Max message size must be between 1KB and 1GB"
-    ))]
-    #[builder(default = 16 * 1024 * 1024)]
-    pub max_message_size: usize,
+    #[serde(default = "default_max_message_size")]
+    #[builder(default = default_max_message_size())]
+    #[validate(custom(function = "validate_max_message_size"))]
+    pub max_message_size: Bytes,
 
     /// NATS stream name for events
     #[validate(length(min = 1, message = "NATS stream name cannot be empty"))]
@@ -154,7 +152,7 @@ impl IngestdConfig {
             .nats_url(nats_url)
             .database_pool_size(pool_size)
             .batch_size(batch_size)
-            .batch_timeout_secs(batch_timeout_secs)
+            .batch_timeout_secs(Seconds::from_secs(batch_timeout_secs))
             .dry_run(dry_run)
             .skip_schema_sync(skip_schema_sync)
             .validate_schemas(validate_schemas);
@@ -330,12 +328,12 @@ impl Default for IngestdConfig {
             database_pool_size: 50,
             nats_url: "nats://localhost:4222".to_string(),
             batch_size: 1000,
-            batch_timeout_secs: 5,
+            batch_timeout_secs: default_batch_timeout_secs(),
             dry_run: false,
             validate_schemas: true,
             skip_schema_sync: false,
             work_dir: default_work_dir(),
-            max_message_size: 16 * 1024 * 1024,
+            max_message_size: default_max_message_size(),
             nats_stream_name: default_nats_stream_name(),
             nats_consumer_name: format!("ingestd-{}", env.name()),
             annex_repo_path: default_annex_repo_path(),
@@ -373,6 +371,14 @@ fn default_work_dir() -> Utf8PathBuf {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
+}
+
+fn default_batch_timeout_secs() -> Seconds {
+    Seconds::from_secs(5)
+}
+
+fn default_max_message_size() -> Bytes {
+    Bytes::from_mebibytes(16)
 }
 
 /// Default NATS stream name with environment namespacing
@@ -436,4 +442,19 @@ fn validate_state_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErr
     validate_path(path.as_str())
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_state_dir"))
+}
+
+fn validate_batch_timeout_secs(value: &Seconds) -> Result<(), ValidationError> {
+    if value.as_secs() == 0 {
+        return Err(ValidationError::new("min"));
+    }
+    Ok(())
+}
+
+fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {
+    let bytes = value.as_u64();
+    if !(1024..=1_073_741_824).contains(&bytes) {
+        return Err(ValidationError::new("range"));
+    }
+    Ok(())
 }

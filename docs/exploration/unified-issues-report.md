@@ -321,8 +321,8 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Add marker traits (e.g., `Idempotent`) for operations eligible for automatic retry; enforce via retry wrappers.
     - **Tests:** Unit tests that non-idempotent ops are refused by retry helpers; positive test for idempotent ops.
 
-57. **Units/size/times use raw integers** — ⏳
-    - **Status:** Configuration structs still expose primitive integers for byte/second semantics (`crate/core/sinex-ingestd/src/config.rs:34-95` keeps `batch_timeout_secs: u64`, `max_message_size: usize`, etc.), so nothing prevents mixing milliseconds vs. seconds in new call sites.
+57. **Units/size/times use raw integers** — 🟡
+    - **Status:** `sinex-core::types::units::{Bytes, Seconds}` now wrap size/time values and `IngestdConfig` adopted them (`crate/core/sinex-ingestd/src/config.rs:22-120`), so CLI/defaults/documents all use explicit units. `cargo nextest run -p sinex-ingestd figment_config_tests` still fails to build until the local Postgres instance picks up the packaged TimescaleDB, so the regression reference will be captured once the DB is rebuilt. Satellite configs still expose raw integers, so the TODO stays open until those structs migrate as well.
     - **Files:** config structs and validation for timeouts/size limits in ingestd/satellites.
     - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).
     - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.

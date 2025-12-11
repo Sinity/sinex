@@ -1,4 +1,4 @@
-use sinex_core::types::validation::config_validation::ConfigValidation;
+use sinex_core::types::{validation::config_validation::ConfigValidation, Seconds};
 use sinex_ingestd::IngestdConfig;
 use sinex_test_utils::sinex_test;
 
@@ -7,7 +7,7 @@ fn defaults_match_constants() -> color_eyre::eyre::Result<()> {
     let config = IngestdConfig::default();
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 1_000);
-    assert_eq!(config.batch_timeout_secs, 5);
+    assert_eq!(config.batch_timeout_secs, Seconds::from_secs(5));
     assert!(!config.dry_run);
     assert!(config.validate_schemas);
     Ok(())
@@ -43,7 +43,7 @@ fn constructs_from_args() -> color_eyre::eyre::Result<()> {
     assert_eq!(config.nats_url, "nats://custom:4222");
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 200);
-    assert_eq!(config.batch_timeout_secs, 10);
+    assert_eq!(config.batch_timeout_secs.as_secs(), 10);
     assert!(config.dry_run);
     Ok(())
 }
@@ -75,7 +75,7 @@ fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
     assert_eq!(config.nats_url, "nats://example:4222");
     assert_eq!(config.database_pool_size, 25);
     assert_eq!(config.batch_size, 128);
-    assert_eq!(config.batch_timeout_secs, 9);
+    assert_eq!(config.batch_timeout_secs.as_secs(), 9);
     assert!(config.dry_run);
 
     if let Some(url) = original_db {

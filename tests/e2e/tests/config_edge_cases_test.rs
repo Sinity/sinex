@@ -10,6 +10,7 @@
 //! - Path validation edge cases
 //! - Connection test failure handling
 
+use sinex_core::types::{Bytes, Seconds};
 use sinex_ingestd::config::IngestdConfig;
 use sinex_test_utils::prelude::*;
 use std::env;
@@ -118,11 +119,11 @@ async fn test_config_batch_size_zero() -> Result<()> {
 #[sinex_test]
 async fn test_config_batch_timeout_minimum() -> Result<()> {
     let config = IngestdConfig::builder()
-        .batch_timeout_secs(1)
+        .batch_timeout_secs(Seconds::from_secs(1))
         .database_url("postgresql:///test")
         .build();
 
-    assert_eq!(config.batch_timeout_secs, 1);
+    assert_eq!(config.batch_timeout_secs.as_secs(), 1);
 
     let validation = validator::Validate::validate(&config);
     assert!(
@@ -138,7 +139,7 @@ async fn test_config_batch_timeout_minimum() -> Result<()> {
 #[sinex_test]
 async fn test_config_batch_timeout_zero() -> Result<()> {
     let config = IngestdConfig::builder()
-        .batch_timeout_secs(0)
+        .batch_timeout_secs(Seconds::from_secs(0))
         .database_url("postgresql:///test")
         .build();
 
@@ -156,7 +157,7 @@ async fn test_config_batch_timeout_zero() -> Result<()> {
 async fn test_config_max_message_size_boundaries() -> Result<()> {
     // Minimum (1KB)
     let config = IngestdConfig::builder()
-        .max_message_size(1024)
+        .max_message_size(Bytes::from_bytes(1024))
         .database_url("postgresql:///test")
         .build();
 
@@ -165,7 +166,7 @@ async fn test_config_max_message_size_boundaries() -> Result<()> {
 
     // Maximum (1GB)
     let config = IngestdConfig::builder()
-        .max_message_size(1073741824)
+        .max_message_size(Bytes::from_bytes(1_073_741_824))
         .database_url("postgresql:///test")
         .build();
     let validation = validator::Validate::validate(&config);
@@ -173,7 +174,7 @@ async fn test_config_max_message_size_boundaries() -> Result<()> {
 
     // Below minimum
     let config = IngestdConfig::builder()
-        .max_message_size(1023)
+        .max_message_size(Bytes::from_bytes(1023))
         .database_url("postgresql:///test")
         .build();
     let validation = validator::Validate::validate(&config);
@@ -181,7 +182,7 @@ async fn test_config_max_message_size_boundaries() -> Result<()> {
 
     // Above maximum
     let config = IngestdConfig::builder()
-        .max_message_size(1073741825)
+        .max_message_size(Bytes::from_bytes(1_073_741_825))
         .database_url("postgresql:///test")
         .build();
     let validation = validator::Validate::validate(&config);
@@ -398,8 +399,8 @@ async fn test_config_all_boundaries_valid() -> Result<()> {
     let config = IngestdConfig::builder()
         .database_pool_size(1)
         .batch_size(1)
-        .batch_timeout_secs(1)
-        .max_message_size(1024)
+        .batch_timeout_secs(Seconds::from_secs(1))
+        .max_message_size(Bytes::from_bytes(1024))
         .database_url("postgresql:///test")
         .nats_url("nats://localhost:4222")
         .nats_stream_name("s")
@@ -425,8 +426,8 @@ async fn test_config_multiple_validation_errors() -> Result<()> {
     let config = IngestdConfig::builder()
         .database_pool_size(0) // Invalid
         .batch_size(0) // Invalid
-        .batch_timeout_secs(0) // Invalid
-        .max_message_size(100) // Invalid (< 1024)
+        .batch_timeout_secs(Seconds::from_secs(0)) // Invalid
+        .max_message_size(Bytes::from_bytes(100)) // Invalid (< 1024)
         .database_url("mysql://localhost/db") // Invalid (not PostgreSQL)
         .nats_url("") // Invalid (empty)
         .nats_stream_name("") // Invalid (empty)
