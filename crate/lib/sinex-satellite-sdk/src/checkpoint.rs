@@ -505,13 +505,67 @@ impl CheckpointManager {
     /// Get checkpoint history for debugging
     pub async fn get_checkpoint_history(
         &self,
-        _limit: i64,
+        limit: i64,
     ) -> SatelliteResult<Vec<CheckpointHistoryEntry>> {
-        // CheckpointQueries doesn't have get_checkpoint_history method in the new API
-        // For now, just return an empty vector
-        let rows: Vec<CheckpointHistoryEntry> = vec![];
+        let max_entries = if limit <= 0 { 50 } else { limit };
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+        let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let entries = rows;
+        let rows = match &self.pool {
+            Some(pool) => {
+                sqlx::query!(
+                    r#"
+                    SELECT
+                        id::text AS "id!",
+                        last_processed_id::text AS "last_processed_id?",
+                        processed_count,
+                        checkpoint_version,
+                        created_at,
+                        last_activity,
+                        updated_at
+                    FROM core.processor_checkpoints
+                    WHERE processor_name = $1
+                      AND consumer_group = $2
+                      AND consumer_name = $3
+                    ORDER BY updated_at DESC
+                    LIMIT $4
+                    "#,
+                    processor_name.as_ref(),
+                    consumer_group.as_ref(),
+                    consumer_name.as_ref(),
+                    max_entries
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            None => Vec::new(),
+        };
+
+        let mut entries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let processed_count = u64::try_from(row.processed_count).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "Stored checkpoint has negative processed_count, refusing to load history"
+                        .to_string(),
+                )
+            })?;
+            let checkpoint_version = u32::try_from(row.checkpoint_version).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "checkpoint_version exceeds supported range for history".to_string(),
+                )
+            })?;
+
+            entries.push(CheckpointHistoryEntry {
+                id: row.id,
+                last_processed_id: row.last_processed_id,
+                processed_count,
+                last_activity: row.last_activity,
+                checkpoint_version,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
+        }
 
         debug!(
             processor = %self.processor_name,

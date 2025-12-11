@@ -151,25 +151,12 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ### 2.3 Operational Gaps
 
-- **Implement `reset_checkpoint()` (NEW)**
+- **Implement `reset_checkpoint()` (NEW)** — ✅ Deleting a processor/consumer triple uses `ProcessorName`/`ConsumerGroup`/`ConsumerName` identities and clears the optional KV entry; covered by `cargo nextest run -p sinex-satellite-sdk checkpoint_history_stats_and_reset` (run `dac966cb-fdfd-4bf7-becf-01184ca9470a`).
   - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-  - **Snippet:**
-
-        ```rust
-        pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-            self.pool.checkpoints().delete(
-                &ProcessorName::new(&self.processor_name),
-                &ConsumerGroup::new(&self.consumer_group),
-                &ConsumerName::new(&self.consumer_name),
-            ).await?;
-            info!(processor = %self.processor_name, "Checkpoint reset");
-            Ok(())
-        }
-        ```
-
-- **Implement `get_checkpoint_stats()` (NEW)**
+- **Implement `get_checkpoint_stats()` (NEW)** — ✅ Stats now summarize `core.processor_checkpoints` rows for the processor/consumer pair and drive the same regression run above.
   - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-  - **Action:** Implement stats retrieval (currently returns empty/zero stats).
+- **Expose checkpoint history (NEW)** — ✅ `CheckpointManager::get_checkpoint_history(limit)` fetches recent rows for the processor/group/consumer triple (descending `updated_at`), enforces sane default limits, and surfaces negative counters as checkpoint errors (also verified by run `dac966cb-fdfd-4bf7-becf-01184ca9470a`).
+  - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
 - **Fix Shutdown Polling (NEW)** — ✅ `LifecycleManager::shutdown_future` now clones a `tokio::sync::watch` receiver so shutdown notifications propagate instantly (no 100 ms sleep loop) and signals/Ctrl+C send through the channel (`cargo nextest run -p sinex-satellite-sdk lifecycle::tests::shutdown_future_notifies_without_polling`, run `61b444c1-2bf7-4cd1-bad0-39f37af1dd17`).
   - **File:** `crate/lib/sinex-satellite-sdk/src/lifecycle.rs`
   - **Action:** Replace 100ms polling loop with `tokio::sync::watch` channel for immediate shutdown.
