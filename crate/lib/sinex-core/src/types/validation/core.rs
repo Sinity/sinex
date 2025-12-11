@@ -1,4 +1,5 @@
 use camino::{Utf8Component as Component, Utf8Path as Path, Utf8PathBuf as PathBuf};
+use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -58,23 +59,14 @@ pub fn validate_path(path: &str) -> Result<camino::Utf8PathBuf> {
     }
 
     // Create PathBuf and clean it to normalize .. and . components
-    let path_buf = PathBuf::from(path);
+    let normalized = path.replace('\\', "/");
+    let path_buf = PathBuf::from(normalized.as_str());
     let cleaned_path = clean_path(&path_buf);
+    ensure_path_does_not_traverse(&cleaned_path)?;
 
-    // Check for directory traversal after cleaning
-    let mut depth = 0i32;
-    for component in cleaned_path.components() {
-        match component {
-            Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
-                    return Err(ValidationError::Path("Path traversal detected".into()));
-                }
-            }
-            Component::Normal(_) => depth += 1,
-            Component::RootDir => depth = 0,
-            _ => {}
-        }
+    if let Some(decoded) = decode_percent_encoded_path(path)? {
+        let cleaned_decoded = clean_path(&decoded);
+        ensure_path_does_not_traverse(&cleaned_decoded)?;
     }
 
     Ok(cleaned_path)
@@ -107,6 +99,51 @@ fn clean_path(path: &Path) -> PathBuf {
     }
 
     components.iter().collect()
+}
+
+fn ensure_path_does_not_traverse(path: &Path) -> Result<()> {
+    let mut depth = 0i32;
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(ValidationError::Path("Path traversal detected".into()));
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::RootDir => depth = 0,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn decode_percent_encoded_path(path: &str) -> Result<Option<PathBuf>> {
+    if !path.as_bytes().contains(&b'%') {
+        return Ok(None);
+    }
+
+    let mut current = path.to_string();
+    let mut decoded_any = false;
+    // Decode up to three times to catch nested encodings without risking an
+    // unbounded allocation loop.
+    for _ in 0..3 {
+        if !current.as_bytes().contains(&b'%') {
+            break;
+        }
+        decoded_any = true;
+        current = percent_decode_str(&current)
+            .decode_utf8()
+            .map_err(|_| ValidationError::Path("Path contains invalid percent-encoding".into()))?
+            .into_owned();
+    }
+
+    if !decoded_any {
+        return Ok(None);
+    }
+
+    Ok(Some(PathBuf::from(current.replace('\\', "/"))))
 }
 
 /// Sanitize a filename component for safe storage and display  

@@ -1,8 +1,9 @@
 #![doc = include_str!("../../docs/annex.md")]
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{bail, Context, Result};
+use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
+use sinex_core::types::ulid::Ulid;
 use std::process::Command;
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn};
@@ -30,31 +31,25 @@ pub struct AnnexKey {
 
 impl AnnexKey {
     pub fn parse(key_str: &str) -> Result<Self> {
-        // Parse git-annex key format: BACKEND-sizeSTORE--hash.ext
+        // Parse git-annex key format: BACKEND-s<size>--hash.ext
         // Example: SHA256E-s12345--hash.dat
-        let parts: Vec<&str> = key_str.split('-').collect();
-        if parts.len() < 3 {
-            bail!("Invalid annex key format: {}", key_str);
-        }
+        let (prefix, hash) = key_str
+            .split_once("--")
+            .ok_or_else(|| eyre!("Invalid annex key format: {}", key_str))?;
 
-        let backend = parts[0].to_string();
-        let size_part = &parts[1];
+        let (backend, size_part) = prefix
+            .split_once("-s")
+            .ok_or_else(|| eyre!("Invalid size format in annex key: {}", key_str))?;
 
-        if !size_part.starts_with('s') {
-            bail!("Invalid size format in annex key: {}", key_str);
-        }
-
-        let size = size_part[1..]
+        let size = size_part
             .parse::<u64>()
             .wrap_err("Failed to parse size from annex key")?;
 
-        let hash = parts[2..].join("-");
-
         Ok(AnnexKey {
             key: key_str.to_string(),
-            backend,
+            backend: backend.to_string(),
             size,
-            hash,
+            hash: hash.to_string(),
         })
     }
 }
@@ -176,9 +171,25 @@ impl GitAnnex {
             bail!("File does not exist: {:?}", resolved_path);
         }
 
+        let (ingest_path, needs_cleanup) = if resolved_path.starts_with(&self.config.repo_path) {
+            (resolved_path.clone(), false)
+        } else {
+            let temp_name = format!("ingest-{}.tmp", Ulid::new());
+            let target = self.config.repo_path.join(temp_name);
+            tokio::fs::copy(&resolved_path, &target)
+                .await
+                .wrap_err("Failed to stage file inside annex repository")?;
+            (target, true)
+        };
+
+        let relative_path = ingest_path
+            .strip_prefix(&self.config.repo_path)
+            .unwrap_or(&ingest_path)
+            .to_owned();
+
         let output = AsyncCommand::new("git-annex")
             .arg("add")
-            .arg(file_path)
+            .arg(relative_path.as_str())
             .current_dir(&self.config.repo_path)
             .output()
             .await
@@ -206,8 +217,19 @@ impl GitAnnex {
             bail!("git-annex add failed: {}", stderr);
         }
 
-        // Get the annex key for the added file
-        self.get_key(file_path).await
+        let key = self.get_key(relative_path.as_path()).await?;
+
+        if needs_cleanup {
+            if let Err(e) = tokio::fs::remove_file(&ingest_path).await {
+                warn!(
+                    error = %e,
+                    path = %ingest_path,
+                    "Failed to clean up staged ingest file inside annex repo"
+                );
+            }
+        }
+
+        Ok(key)
     }
 
     /// Get the annex key for a file
@@ -235,13 +257,33 @@ impl GitAnnex {
         AnnexKey::parse(&key_str)
     }
 
+    fn resolve_argument(&self, key_or_path: &str) -> (bool, String) {
+        let candidate = self.config.repo_path.join(key_or_path);
+        if candidate.exists() {
+            let rel = candidate
+                .strip_prefix(&self.config.repo_path)
+                .unwrap_or(&candidate);
+            (false, rel.to_string())
+        } else {
+            (true, key_or_path.to_string())
+        }
+    }
+
     /// Ensure content is available locally
     pub async fn get_content(&self, key_or_path: &str) -> Result<()> {
         debug!("Getting content for: {}", key_or_path);
 
-        let output = AsyncCommand::new("git-annex")
-            .arg("get")
-            .arg(key_or_path)
+        let (is_key, argument) = self.resolve_argument(key_or_path);
+
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("get");
+        if is_key {
+            cmd.arg("--key").arg(&argument);
+        } else {
+            cmd.arg(&argument);
+        }
+
+        let output = cmd
             .current_dir(&self.config.repo_path)
             .output()
             .await
@@ -261,8 +303,14 @@ impl GitAnnex {
     pub async fn drop_content(&self, key_or_path: &str, force: bool) -> Result<()> {
         debug!("Dropping content for: {}", key_or_path);
 
+        let (is_key, argument) = self.resolve_argument(key_or_path);
         let mut cmd = AsyncCommand::new("git-annex");
-        cmd.arg("drop").arg(key_or_path);
+        cmd.arg("drop");
+        if is_key {
+            cmd.arg("--key").arg(&argument);
+        } else {
+            cmd.arg(&argument);
+        }
 
         if force {
             cmd.arg("--force");

@@ -883,10 +883,8 @@ now write a third one. do not invent your own things, it's supposed to be based 
 
 ### 6.1 Restore Disabled Tests
 
-* **Action:** Uncomment and fix tests in:
-  * `crate/lib/sinex-core/tests/property/schema_property_test.rs`
-  * `crate/lib/sinex-satellite-sdk/tests/integration/blob_manager_test.rs`
-* **Requirement:** Ensure they pass with the new `AcquisitionManager` and `BlobManager` architecture (from Batch 1 & 2).
+* **Action:** ✅ `crate/lib/sinex-core/tests/property/schema_property_test.rs` (via the `property_tests` binary) now runs under Nextest, and ✅ `crate/lib/sinex-satellite-sdk/tests/blob_manager_integration.rs` exercises dedupe/round-trip/corruption flows against real git-annex repos. `cargo nextest run -p sinex-core --test property_tests` (run `f7c846c6-cb19-4e92-b6b6-ec031ed13c43`) and `cargo nextest run -p sinex-satellite-sdk --test blob_manager_integration` (run `c2f6ea18-3715-483e-b3a8-2c6754ce88b4`) both pass locally.
+* **Requirement:** Keep both suites in the reliable profile so regressions (crypto verification, schema validation) fail fast before releases.
 
 ---
 
