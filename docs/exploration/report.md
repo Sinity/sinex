@@ -282,7 +282,11 @@ The previous implementation held a write lock on the entire state map while perf
 * `MaterialAssembler` registers the in-flight record when it observes `source_material.begin`, assembles slices, and merges begin/end metadata when finalizing the record (metadata is appended before calling `finalize_in_flight`). The ingestion daemon is now the only writer touching `raw.source_material_registry` and `raw.temporal_ledger`.
 * All satellites/tests constructing `StageAsYouGoContext` now chain `.with_acquisition_manager(...)` (or use `from_sender(acquisition, …)`), and the obsolete Postgres-only regression test was removed to keep JetStream as the only supported path.
 
-Satellites are writing directly to `raw.source_material_registry` via `PgPool`. They must use NATS.
+*Update (Crash/Restart Hardening — runs `c02b562e-27c4-46ea-87cd-e99a50763a8b` and `5c0cbb15-ae88-470a-91d9-426a779c94b1`):* the `material_acquisition` integration binary is back to ✅ after hardening the restart path:
+
+* `TestIngestdHandle::stop` now logs lifecycle edges so failing runs show when pools close, and `material_acquisition_restart_recovery` explicitly calls `ctx.quiesce_background_tasks()` after each ingestd stop to guarantee the first daemon is fully dead before the next start.
+* `MaterialAssembler::handle_end` exits early if the DB pool is already closed, preventing half-written DLQ state and giving clear logs instead of silently corrupting ledger finalization.
+* The restart suite + full binary now run cleanly (`cargo nextest run -p sinex-satellite-sdk -E "binary(material_acquisition)"`), using the JetStream-only flow as the regression guard for spacecraft crash scenarios.
 
 ### Steps
 

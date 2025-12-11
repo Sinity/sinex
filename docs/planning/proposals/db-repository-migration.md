@@ -36,7 +36,6 @@ rest of the codebase goes through `EventRepository`.
 - Added `scope_window tstzrange` column to `core.operations_log` plus optional parameter on `core.start_operation`.
 - `StateRepository::start_replay_operation` now converts `ReplayScope::time_window` into a `tstzrange`, so every replay operation records its window with native Postgres range semantics.
 - Existing readers continue to work (column is nullable) while we plumb richer accessors later.
-- Introduced `SourceMaterialRepository::register_external_in_flight(material_id, …)` so ingestd can register JetStream materials with the ULID minted at the edge; satellites now publish begin/slice/end via `AcquisitionManager` instead of writing directly to `raw.source_material_registry`.
 
 ### Proposed change (remaining)
 

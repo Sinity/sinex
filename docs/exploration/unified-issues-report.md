@@ -808,10 +808,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Emit counters for confirmation publish failures, DLQ write failures, NACK failures; integrate with existing observability pipeline.
     - **Tests:** Metric emission tests or harness that forces failures and asserts counters increment.
 
-99. **Crash-recovery tests for material acquisition**
-    - **Files:** `crate/lib/sinex-satellite-sdk` acquisition path, material assembler.
-    - **Steps:** Add adversarial tests simulating satellite crashes at stages (early, mid, finalization) and concurrent acquisition, verifying registry/ledger state and checkpoint recovery; ensure tests are compatible with the JetStream-only single-writer model.
-    - **Tests:** New crash-recovery suite covering early/mid/finalization crashes, orphan detection, checkpoint recovery, and concurrent acquisition.
+99. **Crash-recovery tests for material acquisition** — ✅
+    - **Status:** `MaterialAssembler::handle_end` now aborts if the DB pool is already closed, assembler state directories are created eagerly, blob repo operations log structured errors, and the restart/concurrency suites explicitly quiesce background ingestd tasks before restarts. The JetStream-only acquisition path is guarded by `cargo nextest run -p sinex-satellite-sdk -E "binary(material_acquisition)"` (latest run `5c0cbb15-ae88-470a-91d9-426a779c94b1`).
+    - **Coverage:** `material_acquisition_restart_recovery` simulates mid-flight restarts, `material_acquisition_concurrent_sessions_isolated` polls for completion via `WaitHelpers`, and `material_acquisition_out_of_order_slices` ensures orphan slices are reconciled. These suites collectively cover early/mid/finalization crashes plus concurrent acquisitions on the JetStream-only writer model.
 
 100. **Refactor events batch_insert_many to UNNEST**
      - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs` (batch_insert_many).
