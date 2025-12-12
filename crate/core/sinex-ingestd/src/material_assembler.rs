@@ -817,21 +817,18 @@ impl MaterialAssembler {
             .metadata(metadata)
             .build();
 
-        let stored = repo
-            .insert(blob)
-            .await
-            .map_err(|e| {
-                error!(
-                    material_id = %state.material_id,
-                    backend = %annex_key.backend,
-                    hash = %annex_key.hash,
-                    size = annex_key.size,
-                    error = %e,
-                    error_debug = ?e,
-                    "Failed to insert blob metadata"
-                );
-                SinexError::database(format!("Failed to insert blob metadata: {}", e))
-            })?;
+        let stored = repo.insert(blob).await.map_err(|e| {
+            error!(
+                material_id = %state.material_id,
+                backend = %annex_key.backend,
+                hash = %annex_key.hash,
+                size = annex_key.size,
+                error = %e,
+                error_debug = ?e,
+                "Failed to insert blob metadata"
+            );
+            SinexError::database(format!("Failed to insert blob metadata: {}", e))
+        })?;
 
         Ok(Id::from_ulid(stored.id.as_ulid().clone()))
     }
