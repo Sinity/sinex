@@ -57,13 +57,10 @@ in
     };
   };
 
-  config = mkIf (cfg.secrets.enableAgenix or false) {
-    # Only wire agenix when the Sinex module itself is enabled.
-    config = mkIf cfg.enable {
-      age.identityPaths = mkDefault defaultIdentities;
-      age.secrets = specs;
-      sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
-      sinex.secrets.exportScript = mkDefault exportScript;
-    };
+  config = mkIf (cfg.enable && (cfg.secrets.enableAgenix or false)) {
+    age.identityPaths = mkDefault defaultIdentities;
+    age.secrets = specs;
+    sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
+    sinex.secrets.exportScript = mkDefault exportScript;
   };
 }
