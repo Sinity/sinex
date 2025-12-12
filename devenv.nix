@@ -74,6 +74,11 @@ in
     );
   };
 
+  cachix = {
+    enable = true;
+    pull = [ "sinity" "nix-community" ];
+  };
+
   packages = basePackages;
 
   env = {
