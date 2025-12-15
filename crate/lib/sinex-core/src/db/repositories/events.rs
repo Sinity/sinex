@@ -452,7 +452,7 @@ impl<'a> EventRepository<'a> {
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
         let ts_orig = event.ts_orig;
-        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i16);
+        let ts_orig_subnano = ts_orig.map(|ts| ts.nanosecond() as i32);
 
         #[cfg(any(test, feature = "testing"))]
         if let Some(material_ulid) = source_material_id {
@@ -894,7 +894,7 @@ impl<'a> EventRepository<'a> {
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
         let ts_orig = event.ts_orig;
-        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i16);
+        let ts_orig_subnano = ts_orig.map(|ts| ts.nanosecond() as i32);
 
         let record = sqlx::query_as!(
             EventRecord,
@@ -1023,10 +1023,12 @@ impl<'a> EventRepository<'a> {
 
         // For very small batches, use individual inserts to avoid overhead
         if events.len() == 1 {
-            let event = events
-                .into_iter()
-                .next()
-                .expect("events.len() == 1 but no element found - this should never happen");
+            let Some(event) = events.into_iter().next() else {
+                return Err(db_error(
+                    sqlx::Error::Protocol("single-element batch missing event".into()),
+                    "insert batch",
+                ));
+            };
             let inserted = self.insert(event).await?;
             return Ok(vec![inserted]);
         }
@@ -2175,7 +2177,7 @@ mod tests {
 
     fn base_record() -> EventRecord {
         let ts = Utc::now();
-        let subnano = (ts.nanosecond() % 1_000) as i16;
+        let subnano = ts.nanosecond() as i32;
         EventRecord {
             id: sinex_schema::ulid::Ulid::new(),
             source: "test.source".to_string(),

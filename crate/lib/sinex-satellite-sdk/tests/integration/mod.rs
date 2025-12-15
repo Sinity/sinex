@@ -8,5 +8,4 @@ pub mod event_generation_test;
 pub mod satellite_architecture_test;
 pub mod satellite_coordination_test;
 pub mod satellite_lifecycle_test;
-pub mod stage_as_you_go_integration_test;
 pub mod version_migration_test;

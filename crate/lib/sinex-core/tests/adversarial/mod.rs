@@ -26,6 +26,9 @@ pub mod concurrency_test;
 // ULID edge case and boundary testing
 pub mod ulid_edge_cases_test;
 
+// Crash recovery adversarial tests for Stage-as-You-Go materials
+pub mod satellite_crash_recovery_test;
+
 // Other adversarial tests have been consolidated or are being migrated
 
 /// Common utilities for adversarial testing

@@ -1,3 +1,4 @@
+use chrono::Utc;
 use serde_json::json;
 use sinex_core::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType, HostName};
@@ -130,5 +131,28 @@ async fn cleanup_test_events_does_not_match_production_names(
         fetched.is_some(),
         "event should still exist after cleanup guard"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_uses_provided_id(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
+    let forced_id = sinex_core::types::ulid::Ulid::new();
+    let identifier = format!("test-material-{}", forced_id);
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_core::db::repositories::source_materials::legacy_material_types::FILE,
+            Some(&identifier),
+            json!({"note": "external registration"}),
+            Utc::now(),
+        )
+        .await?;
+
+    assert_eq!(record.id, forced_id);
+    assert_eq!(record.source_identifier, identifier);
     Ok(())
 }

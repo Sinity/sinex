@@ -77,6 +77,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             EventTransport::Nats(publisher),
             None,
             None,
+            None,
         );
 
         let work_dir = Utf8PathBuf::from_path_buf(std::env::temp_dir())

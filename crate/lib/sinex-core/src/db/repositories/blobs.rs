@@ -236,7 +236,7 @@ impl BlobRepository {
             SET 
                 verification_status = $1,
                 last_verified_at = $2
-            WHERE id = $3
+            WHERE id = $3::uuid::ulid
             "#,
             status,
             Utc::now(),
@@ -263,7 +263,7 @@ impl BlobRepository {
                 COALESCE(metadata->'original_filenames', '[]'::jsonb) || to_jsonb($1::text),
                 true
             )
-            WHERE id = $2
+            WHERE id = $2::uuid::ulid
             "#,
             filename,
             id_uuid as _

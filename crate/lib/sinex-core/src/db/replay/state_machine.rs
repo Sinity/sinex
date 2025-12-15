@@ -9,10 +9,9 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// Helper function to extract lock ID from ULID for advisory locks
-#[allow(dead_code)]
 fn ulid_to_lock_id(ulid: Ulid) -> i64 {
     let bytes = ulid.to_bytes();
-    i64::from_le_bytes([
+    i64::from_be_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ])
 }
@@ -651,11 +650,7 @@ impl ReplayStateMachine {
         executor_node: String,
     ) -> Result<bool> {
         // Use PostgreSQL advisory lock based on operation_id hash
-        // Convert first 8 bytes of ULID to i64 for lock ID
-        let bytes = operation_id.to_bytes();
-        let lock_id = i64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
+        let lock_id = ulid_to_lock_id(operation_id);
 
         let acquired = sqlx::query!(
             r#"
@@ -698,11 +693,7 @@ impl ReplayStateMachine {
 
     /// Release execution lock
     pub async fn release_execution_lock(&self, operation_id: Ulid) -> Result<()> {
-        // Convert first 8 bytes of ULID to i64 for lock ID
-        let bytes = operation_id.to_bytes();
-        let lock_id = i64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
+        let lock_id = ulid_to_lock_id(operation_id);
 
         sqlx::query!(
             r#"

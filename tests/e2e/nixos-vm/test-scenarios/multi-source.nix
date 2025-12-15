@@ -253,14 +253,17 @@ pkgs.testers.nixosTest {
 
       # Test user setup with additional stress directories
       users.users.test.shell = lib.mkForce pkgs.zsh;
+      users.users.test.extraGroups = lib.mkForce [ "users" "video" "render" "seat" ];
       
       # Enhanced Hyprland setup for IPC testing
       services.dbus.enable = true;
+      services.seatd.enable = true;
       
       systemd.services.hyprland-headless = {
         description = "Hyprland Wayland compositor (headless mode for testing)";
         wantedBy = [ "multi-user.target" ];
-        after = [ "systemd-user-sessions.service" ];
+        after = [ "systemd-user-sessions.service" "seatd.service" ];
+        requires = [ "seatd.service" ];
         
         serviceConfig = {
           ExecStart = "${pkgs.hyprland}/bin/Hyprland";
@@ -280,6 +283,8 @@ pkgs.testers.nixosTest {
             "LIBGL_ALWAYS_SOFTWARE=1"
             "WLR_NO_HARDWARE_CURSORS=1"
             "HYPRLAND_INSTANCE_SIGNATURE=test"
+            "LIBSEAT_BACKEND=logind"
+            "WLR_LIBINPUT_NO_DEVICES=1"
           ];
         };
         

@@ -19,3 +19,13 @@ sinex-satellite-sdk = { path = "../../crate/lib/sinex-satellite-sdk" }
 sinex-services = { path = "../../crate/lib/sinex-services" }
 sinex-gateway = { path = "../../crate/core/sinex-gateway" }
 async-nats.workspace = true
+uuid.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+sqlx.workspace = true
+base64.workspace = true
+axum.workspace = true
+validator.workspace = true
+camino.workspace = true

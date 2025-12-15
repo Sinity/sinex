@@ -79,7 +79,7 @@ pub struct EventRecord {
     pub host: String,
     pub payload: JsonValue,
     pub ts_orig: DateTime<Utc>,
-    pub ts_orig_subnano: Option<i16>,
+    pub ts_orig_subnano: Option<i32>,
     pub ts_ingest: DateTime<Utc>,
 
     // Provenance fields
@@ -119,7 +119,7 @@ impl Events {
             .col(ColumnDef::new(Events::Host).text().not_null())
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone().not_null())
-            .col(ColumnDef::new(Events::TsOrigSubnano).small_integer())
+            .col(ColumnDef::new(Events::TsOrigSubnano).integer())
             .col(ColumnDef::new(Events::TsIngest).timestamp_with_time_zone().not_null().extra("GENERATED ALWAYS AS (id::timestamp) STORED"))
             .col(ColumnDef::new(Events::SourceMaterialId).custom(Alias::new("ULID")))
             .col(ColumnDef::new(Events::AnchorByte).big_integer())

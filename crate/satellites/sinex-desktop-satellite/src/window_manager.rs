@@ -218,7 +218,7 @@ impl WindowManagerWatcher {
             material_id as Ulid,    // $1 - id
             self.source_identifier, // $2 - source_identifier
             now,                    // $3 - staged_at
-            "window_state",         // $4 - material_kind
+            "annex",                // $4 - material_kind
             "realtime",             // $5 - timing_info_type
             serde_json::to_value(&complete_metadata).unwrap_or_else(|_| serde_json::json!({})), // $6 - metadata
             "completed",      // $7 - status

@@ -244,7 +244,8 @@ impl From<LegacyCheckpointState> for CheckpointState {
 /// Database operations are atomic and handle concurrent access.
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
-    pool: PgPool,
+    pool: Option<PgPool>,
+    kv: Option<async_nats::jetstream::kv::Store>,
     processor_name: String,
     consumer_group: String,
     consumer_name: String,
@@ -258,8 +259,26 @@ impl CheckpointManager {
         consumer_group: String,
         consumer_name: String,
     ) -> Self {
+        Self::new_with_backends(
+            Some(pool),
+            None,
+            processor_name,
+            consumer_group,
+            consumer_name,
+        )
+    }
+
+    /// Create a checkpoint manager with optional NATS KV and/or database backends.
+    pub fn new_with_backends(
+        pool: Option<PgPool>,
+        kv: Option<async_nats::jetstream::kv::Store>,
+        processor_name: String,
+        consumer_group: String,
+        consumer_name: String,
+    ) -> Self {
         Self {
             pool,
+            kv,
             processor_name,
             consumer_group,
             consumer_name,
@@ -280,22 +299,56 @@ impl CheckpointManager {
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
+        if let Some(kv) = &self.kv {
+            if let Some(data) = kv.get(&self.kv_key()).await.map_err(|e| {
+                SatelliteError::Checkpoint(format!("Failed to read checkpoint KV: {e}"))
+            })? {
+                if !data.is_empty() {
+                    match serde_json::from_slice::<CheckpointState>(&data) {
+                        Ok(state) => {
+                            debug!(
+                                processor = %self.processor_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                "Loaded checkpoint from KV"
+                            );
+                            return Ok(state);
+                        }
+                        Err(err) => {
+                            warn!(
+                                processor = %self.processor_name,
+                                error = %err,
+                                "Failed to decode checkpoint from KV; falling back to database if available"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let checkpoint_result = self
-            .pool
-            .checkpoints()
-            .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
-            .await?;
+        let checkpoint_result = match &self.pool {
+            Some(pool) => {
+                pool.checkpoints()
+                    .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
+                    .await?
+            }
+            None => None,
+        };
         let checkpoint_result = if checkpoint_result.is_some() {
             checkpoint_result
         } else {
-            self.pool
-                .checkpoints()
-                .get_latest_for_processor_group(&processor_name, &consumer_group)
-                .await?
+            match &self.pool {
+                Some(pool) => {
+                    pool.checkpoints()
+                        .get_latest_for_processor_group(&processor_name, &consumer_group)
+                        .await?
+                }
+                None => None,
+            }
         };
 
         let checkpoint = if let Some(row) = checkpoint_result {
@@ -406,21 +459,29 @@ impl CheckpointManager {
             )
         })?;
 
-        self.pool
-            .checkpoints()
-            .upsert(
-                sinex_core::db::repositories::checkpoints::CheckpointIdentity {
-                    processor: &processor_name,
-                    consumer_group: &consumer_group,
-                    consumer_name: &consumer_name,
-                },
-                last_processed_id.map(|id| {
-                    sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
-                }),
-                processed_count,
-                Some(checkpoint_data),
-            )
-            .await?;
+        if let Some(pool) = &self.pool {
+            pool.checkpoints()
+                .upsert(
+                    sinex_core::db::repositories::checkpoints::CheckpointIdentity {
+                        processor: &processor_name,
+                        consumer_group: &consumer_group,
+                        consumer_name: &consumer_name,
+                    },
+                    last_processed_id.map(|id| {
+                        sinex_core::Id::<sinex_core::Event<sinex_core::JsonValue>>::from_ulid(id)
+                    }),
+                    processed_count,
+                    Some(checkpoint_data.clone()),
+                )
+                .await?;
+        }
+
+        if let Some(kv) = &self.kv {
+            let encoded = serde_json::to_vec(state).map_err(SatelliteError::Serialization)?;
+            kv.put(&self.kv_key(), encoded.into()).await.map_err(|e| {
+                SatelliteError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
+            })?;
+        }
 
         debug!(
             processor = %self.processor_name,
@@ -434,16 +495,77 @@ impl CheckpointManager {
         Ok(())
     }
 
+    fn kv_key(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.processor_name, self.consumer_group, self.consumer_name
+        )
+    }
+
     /// Get checkpoint history for debugging
     pub async fn get_checkpoint_history(
         &self,
-        _limit: i64,
+        limit: i64,
     ) -> SatelliteResult<Vec<CheckpointHistoryEntry>> {
-        // CheckpointQueries doesn't have get_checkpoint_history method in the new API
-        // For now, just return an empty vector
-        let rows: Vec<CheckpointHistoryEntry> = vec![];
+        let max_entries = if limit <= 0 { 50 } else { limit };
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+        let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let entries = rows;
+        let rows = match &self.pool {
+            Some(pool) => {
+                sqlx::query!(
+                    r#"
+                    SELECT
+                        id::text AS "id!",
+                        last_processed_id::text AS "last_processed_id?",
+                        processed_count,
+                        checkpoint_version,
+                        created_at,
+                        last_activity,
+                        updated_at
+                    FROM core.processor_checkpoints
+                    WHERE processor_name = $1
+                      AND consumer_group = $2
+                      AND consumer_name = $3
+                    ORDER BY updated_at DESC
+                    LIMIT $4
+                    "#,
+                    processor_name.as_ref(),
+                    consumer_group.as_ref(),
+                    consumer_name.as_ref(),
+                    max_entries
+                )
+                .fetch_all(pool)
+                .await?
+            }
+            None => Vec::new(),
+        };
+
+        let mut entries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let processed_count = u64::try_from(row.processed_count).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "Stored checkpoint has negative processed_count, refusing to load history"
+                        .to_string(),
+                )
+            })?;
+            let checkpoint_version = u32::try_from(row.checkpoint_version).map_err(|_| {
+                SatelliteError::Checkpoint(
+                    "checkpoint_version exceeds supported range for history".to_string(),
+                )
+            })?;
+
+            entries.push(CheckpointHistoryEntry {
+                id: row.id,
+                last_processed_id: row.last_processed_id,
+                processed_count,
+                last_activity: row.last_activity,
+                checkpoint_version,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
+        }
 
         debug!(
             processor = %self.processor_name,
@@ -456,32 +578,78 @@ impl CheckpointManager {
 
     /// Reset checkpoint (for testing or manual intervention)
     pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-        // CheckpointQueries doesn't have delete_checkpoint method in the new API
-        // For now, just log a warning
-        warn!(
-            processor = %self.processor_name,
-            "Reset checkpoint not implemented in new API"
-        );
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+        let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        warn!(
-            processor = %self.processor_name,
-            consumer_group = %self.consumer_group,
-            consumer_name = %self.consumer_name,
-            "Reset checkpoint"
-        );
+        let deleted = match &self.pool {
+            Some(pool) => {
+                pool.checkpoints()
+                    .delete(&processor_name, &consumer_group, &consumer_name)
+                    .await?
+            }
+            None => false,
+        };
+
+        if let Some(kv) = &self.kv {
+            let _ = kv.delete(&self.kv_key()).await;
+        }
+
+        if deleted {
+            info!(
+                processor = %self.processor_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "Checkpoint reset"
+            );
+        } else {
+            warn!(
+                processor = %self.processor_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                "No checkpoint found to reset"
+            );
+        }
 
         Ok(())
     }
 
     /// Get checkpoint statistics
     pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
-        // CheckpointQueries doesn't have get_checkpoint_stats method in the new API
-        // For now, return default stats
+        let processor_name = ProcessorName::new(&self.processor_name);
+        let consumer_group = ConsumerGroup::new(&self.consumer_group);
+
+        let stats = if let Some(pool) = &self.pool {
+            sqlx::query_as!(
+                CheckpointStatsRecord,
+                r#"
+                SELECT 
+                    COUNT(*)::bigint as "total_checkpoints!",
+                    MAX(processed_count) as "max_processed?",
+                    MAX(updated_at) as "last_update?",
+                    MIN(created_at) as "first_checkpoint?"
+                FROM core.processor_checkpoints
+                WHERE processor_name = $1 AND consumer_group = $2
+                "#,
+                processor_name.as_ref(),
+                consumer_group.as_ref()
+            )
+            .fetch_one(pool)
+            .await?
+        } else {
+            CheckpointStatsRecord {
+                total_checkpoints: 0,
+                max_processed: Some(0),
+                last_update: None,
+                first_checkpoint: None,
+            }
+        };
+
         Ok(CheckpointStats {
-            total_checkpoints: 0,
-            max_processed: 0,
-            last_update: None,
-            first_checkpoint: None,
+            total_checkpoints: stats.total_checkpoints as u64,
+            max_processed: stats.max_processed.unwrap_or(0) as u64,
+            last_update: stats.last_update,
+            first_checkpoint: stats.first_checkpoint,
         })
     }
 }

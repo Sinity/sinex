@@ -1,6 +1,7 @@
 use clap::Parser;
 use color_eyre::eyre::Result;
 use sinex_ingestd::{IngestService, IngestdConfig};
+use std::io;
 use tracing::{error, info};
 
 #[cfg(not(target_env = "msvc"))]
@@ -95,10 +96,11 @@ async fn main() -> Result<()> {
 
     // Set up graceful shutdown
     let shutdown_signal = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to listen for Ctrl+C");
-        info!("Received shutdown signal");
+        if let Err(err) = wait_for_shutdown_signal().await {
+            error!("Failed to listen for shutdown signal: {}", err);
+        } else {
+            info!("Received shutdown signal");
+        }
     };
 
     // Run the service
@@ -122,4 +124,22 @@ async fn main() -> Result<()> {
 
     info!("Sinex Ingestion Daemon stopped");
     Ok(())
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+
+    tokio::select! {
+        _ = sigterm.recv() => Ok(()),
+        _ = sigint.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::time::Duration;
+use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -99,6 +99,8 @@ impl JetStreamTopology {
         }
     }
 }
+
+const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct PreparedEvent {
     raw: RawEvent,
@@ -740,14 +742,26 @@ impl JetStreamConsumer {
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid as \"id!\"");
 
-        let rows = builder
-            .build_query_as::<(Uuid,)>()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|err| {
-                error!("Failed to persist events batch: {}", err);
-                err
-            })?;
+        let rows = timeout(
+            DB_WRITE_TIMEOUT,
+            builder.build_query_as::<(Uuid,)>().fetch_all(&self.pool),
+        )
+        .await
+        .map_err(|_| {
+            error!(
+                batch_size = batch.len(),
+                timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
+                "Timed out waiting for batch insert to complete"
+            );
+            SinexError::database(format!(
+                "Persisting batch timed out after {:?}",
+                DB_WRITE_TIMEOUT
+            ))
+        })?
+        .map_err(|err| {
+            error!("Failed to persist events batch: {}", err);
+            err
+        })?;
 
         Ok(rows.into_iter().map(|row| Ulid::from(row.0)).collect())
     }

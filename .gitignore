@@ -54,7 +54,7 @@ Thumbs.db
 
 # Nix
 result
-result-*
+target-ci
 
 # Project specific
 /spec/combo/
@@ -81,3 +81,4 @@ scripts/git-state-tracker.sh
 !/.sqlx/
 combined-bundles/
 postgres_data/
+

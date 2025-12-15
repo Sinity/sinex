@@ -96,8 +96,9 @@ impl JetStreamEventConsumer {
 
         let js = jetstream::new(self.nats_client.clone());
 
-        let raw_stream = self.env.nats_stream_name("EVENTS_RAW");
-        let confirmations_stream = self.env.nats_stream_name("EVENTS_CONFIRMATIONS");
+        // Align with ingestd topology: base stream is SINEX_RAW_EVENTS.
+        let raw_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS");
+        let confirmations_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_CONFIRMATIONS");
 
         let raw_consumer = self
             .create_or_get_consumer(&js, &raw_stream, "events.raw.>")
@@ -182,11 +183,14 @@ impl JetStreamEventConsumer {
             SatelliteError::Processing(format!("Failed to get stream {}: {}", stream_name, e))
         })?;
 
+        // Always use environment-prefixed subjects to match stream configuration.
+        let filter_subject = self.env.nats_subject(filter);
+
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
                 name: Some(self.config.consumer_name.clone()),
                 durable_name: Some(self.config.consumer_name.clone()),
-                filter_subject: filter.to_string(),
+                filter_subject,
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: Duration::from_secs(30),
                 max_ack_pending: 1000,

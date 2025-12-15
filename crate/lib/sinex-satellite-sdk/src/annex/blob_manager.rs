@@ -16,13 +16,17 @@ use sinex_core::db::DbPool;
 use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_core::types::validate_path;
 use sinex_core::DbPoolExt;
 use sinex_core::{Blob, Event, Id, JsonValue, SourceMaterial};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use super::{AnnexConfig, AnnexKey, GitAnnex};
+use super::{
+    path_validator::{create_secure_temp_path, validate_path_exists, VerifiedPath},
+    AnnexConfig, GitAnnex,
+};
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command as AsyncCommand;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 
@@ -158,12 +162,12 @@ impl BlobManager {
     /// Ingest a file into the blob management system
     pub async fn ingest_file(
         &self,
-        file_path: &Utf8Path,
+        file_path: &VerifiedPath,
         original_filename: Option<&str>,
     ) -> Result<BlobMetadata> {
         // Validate file path before processing to prevent path traversal attacks
-        let validated_path = validate_path(file_path.as_str())
-            .map_err(|e| eyre!("Invalid file path for ingestion: {}", e))?;
+        validate_path_exists(file_path.as_path())?;
+        let validated_path = file_path.as_path();
 
         info!("Ingesting file: {:?}", validated_path);
         let _start = Instant::now();
@@ -222,7 +226,11 @@ impl BlobManager {
         let mime_type = Self::detect_mime_type(&validated_path)?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(&validated_path).await?;
+        let annex_key = self
+            .annex
+            .add_file(&validated_path)
+            .await
+            .wrap_err("Failed to add file to git-annex")?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         // Create blob record in database
@@ -313,27 +321,37 @@ impl BlobManager {
         }
 
         // Create a unique temporary file without predictable naming to avoid symlink attacks
-        let mut temp_file = tempfile::Builder::new()
-            .prefix("sinex_blob_")
-            .suffix(".tmp")
-            .tempfile_in(self.annex.repo_path())
-            .wrap_err("Failed to create secure temporary file")?;
+        let temp_file_path = create_secure_temp_path("sinex_blob", "tmp")
+            .wrap_err("Failed to allocate secure temporary file path")?;
 
-        use std::io::Write;
+        let mut temp_file = tokio::fs::File::create(&temp_file_path)
+            .await
+            .wrap_err("Failed to create temporary blob file")?;
         temp_file
             .write_all(content)
+            .await
             .wrap_err("Failed to write blob bytes to temporary file")?;
         temp_file
-            .flush()
+            .sync_all()
+            .await
             .wrap_err("Failed to flush temporary blob file")?;
-
-        // Convert to Utf8PathBuf for git-annex
-        let utf8_temp_file = Utf8PathBuf::from_path_buf(temp_file.path().to_path_buf())
-            .map_err(|_| eyre!("Temp file path is not UTF-8"))?;
+        drop(temp_file);
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(&utf8_temp_file).await?;
+        let annex_key = self
+            .annex
+            .add_file(temp_file_path.as_path())
+            .await
+            .wrap_err("Failed to add buffered upload to git-annex")?;
         info!("Added to git-annex with key: {}", annex_key.key);
+
+        if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
+            warn!(
+                error = %e,
+                path = %temp_file_path,
+                "Failed to remove temporary blob file after ingest"
+            );
+        }
 
         // Create blob record in database
         let size_bytes = content.len() as i64;
@@ -376,11 +394,6 @@ impl BlobManager {
             );
         }
 
-        // Drop the temp file explicitly so it is removed now that git-annex has moved it.
-        if let Err(e) = temp_file.close() {
-            debug!(error = %e, "Failed to remove temporary blob file after ingest");
-        }
-
         Ok(blob_metadata)
     }
 
@@ -401,23 +414,29 @@ impl BlobManager {
 
         let blob = self.get_blob_metadata(annex_key).await?;
 
-        // Verify integrity against the stored hash if available.
+        // Verify integrity against the stored hashes if available. Prefer the
+        // canonical content hash (git-annex SHA256), but fall back to the
+        // BLAKE3 checksum we always store during ingestion so tampering is
+        // detected even when the annex hash is missing.
+        let mut verified = false;
         if !blob.content_hash.is_empty() {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(&content);
             let computed = format!("{:x}", hasher.finalize());
 
-            // Accept raw hash or common prefixes.
-            let expected = blob
+            let mut expected = blob
                 .content_hash
                 .trim_start_matches("sha256:")
                 .trim_start_matches("SHA256:")
                 .trim_start_matches("SHA256E-")
                 .to_string();
 
+            if let Some((hash, _ext)) = expected.split_once('.') {
+                expected = hash.to_string();
+            }
+
             if !expected.is_empty() && computed != expected {
-                // Mark as corrupted and bail.
                 let _ = self
                     .update_verification_status(annex_key, "corrupted")
                     .await;
@@ -428,6 +447,25 @@ impl BlobManager {
                     computed
                 );
             } else if !expected.is_empty() {
+                let _ = self.update_verification_status(annex_key, "verified").await;
+                verified = true;
+            }
+        }
+
+        if !verified {
+            if let Some(expected_blake3) = &blob.checksum_blake3 {
+                let computed = blake3::hash(&content).to_hex();
+                if computed.as_str() != expected_blake3 {
+                    let _ = self
+                        .update_verification_status(annex_key, "corrupted")
+                        .await;
+                    bail!(
+                        "Blob BLAKE3 hash mismatch for {} (expected {}, got {})",
+                        annex_key,
+                        expected_blake3,
+                        computed
+                    );
+                }
                 let _ = self.update_verification_status(annex_key, "verified").await;
             }
         }
@@ -551,33 +589,35 @@ impl BlobManager {
             .wrap_err("Failed to add original filename")
     }
 
-    /// Find symlink path in repository for annex key
+    /// Find content path in repository for annex key
     async fn find_symlink_path(&self, annex_key: &str) -> Result<Utf8PathBuf> {
-        // This is a simplified implementation
-        // In practice, you'd need to search the git-annex repository for the symlink
-        // For now, assume the key maps to a predictable path structure
+        let output = AsyncCommand::new("git-annex")
+            .arg("contentlocation")
+            .arg(annex_key)
+            .current_dir(self.annex.repo_path())
+            .output()
+            .await
+            .wrap_err("Failed to run git-annex contentlocation")?;
 
-        let objects_path = self
-            .annex
-            .config
-            .repo_path
-            .join(".git")
-            .join("annex")
-            .join("objects");
-
-        // Extract hash from key for path construction
-        if let Ok(key) = AnnexKey::parse(annex_key) {
-            // git-annex uses a hierarchical directory structure based on key hash
-            let hash_chars: Vec<char> = key.hash.chars().collect();
-            if hash_chars.len() >= 4 {
-                let dir1 = &hash_chars[0..2].iter().collect::<String>();
-                let dir2 = &hash_chars[2..4].iter().collect::<String>();
-                let path = objects_path.join(dir1).join(dir2).join(&key.key);
-                return Ok(path);
-            }
+        if !output.status.success() {
+            bail!(
+                "git-annex contentlocation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
-        bail!("Could not construct path for annex key: {}", annex_key)
+        let relative = String::from_utf8(output.stdout)
+            .wrap_err("Invalid UTF-8 from git-annex contentlocation")?;
+        let trimmed = relative.trim();
+        if trimmed.is_empty() {
+            bail!(
+                "git-annex contentlocation returned empty path for {}",
+                annex_key
+            );
+        }
+
+        let path = self.annex.repo_path().join(trimmed);
+        Ok(path)
     }
 
     /// Simple MIME type detection

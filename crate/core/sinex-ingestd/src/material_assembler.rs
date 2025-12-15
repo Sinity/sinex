@@ -12,7 +12,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Map as JsonMap};
 use sinex_core::db::models::blob::Blob;
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::{
@@ -30,7 +30,12 @@ use std::{
 };
 
 use libc;
-use tokio::{fs, fs::File, io::AsyncWriteExt, sync::RwLock};
+use tokio::{
+    fs,
+    fs::File,
+    io::AsyncWriteExt,
+    sync::{Mutex, RwLock},
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{IngestdResult, SinexError};
@@ -60,6 +65,7 @@ struct MaterialEndMessage {
     content_hash: String,
     total_slices: usize,
     total_size_bytes: i64,
+    metadata: JsonValue,
 }
 
 /// Persisted assembler state (stored on disk for restart recovery)
@@ -100,6 +106,19 @@ struct AssemblerState {
     hasher: Hasher,
 }
 
+#[derive(Clone)]
+struct FinalizationState {
+    material_id: Ulid,
+    temp_path: PathBuf,
+    expected_offset: i64,
+    slice_count: usize,
+    buffered_count: usize,
+    metadata: JsonValue,
+    material_kind: String,
+    source_identifier: String,
+    started_at: DateTime<Utc>,
+}
+
 impl AssemblerState {
     fn buffers_dir(&self) -> PathBuf {
         self.state_dir.join(BUFFER_DIR_NAME)
@@ -108,6 +127,100 @@ impl AssemblerState {
     fn state_file(&self) -> PathBuf {
         self.state_dir.join(STATE_FILE_NAME)
     }
+
+    fn finalization_view(&self) -> FinalizationState {
+        FinalizationState {
+            material_id: self.material_id,
+            temp_path: self.temp_path.clone(),
+            expected_offset: self.expected_offset,
+            slice_count: self.slice_count,
+            buffered_count: self.buffered_slices.len(),
+            metadata: self.metadata.clone(),
+            material_kind: self.material_kind.clone(),
+            source_identifier: self.source_identifier.clone(),
+            started_at: self.started_at,
+        }
+    }
+}
+
+fn take_buffered_slice(
+    state: &mut AssemblerState,
+    material_id: Ulid,
+    offset: i64,
+) -> IngestdResult<PathBuf> {
+    state.buffered_slices.remove(&offset).ok_or_else(|| {
+        SinexError::service(format!(
+            "Missing buffered slice for {material_id} at offset {offset}"
+        ))
+    })
+}
+
+fn normalize_metadata(value: JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(_) => value,
+        JsonValue::Null => json!({}),
+        other => {
+            let mut map = JsonMap::new();
+            map.insert("value".to_string(), other);
+            JsonValue::Object(map)
+        }
+    }
+}
+
+fn merge_metadata(base: &JsonValue, updates: &JsonValue) -> JsonValue {
+    let mut merged = normalize_metadata(base.clone());
+    if let Some(target) = merged.as_object_mut() {
+        match updates {
+            JsonValue::Object(map) => {
+                for (key, value) in map {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            JsonValue::Null => {}
+            other => {
+                target.insert("value".to_string(), other.clone());
+            }
+        }
+    }
+    merged
+}
+
+fn build_finalize_metadata(
+    state: &FinalizationState,
+    end_metadata: &JsonValue,
+    ended_at: DateTime<Utc>,
+    total_bytes: i64,
+    content_hash: &str,
+) -> JsonValue {
+    let mut merged = merge_metadata(&state.metadata, end_metadata);
+    let map = merged
+        .as_object_mut()
+        .expect("metadata normalized to object during merge");
+    map.insert(
+        "finalize_reason".to_string(),
+        JsonValue::String("jetstream-material".to_string()),
+    );
+    map.insert(
+        "finalized_at".to_string(),
+        JsonValue::String(ended_at.to_rfc3339()),
+    );
+    map.insert(
+        "content_hash".to_string(),
+        JsonValue::String(content_hash.to_string()),
+    );
+    map.insert(
+        "total_slices".to_string(),
+        JsonValue::Number(state.slice_count.into()),
+    );
+    map.insert(
+        "total_bytes".to_string(),
+        JsonValue::Number(total_bytes.into()),
+    );
+    map.entry("material_kind".to_string())
+        .or_insert_with(|| JsonValue::String(state.material_kind.clone()));
+    map.entry("source_identifier".to_string())
+        .or_insert_with(|| JsonValue::String(state.source_identifier.clone()));
+    merged
 }
 
 /// Material assembler service
@@ -116,7 +229,7 @@ pub struct MaterialAssembler {
     pool: DbPool,
     env: SinexEnvironment,
     annex: Arc<GitAnnex>,
-    assembler_state: Arc<RwLock<HashMap<Ulid, AssemblerState>>>,
+    assembler_state: Arc<RwLock<HashMap<Ulid, Arc<Mutex<AssemblerState>>>>>,
     state_root: PathBuf,
     dlq_subject: String,
 }
@@ -307,14 +420,11 @@ impl MaterialAssembler {
                 started_at,
                 material_kind: persisted.material_kind,
                 source_identifier: persisted.source_identifier,
-                metadata: persisted.metadata,
+                metadata: normalize_metadata(persisted.metadata),
                 hasher,
             };
 
-            self.assembler_state
-                .write()
-                .await
-                .insert(material_id, state);
+            self.insert_state_handle(material_id, state).await;
 
             info!(material_id = %material_id, "Restored in-flight material state");
         }
@@ -338,6 +448,14 @@ impl MaterialAssembler {
             SinexError::serialization(format!(
                 "Failed to serialize assembler state for {}: {}",
                 state.material_id, e
+            ))
+        })?;
+
+        fs::create_dir_all(&state.state_dir).await.map_err(|e| {
+            SinexError::io(format!(
+                "Failed to ensure assembler state dir {}: {}",
+                state.state_dir.display(),
+                e
             ))
         })?;
 
@@ -366,11 +484,63 @@ impl MaterialAssembler {
         }
     }
 
+    /// Fetch a handle to an existing assembler state for a material.
+    async fn get_state_handle(&self, material_id: &Ulid) -> Option<Arc<Mutex<AssemblerState>>> {
+        self.assembler_state.read().await.get(material_id).cloned()
+    }
+
+    /// Insert a new assembler state if one does not already exist.
+    async fn insert_state_handle(
+        &self,
+        material_id: Ulid,
+        state: AssemblerState,
+    ) -> Arc<Mutex<AssemblerState>> {
+        let state_handle = Arc::new(Mutex::new(state));
+
+        let mut states = self.assembler_state.write().await;
+        if let Some(existing) = states.get(&material_id) {
+            existing.clone()
+        } else {
+            states.insert(material_id, state_handle.clone());
+            state_handle
+        }
+    }
+
+    /// Build a placeholder assembler state for materials whose slices arrive before the begin message.
+    async fn create_placeholder_state(&self, material_id: Ulid) -> IngestdResult<AssemblerState> {
+        let state_dir = self.state_root.join(material_id.to_string());
+        fs::create_dir_all(&state_dir)
+            .await
+            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
+
+        let temp_path = state_dir.join(TEMP_FILE_NAME);
+        let temp_file = File::create(&temp_path)
+            .await
+            .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
+
+        Ok(AssemblerState {
+            material_id,
+            temp_path,
+            temp_file: Some(temp_file),
+            expected_offset: 0,
+            slice_count: 0,
+            buffered_slices: BTreeMap::new(),
+            state_dir,
+            started_at: Utc::now(),
+            material_kind: "unknown".to_string(),
+            source_identifier: "unknown".to_string(),
+            metadata: json!({}),
+            hasher: Hasher::new(),
+        })
+    }
+
     /// Handle a begin message
     async fn handle_begin(&self, msg: jetstream::Message) -> IngestdResult<()> {
-        let begin: MaterialBeginMessage = serde_json::from_slice(&msg.payload).map_err(|e| {
-            SinexError::parse(format!("Failed to decode begin message payload: {}", e))
-        })?;
+        let mut begin: MaterialBeginMessage =
+            serde_json::from_slice(&msg.payload).map_err(|e| {
+                SinexError::parse(format!("Failed to decode begin message payload: {}", e))
+            })?;
+        begin.metadata = normalize_metadata(begin.metadata);
 
         let material_id = Ulid::from_str(&begin.material_id).map_err(|e| {
             SinexError::parse(format!(
@@ -379,11 +549,33 @@ impl MaterialAssembler {
             ))
         })?;
 
-        let mut states = self.assembler_state.write().await;
-        if states.contains_key(&material_id) {
+        let started_at = DateTime::parse_from_rfc3339(&begin.started_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+
+        if let Some(existing_handle) = self.get_state_handle(&material_id).await {
+            {
+                let mut existing = existing_handle.lock().await;
+                // We may have created a placeholder state from slices arriving first; enrich it.
+                existing.material_kind = begin.material_kind.clone();
+                existing.source_identifier = begin.source_identifier.clone();
+                existing.metadata = begin.metadata.clone();
+                existing.started_at = started_at;
+                self.persist_state(&existing).await?;
+            }
+
+            self.register_material_record(
+                material_id,
+                &begin.material_kind,
+                &begin.source_identifier,
+                begin.metadata.clone(),
+                started_at,
+            )
+            .await?;
+
             debug!(
                 material_id = %material_id,
-                "Begin message received for material that already has assembler state"
+                "Begin message updated existing assembler state"
             );
             return Ok(());
         }
@@ -397,10 +589,6 @@ impl MaterialAssembler {
         let temp_file = File::create(&temp_path)
             .await
             .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
-
-        let started_at = DateTime::parse_from_rfc3339(&begin.started_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now());
 
         let state = AssemblerState {
             material_id,
@@ -417,11 +605,50 @@ impl MaterialAssembler {
             hasher: Hasher::new(),
         };
 
+        let register_metadata = state.metadata.clone();
+        let register_kind = state.material_kind.clone();
+        let register_identifier = state.source_identifier.clone();
+
         self.persist_state(&state).await?;
-        states.insert(material_id, state);
+        self.insert_state_handle(material_id, state).await;
+        self.register_material_record(
+            material_id,
+            &register_kind,
+            &register_identifier,
+            register_metadata,
+            started_at,
+        )
+        .await?;
         info!(material_id = %material_id, "Initialized material assembler state");
 
         Ok(())
+    }
+
+    async fn register_material_record(
+        &self,
+        material_id: Ulid,
+        material_kind: &str,
+        source_identifier: &str,
+        metadata: JsonValue,
+        started_at: DateTime<Utc>,
+    ) -> IngestdResult<()> {
+        self.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                material_kind,
+                Some(source_identifier),
+                metadata,
+                started_at,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                SinexError::database(format!(
+                    "Failed to register source material {}: {}",
+                    material_id, e
+                ))
+            })
     }
 
     /// Store a slice (in-order or buffered) for a material
@@ -431,17 +658,17 @@ impl MaterialAssembler {
         offset: i64,
         data: Vec<u8>,
     ) -> IngestdResult<()> {
-        let mut states = self.assembler_state.write().await;
-        let state = match states.get_mut(&material_id) {
-            Some(state) => state,
-            None => {
-                warn!(
-                    material_id = %material_id,
-                    "Slice received for unknown material (missing begin)"
-                );
-                return Ok(());
-            }
+        let state_handle = if let Some(existing) = self.get_state_handle(&material_id).await {
+            existing
+        } else {
+            // Slices may arrive before the begin message due to JetStream scheduling.
+            // Create a placeholder state so we can buffer slices and let the later
+            // begin message fill in metadata.
+            let placeholder = self.create_placeholder_state(material_id).await?;
+            self.insert_state_handle(material_id, placeholder).await
         };
+
+        let mut state = state_handle.lock().await;
 
         if offset == state.expected_offset {
             if let Some(file) = state.temp_file.as_mut() {
@@ -468,10 +695,18 @@ impl MaterialAssembler {
                     break;
                 }
 
-                let buf_path = state
-                    .buffered_slices
-                    .remove(&next_offset)
-                    .expect("buffer entry must exist");
+                let buf_path = match take_buffered_slice(&mut state, material_id, next_offset) {
+                    Ok(path) => path,
+                    Err(err) => {
+                        warn!(
+                            material_id = %material_id,
+                            offset = next_offset,
+                            error = %err,
+                            "Buffered slice vanished while flushing; aborting material assembly"
+                        );
+                        return Err(err);
+                    }
+                };
 
                 let buffered_data = fs::read(&buf_path).await.map_err(|e| {
                     SinexError::io(format!(
@@ -534,14 +769,14 @@ impl MaterialAssembler {
             );
         }
 
-        self.persist_state(state).await?;
+        self.persist_state(&state).await?;
         Ok(())
     }
 
     /// Insert or fetch blob metadata for the assembled material
     async fn upsert_blob(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
         annex_key: &AnnexKey,
         content_hash: &str,
     ) -> IngestdResult<Id<Blob>> {
@@ -550,7 +785,18 @@ impl MaterialAssembler {
         if let Some(existing) = repo
             .get_by_content(&annex_key.backend, &annex_key.hash, annex_key.size as i64)
             .await
-            .map_err(|e| SinexError::database(format!("Failed to query blob store: {}", e)))?
+            .map_err(|e| {
+                error!(
+                    material_id = %state.material_id,
+                    backend = %annex_key.backend,
+                    hash = %annex_key.hash,
+                    size = annex_key.size,
+                    error = %e,
+                    error_debug = ?e,
+                    "Failed to query blob store"
+                );
+                SinexError::database(format!("Failed to query blob store: {}", e))
+            })?
         {
             return Ok(Id::from_ulid(existing.id.as_ulid().clone()));
         }
@@ -571,10 +817,18 @@ impl MaterialAssembler {
             .metadata(metadata)
             .build();
 
-        let stored = repo
-            .insert(blob)
-            .await
-            .map_err(|e| SinexError::database(format!("Failed to insert blob metadata: {}", e)))?;
+        let stored = repo.insert(blob).await.map_err(|e| {
+            error!(
+                material_id = %state.material_id,
+                backend = %annex_key.backend,
+                hash = %annex_key.hash,
+                size = annex_key.size,
+                error = %e,
+                error_debug = ?e,
+                "Failed to insert blob metadata"
+            );
+            SinexError::database(format!("Failed to insert blob metadata: {}", e))
+        })?;
 
         Ok(Id::from_ulid(stored.id.as_ulid().clone()))
     }
@@ -582,33 +836,36 @@ impl MaterialAssembler {
     /// Finalize source material registry and ledger
     async fn finalize_material_record(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
         blob_id: Id<Blob>,
         total_size_bytes: i64,
-        content_hash: &str,
+        metadata: JsonValue,
     ) -> IngestdResult<()> {
         let repo = self.pool.source_materials();
         let id: Id<SourceMaterialRecord> = Id::from_ulid(state.material_id);
 
-        let finalize_metadata = json!({
-            "finalize_reason": "jetstream-material",
-            "finalized_at": Utc::now().to_rfc3339(),
-            "content_hash": content_hash,
-            "total_slices": state.slice_count,
-            "source_identifier": state.source_identifier,
-        });
-
-        repo.update_metadata(id, finalize_metadata)
+        repo.update_metadata(id, metadata.clone())
             .await
             .map_err(|e| {
                 SinexError::database(format!("Failed to update material metadata: {}", e))
             })?;
 
+        let encoding_hint = metadata
+            .as_object()
+            .and_then(|map| map.get("encoding"))
+            .and_then(|value| value.as_str())
+            .map(|s| s.to_string());
+        let content_preview_hint = metadata
+            .as_object()
+            .and_then(|map| map.get("content_preview"))
+            .and_then(|value| value.as_str())
+            .map(|s| s.to_string());
+
         repo.finalize_in_flight(
             Id::from_ulid(state.material_id),
             Some(blob_id),
-            None,
-            None,
+            encoding_hint.as_deref(),
+            content_preview_hint.clone(),
             Some(total_size_bytes),
         )
         .await
@@ -616,7 +873,7 @@ impl MaterialAssembler {
     }
 
     /// Append entry in raw.temporal_ledger
-    async fn record_ledger_entry(&self, state: &AssemblerState) -> IngestdResult<()> {
+    async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
         sqlx::query!(
             r#"
             INSERT INTO raw.temporal_ledger
@@ -630,7 +887,7 @@ impl MaterialAssembler {
             state.started_at,
             "bounded",
             "wall",
-            state.material_kind
+            "realtime_capture"
         )
         .execute(&self.pool)
         .await
@@ -693,7 +950,7 @@ impl MaterialAssembler {
     /// Import the assembled material into git-annex
     async fn import_into_annex(
         &self,
-        state: &AssemblerState,
+        state: &FinalizationState,
     ) -> IngestdResult<(AnnexKey, PathBuf)> {
         let relative_utf8 = Utf8PathBuf::from(format!("materials/{}.bin", state.material_id));
         let repo_path = self.annex.repo_path();
@@ -749,25 +1006,42 @@ impl MaterialAssembler {
     }
 
     /// Handle material finalization (end message)
-    async fn handle_end(&self, end: MaterialEndMessage) -> IngestdResult<()> {
+    async fn handle_end(&self, mut end: MaterialEndMessage) -> IngestdResult<()> {
+        end.metadata = normalize_metadata(end.metadata);
         let material_id = Ulid::from_str(&end.material_id).map_err(|e| {
             SinexError::parse(format!(
                 "Invalid material_id '{}' in end message: {}",
                 end.material_id, e
             ))
         })?;
+        let ended_at = DateTime::parse_from_rfc3339(&end.ended_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
 
-        let mut states = self.assembler_state.write().await;
-        let mut state = match states.remove(&material_id) {
-            Some(state) => state,
-            None => {
-                warn!(
-                    material_id = %material_id,
-                    "End message received for unknown material"
-                );
-                return Ok(());
-            }
+        if self.pool.is_closed() {
+            error!(
+                material_id = %material_id,
+                "Database pool closed before handling end message"
+            );
+            return Err(SinexError::database(
+                "database pool closed before end processing".to_string(),
+            ));
+        }
+
+        let state_handle = {
+            let mut states = self.assembler_state.write().await;
+            states.remove(&material_id)
         };
+        let Some(state_handle) = state_handle else {
+            warn!(
+                material_id = %material_id,
+                "End message received for unknown material"
+            );
+            return Err(SinexError::service(format!(
+                "end message received before begin for material {material_id}"
+            )));
+        };
+        let mut state = state_handle.lock().await;
 
         if let Some(mut file) = state.temp_file.take() {
             if let Err(e) = file.flush().await {
@@ -779,16 +1053,117 @@ impl MaterialAssembler {
             }
         }
 
-        // Ensure no buffered slices remain
-        if !state.buffered_slices.is_empty() {
+        let final_state = state.finalization_view();
+        let assembled_bytes = final_state.expected_offset;
+        let slice_count = final_state.slice_count;
+        let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
+        drop(state);
+
+        debug!(
+            material_id = %material_id,
+            assembled_bytes,
+            slice_count,
+            reported_total = end.total_size_bytes,
+            temp_path = %final_state.temp_path.display(),
+            "Processing end message"
+        );
+
+        // If no slices were processed or the payload claims zero bytes, avoid annex/blob work
+        // and treat this as an empty material. Persist a DLQ entry so publishers can diagnose.
+        if slice_count == 0 || end.total_size_bytes == 0 {
             warn!(
                 material_id = %material_id,
-                buffered = state.buffered_slices.len(),
+                slices = slice_count,
+                total_size = end.total_size_bytes,
+                "Material ended with no content; skipping annex import and routing to DLQ"
+            );
+
+            self.route_material_error(
+                material_id,
+                "empty_material",
+                json!({
+                    "slice_count": slice_count,
+                    "expected_size": end.total_size_bytes
+                }),
+            )
+            .await;
+
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        // Ensure the assembled file exists even if no slices were processed (e.g., out-of-order messages).
+        if !final_state.temp_path.exists() {
+            if let Some(parent) = final_state.temp_path.parent() {
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    SinexError::io(format!(
+                        "Failed to create temp file parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ))
+                })?;
+            }
+            File::create(&final_state.temp_path).await.map_err(|e| {
+                SinexError::io(format!(
+                    "Failed to recreate missing assembled file {}: {}",
+                    final_state.temp_path.display(),
+                    e
+                ))
+            })?;
+        }
+
+        // Ensure no buffered slices remain
+        if final_state.buffered_count > 0 {
+            warn!(
+                material_id = %material_id,
+                buffered = final_state.buffered_count,
                 "Buffered slices remain when end message arrived; forcing flush"
             );
         }
 
-        let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
+        // Sanity checks: ensure we assembled something and sizes line up before annex import.
+        if assembled_bytes == 0 || end.total_size_bytes <= 0 {
+            warn!(
+                material_id = %material_id,
+                assembled_bytes,
+                reported_total = end.total_size_bytes,
+                "Material ended empty; routing to DLQ instead of annex import"
+            );
+            self.route_material_error(
+                material_id,
+                "empty_material",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "reported_total": end.total_size_bytes,
+                    "slice_count": slice_count
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        if assembled_bytes != end.total_size_bytes {
+            warn!(
+                material_id = %material_id,
+                assembled_bytes,
+                reported_total = end.total_size_bytes,
+                "Material size mismatch between assembled bytes and end message; routing to DLQ"
+            );
+            self.route_material_error(
+                material_id,
+                "material_size_mismatch",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "reported_total": end.total_size_bytes,
+                    "slice_count": slice_count
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
         if computed_hash != end.content_hash {
             warn!(
                 material_id = %material_id,
@@ -811,7 +1186,33 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let (annex_key, final_path) = match self.import_into_annex(&state).await {
+        // Verify the staged file size matches expectations before annex import.
+        let file_size = fs::metadata(&final_state.temp_path)
+            .await
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+        if file_size != assembled_bytes {
+            warn!(
+                material_id = %material_id,
+                file_size,
+                assembled_bytes,
+                "Assembled file size on disk does not match assembled bytes; routing to DLQ"
+            );
+            self.route_material_error(
+                material_id,
+                "material_size_mismatch_disk",
+                json!({
+                    "assembled_bytes": assembled_bytes,
+                    "file_size": file_size,
+                    "reported_total": end.total_size_bytes,
+                }),
+            )
+            .await;
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        let (annex_key, final_path) = match self.import_into_annex(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 self.route_material_error(
@@ -820,13 +1221,14 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                states.insert(material_id, state); // Reinsert state for potential retry
+                let mut states = self.assembler_state.write().await;
+                states.insert(material_id, state_handle.clone()); // Reinsert state for potential retry
                 return Err(e);
             }
         };
 
         let blob_id = match self
-            .upsert_blob(&state, &annex_key, &end.content_hash)
+            .upsert_blob(&final_state, &annex_key, &end.content_hash)
             .await
         {
             Ok(id) => id,
@@ -837,13 +1239,27 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                states.insert(material_id, state); // Reinsert for retry
+                let mut states = self.assembler_state.write().await;
+                states.insert(material_id, state_handle.clone()); // Reinsert for retry
                 return Err(e);
             }
         };
 
+        let finalize_metadata = build_finalize_metadata(
+            &final_state,
+            &end.metadata,
+            ended_at,
+            end.total_size_bytes,
+            &end.content_hash,
+        );
+
         if let Err(e) = self
-            .finalize_material_record(&state, blob_id, end.total_size_bytes, &end.content_hash)
+            .finalize_material_record(
+                &final_state,
+                blob_id,
+                end.total_size_bytes,
+                finalize_metadata,
+            )
             .await
         {
             self.route_material_error(
@@ -852,18 +1268,20 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            states.insert(material_id, state); // Reinsert for retry
+            let mut states = self.assembler_state.write().await;
+            states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
-        if let Err(e) = self.record_ledger_entry(&state).await {
+        if let Err(e) = self.record_ledger_entry(&final_state).await {
             self.route_material_error(
                 material_id,
                 "ledger_append_failed",
                 json!({ "error": e.to_string() }),
             )
             .await;
-            states.insert(material_id, state); // Reinsert for retry
+            let mut states = self.assembler_state.write().await;
+            states.insert(material_id, state_handle.clone()); // Reinsert for retry
             return Err(e);
         }
 
@@ -874,7 +1292,7 @@ impl MaterialAssembler {
             annex_key = %annex_key.key,
             path = %final_path.display(),
             size_bytes = end.total_size_bytes,
-            slices = state.slice_count,
+            slices = slice_count,
             "Material assembly complete and persisted to annex"
         );
 
@@ -1211,5 +1629,53 @@ impl MaterialAssembler {
                 "{task_name} panicked: {join_err}"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeMap, str::FromStr};
+    use tempfile::tempdir;
+
+    fn test_state(material_id: Ulid) -> AssemblerState {
+        let temp_dir = tempdir().expect("temp dir should be creatable");
+        AssemblerState {
+            material_id,
+            temp_path: temp_dir.path().join(TEMP_FILE_NAME),
+            temp_file: None,
+            expected_offset: 0,
+            slice_count: 0,
+            buffered_slices: BTreeMap::new(),
+            state_dir: temp_dir.path().to_path_buf(),
+            started_at: Utc::now(),
+            material_kind: "test".to_string(),
+            source_identifier: "test".to_string(),
+            metadata: JsonValue::Null,
+            hasher: Hasher::new(),
+        }
+    }
+
+    #[test]
+    fn missing_buffered_slice_returns_error_instead_of_panic() {
+        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let mut state = test_state(material_id);
+
+        let result = take_buffered_slice(&mut state, material_id, 42);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn buffered_slice_is_removed_and_returned() {
+        let material_id = Ulid::from_str("01J00000000000000000000000").unwrap();
+        let mut state = test_state(material_id);
+        let buffer_path = state.state_dir.join("buffers/42.bin");
+        state.buffered_slices.insert(42, buffer_path.clone());
+
+        let result = take_buffered_slice(&mut state, material_id, 42).unwrap();
+
+        assert_eq!(result, buffer_path);
+        assert!(state.buffered_slices.is_empty());
     }
 }

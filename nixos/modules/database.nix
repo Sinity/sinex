@@ -47,15 +47,32 @@ let
   baselineConnections = totalServiceCount * perServiceConnections + 50;
   computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
 
-  postgresqlPkg = db.package;
+  postgresqlPkgBase = db.package;
   postgresqlPackages = pkgs.postgresql16Packages;
 
-  extensionPackages = unique (
-    optionals (postgresqlPackages ? timescaledb) [ postgresqlPackages.timescaledb ]
-    ++ optionals (postgresqlPackages ? pgvector) [ postgresqlPackages.pgvector ]
-    ++ optionals (postgresqlPackages ? pg_jsonschema) [ postgresqlPackages.pg_jsonschema ]
-    ++ optionals (postgresqlPackages ? pgx_ulid) [ postgresqlPackages.pgx_ulid ]
-  );
+  # pg_jsonschema is packaged in this repository under nix/pkgs/pg_jsonschema.
+  # Wire it into the Postgres build explicitly so that any cluster provisioned
+  # via this module (including ones used by xtask ci postgres) always has the
+  # extension available in pg_available_extensions, instead of relying on a
+  # separate overlay to attach it indirectly.
+  pgJsonschema = pkgs.callPackage ../../nix/pkgs/pg_jsonschema { };
+
+  extensionPackageBuilder =
+    ps:
+    unique (
+      optionals (ps ? timescaledb) [ ps.timescaledb ]
+      ++ optionals (ps ? pgvector) [ ps.pgvector ]
+      ++ optionals (ps ? pgx_ulid) [ ps.pgx_ulid ]
+      # Always include pg_jsonschema, even if it's not present under
+      # postgresql16Packages in this particular pkgs set.
+      ++ [ pgJsonschema ]
+    );
+
+  postgresqlPkg =
+    if lib.hasAttr "withPackages" postgresqlPkgBase then
+      postgresqlPkgBase.withPackages extensionPackageBuilder
+    else
+      postgresqlPkgBase;
 
   sharedPreloadLibraries =
     let
@@ -130,9 +147,23 @@ host    all             all             ::/0                    reject
   migrationPackage =
     if db.migration.package != null then db.migration.package else cfg.package;
 
+  databaseExtensionsOverlay = import ../../nix/overlays/database-extensions.nix;
+  sinexAllowUnfreePredicate =
+    pkg:
+    let
+      name = lib.getName pkg;
+    in
+    elem name [ "timescaledb" "pg_jsonschema" ];
+
 in
 {
   config = mkMerge [
+    (mkIf (db.enable && db.autoSetup) {
+      nixpkgs.overlays = mkAfter [ databaseExtensionsOverlay ];
+      nixpkgs.config.allowUnfree = mkDefault true;
+      nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
+    })
+
     (mkIf (db.enable && db.autoSetup) {
       services.postgresql = {
         enable = true;
@@ -140,7 +171,6 @@ in
         ensureDatabases = mkDefault allDatabases;
         ensureUsers = mkDefault ensuredUsers;
         authentication = mkDefault authenticationConfig;
-        extensions = extensionPackages;
         settings = mkMerge [ baseSettings { port = mkForce db.port; } ];
       };
     })

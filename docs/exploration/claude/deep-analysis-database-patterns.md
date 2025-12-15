@@ -1188,8 +1188,8 @@ fn migrations_fingerprint() -> Option<String> {
         }
     }
 
-    // Include SQL files
-    for extra in ["DDL.sql", "monitoring.sql"] {
+    // Include additional SQL artifacts such as monitoring views
+    for extra in ["monitoring.sql"] {
         if let Ok(bytes) = fs::read(&schema_dir.join(extra)) {
             hasher.update(extra.as_bytes());
             hasher.update(bytes);

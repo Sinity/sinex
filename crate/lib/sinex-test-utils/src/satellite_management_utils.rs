@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use sinex_core::db::DbPool;
-use sinex_core::types::error::SinexError;
+use sinex_core::types::{error::SinexError, Seconds};
 use sinex_ingestd::{config::IngestdConfig, service::IngestService};
 use tokio::process::Child;
 use tokio::sync::Mutex as AsyncMutex;
@@ -44,6 +44,7 @@ pub struct TestIngestdHandle {
 impl TestIngestdHandle {
     /// Stop the ingestd process
     pub async fn stop(&mut self) -> TestResult<()> {
+        tracing::info!(stream = %self.stream_name, "Stopping test ingestd");
         if let Some(service) = self.service.as_mut() {
             service.shutdown().await?;
         }
@@ -59,6 +60,7 @@ impl TestIngestdHandle {
                 );
             }
         }
+        tracing::info!(stream = %self.stream_name, "Test ingestd stopped");
         Ok(())
     }
 }
@@ -102,14 +104,19 @@ pub async fn start_test_ingestd_with_config(
     let jetstream = async_nats::jetstream::new(nats_client.clone());
     let _ = jetstream.delete_stream(stream_name).await;
 
+    let annex_path = work_dir.join("annex");
+    let state_dir = work_dir.join("assembler_state");
+
     let ingest_config = IngestdConfig::builder()
         .database_url(config.database_url.clone())
         .nats_url(config.nats_url.clone())
         .batch_size(1)
-        .batch_timeout_secs(1)
+        .batch_timeout_secs(Seconds::from_secs(1))
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir)
+        .annex_repo_path(annex_path)
+        .assembler_state_dir(state_dir)
         .nats_stream_name(stream_name.to_string())
         .build();
 

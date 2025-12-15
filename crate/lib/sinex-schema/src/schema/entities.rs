@@ -161,12 +161,6 @@ impl Entities {
                 .col(Entities::Name)
                 .unique()
                 .to_owned(),
-            Index::create()
-                .unique()
-                .name("ix_entities_type")
-                .table(Self::table_iden())
-                .col(Entities::EntityType)
-                .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
             Index::create()
                 .unique()
@@ -343,30 +337,6 @@ impl EntityRelations {
                 .col(EntityRelations::ToEntityId)
                 .col(EntityRelations::RelationType)
                 .unique()
-                .to_owned(),
-            // Indexes to support graph traversal queries starting from either direction.
-            Index::create()
-                .unique()
-                .name("ix_entity_relations_from_type")
-                .table(Self::table_iden())
-                .col(EntityRelations::FromEntityId)
-                .col(EntityRelations::RelationType)
-                .to_owned(),
-            Index::create()
-                .unique()
-                .name("ix_entity_relations_to_type")
-                .table(Self::table_iden())
-                .col(EntityRelations::ToEntityId)
-                .col(EntityRelations::RelationType)
-                .to_owned(),
-            // Partial index on active relations for performance.
-            Index::create()
-                .unique()
-                .name("ix_entity_relations_active")
-                .table(Self::table_iden())
-                .col(EntityRelations::FromEntityId)
-                .col(EntityRelations::ToEntityId)
-                .cond_where(Expr::col(EntityRelations::IsActive).eq(true))
                 .to_owned(),
         ]
     }
