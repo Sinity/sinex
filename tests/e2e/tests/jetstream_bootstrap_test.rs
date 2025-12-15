@@ -25,9 +25,9 @@ use tokio::time::sleep;
 
 /// Test that stream creation is idempotent.
 #[sinex_test]
-async fn test_stream_creation_idempotent(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_stream_creation_idempotent() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream_name = format!("TEST_IDEMPOTENT_{}", uuid::Uuid::new_v4().simple());
 
@@ -54,9 +54,9 @@ async fn test_stream_creation_idempotent(ctx: TestContext) -> Result<()> {
 
 /// Test that stream creation fails with conflicting configuration.
 #[sinex_test]
-async fn test_stream_creation_config_conflict(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_stream_creation_config_conflict() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream_name = format!("TEST_CONFLICT_{}", uuid::Uuid::new_v4().simple());
 
@@ -93,9 +93,9 @@ async fn test_stream_creation_config_conflict(ctx: TestContext) -> Result<()> {
 
 /// Test stream creation with duplicate subjects fails.
 #[sinex_test]
-async fn test_stream_duplicate_subjects_handling(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_stream_duplicate_subjects_handling() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream1_name = format!("TEST_SUBJ1_{}", uuid::Uuid::new_v4().simple());
     let stream2_name = format!("TEST_SUBJ2_{}", uuid::Uuid::new_v4().simple());
@@ -137,9 +137,9 @@ async fn test_stream_duplicate_subjects_handling(ctx: TestContext) -> Result<()>
 
 /// Test durable consumer creation is idempotent.
 #[sinex_test]
-async fn test_consumer_creation_idempotent(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_consumer_creation_idempotent() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream_name = format!("TEST_CONSUMER_{}", uuid::Uuid::new_v4().simple());
     let consumer_name = "test-durable";
@@ -176,9 +176,9 @@ async fn test_consumer_creation_idempotent(ctx: TestContext) -> Result<()> {
 
 /// Test consumer creation with different config fails.
 #[sinex_test]
-async fn test_consumer_config_conflict(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_consumer_config_conflict() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream_name = format!("TEST_CONS_CONF_{}", uuid::Uuid::new_v4().simple());
     let consumer_name = "config-conflict-consumer";
@@ -223,9 +223,9 @@ async fn test_consumer_config_conflict(ctx: TestContext) -> Result<()> {
 
 /// Test consumer creation on non-existent stream fails.
 #[sinex_test]
-async fn test_consumer_on_nonexistent_stream(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let js = ctx.jetstream().await?;
+async fn test_consumer_on_nonexistent_stream() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let js = nats.jetstream().await?;
 
     let stream_name = "NONEXISTENT_STREAM_12345";
 
@@ -241,9 +241,9 @@ async fn test_consumer_on_nonexistent_stream(ctx: TestContext) -> Result<()> {
 
 /// Test concurrent stream creation from multiple instances.
 #[sinex_test]
-async fn test_concurrent_stream_creation(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats_client = ctx.nats_client();
+async fn test_concurrent_stream_creation() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
 
     let stream_name = format!("TEST_CONCURRENT_{}", uuid::Uuid::new_v4().simple());
     let success_count = Arc::new(AtomicU32::new(0));
@@ -311,9 +311,9 @@ async fn test_concurrent_stream_creation(ctx: TestContext) -> Result<()> {
 
 /// Test concurrent consumer creation from multiple instances.
 #[sinex_test]
-async fn test_concurrent_consumer_creation(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats_client = ctx.nats_client();
+async fn test_concurrent_consumer_creation() -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
     let js = jetstream::new(nats_client.clone());
 
     let stream_name = format!("TEST_CONS_CONC_{}", uuid::Uuid::new_v4().simple());

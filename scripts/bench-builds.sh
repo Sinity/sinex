@@ -55,25 +55,42 @@ main() {
   fi
   echo
 
-  # 1) Fast-ish baseline: core correctness checks
+  # 1) Fast-ish baseline: core correctness checks (includes sqlx prepare --check with SQLX_OFFLINE=1)
   bench "cargo xtask check" \
     cargo xtask check
 
-  # 2) SQLx offline metadata regeneration cost
-  bench "cargo xtask sqlx-prepare" \
+  # 2) SQLx offline vs online compile-time checking
+  # Offline: uses .sqlx JSON cache, SQLX_OFFLINE=1
+  bench "cargo xtask sqlx-check (offline, .sqlx)" \
+    cargo xtask sqlx-check
+
+  # Online: skips .sqlx and talks to a live Postgres, requires DATABASE_URL
+  bench "cargo xtask sqlx-check --online (no .sqlx)" \
+    cargo xtask sqlx-check --online
+
+  # 3) SQLx offline metadata regeneration cost (writes/refreshes .sqlx)
+  bench "cargo xtask sqlx-prepare (regen .sqlx)" \
     cargo xtask sqlx-prepare
 
-  # 3) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
+  # 4) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
   bench "cargo xtask ci postgres -- cargo xtask ci workspace" \
     cargo xtask ci postgres -- cargo xtask ci workspace
 
-  # 4) Nix flake build for a single binary (ingest daemon).
-  bench "nix build .#sinex-ingestd" \
-    nix build .#sinex-ingestd
+  # 5) Nix flake build for a single binary (ingest daemon).
+  # Offline: current design, uses .sqlx cache and SQLX_OFFLINE=1
+  bench "nix build .#sinexIngestd (offline, .sqlx)" \
+    nix build .#sinexIngestd
 
-  # 5) Nix flake build for the full suite (symlinkJoin).
-  bench "nix build .#sinex" \
+  # Online: experimental path using ephemeral Postgres for SQLx at build time
+  bench "nix build .#sinexIngestdOnline (online, no .sqlx)" \
+    nix build .#sinexIngestdOnline
+
+  # 6) Nix flake build for the full suite (symlinkJoin).
+  bench "nix build .#sinex (offline, .sqlx)" \
     nix build .#sinex
+
+  bench "nix build .#sinexOnline (online, no .sqlx)" \
+    nix build .#sinexOnline
 
   echo "Benchmarks complete."
 }

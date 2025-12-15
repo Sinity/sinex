@@ -19,66 +19,15 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ---
 
-**Recent Fixes (current branch)**
-
-- Material assembler panic paths hardened (removed `expect` and return errors).
-- Material assembler state map now uses per-material locks so concurrent materials no longer serialize on a global lock.
-- Ingestion shutdown now waits for background tasks before closing DB pools.
-- Native messaging secret comparison uses constant-time equality.
-- Systemd hardening applied to ingestd, gateway, and satellite units (ProtectSystem strict, PrivateTmp, NoNewPrivileges, AF restriction).
-- Checkpoint reset/stats implemented for satellites (no-op stubs removed).
-- Stage-as-You-Go now supports JetStream-only mode (DB-optional registration/finalization paths).
-- Stage-as-You-Go and AcquisitionManager no longer write source material/ledger rows directly; ingestd is the single database writer.
-- Gateway TCP bindings now require tokens and TLS; insecure mode is limited to Unix sockets.
-- Checkpoints can persist to NATS KV; ingestd broadcasts active schemas to `system.schemas.active`.
-- Satellites subscribe to `system.schemas.active` broadcasts in edge mode to cache active schemas.
-- git-annex add surfaces disk-full/permission/corruption errors; path validation tests now reject symlinks and cover Unicode paths.
-- `core.events.ts_orig_subnano` now stores full nanosecond precision via INT4 storage and repository fixes; ingestion no longer truncates timestamp data.
-- Advisory lock IDs use big-endian conversion across replay state machine and distributed locking, preventing mismatched lock acquisition.
-- Removed unsafe unique indexes from `core.entities`/`core.entity_relations` so multiple entities per type and fan-out relations are supported; migration drops the legacy indexes.
-- `SourceMaterialRepository::register_external_in_flight` plus ingestd’s `MaterialAssembler` make JetStream the single writer for source materials: begin/end metadata is published over NATS, ingestd registers the ULID in `raw.source_material_registry`, and finalization merges metadata before writing temporal ledger rows.
-
 ## 1. Critical & Immediate Actions (Week 1)
 
 **Goal:** Stabilize production, prevent data loss, and close security vulnerabilities.
 
 ### 1.1 Data Integrity & Corruption
 
-- **Fix subnano precision loss (NEW-C1)** — ✅
-  - **Status:** `core.events.ts_orig_subnano` now uses an `INTEGER` column (see `crate/lib/sinex-schema/src/schema/events.rs:92-118`), and the repositories consistently persist/extract the nanosecond remainder via `ts.nanosecond() as i32` (`crate/lib/sinex-core/src/db/repositories/events.rs:455,897`). The ingest path no longer truncates to `i16`, so nanosecond precision is preserved end to end.
-- **Standardize lock ID endianness (NEW-C2)** — ✅
-  - **Status:** Both advisory-lock helpers convert ULIDs with `i64::from_be_bytes(...)` (`crate/lib/sinex-core/src/db/distributed_locking.rs:138-145` and `crate/lib/sinex-core/src/db/replay/state_machine.rs:14-27`), so every consumer now hashes lock IDs with the same Big-Endian ordering. Replay control + distributed locking integration tests pass under `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`).
-- **Remove dangerous UNIQUE indexes (NEW-C3, NEW-C4)** — ✅
-  - **Status:** The schema generator no longer creates `ix_entities_type` or relation-level `UNIQUE` indexes that prevented fan-out (`crate/lib/sinex-schema/src/schema/entities.rs:124-210`). The only remaining uniqueness constraint is on `(entity_type, name)` plus the scoped `uk_entity_relations_triple` tuple, which preserves graph integrity while allowing multiple entities per type and arbitrary edge fan-out.
-
 ### 1.2 Production Stability (Crashes/Panics)
 
-- **Fix panics in hot paths (NEW-C5, C6, C7)** — ✅
-  - **Status:** `MaterialAssembler::handle_end`/`persist_state` now bubble errors instead of unwrapping (`crate/core/sinex-ingestd/src/material_assembler.rs:991-1055`), `EventRepository::insert_event`/`insert_many` derive subnanoseconds via safe `map_err` paths (`crate/lib/sinex-core/src/db/repositories/events.rs:455-524,897-938`), and terminal satellite watcher/tests keep unwraps inside test scaffolding only. Regression `cargo nextest run -p sinex-ingestd material_assembler::tests::buffered_slice_is_removed_and_returned` (run `20174d86-f1f7-4041-bfbd-65a72e26d007`) covers the assembler buffer hot path without panics.
-- **Prevent config integer overflow (NEW-C8)** — ✅
-  - **Status:** `RpcDispatcherProcessor::initialize` now runs `config.validate()` and surfaces a `SatelliteError::Configuration` before touching any limits (`crate/core/sinex-rpc-dispatcher/src/lib.rs:30-154`), so oversized CLI/env overrides are rejected at startup. Local `cargo nextest run -p sinex-rpc-dispatcher` attempts currently fail because the shared Postgres instance lacks the TimescaleDB extension required for sqlx compile-time checks; once that extension is available the dispatcher suite can run end to end.
-
-- **Apply systemd security hardening to all services (NEW)** — ✅
-  - **Status:** `nixos/modules/satellite-services.nix:78-110` defines the shared `mkBaseServiceConfig` with `ProtectSystem="strict"`, `ProtectHome=true`, `PrivateTmp=true`, `NoNewPrivileges=true`, AF restrictions, and constrained `ReadWritePaths`, and every ingestd/gateway/satellite unit consumes that helper (`nixos/modules/satellite-services.nix:134-220`). The hardened overlay is now part of the default module set.
-
-- **Add SIGTERM handler to ingestd (NEW)** — ✅
-  - **Status:** `crate/core/sinex-ingestd/src/main.rs:105-160` wires `tokio::signal::unix::signal(SignalKind::terminate)` alongside SIGINT so systemd stop targets trigger an orderly `service.shutdown()`. The shutdown future logs transitions and prevents abrupt pool closures.
-
-- **Merge Blob Manager security patch (TODO #58)** — ✅ *blob manager now enforces validated paths + secure temp files*
-  - **Files:** `blob_manager.rs`, `path_validator.rs`
-  - **Status:** `ingest_file` accepts raw `&str` inputs and validates via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, `find_symlink_path` already switched to `git-annex contentlocation`, and the legacy `secure_blob_manager_patch.rs` file has been deleted.
-- **Harden Annex path safety (TODO #43)** — ✅
-  - **Status:** The `VerifiedPath` newtype (`crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs:6-48`) now encapsulates sanitized paths and `BlobManager::ingest_file` only accepts `&VerifiedPath` (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:163-267`), forcing callers to validate inputs at compile time. The `security` test binary (path validation suite) compiles once sqlx can operate offline; current runs on this host are blocked by the TimescaleDB extension missing from the dev Postgres instance.
-
 ### 1.4 Database & Concurrency
-
-- **Add database query timeouts (NEW)** — ✅ `persist_batch_optimized` now awaits the multi-row insert with a 5s `tokio::time::timeout`, turning hung queries into surfaced database errors (`cargo nextest run -p sinex-ingestd`, run `b1b0a7ce-9e22-411c-b22f-475259f301b9` — JetStream consumer suites pass while the pre-existing `assembler_rejects_corrupted_slice_and_records_dlq` failure remains).
-  - **Context:** Queries in `jetstream_consumer.rs` can hang indefinitely, blocking the consumer.
-  - **Action:** Wrap critical `fetch_all` calls in `tokio::time::timeout`.
-- **Fix RwLock held during I/O (NEW)** — ✅ `handle_end` now snapshots assembler state, drops the map/Mutex guards before annex imports or DB writes, and reinserts the Arc on retries (`cargo nextest run -p sinex-ingestd material_assembler::tests::buffered_slice_is_removed_and_returned`, run `7c02139f-d90e-49f5-b16b-b69e08d8e92d`).
-  - **File:** `material_assembler.rs`
-  - **Issue:** Async RwLock held across file operations blocks all material processing.
-  - **Action:** Load necessary data, drop lock, perform I/O, re-acquire if needed.
 
 ---
 
@@ -86,16 +35,9 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 **Goal:** Close architecture gaps, restore disabled tests, and complete the JetStream migration.
 
-### 2.1 Architecture & Refactoring
+-### 2.1 Architecture & Refactoring
 
-- **Complete Stage-as-You-Go JetStream Migration (TODO #49, 51, 64, 88)**
-  - **Context:** Satellites still write directly to `raw.source_material_registry` and `raw.temporal_ledger`, causing race conditions with ingestd.
-  - **Action:**
-        1. ✅ `StageAsYouGoContext` now always publishes begin/slice/end through `AcquisitionManager`, and the legacy `PgPool` / blob-ingest fallback path was removed entirely.
-        2. ✅ `AcquisitionManager` now carries metadata on begin/end; ingestd receives the same JSON the satellite would have written.
-        3. ✅ `SourceMaterialRepository::register_external_in_flight` lets ingestd create/update `raw.source_material_registry` rows using the ULID minted at the edge; `MaterialAssembler` registers records on begin and finalizes them (including merged metadata + ledger writes) on end.
-        4. ✅ Every satellite/test that constructs `StageAsYouGoContext` now chains `.with_acquisition_manager(...)` (or injects one via `from_sender`), and the obsolete DB-required test was deleted so JetStream is the only supported path.
-        5. ✅ Added the `stage_as_you_go_pipeline_end_to_end` integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) which boots ingestd + JetStream, runs a log processor, and asserts ingestd persists the source material/event records.
+- **Complete Stage-as-You-Go JetStream Migration (TODO #49, 51, 64, 88)** *(archived in `docs/exploration/unified-issues-done.md`)*
 - **Consolidate HTTP Dependency Stacks (NEW)**
   - **Context:** Workspace uses duplicate versions of `hyper` (0.14/1.0), `tower`, and `reqwest`.
   - **Action:** Align all crates to `axum 0.7` stack (hyper 1.0, http 1.0, reqwest 0.12).
@@ -113,29 +55,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
   - **Targets:** `LeaseManager` (0.07:1 ratio), `DlqRetryHandler` (0 tests), `CheckpointManager` error paths.
 
 ### 2.3 Operational Gaps
-
-- **Implement `reset_checkpoint()` (NEW)** — ✅ Deleting a processor/consumer triple uses `ProcessorName`/`ConsumerGroup`/`ConsumerName` identities and clears the optional KV entry; covered by `cargo nextest run -p sinex-satellite-sdk checkpoint_history_stats_and_reset` (run `dac966cb-fdfd-4bf7-becf-01184ca9470a`).
-  - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-- **Implement `get_checkpoint_stats()` (NEW)** — ✅ Stats now summarize `core.processor_checkpoints` rows for the processor/consumer pair and drive the same regression run above.
-  - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-- **Expose checkpoint history (NEW)** — ✅ `CheckpointManager::get_checkpoint_history(limit)` fetches recent rows for the processor/group/consumer triple (descending `updated_at`), enforces sane default limits, and surfaces negative counters as checkpoint errors (also verified by run `dac966cb-fdfd-4bf7-becf-01184ca9470a`).
-  - **File:** `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-- **Fix Shutdown Polling (NEW)** — ✅ `LifecycleManager::shutdown_future` now clones a `tokio::sync::watch` receiver so shutdown notifications propagate instantly (no 100 ms sleep loop) and signals/Ctrl+C send through the channel (`cargo nextest run -p sinex-satellite-sdk lifecycle::tests::shutdown_future_notifies_without_polling`, run `61b444c1-2bf7-4cd1-bad0-39f37af1dd17`).
-  - **File:** `crate/lib/sinex-satellite-sdk/src/lifecycle.rs`
-  - **Action:** Replace 100ms polling loop with `tokio::sync::watch` channel for immediate shutdown.
-  - **Snippet:**
-
-        ```rust
-        // Create shutdown channel
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-        // In shutdown handler
-        shutdown_tx.send(true)?;
-        // In processing loop
-        tokio::select! {
-            _ = shutdown_rx.changed() => break,
-            result = process_next() => { ... }
-        }
-        ```
 
 ---
 
@@ -182,16 +101,28 @@ This document consolidates the project's entire backlog, technical debt, and exp
 - **Fix Timestamp Auto-Detection (NEW)**
   - **Context:** `timestamp_helpers.rs` misclassifies year 2128+ timestamps as milliseconds.
 
+### 3.4 Runtime Hardening
+
+- **Graceful shutdown handles SIGTERM + removes busy polling (NEW)**
+  - **Context:** Architecture deep dive flagged that `sinex-ingestd` only awaits `ctrl_c()` (SIGINT) and the shared processor runtime polls every 100 ms to detect shutdown, so `systemctl stop` can hang and watchers keep running.
+  - **Action:** Catch SIGTERM in ingestd’s entrypoint and propagate cancellation tokens instead of polling loops in `StatefulStreamProcessor`/`ProcessorRunner`. Ensure shutdown drains outstanding work and background tasks stop immediately.
+  - **Tests:** Integration test that `systemctl stop sinex-ingestd` (or equivalent ctrl-c) exits promptly; unit tests asserting processors receive cancellation without 100 ms sleep; leak checks for watcher tasks.
+- **Add systemd sandboxing to production services (NEW)**
+  - **Context:** Only the `preflight` unit sets `ProtectSystem`, `NoNewPrivileges`, etc.; ingestd/gateway/satellite services are running without hardening despite the critical finding in the deep dive.
+  - **Action:** Update `nixos/modules/ingestd.nix`, `gateway.nix`, and `satellite-services.nix` to include seccomp/namespace restrictions, private tmp, and read-only root FS; document required exceptions for IPC or storage paths.
+  - **Tests:** NixOS VM test ensures services still start under hardened settings and fail when permissions are too loose; add docs to deployment guide describing the sandboxing knobs.
+- **Implement checkpoint reset/stats APIs (NEW)**
+  - **Context:** `CheckpointManager::reset_checkpoint` and `get_checkpoint_stats` in `crate/lib/sinex-satellite-sdk/src/checkpoint.rs` still return stubs, leaving operators without a way to clear bad checkpoints or inspect progress.
+  - **Action:** Wire both methods to real SQL routines (delete/reset rows, aggregate counts/timestamps) and expose commands via `sinex-cli`/xtask to call them per processor.
+  - **Tests:** Unit/integration tests covering reset flows (row removed, processor restarts from scratch) and stats queries returning real totals; documentation update for ops runbooks.
+
 ---
 
 ## 4. Active Implementation Initiatives
 
 *Tracked from `implementation-plan.md`*
 
-1. **Schema Pipeline Unification**: ✅ Complete. Rust types are source of truth.
-2. **Documentation Alignment**: ✅ Complete. Docs reflect JetStream-only world.
 3. **Channel Hygiene**: 🔄 In Progress. Audit satellites for unbounded channels.
-4. **Processor Model Cleanup**: ✅ Complete. HotlogAutomaton removed.
 5. **RPC Dispatcher Completion**: 🔄 In Progress.
     - Flesh out `scan` method.
     - Implement `ExplorationProvider` with real data.
@@ -254,16 +185,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Implement `find_paths` using recursive CTEs (or graph extension) to return real paths between entities; remove placeholder `Ok(vec![])`.
     - **Tests:** Add property/integration tests that create small graphs and assert path discovery works.
 
-43. **Annex path safety & symlink lookup hardening** — ✅ *BlobManager enforces validated paths*
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs`.
-    - **Status:** `ingest_file` now accepts raw `&str` inputs and validates/sanitizes them via `validate_and_convert_path`, `ingest_from_bytes` writes through `create_secure_temp_path`, temporary files are removed explicitly, and path traversal coverage lives under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`.
-
-44. **Native messaging auth not fully exercised** — ✅
-    - **Status:** `native_messaging.rs` enforces allowlists via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS` (optional shared secrets) and emits structured `native_messaging.auth` logs for both allow/deny decisions. The regression tests `native_messaging_rejects_untrusted_extensions`, `native_messaging_accepts_trusted_extension_with_secret`, and `native_messaging_rejects_missing_secret` (`crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`) cover the real manifest/payload flow, and `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`) confirms the suite.
-
-45. **Gateway insecure bypass remains enabled** — ✅
-    - **Status:** `guard_tcp_auth` rejects any TCP bind when `GatewayAuth` is disabled (`crate/core/sinex-gateway/src/rpc_server.rs:545-569`), so `SINEX_GATEWAY_ALLOW_INSECURE=1` only applies to Unix-socket bindings. Tests `tcp_binding_disallows_insecure_mode`, `gateway_auth_blocks_missing_token`, and `gateway_auth_accepts_bearer_header` exercise the guardrails as part of `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`).
-
 46. **Build stamping is hardcoded**
     - **Files:** `crate/lib/sinex-satellite-sdk/src/version.rs`, build scripts.
     - **Steps:** Restore build-time git revision/binary hash injection for release artifacts; wire into Nix/CI builds.
@@ -277,9 +198,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
         3. Allow satellites to run with NATS-only config (no PgPool) when edge mode is enabled; keep SDK dependency intact.
         4. Once KV + schema broadcast are in place, delete/disable redundant DB-only satellite codepaths and drop their backing tables from the base schema (no new migration—update the squashed schema and reset DB) to avoid parallel modes.
     - **Tests:** Integration that runs a satellite with only NATS (no Postgres) and verifies checkpoints persist in KV and schema validation works from the broadcast; compatibility test that DB-backed mode still works.
-
-48. **RPC transport security for TCP bindings is missing** — ✅
-    - **Status:** `rpc_server.rs` now refuses to bind TCP unless `SINEX_GATEWAY_TLS_CERT`/`SINEX_GATEWAY_TLS_KEY` are set, wraps the listener in `tokio-rustls`, and calls `guard_tcp_auth` so `SINEX_GATEWAY_ALLOW_INSECURE` is only permitted on Unix sockets. Optional client CA support enables mTLS. Tests `tcp_binding_disallows_insecure_mode`, `tls_paths_must_be_set_for_tcp`, and `gateway_auth_blocks_missing_token` cover the guardrails, and `cargo nextest run -p sinex-gateway` (run `18f2e461-b4f2-485a-b0bb-387324e8065d`) passed the suite.
 
 49. **Browser activity capture is missing**
     - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.
@@ -306,9 +224,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Introduce a composable step/middleware chain (tower-like) for validation → enrichment → transformation → side effects, and migrate all event processing paths to it to standardize metrics/tracing/error handling. Make the chain the default pattern for new processors; eliminate ad-hoc inline pipelines.
     - **Tests:** Unit tests for individual steps and composition; integration tests showing a migrated pipeline (e.g., ingestd event/material consumers, one satellite) behaves identically with the chain.
 
-54. **Paths still passed as raw strings** — ✅
-    - **Status:** `crate/lib/sinex-satellite-sdk/src/annex/path_validator.rs:6-48` now exposes a `VerifiedPath` newtype; `BlobManager::ingest_file` accepts only `&VerifiedPath` and callers must parse/validate upfront (`crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs:163-270`). The security regression tests under `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs` construct VerifiedPath instances before ingestion. Locally, `cargo nextest run -p sinex-satellite-sdk --test security` still fails to compile because the shared Postgres instance lacks the TimescaleDB extension needed for sqlx offline metadata; once TimescaleDB is available the suite can be rerun to capture a run ID.
-
 55. **Stateful automata lack sharding/affinity** — ⏳
     - **Status:** No `Shardable`/consistent hashing abstraction exists outside this report (`rg "Shardable" -g'*'` returns only the backlog entry), and processors such as `crate/satellites/sinex-health-aggregator/src/processor.rs` still rely on single-threaded `StatefulStreamProcessor` instances without key affinity.
     - **Files:** stateful automata (analytics, session-aware processors), routing helpers.
@@ -327,10 +242,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Introduce small newtypes for bytes/durations in new/updated configs to prevent unit mixups; adopt in validation boundaries (not a wholesale rewrite).
     - **Tests:** Config parsing tests that catch unit mixups; compile-time type checks in affected modules.
 
-58. **Blob manager security patch is unmerged** — ✅ *Patch merged, standalone file removed*
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs`, `path_validator.rs`.
-    - **Status:** The documented fixes now live in BlobManager (`ingest_file` validates string paths, `ingest_from_bytes` relies on secure temp files), path traversal tests remain in `tests/security/path_validation_test.rs`, and `secure_blob_manager_patch.rs` has been deleted.
-
 59. **Satellites still require direct DB access (violates edge isolation)** — ⏳
     - **Status:** Checkpointing keeps a hard PgPool dependency (`crate/lib/sinex-satellite-sdk/src/checkpoint.rs:41-118` stores a `sqlx::PgPool` and issues `INSERT ... ON CONFLICT`), so satellites cannot run with `DATABASE_URL` unset despite Stage-as-You-Go now publishing via JetStream.
     - **Files:** `crate/lib/sinex-satellite-sdk` (checkpoint manager, Stage-as-You-Go), `crate/core/sinex-ingestd`.
@@ -342,12 +253,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs`.
     - **Steps:** Split into writer/reader/analytics modules; keep cascade/helpers isolated. Reduce cognitive load and surface narrower traits for callers.
     - **Tests:** Ensure existing tests still pass; add smoke tests for the separated modules if needed.
-
-61. **Gateway insecure bypass remains a production foot-gun** — ✅
-    - **Status:** `GatewayAuth::from_env` now refuses to start without `SINEX_RPC_TOKEN` unless `SINEX_GATEWAY_ALLOW_INSECURE=1`, and `guard_tcp_auth` (`crate/core/sinex-gateway/src/rpc_server.rs:151-214, 531-560`) rejects TCP bindings when auth is disabled, forcing insecure mode to Unix sockets only. The regression tests `gateway_auth_blocks_missing_token` / `gateway_auth_accepts_bearer_header` cover the enforcement.
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, docs.
-    - **Steps:** Remove or hard-gate `SINEX_GATEWAY_ALLOW_INSECURE=1` to localhost/dev; add TLS/mTLS config for TCP bindings (see item 48).
-    - **Tests:** Integration that asserts TCP startup without TLS/auth fails; dev-mode allows only loopback.
 
 62. **Syslog/journal watcher shells out to journalctl** — ⏳
     - **Status:** `crate/satellites/sinex-system-satellite/src/journal_watcher.rs:30-330` still spawns `journalctl` via `std::process::Command` for snapshots, tailing, and filtering; no sd-journal bindings exist yet.
@@ -361,91 +266,21 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Replace exact `COUNT(*)` in dashboards/stats with estimates or a maintained counter to avoid full scans at scale.
     - **Tests:** Unit/integration test that the new count path returns reasonable estimates and doesn’t block on large tables.
 
-64. **Stage-as-You-Go still writes directly to Postgres** — ✅ *JetStream-only path enforced*
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`.
-    - **Status:** Satellites publish begin/slice/end exclusively via `AcquisitionManager`, ingestd registers/finalizes the material rows, and the `stage_as_you_go_pipeline_end_to_end` integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) guards the flow.
-
 ## Gateway Hardening
-
-1. **Require explicit TCP opt-in and authentication for JSON-RPC** — ✅ *Completed via GatewayAuth enforcement*
-    - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `docs/current/architecture/UserInteraction_And_Query_Architecture.md`, CLI.
-    - **Status:** `sinex-gateway` now refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. Every request must present `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). CLI commands accept `--rpc-token` and automatically attach the header; tests `gateway_auth_blocks_missing_token`, `gateway_auth_accepts_bearer_header`, and `gateway_auth_accepts_custom_header` cover the new flow. `SINEX_GATEWAY_ALLOW_INSECURE=1` remains as the explicit dev/test escape hatch.
-
-2. **Enforce rate limiting and payload caps on RPC** — ✅ *Guards wired via tower middleware*
-   - **Files:** `crate/core/sinex-gateway/src/rpc_server.rs`, `crate/core/sinex-gateway/docs/rpc_server.md`.
-   - **Status:** Router is wrapped in `LoadShed + ConcurrencyLimit + Timeout + RequestBodyLimit` with env-tunable knobs (`SINEX_GATEWAY_MAX_CONCURRENCY`, `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, `SINEX_GATEWAY_MAX_BODY_BYTES`). Tests `concurrency_limit_returns_429`, `timeout_layer_returns_504`, and `body_limit_returns_413` confirm each guard.
 
 3. **Validate native-messaging origins**
    - **Files:** `crate/core/sinex-gateway/src/native_messaging.rs`, `docs/native_messaging.md`.
-   - **Steps:** ✅ Enforce allowlists via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`, optionally requiring per-extension secrets. Structured logging now emits `native_messaging.auth` events for every allow/deny decision so operators can audit failures.
-   - **Tests:** `native_messaging_rejects_untrusted_extensions`, `native_messaging_accepts_trusted_extension_with_secret`, and `native_messaging_rejects_missing_secret` in `crate/core/sinex-gateway/tests/native_messaging_auth_test.rs`.
-
 ## Content / Blob Pipeline
-
-4. **Keep gateway out of the blob/event write path** — ✅ *Direct DB writes removed; follow-up re-publish TBD*
-   - **Files:** `crate/core/sinex-gateway/src/service_container.rs`, `sinex-satellite-sdk/src/annex/blob_manager.rs`, gateway tests.
-   - **Steps:** Gateway no longer drains BlobManager events into `EventRepository`/JetStream. BlobManager now accepts an optional event sink so satellites continue emitting via Stage-as-You-Go while gateway/storage helpers can disable emissions entirely. Follow-up: reintroduce JetStream publishing for CLI uploads once the command bus exists.
-   - **Tests:** `content_store_blob_does_not_insert_events` (`crate/core/sinex-gateway/tests/blob_route_security_test.rs`) asserts the RPC surface does not mutate `core.events`. Future work should add a positive replay/path test once blob uploads are routed through ingestd.
-
-5. **Migrate `sinex-document-ingestor` off sensd** — ✅ *Completed via direct ingestion pipeline*
-   - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`, `.sqlx` artifacts, docs.
-   - **Steps:** swap the `MaterialSlice` stub + `raw.sensor_jobs` polling for the SDK’s `AcquisitionManager`, stage-as-you-go ingestion, and JetStream slices; delete legacy SQL.
-   - **Status:** `DocumentProcessor` now ingests files directly and emits `document.ingested` events without touching `raw.sensor_jobs`; `document_processor_emits_events_for_targets` (`crate/satellites/sinex-document-ingestor/tests/direct_ingestion_test.rs`) covers the behavior.
-
-6. **Fix NULL material IDs in document job monitor** — ✅ *Completed via ULID parsing fix*
-    - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`, associated tests.
-    - **Status:** `monitor_jobs` now parses the JSON `source_material_id` field into a real `Ulid`, logs malformed configs, and the regressions `monitor_jobs_null_material_id`, `document_jobs_compare_ulids`, and `document_jobs_metadata` pass.
-
-7. **Stream document data directly to annex** — ✅ *Document ingestor no longer buffers entire files*
-   - **Status:** `DocumentProcessor::ingest_target` only inspects metadata + a 4 KiB sniff window to detect encoding, streams blobs via `BlobManager`, and enforces `max_document_size` before allocating memory. Oversized files are skipped with a warning, and `document_processor_emits_events_for_targets` continues to pass using the leaner path.
 
 ## System Satellite
 
-8. **Wire real watchers into `SystemProcessor`** — ✅ *watchers start + surface readiness*
-   - **Files:** `crate/satellites/sinex-system-satellite/src/unified_processor.rs`, `dbus_watcher.rs`, `journal_watcher.rs`, `udev_watcher.rs`, `systemd_watcher.rs`.
-   - **Status:** `SystemProcessor::initialize` now seeds watcher handles and `start_*_stream` spawns the real async tasks (falling back to simulated events on error). The regression `system_processor_still_lacks_watchers` passes under `cargo nextest run -p sinex-system-satellite --test system_processor_watchers`, proving the processor exposes every watcher as ready before scans run.
-
-9. **Add integration tests for each watcher** — ✅ *regressions wired through watcher suite*
-   - **Files:** watcher modules + `crate/satellites/sinex-system-satellite/tests/system_processor_watchers.rs`.
-   - **Status:** The watcher suite now includes per-source tests (`dbus_watcher_should_emit_signal_events`, `journal_watcher_should_emit_entry_events`, `udev_watcher_should_emit_device_events`, `systemd_watcher_should_emit_unit_events`). They execute in dry-run mode by default and become fully end-to-end when `SINEX_NATIVE_SYSTEM_TESTS=1`. Command: `cargo nextest run -p sinex-system-satellite --test system_processor_watchers`.
-
 ## Observability & Heartbeats
-
-10. **Emit heartbeats for all processor modes** — ✅ *Completed via `command_requires_heartbeat` expansion*
-    - **Status:** `command_requires_heartbeat` now returns `true` for service/scan/explore commands, the CLI macro spawns a `HeartbeatEmitter` for each mode, and the regression tests `scan_mode_emits_heartbeats` and `explore_mode_emits_heartbeats` verify the behavior.
-
-11. **Improve heartbeat metrics (CPU/memory/lag)** — ✅ *Completed via `heartbeat emitter CPU + status refresh`*
-    - **Status:** Heartbeat emitter now derives CPU usage from `getrusage`, keeps per-mode error rolling totals before reset, and the regression suite `heartbeat_metrics_regression` passes (CPU > 0, status transitions to `ProcessStatus::Failed` after repeated errors).
-
-12. **Make process heartbeat status strongly typed** — ✅ *Completed in `ProcessStatus enum + heartbeat wiring`*
-    - **Status:** `ProcessHeartbeatPayload` now uses the new `ProcessStatus` enum (`Healthy|Degraded|Failed`), `HeartbeatEmitter` emits typed statuses, and `process_status_test` verifies unknown strings are rejected.
 
 ## Schema Tooling
 
-14. **Implement schema compatibility validation** — ✅ *Completed via `sinex-schema validate` diffing*
-    - **Files:** `crate/lib/sinex-core/src/types/bin/sinex-schema.rs`.
-    - **Status:** `sinex-schema validate <from> <to>` now loads the referenced schema JSON, reports missing required fields/type regressions/enum removals, and exits non-zero when any incompatibilities are found. Unit tests `detect_missing_required_fields` / `detect_enum_regressions` cover the comparator.
-
 ## Testing Coverage
 
-15. **Restore BlobManager integration tests** — ✅ *git-annex harness + verification restored*
-    - **Files:** `crate/lib/sinex-satellite-sdk/tests/blob_manager_integration.rs`, annex modules.
-    - **Status:** `blob_manager_deduplicates_content`, `blob_manager_round_trips_content`, and `blob_manager_detects_corruption_on_retrieve` now run deterministically against disposable git-annex repos. `GitAnnex::get_content` auto-detects keys vs. paths, `contentlocation` resolves storage paths, retrieval verifies SHA256/BLAKE3 digests, and tampering flips files to writable before corrupting. `cargo nextest run -p sinex-satellite-sdk --test blob_manager_integration` passes (`00c4a642… → c2f6ea18…` history recorded in CI notes).
-
-16. **Re-enable blob path validation regression test** — ✅ *percent-encoded traversal blocked*
-    - **Files:** `crate/lib/sinex-satellite-sdk/tests/security.rs`, `crate/lib/sinex-satellite-sdk/tests/security/path_validation_test.rs`, `crate/lib/sinex-core/src/types/validation/core.rs`.
-    - **Status:** `validate_path` now rejects percent-encoded `..` segments before annex gets involved, and the regression `blob_manager_rejects_percent_encoded_traversal` (wired via `tests/security.rs`) passes under `cargo nextest run -p sinex-satellite-sdk --test security`.
-
-17. **Uncomment schema property/integration tests** — ✅ *property suite re-enabled*
-    - **Files:** `crate/lib/sinex-core/tests/property/schema_property_test.rs`.
-    - **Status:** The async property harness runs under Nextest and `schema_registry_should_drive_json_validation` now proves that DB-registered schemas drive `EventValidator`. Command: `cargo nextest run -p sinex-core --test property_tests`.
-
 ## Additional Priorities
-
-18. **Deprecate `raw.sensor_jobs` / sensd schema** — ✅ *Completed via canonical schema rewrite*
-    - **Files:** `crate/lib/sinex-schema/src/schema/sensd.rs`, residual `.sqlx` caches, docs referencing sensd.
-    - **Steps:** drop the tables in the squashed migration (or gate them behind a feature), scrub `.sqlx` artifacts, and rewrite any docs/tools still referencing sensd workflows.
-    - **Status:** The squashed migration no longer creates `raw.sensor_jobs` / `raw.sensor_states`, `ensure_required_extensions` skips unavailable extensions cleanly, and the dev database was rebuilt (`cargo run -p sinex-schema -- up`) to verify the tables are gone.
 
 19. **Document ingestor job metadata**
     - **Files:** `crate/satellites/sinex-document-ingestor/src/lib.rs`.
@@ -458,23 +293,11 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Tests:** integration test that currently shows the replay client missing when NATS is down; expect failure until retries/metrics exist.
     - **Status:** `service_container_should_fail_when_replay_control_unavailable` (`crate/core/sinex-gateway/tests/replay_control_resilience_test.rs`) now fails because `ServiceContainer::new` still returns `Ok` with `replay_control=None` when NATS connections error instead of surfacing the failure.
 
-21. **Structured DLQ metrics and tooling** — ✅ *Completed via `exo dlq metrics`*
-    - **Files:** `cli/exo.py`, `tests/cli_missing_commands.rs`.
-    - **Status:** The new `exo dlq metrics` command surfaces backlog summaries, per-category counts, and top offending automata over a configurable window; `exo_dlq_metrics_command_reports_stats` now passes.
-
 22. **Gateway performance isolation**
     - **Files:** `crate/core/sinex-gateway/src/service_container.rs`, `sinex-services`.
     - **Steps:** refactor long-running queries (analytics/search) to async tasks or chunked pagination so one RPC cannot hog the shared DB pool.
     - **Tests:** after the async refactor, add a stress test (or benchmark harness) that fires multiple expensive queries concurrently and ensures throughput improves; no useful fail-first coverage is practical before the refactor.
     - **Status:** `analytics_queries_block_each_other_with_single_connection` (`crate/lib/sinex-services/tests/analytics_service_test.rs`) now fails because two analytics queries against a single-connection pool block each other, demonstrating the lack of workload isolation.
-
-23. **Heartbeat-driven alerting for satellites** — ✅ *Completed via heartbeat alert sink plumbing*
-    - **Files:** `sinex-satellite-sdk/src/heartbeat.rs`, `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`.
-    - **Status:** Heartbeat emitter now logs structured `process.degraded` / `process.failed` entries (with deduplicated transitions) and the regression tests `heartbeat_emits_degraded_alert_on_error_spike` / `heartbeat_emits_failed_alert_only_on_transition` (`crate/lib/sinex-satellite-sdk/tests/heartbeat_metrics_regression.rs`) cover the behavior.
-
-24. **Gateway CLI teardown awareness** — ✅ *Completed via RPC error guidance helper*
-    - **Files:** `cli/exo.py`, `crate/core/sinex-gateway/src/rpc_server.rs`.
-    - **Status:** `handle_rpc_error` now surfaces tailored hints for 401/429 (auth tokens vs. rate-limit/`--use-db` guidance) and the coverage suite `test_query_surfaces_rate_limit_guidance` / `test_query_prompts_for_auth_on_unauthorized` (`cli/tests/test_cli_error_guidance.py`) passes.
 
 25. **Watcher teardown and restart handling**
     - **Files:** `dbus_watcher.rs`, `journal_watcher.rs`, `systemd_watcher.rs`, `udev_watcher.rs`.
@@ -486,13 +309,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** introduce request IDs, user/session tags, and propagate them into service-layer logs for auditability.
     - **Tests:** when request IDs are wired, add an integration test that issues an RPC call with a tracing subscriber configured to capture events and asserts the resulting log contains the propagated `request_id`.
     - **Status:** `rpc_responses_include_request_id_header` (`crate/core/sinex-gateway/src/rpc_server.rs`) now fails because the router still responds without any `x-request-id` header or structured trace context.
-
-27. **DLQ / confirmation CLI commands** — ✅ *Implemented CLI wiring*
-    - **Files:** `cli/exo.py` (DLQ group enhancements + new `confirmations` group).
-    - **Status:** `exo dlq list`/`purge` short-circuit gracefully when the database is unavailable, and `exo confirmations tail` surfaces recent confirmation events (with fallback messaging when `DATABASE_URL` isn’t set). Tests `test_dlq_list_command_exists`, `test_dlq_purge_command_exists`, and `test_confirmations_tail_command_exists` now pass.
-
-28. **Remove dead sensd stubs from satellites** — ✅ *Completed by removing the sensd schema and DocumentProcessor sensd hooks*
-    - **Status:** `sinex-document-ingestor` now ingests files directly and the sensd schema/table definitions (`raw.sensor_jobs/raw.sensor_states`) have been dropped.
 
 29. **Replay automation coverage**
     - **Files:** `crate/lib/sinex-processor-runtime/src/lib.rs` (replay module), `crate/lib/sinex-services/src/analytics.rs`.
@@ -519,18 +335,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 ## SQL Ergonomics Sweep
 
-33. **Remove remaining SeaQuery call sites (outside schema/migration code)** — ✅ *Completed in `Range-aware replays and cascade repository refactor` follow-up*
-    - **Status:** `seaquery_helpers.rs` modules/tests were removed and `repositories_common` now builds SQL via `format!`; only schema/migration crates retain SeaQuery.
-    - **Regression Test:** `cargo check` (via `cargo xtask check`) ensures no `sea_query` references remain under `sinex-core` outside migrations; add `rg "sea_query" crate/lib/sinex-core` CI guard if desired.
-
-34. **Sweep for aliased IDs (`SELECT id AS foo_id`) and align with schema names** — ✅ *Verified*
-    - **Status:** Workspace `rg " AS [A-Za-z0-9_]+_id"` (excluding sqlx macro aliases like `"id!: ..."`) returns no business logic hits; search previously-flagged services (search, analytics) now bind `id` directly.
-    - **Ongoing guard:** keep the search command in CI lint docs to ensure future aliases don’t regress.
-
-35. **Adopt shared fixture constants across remaining test suites** — ✅ *Done*
-    - **Status:** `rg "repo-test"` / `rg "query.safety"` only match `sinex-test-utils/src/constants.rs`; `integration_tests`, `type_safety_test`, and other suites import the constants via the prelude.
-    - **Guard:** keep the `rg` check noted here so future literals get caught early.
-
 ## Legacy Cleanup & Provenance
 
 36. **Document job monitor leaks tasks and never retires jobs**
@@ -544,9 +348,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** remove the sensd job-submission remnants, instantiate real watchers (or AcquisitionManager-driven sensors), and emit events via JetStream instead of dropping metadata into Postgres.
     - **Tests:** `desktop_processor_emits_clipboard_events` (`crate/satellites/sinex-desktop-satellite/src/unified_processor.rs`) now fails because snapshot scans still don't emit any clipboard/window events.
 
-38. **SDK `JobManager` still operates on `raw.sensor_jobs` / `raw.sensor_states`** — ✅ *Removed alongside the sensd schema*
-    - **Status:** The legacy `JobManager` and sensor executors were deleted, and the core migration no longer creates `raw.sensor_jobs` / `raw.sensor_states`.
-
 39. **Replay planner bypasses ingestion invariants (DB target)**
     - **Files:** `cli/replay_planner.py`.
     - **Steps:** stop inserting directly into `core.events` (which fails due to generated `ts_ingest` and missing provenance). Route through ingestd or stage-as-you-go so provenance and schema checks pass.
@@ -557,29 +358,16 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** implement publishing to `sinex.control.replay` with operation IDs in message headers.
     - **Tests:** `test_replay_planner_nats_target_publishes` (`cli/tests/test_replay_planner.py`) now fails because the NATS branch remains a stub.
 
-41. **Document jobs don’t carry material metadata** — ✅ *Completed via `document capture metadata plumbing`*
-    - **Status:** `DocumentProcessor::insert_document_capture_job_with_metadata` now records a `source_material_id` for every job, `submit_document_job` uses it, and `document_job_records_material_id` verifies the field is persisted.
-
 42. **Watcher tasks never shut down**
     - **Files:** `sinex-system-satellite` watchers, desktop watchers.
     - **Steps:** add cancellation handles so `ProcessorRunner::shutdown` stops each spawned `tokio::spawn` loop.
     - **Tests:** fail-first integration test `system_watchers_stop_on_shutdown`; today watchers run forever after shutdown.
     - **Status:** `processor_runner_triggers_processor_shutdown` (`crate/lib/sinex-processor-runtime/tests/processor_runner.rs`) now fails because `ProcessorRunner` never calls `StatefulStreamProcessor::shutdown` when handling service-mode shutdowns, so background watcher tasks keep running.
 
-43. **Gateway blob endpoints lack auth/size quotas** — ✅ *RPC token plus blob quota enforced*
-    - **Files:** `crate/core/sinex-gateway/src/handlers.rs`, `sinex-services/src/content.rs`.
-    - **Status:** JSON-RPC requires `SINEX_RPC_TOKEN`, and `handle_store_blob` now enforces `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) before decoding payloads. The regression `blob_routes_should_enforce_auth_and_quota` ensures oversized uploads error before reaching git-annex.
-
 44. **Desktop clipboard/window watchers still write directly to Postgres tables**
     - **Files:** `crate/satellites/sinex-desktop-satellite/src/clipboard.rs` and related modules.
     - **Steps:** replace raw `INSERT INTO raw.source_material_registry/raw.temporal_ledger` calls with AcquisitionManager + JetStream writes so the satellite no longer requires `DATABASE_URL`.
     - **Tests:** `desktop_clipboard_requires_database_pool` (unit test inside `clipboard.rs`) now fails because `store_clipboard_source_material` returns `None` when `db_pool` is absent.
-
-45. **Document job monitor compares ULIDs to file paths, so jobs never retire** — ✅ *Completed via `document capture metadata plumbing`*
-    - **Status:** `monitor_jobs` now selects `config->>'source_material_id'`, filters on jobs that carry the field, and compares against event payloads. The regression `document_monitor_detects_completed_job` passes once a matching `document.ingested` event exists.
-
-46. **Large clipboard captures are silently dropped** — ✅ *Completed via `clipboard annex ingestion`*
-    - **Status:** Clipboard watcher now initializes a `BlobManager`, ingests oversized payloads into git-annex, annotates metadata with blob references, and the regression test `clipboard_large_content_is_persisted` passes.
 
 47. **System satellite emits events with invalid provenance references**
     - **Files:** `crate/satellites/sinex-system-satellite/src/dbus_watcher.rs`, `journal_watcher.rs`, `systemd_watcher.rs`, `udev_watcher.rs`.
@@ -590,17 +378,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Files:** `crate/satellites/sinex-terminal-satellite/src/unified_processor.rs` (`HistoryWatcherContext::monitor`).
     - **Steps:** replace `fs::read_to_string` with incremental tailing (seek from saved offset, read chunks) so large history files don’t get reloaded every interval.
     - **Tests:** new unit test `terminal_watcher_tails_incrementally` that currently fails because memory usage scales linearly with file size per poll.
-
-49. **Stage-as-You-Go contexts still require direct Postgres access from satellites** — ✅ *edge mode no longer needs `DATABASE_URL`*
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs`, `acquisition_manager.rs`, any satellite constructing `StageAsYouGoContext`.
-    - **Status:** Stage-as-you-go contexts only need a JetStream connection: begin/slice/end are published via `AcquisitionManager`, ingestd performs the DB writes, and the NATS-only integration test (`cargo nextest run -p sinex-satellite-sdk --test stage_as_you_go_integration`) covers the flow.
-
-50. **JobManager never marks jobs as running/completed** — ✅ *Completed via `sensor job status normalization`*
-    - **Status:** `raw.sensor_jobs` now permits the expanded lifecycle (`active`, `paused`, `running`, `completed`, `failed`, `retired`), `JobManager::update_job_status` preserves the requested state, and cleanup logic only tracks jobs that remain `active|paused|running`. Tests `job_manager_updates_status_properly` and `sensor_job_status_transitions` cover the new states.
-
-51. **Satellites still insert source material/ledger rows, racing ingestd** — ✅ *ingestd is the sole writer*
-    - **Files:** `crate/lib/sinex-satellite-sdk/src/acquisition_manager.rs`, `stage_as_you_go.rs`.
-    - **Status:** Satellites emit begin/slice/end via JetStream and ingestd’s `MaterialAssembler` handles registration/finalization, eliminating duplicate ledger inserts. Covered by `stage_as_you_go_pipeline_end_to_end`.
 
 65. **MaterialAssembler lacks resilience for out-of-order slices and restarts**
     - **Files:** `crate/core/sinex-ingestd/src/material_assembler.rs`, `crate/lib/sinex-test-utils` (JetStream harness).
@@ -771,10 +548,6 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Steps:** Emit counters for confirmation publish failures, DLQ write failures, NACK failures; integrate with existing observability pipeline.
     - **Tests:** Metric emission tests or harness that forces failures and asserts counters increment.
 
-99. **Crash-recovery tests for material acquisition** — ✅
-    - **Status:** `MaterialAssembler::handle_end` now aborts if the DB pool is already closed, assembler state directories are created eagerly, blob repo operations log structured errors, and the restart/concurrency suites explicitly quiesce background ingestd tasks before restarts. The JetStream-only acquisition path is guarded by `cargo nextest run -p sinex-satellite-sdk -E "binary(material_acquisition)"` (latest run `5c0cbb15-ae88-470a-91d9-426a779c94b1`).
-    - **Coverage:** `material_acquisition_restart_recovery` simulates mid-flight restarts, `material_acquisition_concurrent_sessions_isolated` polls for completion via `WaitHelpers`, and `material_acquisition_out_of_order_slices` ensures orphan slices are reconciled. These suites collectively cover early/mid/finalization crashes plus concurrent acquisitions on the JetStream-only writer model.
-
 100. **Refactor events batch_insert_many to UNNEST**
      - **Files:** `crate/lib/sinex-core/src/db/repositories/events.rs` (batch_insert_many).
      - **Steps:** Replace per-row INSERT loop with UNNEST-based bulk insert (pattern from ingestd’s jetstream_consumer) for 10–100x throughput improvement; keep idempotency/ON CONFLICT semantics.
@@ -790,696 +563,11 @@ This document consolidates the project's entire backlog, technical debt, and exp
      - **Steps:** Consider adding a trigram or FTS index on `payload::text` for ILIKE/text search; weigh disk/maintenance cost vs. observed query patterns and adjust query to use FTS if chosen.
      - **Tests:** Migration/sqlx prepare; EXPLAIN/benchmark for representative text searches.
 
-# Appendix B: Architecture Deep Dive (Restored from Deep Dive Findings)
+# Appendix B: Architecture Deep Dive
 
-## Cross-Cutting Concerns
+Architecture and deployment findings now live in [docs/exploration/architecture-deep-dive.md](./architecture-deep-dive.md). Refer to that document for the codebase review, idempotency/backpressure analysis, graceful shutdown posture, ingestion hot-path walk-through, provenance enforcement, checkpoint lifecycle notes, startup sequencing, NixOS deployment audit, and patterns summary.
 
-### Idempotency Patterns
-
-Idempotency is achieved through a **three-layer defense** across the system:
-
-#### 1. NATS Message Deduplication
-
-All satellites use `Nats-Msg-Id` headers for publisher-side deduplication:
-
-```rust
-// crate/lib/sinex-satellite-sdk/src/nats_publisher.rs
-let msg_id = format!("{}:{{"{}"}}", satellite_id, event.id);
-headers.insert("Nats-Msg-Id", msg_id);
-```
-
-JetStream maintains a deduplication window (default 2 minutes) to reject duplicate message IDs.
-
-#### 2. Database-Level Idempotency
-
-All event inserts use `ON CONFLICT DO NOTHING`:
-
-```rust
-// crate/core/sinex-ingestd/src/jetstream_consumer.rs:741
-builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid as \"id!\"");
-```
-
-This ensures duplicate ULID insertions are silently ignored, not errored.
-
-#### 3. Confirmation Stream Compaction
-
-The `sinex.events.confirmations` stream uses `max_msgs_per_subject: 1`:
-
-```rust
-// Configuration ensures only the latest confirmation per subject is retained
-StreamConfig {
-    max_msgs_per_subject: 1,  // Compacts to latest confirmation
-    ...
-}
-```
-
-This prevents automata from seeing duplicate confirmations for the same event.
-
-#### Assessment: **CONSISTENT** ✅
-
-Idempotency is uniformly implemented across all layers. The system achieves exactly-once semantics through this layered approach.
-
----
-
-### Backpressure Mechanisms
-
-Backpressure is coordinated across four layers:
-
-#### 1. Gateway Layer
-
-```rust
-// crate/core/sinex-gateway/src/rpc_server.rs
-ServiceBuilder::new()
-    .layer(TimeoutLayer::new(Duration::from_secs(30)))
-    .layer(ConcurrencyLimitLayer::new(100))
-    .layer(RateLimitLayer::new(100, Duration::from_secs(1)))
-```
-
-- **Concurrency limit**: 100 concurrent requests
-- **Timeout**: 30 seconds per request
-- **Rate limit**: 100 requests/second
-
-#### 2. JetStream Consumer Layer
-
-```rust
-// crate/core/sinex-ingestd/src/jetstream_consumer.rs
-ConsumerConfig {
-    max_ack_pending: 100,      // Flow control
-    ack_wait: Duration::from_secs(30),
-    max_deliver: 10,           // Retry limit before DLQ
-    ...
-}
-```
-
-**Note**: `max_ack_pending` is currently hardcoded, not configurable.
-
-#### 3. Database Pool Layer
-
-```rust
-// Connection pool configuration
-PgPoolOptions::new()
-    .max_connections(10)
-    .connect_timeout(Duration::from_secs(30))
-```
-
-#### 4. Internal Channel Bounds
-
-```rust
-// Typical bounded channel pattern
-let (tx, rx) = tokio::sync::mpsc::channel(100);
-```
-
-#### Assessment: **MOSTLY CONSISTENT** ⚠️
-
-Backpressure is well-coordinated, but there's a configuration mismatch:
-
-- Config allows `batch_size: 1000` but consumer pulls only 100 messages
-- `max_ack_pending` is hardcoded and should be configurable
-
----
-
-### Graceful Shutdown
-
-#### Signal Handling Patterns
-
-**sinex-ingestd** (partial):
-
-```rust
-// Only catches SIGINT, missing SIGTERM
-tokio::signal::ctrl_c().await?;
-```
-
-**Satellites** (complete):
-
-```rust
-// Catches both signals
-let mut sigterm = signal(SignalKind::terminate())?;
-let mut sigint = signal(SignalKind::interrupt())?;
-
-tokio::select! {
-    _ = sigterm.recv() => { /* shutdown */ }
-    _ = sigint.recv() => { /* shutdown */ }
-}
-```
-
-#### Shutdown Sequence
-
-1. Signal received
-2. Cancellation token triggered
-3. In-flight messages completed (or NAK'd for redelivery)
-4. Checkpoint saved to database
-5. Connections closed
-
-#### Polling-Based Shutdown Detection
-
-```rust
-// crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs:778-782
-tokio::select! {
-    _ = async {
-        while !self.should_stop() {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    } => { /* shutdown */ }
-    result = self.run_ingestor_startup_sequence() => { /* completed */ }
-}
-```
-
-**Issue**: 100ms polling introduces up to 100ms shutdown latency.
-
-#### Assessment: **INCONSISTENT** ❌
-
-- **ingestd only catches SIGINT** - systemd sends SIGTERM by default
-- 100ms polling for shutdown is inefficient; should use channels or events
-- Checkpoint saving happens, but `reset_checkpoint()` is NOT IMPLEMENTED
-
----
-
-### Configuration Precedence
-
-#### Loading Order
-
-All services use Figment for configuration with clear precedence:
-
-```rust
-// Typical pattern across all services
-Figment::new()
-    .merge(Toml::file("config.toml"))       // 1. Config file (lowest)
-    .merge(Env::prefixed("SINEX_"))         // 2. Environment variables
-    .merge(Serialized::defaults(&cli_args)) // 3. CLI args (highest)
-```
-
-#### Environment Variable Prefixes
-
-| Service | Prefix | Example |
-|---------|--------|---------|
-| Gateway | `SINEX_` | `SINEX_RPC_PORT` |
-| Ingestd | `INGESTD_` | `INGESTD_BATCH_SIZE` |
-| Satellites | `SATELLITE_` | `SATELLITE_POLL_INTERVAL` |
-
-**Issue**: Inconsistent prefixes across services.
-
-#### Secret Injection
-
-```nix
-# nixos/modules/secrets.nix
-environment.SINEX_DB_PASSWORD = config.sops.secrets.db-password.path;
-```
-
-Secrets are injected via environment variables pointing to agenix-managed paths.
-
-#### Assessment: **MOSTLY CONSISTENT** ⚠️
-
-- Clear precedence (file → env → CLI)
-- Inconsistent prefix naming conventions
-- Secret handling is properly externalized
-
----
-
-## Critical Path Analysis
-
-### Ingestion Hot Path
-
-**File**: `crate/core/sinex-ingestd/src/jetstream_consumer.rs`
-
-#### Message Flow
-
-```
-NATS JetStream
-    │
-    ▼ pull_batch(100)
-┌─────────────────────┐
-│   process_batch()   │ ← Lines 334-647
-│   ├── Deserialize   │
-│   ├── Validate      │
-│   ├── Parse ULID    │
-│   └── Build batch   │
-└─────────────────────┘
-    │
-    ▼
-┌─────────────────────────────┐
-│ persist_batch_optimized()   │ ← Lines 687-753
-│ └── Multi-row INSERT        │
-│     ON CONFLICT DO NOTHING  │
-└─────────────────────────────┘
-    │
-    ▼ AFTER commit
-┌─────────────────────────────┐
-│ publish_confirmations()     │ ← Lines 598-605
-│ └── To sinex.events.{id}    │
-└─────────────────────────────┘
-    │
-    ▼
-┌─────────────────────┐
-│      ack_all()      │
-└─────────────────────┘
-```
-
-#### Key Configuration
-
-```rust
-// Consumer configuration
-ConsumerConfig {
-    deliver_policy: DeliverPolicy::All,
-    ack_policy: AckPolicy::Explicit,
-    ack_wait: Duration::from_secs(30),
-    max_deliver: 10,           // After 10 failures → DLQ
-    max_ack_pending: 100,      // Flow control
-    filter_subject: "sinex.events.*".to_string(),
-}
-```
-
-#### Batch Processing
-
-```rust
-// Lines 362-380: Pull up to 100 messages with 5s timeout
-let messages = consumer
-    .fetch()
-    .max_messages(100)
-    .expires(Duration::from_secs(5))
-    .messages()
-    .await?;
-```
-
-#### Critical Invariant: Confirmations After Commit
-
-```rust
-// Lines 598-605: Order matters for exactly-once
-// 1. DB transaction commits
-// 2. THEN confirmations published
-// 3. THEN messages ACK'd
-
-// If we crash after commit but before ACK:
-// - Messages redeliver (idempotent insert)
-// - Confirmations republish (compacted stream)
-// Result: No duplicates, no lost events
-```
-
----
-
-### Provenance Enforcement
-
-Provenance enforces **audit trail integrity** via an XOR constraint: every event must have EITHER material provenance (external source) OR synthesis provenance (derived from other events), but never both or neither.
-
-#### Application-Level Validation
-
-```rust
-// jetstream_consumer.rs:482-521
-fn validate_provenance(raw_event: &RawEvent) -> Result<PreparedProvenance> {
-    match (&raw_event.material_id, &raw_event.source_event_ids) {
-        // Material provenance (from external source)
-        (Some(material_id), None) => Ok(PreparedProvenance::Material {
-            material_id: material_id.clone(),
-            byte_offset_start: raw_event.byte_offset_start,
-            byte_offset_end: raw_event.byte_offset_end,
-        }),
-
-        // Synthesis provenance (derived from other events)
-        (None, Some(source_ids)) => Ok(PreparedProvenance::Synthesis {
-            source_event_ids: source_ids.clone(),
-        }),
-
-        // XOR violation - both present
-        (Some(_), Some(_)) => Err(anyhow!("Event has both material and synthesis provenance")),
-
-        // Neither present - default to self-referential
-        (None, None) => {
-            warn!(event_id = %raw_event.id, "Event missing provenance; assuming self-referential");
-            Ok(PreparedProvenance::Synthesis {
-                source_event_ids: vec![raw_event.id.as_uuid()],
-            })
-        }
-    }
-}
-```
-
-#### Database-Level Constraint
-
-```sql
--- From schema migrations
-ALTER TABLE raw.events ADD CONSTRAINT provenance_xor CHECK (
-    (material_id IS NOT NULL AND source_event_ids IS NULL) OR
-    (material_id IS NULL AND source_event_ids IS NOT NULL)
-);
-```
-
-#### Default Self-Referential Provenance
-
-When neither provenance type is provided, the system defaults to self-referential synthesis (event is its own source). This is a **recovery mechanism**, not the intended path.
-
----
-
-### Checkpoint Lifecycle
-
-**File**: `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-
-#### CheckpointState Structure
-
-```rust
-// Lines 91-107
-pub struct CheckpointState {
-    /// Unified checkpoint data (External/Internal/Stream/Timestamp)
-    pub checkpoint: Checkpoint,
-
-    /// Total number of messages/events processed
-    pub processed_count: u64,
-
-    /// Last activity timestamp
-    pub last_activity: chrono::DateTime<chrono::Utc>,
-
-    /// Processor-specific state data
-    pub data: Option<serde_json::Value>,
-
-    /// Checkpoint version (for schema evolution)
-    pub version: u32,  // Currently v2
-}
-```
-
-#### Checkpoint Variants
-
-```rust
-pub enum Checkpoint {
-    None,                              // Initial state
-    Internal { event_id: Ulid, ... },  // Automata (event ULID)
-    External { position: u64, ... },   // Ingestors (file offset, etc.)
-    Stream { message_id: String, ... }, // NATS message ID
-    Timestamp { at: DateTime, ... },   // Time-based processing
-}
-```
-
-#### Load with Migration
-
-```rust
-// Lines 282-368
-pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
-    let row = self.pool.checkpoints().get_by_processor(...).await?;
-
-    if let Some(row) = row {
-        if row.checkpoint_data.is_some() {
-            // Version 2+: Deserialize unified format
-            let checkpoint: Checkpoint = serde_json::from_value(data)?;
-            return Ok(CheckpointState { checkpoint, ... });
-        } else {
-            // Version 1: Migrate legacy format
-            warn!("Migrating legacy checkpoint format");
-            let legacy = LegacyCheckpointState { ... };
-            let unified = CheckpointState::from(legacy);
-            self.save_checkpoint(&unified).await?;
-            return Ok(unified);
-        }
-    }
-
-    // No checkpoint found - start fresh
-    Ok(CheckpointState::default())
-}
-```
-
-#### Save with Atomic Upsert
-
-```rust
-// Lines 387-435
-pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
-    let checkpoint_data = serde_json::to_value(&state.checkpoint)?;
-
-    self.pool.checkpoints().upsert(
-        CheckpointIdentity { processor, consumer_group, consumer_name },
-        last_processed_id,
-        processed_count,
-        Some(checkpoint_data),
-    ).await?;
-}
-```
-
-#### NOT IMPLEMENTED Functions
-
-```rust
-// Lines 458-474: Reset checkpoint
-pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-    warn!("Reset checkpoint not implemented in new API");
-    Ok(())  // No-op!
-}
-
-// Lines 477-486: Get checkpoint stats
-pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
-    Ok(CheckpointStats {
-        total_checkpoints: 0,
-        max_processed: 0,
-        last_update: None,
-        first_checkpoint: None,
-    })  // Returns empty stats!
-}
-```
-
----
-
-### Three-Phase Startup
-
-**File**: `crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs`
-
-#### Phase Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    INGESTOR STARTUP                         │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 1: SNAPSHOT                                          │
-│  └── Capture current state of external system               │
-│      (if supports_snapshot capability)                      │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 2: GAP-FILL                                          │
-│  └── Process historical data since last checkpoint          │
-│      (if supports_historical capability)                    │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 3: CONTINUOUS                                        │
-│  └── Real-time event streaming                              │
-│      (if supports_continuous capability)                    │
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### Implementation
-
-```rust
-// Lines 609-668
-async fn run_ingestor_startup_sequence(&mut self) -> SatelliteResult<()> {
-    let capabilities = self.processor.capabilities();
-
-    // Phase 1: Snapshot (if supported)
-    if capabilities.supports_snapshot {
-        info!("Phase 1: Starting snapshot capture");
-        let checkpoint = self.checkpoint_manager.load_checkpoint().await?;
-        self.processor.scan_snapshot(checkpoint).await?;
-    }
-
-    // Phase 2: Gap-filling (if supported and needed)
-    if capabilities.supports_historical {
-        info!("Phase 2: Starting historical gap-fill");
-        let checkpoint = self.checkpoint_manager.load_checkpoint().await?;
-        let report = self.processor.scan_historical(checkpoint).await?;
-        self.checkpoint_manager.save_checkpoint(&report.checkpoint).await?;
-    }
-
-    // Phase 3: Continuous processing
-    if capabilities.supports_continuous {
-        info!("Phase 3: Starting continuous processing");
-        self.run_continuous_processing().await?;
-    }
-
-    Ok(())
-}
-```
-
-#### Capability-Driven Behavior
-
-```rust
-pub struct ProcessorCapabilities {
-    pub supports_snapshot: bool,     // Can capture point-in-time state
-    pub supports_historical: bool,   // Can backfill from checkpoint
-    pub supports_continuous: bool,   // Can stream real-time events
-    pub requires_confirmation: bool, // Needs DB confirmation before processing
-}
-```
-
-Different satellites implement different capability sets:
-
-- **File ingestor**: snapshot + historical + continuous
-- **Desktop events**: continuous only
-- **Health automaton**: continuous + requires_confirmation
-
----
-
-## NixOS Deployment Audit
-
-### Module Completeness
-
-#### Available Modules (10 total)
-
-| Module | Purpose | Config Options |
-|--------|---------|----------------|
-| `default.nix` | Service orchestration | enable, users, groups |
-| `ingestd.nix` | Event ingestion daemon | batch_size, workers, nats_url |
-| `gateway.nix` | HTTP/RPC gateway | port, auth, rate_limits |
-| `nats.nix` | NATS JetStream server | jetstream, clustering |
-| `blob-storage.nix` | Binary artifact storage | path, max_size |
-| `satellite-services.nix` | Satellite systemd units | per-satellite config |
-| `preflight-verification.nix` | Startup gates | health_checks, timeouts |
-| `database.nix` | PostgreSQL + TimescaleDB | extensions, pools |
-| `secrets.nix` | Agenix secret management | paths, permissions |
-| `monitoring.nix` | Prometheus/Grafana | metrics, dashboards |
-
-#### Option Coverage Assessment
-
-Most production-critical options are exposed, but some are missing:
-
-- `max_ack_pending` not configurable (hardcoded)
-- `shutdown_timeout` not exposed
-- Individual satellite enable/disable flags
-
-### Service Orchestration
-
-#### Startup Order
-
-```nix
-# Defined via systemd dependencies
-postgresql.service
-    └── nats.service
-        └── sinex-ingestd.service
-            └── sinex-gateway.service
-                └── satellite-*.service
-```
-
-#### Dependency Declaration
-
-```nix
-# satellite-services.nix
-systemd.services."satellite-${name}" = {
-    after = [ "network.target" "nats.service" "sinex-ingestd.service" ];
-    requires = [ "nats.service" ];
-    wantedBy = [ "multi-user.target" ];
-};
-```
-
-#### Health Checks
-
-```nix
-# preflight-verification.nix
-ExecStartPre = [
-    "${pkgs.bash}/bin/bash -c 'until pg_isready; do sleep 1; done'"
-    "${pkgs.bash}/bin/bash -c 'until nats-server --help; do sleep 1; done'"
-];
-```
-
-### Failure Recovery
-
-#### Restart Policies
-
-```nix
-# Standard across all services
-systemd.services.sinex-ingestd = {
-    serviceConfig = {
-        Restart = "on-failure";
-        RestartSec = "5s";
-        StartLimitBurst = 3;
-        StartLimitIntervalSec = "60s";
-    };
-};
-```
-
-#### Preflight Gates
-
-```nix
-# preflight-verification.nix
-systemd.services.sinex-preflight = {
-    serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-    };
-    script = ''
-        # Verify all dependencies before main services start
-        pg_isready -h localhost
-        nats-server --check
-        # Additional health checks...
-    '';
-};
-```
-
-### Security Hardening
-
-#### CRITICAL FINDING: Missing Hardening ❌
-
-**Only the preflight service has security hardening:**
-
-```nix
-# preflight-verification.nix (ONLY SERVICE WITH HARDENING)
-serviceConfig = {
-    ProtectSystem = "strict";
-    ProtectHome = true;
-    PrivateTmp = true;
-    NoNewPrivileges = true;
-    ProtectKernelTunables = true;
-    ProtectKernelModules = true;
-    ProtectControlGroups = true;
-    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-    RestrictNamespaces = true;
-    RestrictRealtime = true;
-    RestrictSUIDSGID = true;
-    MemoryDenyWriteExecute = true;
-    LockPersonality = true;
-};
-```
-
-**Production services (ingestd, gateway, satellites) have ZERO hardening:**
-
-```nix
-# satellite-services.nix (NO HARDENING)
-serviceConfig = {
-    ExecStart = "${satellite}/bin/${name}";
-    Restart = "on-failure";
-    # NO security directives!
-};
-```
-
-#### Secret Management
-
-```nix
-# secrets.nix
-sops.secrets = {
-    "sinex/db-password" = {
-        owner = "sinex";
-        group = "sinex";
-        mode = "0400";
-    };
-};
-```
-
-Secrets are properly managed via agenix with appropriate permissions.
-
----
-
-## Patterns Summary
-
-### Consistent Patterns
-
-| Pattern | Implementation | Assessment |
-|---------|---------------|------------|
-| **Idempotency** | NATS Msg-Id + ON CONFLICT + compaction | ✅ Excellent |
-| **ULID Keys** | All entities use time-ordered ULIDs | ✅ Consistent |
-| **Provenance XOR** | App + DB dual-layer enforcement | ✅ Robust |
-| **Figment Config** | File → Env → CLI precedence | ✅ Clear |
-| **Checkpoint Format** | Unified v2 with migration | ✅ Forwards-compatible |
-| **Confirmation Flow** | Always AFTER DB commit | ✅ Exactly-once safe |
-| **Secret Handling** | Externalized via agenix | ✅ Secure |
-
-### Inconsistent/Missing Patterns
-
-| Pattern | Issue | Impact |
-|---------|-------|--------|
-| **Signal Handling** | ingestd only catches SIGINT, not SIGTERM | 🔴 High - systemd shutdown may not work |
-| **Security Hardening** | Zero hardening on production services | 🔴 Critical - attack surface exposed |
-| **Shutdown Detection** | 100ms polling instead of channels | 🟡 Medium - latency/CPU waste |
-| **Config Prefixes** | SINEX_vs INGESTD_ vs SATELLITE_ | 🟡 Medium - confusing |
-| **Checkpoint Reset** | `reset_checkpoint()` not implemented | 🟡 Medium - ops gap |
-| **Checkpoint Stats** | `get_checkpoint_stats()` returns empty | 🟡 Medium - observability gap |
-| **max_ack_pending** | Hardcoded, not configurable | 🟡 Medium - tuning limitation |
-| **Batch Size Mismatch** | Config allows 1000, consumer pulls 100 | 🟢 Low - misleading config |
+Keeping those details separate prevents the unified issues backlog from mixing non-actionable analysis with actionable tasks.
 
 # Appendix C: Full Implementation Plan Tasks (Migrated from Implementation Plan)
 
@@ -1531,7 +619,6 @@ Secrets are properly managed via agenix with appropriate permissions.
 
 ### Tasks
 
-- ✅ `.github/workflows/ci.yml` / `sqlx-cache.yml` / `sqlx-check.yml` run migrations from `crate/lib/sinex-schema` and all Postgres images are pinned to `timescale/timescaledb:2.15.2-pg16`.
 - [x] Ensure the Nextest profile used in CI matches the documented “reliable” profile (or document the difference if we stick with default). (CI now runs `cargo nextest … --profile reliable` and coverage inherits it.)
 - [x] Add linters/checks that fail CI when `#[tokio::test]` is used in workspace crates (outside proc-macro/test-harness contexts); everything should use `#[sinex_test]`.
 - [x] Add lint or static analysis that forbids `sqlx::query(` and `sqlx::query_as(` (non-macro versions) so contributors stick to compile-time-checked macros (`query!`, `query_as!`, etc.).

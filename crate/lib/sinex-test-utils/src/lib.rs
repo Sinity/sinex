@@ -116,7 +116,9 @@ pub mod prelude {
     pub use crate::TestContext;
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_test};
-    pub use crate::{ChaosInjestor, EventOverrides, TestSatellitePublisher, TestSnapshot};
+    pub use crate::{
+        ChaosInjestor, EphemeralNats, EventOverrides, TestSatellitePublisher, TestSnapshot,
+    };
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated

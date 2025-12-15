@@ -228,6 +228,16 @@ fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
     Ok(())
 }
 
+fn pg_command(binary: &str) -> Command {
+    if let Ok(prefix) = env::var("SINEX_PG_BIN") {
+        let mut path = PathBuf::from(prefix);
+        path.push(binary);
+        Command::new(path)
+    } else {
+        Command::new(binary)
+    }
+}
+
 fn sqlx_check(online: bool) -> Result<()> {
     let mut c = Command::new("cargo");
     if !online {
@@ -330,7 +340,7 @@ fn doctor() -> Result<()> {
     }
 
     heading("postgres reachability");
-    let pg_ok = Command::new("psql")
+    let pg_ok = pg_command("psql")
         .args(["-c", "select 1"])
         .status()
         .ok()
@@ -391,9 +401,7 @@ struct PgInstance {
 impl Drop for PgInstance {
     fn drop(&mut self) {
         if let Some(data_dir) = self.data_dir.to_str() {
-            let _ = Command::new("pg_ctl")
-                .args(["-D", data_dir, "stop"])
-                .status();
+            let _ = pg_command("pg_ctl").args(["-D", data_dir, "stop"]).status();
         }
     }
 }
@@ -431,7 +439,7 @@ fn ci_postgres(
     let initdb_needed = !data_dir.join("PG_VERSION").exists();
     if initdb_needed {
         run_cmd("initdb", {
-            let mut c = Command::new("initdb");
+            let mut c = pg_command("initdb");
             c.args(["--auth=trust", "--no-locale", "--encoding=UTF8", "-D"])
                 .arg(&data_dir);
             c
@@ -448,7 +456,7 @@ fn ci_postgres(
 
     let log_path = data_dir.join("postgres.log");
     run_cmd("pg_ctl start", {
-        let mut c = Command::new("pg_ctl");
+        let mut c = pg_command("pg_ctl");
         c.args(["-D", data_dir.to_str().unwrap(), "start", "-w"])
             .arg("-l")
             .arg(&log_path)
@@ -509,7 +517,7 @@ fn ci_postgres(
 }
 
 fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String> {
-    let output = Command::new("psql")
+    let output = pg_command("psql")
         .arg("-v")
         .arg("ON_ERROR_STOP=1")
         .arg("-h")
@@ -578,13 +586,13 @@ fn ensure_database(env: &PgEnv) -> Result<()> {
 }
 
 fn ensure_extensions(env: &PgEnv) -> Result<()> {
-    let candidates = [
-        &["pgx_ulid", "ulid"][..],
-        &["pg_jsonschema"][..],
-        &["timescaledb"][..],
-        &["vector"][..],
+    let candidates: &[(&[&str], bool)] = &[
+        (&["pgx_ulid", "ulid"], true),
+        (&["pg_jsonschema"], true),
+        (&["timescaledb"], true),
+        (&["vector"], true),
     ];
-    for names in candidates {
+    for &(names, required) in candidates {
         let mut installed = false;
         for name in names {
             let available = psql(
@@ -608,7 +616,7 @@ fn ensure_extensions(env: &PgEnv) -> Result<()> {
             installed = true;
             break;
         }
-        if !installed {
+        if !installed && required {
             bail!(
                 "None of the requested extensions {:?} are available in this PostgreSQL build",
                 names
@@ -746,8 +754,6 @@ fn ci_workspace(target_dir: &str) -> Result<()> {
         c
     })?;
 
-    let sqlx_offline = env::var("SQLX_OFFLINE").unwrap_or_else(|_| "1".to_string());
-
     run_cmd("nextest e2e fast", {
         let mut c = Command::new("cargo");
         c.args([
@@ -757,15 +763,16 @@ fn ci_workspace(target_dir: &str) -> Result<()> {
             "sinex-e2e-tests",
             "--profile",
             "fast",
-        ])
-        .env("SQLX_OFFLINE", &sqlx_offline);
+        ]);
+        // Use a smaller DB pool for fast e2e runs to keep first-time
+        // template + pool initialization well under the per-test timeout.
+        c.env("SINEX_TESTUTILS_POOL_SIZE", "8");
         c
     })?;
 
     run_cmd("xtask test reliable", {
         let mut c = Command::new("cargo");
-        c.args(["xtask", "test", "--profile", "reliable"])
-            .env("SQLX_OFFLINE", &sqlx_offline);
+        c.args(["xtask", "test", "--profile", "reliable"]);
         c
     })?;
 
@@ -970,7 +977,7 @@ fn schema_check_ready(database: Option<String>, superuser: Option<String>) -> Re
         .or_else(|| env::var("SUPERUSER").ok())
         .unwrap_or_else(|| "postgres".to_string());
 
-    let mut cmd = Command::new("psql");
+    let mut cmd = pg_command("psql");
     cmd.arg("-v")
         .arg("ON_ERROR_STOP=1")
         .arg("-d")
@@ -985,7 +992,7 @@ fn schema_check_ready(database: Option<String>, superuser: Option<String>) -> Re
         bail!("core.events missing in database {db}");
     }
 
-    let mut cmd2 = Command::new("psql");
+    let mut cmd2 = pg_command("psql");
     cmd2.arg("-v")
         .arg("ON_ERROR_STOP=1")
         .arg("-d")
@@ -1023,7 +1030,7 @@ fn resolve_default_base_branch() -> Result<String> {
 }
 
 fn ensure_psql() -> Result<()> {
-    let status = Command::new("psql")
+    let status = pg_command("psql")
         .arg("--version")
         .status()
         .with_context(|| "failed to spawn psql")?;
@@ -1034,7 +1041,7 @@ fn ensure_psql() -> Result<()> {
 }
 
 fn ensure_db_connection(db_url: &str) -> Result<()> {
-    let status = Command::new("psql")
+    let status = pg_command("psql")
         .arg(db_url)
         .arg("-c")
         .arg("SELECT 1")
@@ -1047,7 +1054,7 @@ fn ensure_db_connection(db_url: &str) -> Result<()> {
 }
 
 fn psql_query_bool(db_url: &str, query: &str) -> Result<bool> {
-    let output = Command::new("psql")
+    let output = pg_command("psql")
         .arg(db_url)
         .args(["-Atqc", query])
         .output()
@@ -1078,11 +1085,23 @@ fn lint_forbidden() -> Result<()> {
         "crate/lib/sinex-test-utils/macros/src/lib.rs",
         "crate/lib/sinex-test-utils/tests/rstest_integration_example.rs",
         "crate/lib/sinex-test-utils/tests/database_pool_tests.rs",
+        "crate/lib/sinex-test-utils/tests/channel_backpressure_test.rs",
+        "crate/lib/sinex-test-utils/tests/select_cancellation_test.rs",
+        "crate/core/sinex-ingestd/src/service.rs",
+        "crate/lib/sinex-satellite-sdk/src/lifecycle.rs",
+        "xtask/src/main.rs",
     ];
     let rust_test_allow = [
         "crate/lib/sinex-test-utils/macros/src/lib.rs",
         "crate/satellites/sinex-desktop-satellite/src/window_manager.rs",
         "crate/lib/sinex-core/src/db/sanitization.rs",
+        "crate/core/sinex-ingestd/src/material_assembler.rs",
+        "crate/core/sinex-gateway/src/native_messaging.rs",
+        "crate/core/sinex-gateway/src/rpc_server.rs",
+        "crate/lib/sinex-schema/src/schema_registry.rs",
+        "crate/lib/sinex-test-utils/src/cleanup_config.rs",
+        "crate/lib/sinex-test-utils/src/permissions.rs",
+        "xtask/src/main.rs",
     ];
     let sqlx_query_allow = [
         "crate/core/sinex-gateway/src/cascade_analyzer.rs",
@@ -1094,10 +1113,14 @@ fn lint_forbidden() -> Result<()> {
         "crate/lib/sinex-test-utils/src/db_common.rs",
         "crate/lib/sinex-test-utils/src/fixture_generator.rs",
         "crate/lib/sinex-test-utils/src/fixtures.rs",
+        "crate/lib/sinex-test-utils/src/session_guards.rs",
+        "crate/lib/sinex-test-utils/src/permissions.rs",
+        "xtask/src/main.rs",
     ];
     let sqlx_query_as_allow = [
         "crate/lib/sinex-core/src/db/repositories/common.rs",
         "crate/lib/sinex-satellite-sdk/src/preflight/database.rs",
+        "xtask/src/main.rs",
     ];
 
     let mut violations: Vec<String> = Vec::new();

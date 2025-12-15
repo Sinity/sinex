@@ -7,30 +7,31 @@
 }:
 let
   system = pkgs.stdenv.hostPlatform.system;
-  fenixInput =
-    if inputs ? fenix then
-      inputs.fenix
+  hasFenix = inputs ? fenix;
+  fenixPkgs =
+    if hasFenix then
+      inputs.fenix.packages.${system}.complete
     else
-      builtins.getFlake "github:nix-community/fenix?rev=d4e14d370b4763c67ea02a39f01f5366297d61cb&narHash=sha256-nx0zy/+yR57FwloXmatf3CaXgzA4zJqIFbplnpaKn/Y=";
-  fenixPkgs = fenixInput.packages.${system}.complete;
+      null;
   pythonDeps = with pkgs.python3Packages; [
     click
     psycopg2
     rich
     pyyaml
   ];
-  # Postgres extensions are assumed to be installed on the system instance
-  # at /run/postgresql; we no longer bundle a Postgres with extensions here.
   basePackages =
     with pkgs;
     [
-      fenixPkgs.toolchain
-      fenixPkgs.rust-analyzer
-      fenixPkgs.clippy
-      fenixPkgs.rustfmt
-      fenixPkgs.llvm-tools
-      fenixPkgs.rust-src
-      fenixPkgs.rustc-codegen-cranelift
+      # Prefer the pinned Fenix toolchain when available (flake path),
+      # otherwise fall back to the nixpkgs Rust toolchain when running
+      # via plain `devenv` without Sinex flake inputs.
+      (if hasFenix then fenixPkgs.toolchain else rustc)
+      (if hasFenix then fenixPkgs.rust-analyzer else rust-analyzer)
+      (if hasFenix then fenixPkgs.clippy else cargo)
+      (if hasFenix then fenixPkgs.rustfmt else rustfmt)
+      (if hasFenix then fenixPkgs.llvm-tools else llvmPackages.bintools)
+      (if hasFenix then fenixPkgs.rust-src else rustPlatform.rustLibSrc)
+      (if hasFenix then fenixPkgs.rustc-codegen-cranelift else rustc)
       cargo-watch
       cargo-nextest
       cargo-llvm-cov
@@ -92,7 +93,8 @@ in
     # Keep devenv quiet.
     DEVENV_TASKS_QUIET = "1";
     SINEX_DEVENV_SYSTEM = system;
-    SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
+    SINEX_DEVENV_TOOLCHAIN =
+      if hasFenix then "fenix (${system})" else "nixpkgs (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
     SINEX_SCCACHE = "${pkgs.sccache}/bin/sccache";
     SCCACHE_DIR = "$HOME/.cache/sccache";

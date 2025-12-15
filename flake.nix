@@ -50,7 +50,34 @@
           version = "0.1.0"; # TODO: Extract from workspace
           buildTime = "unknown"; # builtins.currentTime not available in pure mode
 
-          # Helper to build Rust packages with common configuration
+          pg_jsonschema = pkgs.callPackage ./nix/pkgs/pg_jsonschema { };
+
+          # Postgres with required extensions for SQLx online builds
+          postgresForSqlx =
+            pkgs.postgresql_16.withPackages (ps: [
+              ps.timescaledb
+              ps.pgvector
+              ps.pgx_ulid
+              pg_jsonschema
+            ]);
+
+          # Common postPatch that generates build_info.rs
+          commonPostPatch = ''
+            # Ensure helper scripts (e.g., rustc wrapper) use in-sandbox interpreters
+            patchShebangs scripts
+
+            # Create build info for version tracking
+            mkdir -p src/generated
+            cat > src/generated/build_info.rs << EOF
+            pub const VERSION: &str = "${version}";
+            pub const GIT_HASH: &str = "${gitRev}";
+            pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
+            pub const BUILD_TIME: &str = "${buildTime}";
+            pub const BUILD_HOST: &str = "${system}";
+            EOF
+          '';
+
+          # Helper to build Rust packages with current .sqlx offline design
           buildRustPackage =
             { name, manifestPath }:
             let
@@ -82,25 +109,96 @@
               auditable = false;
               doCheck = false;
               SQLX_OFFLINE = "true";
-              postPatch = ''
-                # Ensure helper scripts (e.g., rustc wrapper) use in-sandbox interpreters
-                patchShebangs scripts
-              '';
+              postPatch = commonPostPatch;
               preBuild = ''
                 if [ ! -d ".sqlx" ]; then
                   echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
                   exit 1
                 fi
+              '';
+              postInstall = ''
+                # Database migrations ship via the sinex-schema crate/CLI
+                # Nothing extra to install here.
+              '';
+            };
 
-                # Create build info for version tracking
-                mkdir -p src/generated
-                cat > src/generated/build_info.rs << EOF
-                pub const VERSION: &str = "${version}";
-                pub const GIT_HASH: &str = "${gitRev}";
-                pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
-                pub const BUILD_TIME: &str = "${buildTime}";
-                pub const BUILD_HOST: &str = "${system}";
-                EOF
+          # Helper to build Rust packages using online SQLx against an ephemeral Postgres
+          buildRustPackageOnline =
+            { name, manifestPath }:
+            let
+              manifestDir = builtins.dirOf manifestPath;
+            in
+            rustPlatform.buildRustPackage {
+              pname = name + "-online";
+              version = version;
+              src = ./.;
+              cargoLock.lockFile = ./Cargo.lock;
+              buildInputs = with pkgs; [
+                openssl
+                dbus
+                systemd
+                postgresForSqlx
+              ];
+              nativeBuildInputs = with pkgs; [
+                pkg-config
+                protobuf
+                mold
+              ];
+              cargoBuildFlags = [
+                "--manifest-path"
+                manifestPath
+              ];
+              cargoInstallFlags = [
+                "--path"
+                manifestDir
+              ];
+              auditable = false;
+              doCheck = false;
+              # Online SQLx: do not set SQLX_OFFLINE
+              postPatch = commonPostPatch;
+              preBuild = ''
+                # Ephemeral Postgres for SQLx online query checking
+                export PGDATA="$TMPDIR/pgdata"
+                mkdir -p "$PGDATA"
+                ${postgresForSqlx}/bin/initdb -D "$PGDATA" --locale=C --encoding=UTF8 --auth=trust
+
+                # Use a local UNIX socket; avoid exposing TCP
+                export PGHOST="$TMPDIR"
+                export PGPORT=55433
+                echo "unix_socket_directories = '$TMPDIR'" >> "$PGDATA/postgresql.conf"
+                echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+
+                ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -w start
+
+                # Create application database
+                ${postgresForSqlx}/bin/createdb -h "$PGHOST" -p "$PGPORT" sinex_dev || true
+
+                # Create application role expected by migrations and runtime,
+                # and grant it privileges on the public schema used by the
+                # SeaORM migration tracking table. The superuser for this
+                # ephemeral cluster is the default 'postgres' role.
+                ${postgresForSqlx}/bin/psql -h "$PGHOST" -p "$PGPORT" -d postgres -U postgres -v ON_ERROR_STOP=1 -c \"DO \$\$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sinity') THEN
+                    CREATE ROLE sinity LOGIN CREATEDB;
+                  END IF;
+                END
+                \$\$;\"
+
+                ${postgresForSqlx}/bin/psql -h "$PGHOST" -p "$PGPORT" -d sinex_dev -U postgres -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA public TO sinity;\"
+
+                export PGUSER=\"sinity\"
+                export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&port=$PGPORT"
+
+                # Run schema migrations using sinex-schema binary.
+                # Build sinex-schema once; this also warms cargo's target dir.
+                cargo build --manifest-path crate/lib/sinex-schema/Cargo.toml
+                cargo run --manifest-path crate/lib/sinex-schema/Cargo.toml --bin sinex-schema -- up
+              '';
+              postBuild = ''
+                if [ -n "''${PGDATA:-}" ]; then
+                  ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
+                fi
               '';
               postInstall = ''
                 # Database migrations ship via the sinex-schema crate/CLI
@@ -186,7 +284,6 @@
             };
           };
 
-          pg_jsonschema = pkgs.callPackage ./nix/pkgs/pg_jsonschema { };
         in
         let
           # Core satellite services
@@ -194,7 +291,15 @@
             name = "sinex-ingestd";
             manifestPath = "crate/core/sinex-ingestd/Cargo.toml";
           };
+          sinexIngestdOnline = buildRustPackageOnline {
+            name = "sinex-ingestd";
+            manifestPath = "crate/core/sinex-ingestd/Cargo.toml";
+          };
           sinexGateway = buildRustPackage {
+            name = "sinex-gateway";
+            manifestPath = "crate/core/sinex-gateway/Cargo.toml";
+          };
+          sinexGatewayOnline = buildRustPackageOnline {
             name = "sinex-gateway";
             manifestPath = "crate/core/sinex-gateway/Cargo.toml";
           };
@@ -259,10 +364,30 @@
             ];
           };
 
+          sinexSuiteOnline = pkgs.symlinkJoin {
+            name = "sinex-suite-online";
+            paths = [
+              sinexIngestdOnline
+              sinexGatewayOnline
+              sinexSatelliteSdk
+              sinexFsWatcher
+              sinexTerminalSatellite
+              sinexDesktopSatellite
+              sinexSystemSatellite
+              sinexDocumentIngestor
+              sinexTerminalCommandCanonicalizer
+              healthAggregator
+              sinexCli
+              sinexSchema
+            ];
+          };
+
           sinexPackages = {
             inherit
               sinexIngestd
+              sinexIngestdOnline
               sinexGateway
+              sinexGatewayOnline
               sinexSatelliteSdk
               sinexFsWatcher
               sinexTerminalSatellite
@@ -276,6 +401,7 @@
               sinexCli
               ;
             sinex = sinexSuite;
+            sinexOnline = sinexSuiteOnline;
             sinexPreflight = sinexSatelliteSdk;
 
             # Default package is now the ingestion daemon

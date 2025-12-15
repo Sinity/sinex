@@ -263,9 +263,12 @@ async fn test_config_consumer_name_empty() -> Result<()> {
 // Path Validation Tests
 // =============================================================================
 
-/// Test work_dir validation with non-existent path.
+/// Test work_dir validation with non-existent path, exercising full async validation
+/// against real Postgres and NATS.
 #[sinex_test]
 async fn test_config_validate_creates_work_dir(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().await?;
+
     let temp_dir = TempDir::new()?;
     let work_dir = temp_dir.path().join("new_work_dir");
 
@@ -274,19 +277,17 @@ async fn test_config_validate_creates_work_dir(ctx: TestContext) -> Result<()> {
 
     let config = IngestdConfig::builder()
         .work_dir(camino::Utf8PathBuf::try_from(work_dir.clone())?)
-        .database_url(ctx.database_url())
-        .nats_url(
-            ctx.nats_url()
-                .unwrap_or_else(|| "nats://localhost:4222".to_string()),
-        )
+        .database_url(ctx.database_url().to_string())
+        .nats_url(format!("nats://{}", ctx.nats_url().expect("nats url")))
         .build();
 
-    // validate() should create the directory
-    // Note: This test requires actual DB/NATS connections, so we test the sync part
-    let _validation = validator::Validate::validate(&config);
+    // Full async validation should create the directory and validate DB/NATS connectivity.
+    config.validate().await?;
 
-    // The async validation would create the directory
-    // We can't easily test this without running the full async validate()
+    assert!(
+        work_dir.exists(),
+        "validate() should create the work_dir if it does not exist"
+    );
 
     Ok(())
 }

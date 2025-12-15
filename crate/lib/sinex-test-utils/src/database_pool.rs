@@ -285,14 +285,6 @@ fn migrations_fingerprint() -> Option<String> {
         }
     }
 
-    for extra in ["DDL.sql", "monitoring.sql"] {
-        let file = schema_dir.join(extra);
-        if let Ok(bytes) = fs::read(&file) {
-            hasher.update(extra.as_bytes());
-            hasher.update(bytes);
-        }
-    }
-
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -317,7 +309,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(32);
+            .unwrap_or(8);
 
         let mut config = Self {
             size,

@@ -50,13 +50,22 @@ let
   postgresqlPkgBase = db.package;
   postgresqlPackages = pkgs.postgresql16Packages;
 
+  # pg_jsonschema is packaged in this repository under nix/pkgs/pg_jsonschema.
+  # Wire it into the Postgres build explicitly so that any cluster provisioned
+  # via this module (including ones used by xtask ci postgres) always has the
+  # extension available in pg_available_extensions, instead of relying on a
+  # separate overlay to attach it indirectly.
+  pgJsonschema = pkgs.callPackage ../../nix/pkgs/pg_jsonschema { };
+
   extensionPackageBuilder =
     ps:
     unique (
       optionals (ps ? timescaledb) [ ps.timescaledb ]
       ++ optionals (ps ? pgvector) [ ps.pgvector ]
-      ++ optionals (ps ? pg_jsonschema) [ ps.pg_jsonschema ]
       ++ optionals (ps ? pgx_ulid) [ ps.pgx_ulid ]
+      # Always include pg_jsonschema, even if it's not present under
+      # postgresql16Packages in this particular pkgs set.
+      ++ [ pgJsonschema ]
     );
 
   postgresqlPkg =

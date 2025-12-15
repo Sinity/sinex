@@ -292,7 +292,7 @@ async fn test_heartbeat_staleness_detection(ctx: TestContext) -> Result<()> {
     .await?;
 
     // Query for stale instances (heartbeat older than 1 minute)
-    let stale_instances = sqlx::query!(
+    let stale_instances: Vec<_> = sqlx::query!(
         r#"
         SELECT instance_id
         FROM core.satellite_instances
@@ -308,7 +308,7 @@ async fn test_heartbeat_staleness_detection(ctx: TestContext) -> Result<()> {
     assert_eq!(stale_instances[0].instance_id, stale_id);
 
     // Query for healthy instances
-    let healthy_instances = sqlx::query!(
+    let healthy_instances: Vec<_> = sqlx::query!(
         r#"
         SELECT instance_id
         FROM core.satellite_instances
@@ -389,7 +389,7 @@ async fn test_service_leadership_acquisition(ctx: TestContext) -> Result<()> {
     assert_eq!(leader.instance_id.to_string(), instance_id);
 
     // Update heartbeat
-    let updated = sqlx::query!(
+    let updated: Option<_> = sqlx::query!(
         r#"
         UPDATE core.service_leadership
         SET last_heartbeat = NOW()
@@ -471,7 +471,7 @@ async fn test_leadership_transfer(ctx: TestContext) -> Result<()> {
     .await?;
 
     // New leader takes over (atomic transfer)
-    let transfer = sqlx::query!(
+    let transfer: Option<_> = sqlx::query!(
         r#"
         UPDATE core.service_leadership
         SET instance_id = $2,
@@ -546,7 +546,7 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
             let instance_id = uuid::Uuid::new_v4().to_string();
 
             // Register
-            let reg_result = sqlx::query!(
+            let reg_result: Result<_, sqlx::Error> = sqlx::query!(
                 r#"
                 INSERT INTO core.satellite_instances
                     (service_name, instance_id, version, start_time, last_heartbeat, host_name, metadata)
@@ -564,7 +564,7 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
 
                 // Do multiple heartbeats
                 for _ in 0..5 {
-                    let hb_result = sqlx::query!(
+                    let hb_result: Result<_, sqlx::Error> = sqlx::query!(
                         r#"
                         UPDATE core.satellite_instances
                         SET last_heartbeat = NOW()

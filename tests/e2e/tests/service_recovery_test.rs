@@ -476,7 +476,7 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
     .await?;
 
     // Query for stale leadership (heartbeat older than 30 seconds)
-    let stale_leaders = sqlx::query!(
+    let stale_leaders: Vec<_> = sqlx::query!(
         r#"
         SELECT service_name, instance_id::text as "instance_id!", last_heartbeat
         FROM core.service_leadership
@@ -515,7 +515,7 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
     .await?;
 
     // Takeover leadership
-    let takeover_result = sqlx::query!(
+    let takeover_result: Option<_> = sqlx::query!(
         r#"
         UPDATE core.service_leadership
         SET instance_id = $2,
@@ -616,7 +616,7 @@ async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> 
             .await?;
 
             // Try to acquire leadership
-            let result = sqlx::query!(
+            let result: Option<_> = sqlx::query!(
                 r#"
                 INSERT INTO core.service_leadership
                     (service_name, instance_id, acquired_at, last_heartbeat, version)
@@ -756,18 +756,33 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
         .await
         .map_err(|e| eyre!(e))?;
 
-    // Fetch remaining messages - should start from where we left off
-    let mut messages = consumer
-        .fetch()
-        .max_messages(10)
-        .messages()
-        .await
-        .map_err(|e| eyre!(e))?;
+    // Fetch remaining messages - should start from where we left off. JetStream can
+    // legitimately respond with a transient "No Messages" status while messages are
+    // in-flight, so we tolerate a few empty polls and retry briefly.
     let mut remaining_count = 0;
-    while let Some(msg) = messages.next().await {
-        let msg = msg.map_err(|e| eyre!(e))?;
-        msg.ack().await.map_err(|e| eyre!(e))?;
-        remaining_count += 1;
+    let start = std::time::Instant::now();
+    while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(5) {
+        let fetch_result = consumer.fetch().max_messages(10).messages().await;
+        match fetch_result {
+            Ok(mut messages) => {
+                while let Some(msg) = messages.next().await {
+                    let msg = msg.map_err(|e| eyre!(e))?;
+                    msg.ack().await.map_err(|e| eyre!(e))?;
+                    remaining_count += 1;
+                }
+                if remaining_count >= 7 {
+                    break;
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("No Messages") || msg.contains("No Messages Available") {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+                return Err(eyre!(e));
+            }
+        }
     }
 
     // Should have 7 remaining messages (2 from first batch + 5 new)
