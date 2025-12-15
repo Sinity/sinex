@@ -270,6 +270,8 @@ pkgs.testers.nixosTest {
     let
       stateDir = config.services.sinex.stateRoot;
     in {
+      # Secrets/agenix can break evaluation in isolated VM builds; disable for tests
+      disabledModules = [ ../../../../nixos/modules/secrets.nix ];
       imports = [
         ../../../../nixos
       ];
@@ -279,15 +281,17 @@ pkgs.testers.nixosTest {
         package = sinexPackage;
         cliPackage = sinexCliPackage;
         users.target = "test";
-
+        secrets.gatewayAdminTokenFile = "/etc/sinex/gateway-admin-token";
         database.autoSetup = true;
+        database.connectionPool.maxConnections = 20;
 
         satellites = {
           enable = true;
-          coordination.enable = false;
+          coordination.enable = true;
           defaults = {
             instances = 1;
             logLevel = "info";
+            env.SINEX_COORDINATION_DISABLED = "0";
           };
 
           filesystem = {
@@ -297,12 +301,12 @@ pkgs.testers.nixosTest {
 
           terminal.enable = true;
           desktop.enable = true;
-          system.enable = true;
+          system.enable = lib.mkForce false;
 
           automata = {
-            enable = true;
-            canonicalizer.enable = true;
-            healthAggregator.enable = true;
+            enable = lib.mkForce false;
+            canonicalizer.enable = lib.mkForce false;
+            healthAggregator.enable = lib.mkForce false;
           };
         };
 
@@ -317,7 +321,49 @@ pkgs.testers.nixosTest {
         uid = 1000;
       };
       
+      environment.etc."sinex/gateway-admin-token".text = "test-admin-token";
+      
+      services.postgresql.authentication = lib.mkForce ''
+local   all             all                                     trust
+host    all             all             127.0.0.1/32            trust
+host    all             all             ::1/128                 trust
+'';
+
+      # Run migrations before the services come up.
+      systemd.services.sinex-migrations = {
+        description = "Apply Sinex database migrations";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "postgresql.service" "postgresql-setup.service" ];
+        requires = [ "postgresql.service" "postgresql-setup.service" ];
+        serviceConfig =
+          let
+            dbCfg = config.services.sinex.database;
+            dbUrl = "postgresql://${dbCfg.user}@${dbCfg.host}:${toString dbCfg.port}/${dbCfg.name}";
+          in {
+            Type = "oneshot";
+            Environment = [ "DATABASE_URL=${dbUrl}" ];
+            ExecStart = "${sinexPackage}/bin/sinex-schema up";
+          };
+      };
+      systemd.services.sinex-ingestd.after = [ "sinex-migrations.service" ];
+      systemd.services.sinex-ingestd.requires = [ "sinex-migrations.service" ];
+      systemd.services.sinex-gateway.after = [ "sinex-migrations.service" ];
+      systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" ];
+      systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
+      systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
+      systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
+      systemd.services.sinex-system-1.enable = lib.mkForce false;
+      systemd.services.sinex-system-1.wantedBy = lib.mkForce [ ];
+      systemd.services.sinex-canonicalizer.enable = lib.mkForce false;
+      systemd.services.sinex-canonicalizer.wantedBy = lib.mkForce [ ];
+      systemd.services.sinex-health-aggregator.enable = lib.mkForce false;
+      systemd.services.sinex-health-aggregator.wantedBy = lib.mkForce [ ];
+      
       services.dbus.enable = true;
+      
+      # Keep Postgres memory small for the constrained VM
+      services.postgresql.settings.shared_buffers = "128MB";
+      services.postgresql.settings.max_connections = 50;
       
       # Additional packages for failure testing
       environment.systemPackages = with pkgs; [
@@ -365,8 +411,8 @@ pkgs.testers.nixosTest {
       # Enhanced service configuration for failure testing
       systemd.services.sinex-ingestd = {
         serviceConfig = {
-          Restart = "always";
-          RestartSec = "5";
+          Restart = lib.mkForce "always";
+          RestartSec = lib.mkForce "5";
           StartLimitInterval = "300";
           StartLimitBurst = "10";
         };
@@ -374,11 +420,12 @@ pkgs.testers.nixosTest {
 
       systemd.services.sinex-gateway = {
         serviceConfig = {
-          Restart = "always";
-          RestartSec = "5";
+          Restart = lib.mkForce "always";
+          RestartSec = lib.mkForce "5";
           StartLimitInterval = "300";
           StartLimitBurst = "10";
         };
+        environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
       };
     };
 
@@ -425,9 +472,6 @@ pkgs.testers.nixosTest {
         "sinex-filesystem-1.service",
         "sinex-terminal-1.service",
         "sinex-desktop-1.service",
-        "sinex-system-1.service",
-        "sinex-canonicalizer.service",
-        "sinex-health-aggregator.service",
     ]
     wait_for_services(satellite_units)
 

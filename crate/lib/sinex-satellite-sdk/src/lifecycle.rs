@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 /// Service status
@@ -37,6 +38,8 @@ pub struct LifecycleManager {
     status: Arc<std::sync::Mutex<ServiceStatus>>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_sender: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown_watch_tx: watch::Sender<bool>,
+    shutdown_watch_rx: watch::Receiver<bool>,
     health_check_interval: tokio::time::Duration,
     heartbeat_emitter: Option<HeartbeatEmitter>,
     heartbeat_interval_seconds: u64,
@@ -45,11 +48,14 @@ pub struct LifecycleManager {
 impl LifecycleManager {
     /// Create a new lifecycle manager
     pub fn new(service_name: String) -> Self {
+        let (shutdown_watch_tx, shutdown_watch_rx) = watch::channel(false);
         Self {
             service_name,
             status: Arc::new(std::sync::Mutex::new(ServiceStatus::Starting)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_sender: None,
+            shutdown_watch_tx,
+            shutdown_watch_rx,
             health_check_interval: tokio::time::Duration::from_secs(30),
             heartbeat_emitter: None,
             heartbeat_interval_seconds: 30, // Default 30 second heartbeats
@@ -154,6 +160,7 @@ impl LifecycleManager {
 
         // Set up signal handlers
         let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_watch_tx.clone();
         let service_name = self.service_name.clone();
 
         tokio::spawn(async move {
@@ -194,6 +201,7 @@ impl LifecycleManager {
             }
 
             shutdown_flag.store(true, Ordering::Relaxed);
+            let _ = shutdown_notify.send(true);
         });
 
         // Notify systemd that we're ready
@@ -311,6 +319,7 @@ impl LifecycleManager {
             _ = tokio::signal::ctrl_c() => {
                 info!(service = %self.service_name, "Received Ctrl+C");
                 self.shutdown_flag.store(true, Ordering::Relaxed);
+                let _ = self.shutdown_watch_tx.send(true);
                 Ok(())
             }
         };
@@ -342,6 +351,7 @@ impl LifecycleManager {
 
         self.set_status(ServiceStatus::Stopping);
         self.shutdown_flag.store(true, Ordering::Relaxed);
+        let _ = self.shutdown_watch_tx.send(true);
 
         // Send shutdown signal if sender is available
         if let Some(sender) = self.shutdown_sender.take() {
@@ -368,15 +378,13 @@ impl LifecycleManager {
     }
 
     /// Create a shutdown future that completes when shutdown is requested
-    pub fn shutdown_future(&self) -> impl std::future::Future<Output = ()> + '_ {
-        let shutdown_flag = self.shutdown_flag.clone();
+    pub fn shutdown_future(&self) -> impl std::future::Future<Output = ()> {
+        let mut receiver = self.shutdown_watch_rx.clone();
         async move {
-            loop {
-                if shutdown_flag.load(Ordering::Relaxed) {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            if *receiver.borrow() {
+                return;
             }
+            let _ = receiver.changed().await;
         }
     }
 
@@ -400,6 +408,29 @@ pub struct ServiceMetrics {
     pub status: ServiceStatus,
     pub uptime: std::time::Duration,
     pub shutdown_requested: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn shutdown_future_notifies_without_polling() {
+        let manager = LifecycleManager::new("test-service".to_string());
+        let mut wait_future = Box::pin(manager.shutdown_future());
+
+        manager.shutdown_flag.store(true, Ordering::Relaxed);
+        manager
+            .shutdown_watch_tx
+            .send(true)
+            .expect("send shutdown signal");
+
+        timeout(Duration::from_millis(10), &mut wait_future)
+            .await
+            .expect("shutdown future should resolve immediately");
+    }
 }
 
 /// Helper macro for creating a main function with lifecycle management

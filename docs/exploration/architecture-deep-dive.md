@@ -1,34 +1,7 @@
-# Sinex Deep Dive Findings
+# Architecture Deep Dive (Restored from Deep Dive Findings)
 
-This document captures findings from a comprehensive exploration of the sinex codebase, focusing on cross-cutting concerns, critical code paths, and NixOS deployment coherency.
-
----
-
-## Table of Contents
-
-1. [Cross-Cutting Concerns](#cross-cutting-concerns)
-   - [Idempotency Patterns](#idempotency-patterns)
-   - [Backpressure Mechanisms](#backpressure-mechanisms)
-   - [Graceful Shutdown](#graceful-shutdown)
-   - [Configuration Precedence](#configuration-precedence)
-2. [Critical Path Analysis](#critical-path-analysis)
-   - [Ingestion Hot Path](#ingestion-hot-path)
-   - [Provenance Enforcement](#provenance-enforcement)
-   - [Checkpoint Lifecycle](#checkpoint-lifecycle)
-   - [Three-Phase Startup](#three-phase-startup)
-3. [NixOS Deployment Audit](#nixos-deployment-audit)
-   - [Module Completeness](#module-completeness)
-   - [Service Orchestration](#service-orchestration)
-   - [Failure Recovery](#failure-recovery)
-   - [Security Hardening](#security-hardening)
-4. [Patterns Summary](#patterns-summary)
-   - [Consistent Patterns](#consistent-patterns)
-   - [Inconsistent/Missing Patterns](#inconsistentmissing-patterns)
-5. [Recommendations](#recommendations)
-   - [Immediate Actions](#immediate-actions)
-   - [Future Improvements](#future-improvements)
-
----
+> Extracted from Appendix B of `unified-issues-report.md` to keep the backlog focused.
+> Last updated December 2025.
 
 ## Cross-Cutting Concerns
 
@@ -42,7 +15,7 @@ All satellites use `Nats-Msg-Id` headers for publisher-side deduplication:
 
 ```rust
 // crate/lib/sinex-satellite-sdk/src/nats_publisher.rs
-let msg_id = format!("{}:{}", satellite_id, event.id);
+let msg_id = format!("{}:{{"{}"}}", satellite_id, event.id);
 headers.insert("Nats-Msg-Id", msg_id);
 ```
 
@@ -130,6 +103,7 @@ let (tx, rx) = tokio::sync::mpsc::channel(100);
 #### Assessment: **MOSTLY CONSISTENT** ⚠️
 
 Backpressure is well-coordinated, but there's a configuration mismatch:
+
 - Config allows `batch_size: 1000` but consumer pulls only 100 messages
 - `max_ack_pending` is hardcoded and should be configurable
 
@@ -140,12 +114,14 @@ Backpressure is well-coordinated, but there's a configuration mismatch:
 #### Signal Handling Patterns
 
 **sinex-ingestd** (partial):
+
 ```rust
 // Only catches SIGINT, missing SIGTERM
 tokio::signal::ctrl_c().await?;
 ```
 
 **Satellites** (complete):
+
 ```rust
 // Catches both signals
 let mut sigterm = signal(SignalKind::terminate())?;
@@ -418,7 +394,7 @@ pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
             warn!("Migrating legacy checkpoint format");
             let legacy = LegacyCheckpointState { ... };
             let unified = CheckpointState::from(legacy);
-            self.save_checkpoint(&unified).await?;  // Persist migration
+            self.save_checkpoint(&unified).await?;
             return Ok(unified);
         }
     }
@@ -534,6 +510,7 @@ pub struct ProcessorCapabilities {
 ```
 
 Different satellites implement different capability sets:
+
 - **File ingestor**: snapshot + historical + continuous
 - **Desktop events**: continuous only
 - **Health automaton**: continuous + requires_confirmation
@@ -562,6 +539,7 @@ Different satellites implement different capability sets:
 #### Option Coverage Assessment
 
 Most production-critical options are exposed, but some are missing:
+
 - `max_ack_pending` not configurable (hardcoded)
 - `shutdown_timeout` not exposed
 - Individual satellite enable/disable flags
@@ -708,171 +686,8 @@ Secrets are properly managed via agenix with appropriate permissions.
 | **Signal Handling** | ingestd only catches SIGINT, not SIGTERM | 🔴 High - systemd shutdown may not work |
 | **Security Hardening** | Zero hardening on production services | 🔴 Critical - attack surface exposed |
 | **Shutdown Detection** | 100ms polling instead of channels | 🟡 Medium - latency/CPU waste |
-| **Config Prefixes** | SINEX_ vs INGESTD_ vs SATELLITE_ | 🟡 Medium - confusing |
+| **Config Prefixes** | SINEX_vs INGESTD_ vs SATELLITE_ | 🟡 Medium - confusing |
 | **Checkpoint Reset** | `reset_checkpoint()` not implemented | 🟡 Medium - ops gap |
 | **Checkpoint Stats** | `get_checkpoint_stats()` returns empty | 🟡 Medium - observability gap |
 | **max_ack_pending** | Hardcoded, not configurable | 🟡 Medium - tuning limitation |
 | **Batch Size Mismatch** | Config allows 1000, consumer pulls 100 | 🟢 Low - misleading config |
-
----
-
-## Recommendations
-
-### Immediate Actions
-
-#### 1. Add SIGTERM Handler to ingestd
-
-**Priority**: 🔴 High
-**Effort**: Low
-**File**: `crate/core/sinex-ingestd/src/main.rs`
-
-```rust
-// Current (broken)
-tokio::signal::ctrl_c().await?;
-
-// Fixed
-let mut sigterm = signal(SignalKind::terminate())?;
-let mut sigint = signal(SignalKind::interrupt())?;
-tokio::select! {
-    _ = sigterm.recv() => info!("SIGTERM received"),
-    _ = sigint.recv() => info!("SIGINT received"),
-}
-```
-
-#### 2. Apply Security Hardening to All Services
-
-**Priority**: 🔴 Critical
-**Effort**: Medium
-**File**: `nixos/modules/satellite-services.nix`, `nixos/modules/ingestd.nix`, etc.
-
-Copy the hardening from `preflight-verification.nix` to all production services:
-
-```nix
-serviceConfig = {
-    # Existing config...
-
-    # ADD THESE:
-    ProtectSystem = "strict";
-    ProtectHome = true;
-    PrivateTmp = true;
-    NoNewPrivileges = true;
-    ProtectKernelTunables = true;
-    ProtectKernelModules = true;
-    ProtectControlGroups = true;
-    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-    RestrictNamespaces = true;
-    RestrictRealtime = true;
-    RestrictSUIDSGID = true;
-    MemoryDenyWriteExecute = true;
-    LockPersonality = true;
-};
-```
-
-#### 3. Implement reset_checkpoint()
-
-**Priority**: 🟡 Medium
-**Effort**: Low
-**File**: `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-
-```rust
-pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-    self.pool.checkpoints().delete(
-        &ProcessorName::new(&self.processor_name),
-        &ConsumerGroup::new(&self.consumer_group),
-        &ConsumerName::new(&self.consumer_name),
-    ).await?;
-
-    info!(
-        processor = %self.processor_name,
-        "Checkpoint reset successfully"
-    );
-    Ok(())
-}
-```
-
-### Future Improvements
-
-#### 1. Replace Polling with Channel-Based Shutdown
-
-**File**: `crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs`
-
-Replace the 100ms polling loop with a `tokio::sync::watch` channel:
-
-```rust
-// Create shutdown channel
-let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-
-// In shutdown handler
-shutdown_tx.send(true)?;
-
-// In processing loop
-tokio::select! {
-    _ = shutdown_rx.changed() => break,
-    result = process_next() => { ... }
-}
-```
-
-#### 2. Standardize Environment Variable Prefixes
-
-Adopt a single prefix (`SINEX_`) with service-specific suffixes:
-
-| Current | Proposed |
-|---------|----------|
-| `INGESTD_BATCH_SIZE` | `SINEX_INGESTD_BATCH_SIZE` |
-| `SATELLITE_POLL_INTERVAL` | `SINEX_SATELLITE_POLL_INTERVAL` |
-
-#### 3. Make max_ack_pending Configurable
-
-**File**: `crate/core/sinex-ingestd/src/jetstream_consumer.rs`
-
-```rust
-// Add to IngestdConfig
-pub struct IngestdConfig {
-    pub max_ack_pending: u32,  // Default: 100
-    ...
-}
-
-// Use in consumer config
-ConsumerConfig {
-    max_ack_pending: config.max_ack_pending as i64,
-    ...
-}
-```
-
-#### 4. Implement get_checkpoint_stats()
-
-**File**: `crate/lib/sinex-satellite-sdk/src/checkpoint.rs`
-
-```rust
-pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
-    let stats = self.pool.checkpoints().get_stats(
-        &ProcessorName::new(&self.processor_name),
-    ).await?;
-
-    Ok(CheckpointStats {
-        total_checkpoints: stats.count,
-        max_processed: stats.max_processed,
-        last_update: stats.last_update,
-        first_checkpoint: stats.first_created,
-    })
-}
-```
-
----
-
-## Appendix: File Reference
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `crate/core/sinex-ingestd/src/jetstream_consumer.rs` | 860 | Ingestion hot path |
-| `crate/lib/sinex-satellite-sdk/src/checkpoint.rs` | 509 | Checkpoint management |
-| `crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs` | 951 | Satellite runtime |
-| `crate/lib/sinex-satellite-sdk/src/nats_publisher.rs` | ~200 | NATS publishing |
-| `crate/core/sinex-gateway/src/rpc_server.rs` | ~400 | Gateway RPC |
-| `nixos/modules/satellite-services.nix` | ~150 | Satellite systemd |
-| `nixos/modules/preflight-verification.nix` | ~100 | Preflight gates |
-| `nixos/modules/secrets.nix` | ~50 | Secret management |
-
----
-
-*Document generated from deep exploration of sinex codebase, December 2024*

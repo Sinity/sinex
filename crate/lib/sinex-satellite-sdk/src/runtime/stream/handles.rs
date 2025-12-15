@@ -100,6 +100,7 @@ pub struct ProcessorHandles {
     transport: EventTransport,
     lease_manager: Option<Arc<LeaseManager>>,
     confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
+    schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
 }
 
 impl ProcessorHandles {
@@ -111,6 +112,7 @@ impl ProcessorHandles {
         transport: EventTransport,
         lease_manager: Option<Arc<LeaseManager>>,
         confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
+        schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
         Self {
             db_pool,
@@ -119,6 +121,7 @@ impl ProcessorHandles {
             transport,
             lease_manager,
             confirmation_buffer,
+            schema_cache,
         }
     }
 
@@ -144,6 +147,10 @@ impl ProcessorHandles {
 
     pub fn confirmation_buffer(&self) -> Option<Arc<ConfirmationBuffer>> {
         self.confirmation_buffer.as_ref().map(Arc::clone)
+    }
+
+    pub fn schema_cache(&self) -> Option<Arc<crate::runtime::stream::SchemaBroadcastCache>> {
+        self.schema_cache.as_ref().map(Arc::clone)
     }
 }
 

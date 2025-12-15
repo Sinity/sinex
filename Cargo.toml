@@ -138,6 +138,7 @@ indexmap = "2.0"
 
 # Retry logic
 tokio-retry = "0.3"
+parking_lot = "0.12"
 
 # Message bus
 async-nats = "0.33"

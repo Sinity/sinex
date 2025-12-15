@@ -12,6 +12,8 @@
 let
   sinexPackage = if sinex != null then sinex else sinex-ingestd;
   sinexCliPackage = sinexCli;
+  stateDir = config.services.sinex.stateRoot;
+  workDir = "${stateDir}/.cache/sinex/ingestd-dev";
   sinexConfigBase = {
     enable = true;
     package = sinexPackage;
@@ -92,8 +94,6 @@ in
   };
 
   # Ensure core services wait for migrations.
-  systemd.services.sinex-ingestd.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
-  systemd.services.sinex-ingestd.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
   systemd.services.sinex-gateway.after = [ "sinex-migrations.service" "sinex-blob-init.service" ];
   systemd.services.sinex-gateway.requires = [ "sinex-migrations.service" "sinex-blob-init.service" ];
   systemd.services.sinex-gateway.environment.SINEX_RPC_TOKEN_FILE = "/etc/sinex/gateway-admin-token";
@@ -185,14 +185,77 @@ host    all             all             ::1/128                 trust
   ];
 
   # Minimal tmpfiles rules
-  systemd.tmpfiles.rules =
-    let
-      stateDir = config.services.sinex.stateRoot;
-    in [
-      "d /var/lib/sinex/watched 0777 sinex sinex -"
-      "f ${stateDir}/.zsh_history 0644 sinex sinex -"
-      "f ${stateDir}/.bash_history 0644 sinex sinex -"
-    ];
+  systemd.tmpfiles.rules = [
+    "d ${stateDir} 0755 sinex sinex -"
+    "d /var/lib/sinex/watched 0777 sinex sinex -"
+    "D ${stateDir}/nats 0755 sinex sinex -"
+    "f ${stateDir}/.zsh_history 0644 sinex sinex -"
+    "f ${stateDir}/.bash_history 0644 sinex sinex -"
+    "d ${workDir} 0755 sinex sinex -"
+    "d ${workDir}/annex 0755 sinex sinex -"
+    "d ${workDir}/assembler_state 0755 sinex sinex -"
+  ];
+
+  # Prepare ingestd annex before service startup so the blob manager is usable.
+  systemd.services.sinex-ingestd-annex-setup = {
+    description = "Prepare Sinex ingestd annex repository";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "sinex-ingestd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      User = "sinex";
+      Group = "sinex";
+      ExecStart = pkgs.writeShellScript "prepare-ingestd-annex" ''
+        set -euo pipefail
+        install -d -m0755 -o sinex -g sinex ${workDir}/annex
+        install -d -m0755 -o sinex -g sinex ${workDir}/assembler_state
+        cd ${workDir}/annex
+        if [ ! -d .git ]; then ${pkgs.git}/bin/git init; fi
+        ${pkgs.git-annex}/bin/git-annex init ingestd || true
+      '';
+    };
+  };
+
+  # Ensure ingestd has its expected working directories before startup.
+  systemd.services.sinex-ingestd.serviceConfig = lib.mkMerge [
+    (config.systemd.services.sinex-ingestd.serviceConfig or {})
+    {
+      PermissionsStartOnly = true;
+      ExecStartPre = lib.mkForce [
+        "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
+        "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
+        "${pkgs.git}/bin/git -C ${workDir}/annex init || true"
+        "${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init ingestd || true"
+      ];
+      Environment = [
+        "XDG_CACHE_HOME=${stateDir}/.cache"
+        "SINEX_ANNEX_PATH=${workDir}/annex"
+      ];
+    }
+  ];
+
+  systemd.services.sinex-ingestd.after = lib.mkAfter [
+    "sinex-migrations.service"
+    "sinex-blob-init.service"
+    "sinex-ingestd-annex-setup.service"
+  ];
+  systemd.services.sinex-ingestd.requires = lib.mkAfter [
+    "sinex-migrations.service"
+    "sinex-blob-init.service"
+    "sinex-ingestd-annex-setup.service"
+  ];
+
+  # NATS: clear JetStream state on boot to avoid overlap errors and ensure clean bootstrap.
+  systemd.services.nats.serviceConfig = lib.mkMerge [
+    (config.systemd.services.nats.serviceConfig or {})
+    {
+      PermissionsStartOnly = true;
+      ExecStartPre = [
+        "${pkgs.coreutils}/bin/rm -rf ${config.services.sinex.stateRoot}/nats"
+        "${pkgs.coreutils}/bin/install -d -o nats -g nats ${config.services.sinex.stateRoot}/nats/jetstream"
+      ];
+    }
+  ];
 
   # Package overlays
   nixpkgs.overlays = [

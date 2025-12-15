@@ -3,6 +3,7 @@
 use crate::heartbeat::HeartbeatEmitter;
 use crate::stream_processor::ProcessorRuntimeState;
 use crate::version::{SatelliteInstance, SatelliteVersion};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
@@ -162,6 +163,10 @@ impl SatelliteCoordination {
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         info!("Starting coordination loop for {}", self.instance.summary());
+
+        // Ensure the instance is registered before attempting leadership updates.
+        // Without this row, the service_leadership foreign key prevents heartbeats.
+        self.register_instance().await?;
 
         loop {
             match self.determine_desired_mode().await? {
@@ -787,5 +792,40 @@ impl SatelliteCoordination {
             handle.abort();
             info!("Stopped heartbeat monitoring");
         }
+    }
+
+    /// Register or refresh this instance in `core.satellite_instances` so
+    /// leadership heartbeats have a valid foreign key target.
+    async fn register_instance(&self) -> Result<()> {
+        let start_time: DateTime<Utc> = self.instance.start_time.into();
+        let version = self.instance.version.to_string();
+        let host_name = &self.instance.host_name;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO core.satellite_instances (
+                service_name,
+                instance_id,
+                version,
+                start_time,
+                last_heartbeat,
+                host_name,
+                metadata
+            ) VALUES ($1, $2, $3, $4, NOW(), $5, '{}'::jsonb)
+            ON CONFLICT (instance_id) DO UPDATE
+              SET last_heartbeat = EXCLUDED.last_heartbeat,
+                  version = EXCLUDED.version,
+                  host_name = EXCLUDED.host_name
+            "#,
+            self.instance.service_name,
+            self.instance.instance_id,
+            version,
+            start_time,
+            host_name,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }

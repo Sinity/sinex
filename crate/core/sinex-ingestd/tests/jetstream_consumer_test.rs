@@ -169,7 +169,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_nats().await?;
+    let ctx = TestContext::new().await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let pool = ctx.pool.clone();

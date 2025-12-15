@@ -37,7 +37,7 @@ pkgs.testers.nixosTest {
         "postgresql.service",
         "sinex-ingestd.service",
         "sinex-gateway.service",
-        "sinex-git-annex-init.service"
+        "sinex-blob-init.service"
     ]
     for unit in required_units:
         machine.wait_for_unit(unit)
@@ -45,10 +45,8 @@ pkgs.testers.nixosTest {
 
     timers = [
         "sinex-dlq-cleanup.timer",
-        "sinex-git-annex-gc.timer",
-        "sinex-git-annex-fsck.timer",
-        "sinex-resource-monitor.timer",
-        "sinex-system-health.timer"
+        "sinex-blob-gc.timer",
+        "sinex-blob-fsck.timer"
     ]
     for timer in timers:
         machine.succeed(f"systemctl list-timers | grep {timer}")
@@ -56,10 +54,8 @@ pkgs.testers.nixosTest {
     # Ensure maintenance services are defined and runnable
     maintenance_services = [
         "sinex-dlq-cleanup.service",
-        "sinex-git-annex-gc.service",
-        "sinex-git-annex-fsck.service",
-        "sinex-resource-monitor.service",
-        "sinex-system-health.service"
+        "sinex-blob-gc.service",
+        "sinex-blob-fsck.service"
     ]
     for svc in maintenance_services:
         machine.succeed(f"systemctl cat {svc}")

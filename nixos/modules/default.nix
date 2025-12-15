@@ -490,6 +490,21 @@ in
                   default = {};
                   description = "Resource limits for the gateway.";
                 };
+                tlsCertFile = mkOption {
+                  type = nullOr path;
+                  default = null;
+                  description = "Path to TLS certificate for gateway TCP bindings.";
+                };
+                tlsKeyFile = mkOption {
+                  type = nullOr path;
+                  default = null;
+                  description = "Path to TLS private key for gateway TCP bindings.";
+                };
+                tlsClientCAFile = mkOption {
+                  type = nullOr path;
+                  default = null;
+                  description = "Optional client CA bundle to enable mTLS for gateway TCP bindings.";
+                };
                 extraArgs = mkOption {
                   type = strList;
                   default = [];
@@ -999,6 +1014,9 @@ in
         if cfg.secrets.gatewayAdminTokenFile != null then cfg.secrets.gatewayAdminTokenFile
         else if secretPaths ? sinex-gateway-admin-token then secretPaths.sinex-gateway-admin-token
         else null;
+      gatewayTlsCertFile = cfg.core.gateway.tlsCertFile;
+      gatewayTlsKeyFile = cfg.core.gateway.tlsKeyFile;
+      gatewayTlsClientCAFile = cfg.core.gateway.tlsClientCAFile;
       dlqCleanupScript = if cfg.cliPackage == null then null else pkgs.writeShellScript "sinex-dlq-cleanup" ''
         set -euo pipefail
 
@@ -1047,6 +1065,12 @@ in
           {
             assertion = (!cfg.core.enable || !cfg.core.gateway.enable) || gatewayAdminTokenFile != null;
             message = "Gateway requires an admin token file. Set services.sinex.secrets.gatewayAdminTokenFile or provide an agenix secret named sinex-gateway-admin-token.";
+          }
+          {
+            assertion =
+              (!cfg.core.enable || !cfg.core.gateway.enable)
+              || (gatewayTlsCertFile != null && gatewayTlsKeyFile != null);
+            message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
           }
         ];
         environment.systemPackages = mkAfter (

@@ -7,10 +7,9 @@
 use crate::common::*;
 
 // Desktop-specific imports for sensd integration
-use sinex_core::types::Ulid;
-use sqlx::PgPool;
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
+use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_satellite_sdk::{
     acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy},
     event_processor::EventTransport,
@@ -282,8 +281,7 @@ impl DesktopProcessor {
         _from_checkpoint: Checkpoint,
     ) -> SatelliteResult<()> {
         info!("Starting continuous desktop monitoring via AcquisitionManager");
-
-        let db_pool = self.db_pool()?;
+        let _db_pool = self.db_pool()?;
 
         // Acquire NATS client from the runtime transport (JetStream path is required).
         let nats_client =
@@ -308,7 +306,6 @@ impl DesktopProcessor {
             })?;
         let acquisition = Arc::new(AcquisitionManager::new(
             nats_client,
-            db_pool.clone(),
             RotationPolicy::default(),
             "desktop".to_string(),
             "/desktop".to_string(),
@@ -335,15 +332,6 @@ impl DesktopProcessor {
             SatelliteError::Processing(format!("Failed to finalize desktop material: {e}"))
         })?;
 
-        let _ = self
-            .store_desktop_source_material(
-                db_pool,
-                "desktop_monitoring",
-                &monitoring_data.to_string().into_bytes(),
-                monitoring_data,
-            )
-            .await;
-
         Ok(())
     }
 
@@ -362,122 +350,16 @@ impl DesktopProcessor {
         // This would implement any available historical scanning
 
         if emit_events {
-            let db_pool = self.db_pool()?;
-
             if self.config.clipboard_enabled {
-                let scan_data = serde_json::json!({
-                    "event_type": "historical_scan_attempt",
-                    "source": "clipboard",
-                    "scan_type": "historical",
-                    "scan_time": Utc::now().to_rfc3339(),
-                    "note": "Limited historical data available for desktop events"
-                });
-
-                let _ = self
-                    .store_desktop_source_material(
-                        db_pool,
-                        "desktop_monitoring",
-                        &scan_data.to_string().into_bytes(),
-                        scan_data,
-                    )
-                    .await;
                 event_count += 1;
             }
 
             if self.config.window_manager_enabled {
-                let scan_data = serde_json::json!({
-                    "event_type": "historical_scan_attempt",
-                    "source": "window_manager",
-                    "wm_type": self.config.window_manager_type.to_string(),
-                    "scan_type": "historical",
-                    "scan_time": Utc::now().to_rfc3339(),
-                    "note": "Limited historical data available for window manager events"
-                });
-
-                let _ = self
-                    .store_desktop_source_material(
-                        db_pool,
-                        "desktop_monitoring",
-                        &scan_data.to_string().into_bytes(),
-                        scan_data,
-                    )
-                    .await;
                 event_count += 1;
             }
         }
 
         Ok(event_count)
-    }
-
-    /// Store desktop data as source material using sensd pattern
-    async fn store_desktop_source_material(
-        &self,
-        db_pool: &PgPool,
-        source_identifier: &str,
-        data: &[u8],
-        metadata: serde_json::Value,
-    ) -> SatelliteResult<Option<Ulid>> {
-        let material_id = Ulid::new();
-        let acquired_at = Utc::now();
-
-        // Store in source material registry
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO raw.source_material_registry (
-                id,
-                source_identifier, 
-                staged_at,
-                material_kind,
-                timing_info_type,
-                metadata,
-                status,
-                staged_by
-            )
-            VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-            material_id as Ulid, // $1 - id
-            source_identifier,   // $2 - source_identifier
-            acquired_at,         // $3 - staged_at
-            "desktop_snapshot",  // $4 - material_kind
-            "realtime",          // $5 - timing_info_type
-            metadata,            // $6 - metadata
-            "completed",         // $7 - status
-            "desktop-monitor"    // $8 - staged_by
-        )
-        .execute(db_pool)
-        .await;
-
-        match result {
-            Ok(_) => {
-                // Create temporal ledger entry
-                let _ = sqlx::query!(
-                    r#"
-                    INSERT INTO raw.temporal_ledger (
-                        source_material_id,
-                        offset_start,
-                        offset_end,
-                        offset_kind,
-                        ts_capture,
-                        precision,
-                        clock,
-                        source_type
-                    )
-                    VALUES ($1::ulid, 0, $2, 'byte', $3, 'exact', 'wall', 'realtime_capture')
-                    "#,
-                    material_id as Ulid, // source_material_id
-                    data.len() as i64,   // offset_end
-                    acquired_at          // ts_capture
-                )
-                .execute(db_pool)
-                .await;
-
-                Ok(Some(material_id))
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to store desktop source material");
-                Ok(None)
-            }
-        }
     }
 }
 
@@ -545,36 +427,6 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
                 events_processed = active_watchers as u64;
                 successful_targets.push("desktop_state_snapshot".to_string());
-
-                if !args.dry_run {
-                    // Store snapshot data as source material
-                    let db_pool = self.db_pool()?;
-                    let mut enabled_sources = Vec::new();
-                    if self.config.clipboard_enabled {
-                        enabled_sources.push("clipboard");
-                    }
-                    if self.config.window_manager_enabled {
-                        enabled_sources.push("window_manager");
-                    }
-
-                    let snapshot_data = serde_json::json!({
-                        "snapshot_type": "desktop_state",
-                        "enabled_sources": enabled_sources,
-                        "source_count": active_watchers,
-                        "clipboard_enabled": self.config.clipboard_enabled,
-                        "window_manager_enabled": self.config.window_manager_enabled,
-                        "snapshot_time": Utc::now().to_rfc3339()
-                    });
-
-                    let _ = self
-                        .store_desktop_source_material(
-                            db_pool,
-                            "desktop_snapshot",
-                            &snapshot_data.to_string().into_bytes(),
-                            snapshot_data,
-                        )
-                        .await;
-                }
             }
 
             TimeHorizon::Historical { .. } => {

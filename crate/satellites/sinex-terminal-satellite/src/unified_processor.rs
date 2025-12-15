@@ -469,11 +469,11 @@ impl TerminalProcessor {
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
         for source in &self.config.history_sources {
-            let acquisition = runtime.acquisition_manager(
+            let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 "terminal-history",
                 source.path.to_string(),
-            )?;
+            )?);
 
             let state_path = state_dir.as_ref().map(|dir| {
                 let hash = blake3::hash(source.path.as_str().as_bytes())
@@ -482,9 +482,13 @@ impl TerminalProcessor {
                 dir.join(format!("{}.json", hash))
             });
 
+            let stage_context = stage
+                .clone()
+                .with_acquisition_manager(Arc::clone(&acquisition));
+
             contexts.push(HistoryWatcherContext {
-                acquisition: Arc::new(acquisition),
-                stage_context: stage.clone(),
+                acquisition,
+                stage_context,
                 shell: source.shell.clone(),
                 path: source.path.clone(),
                 max_capture_bytes: self.config.max_capture_bytes,
@@ -698,7 +702,10 @@ mod tests {
     use sinex_core::Id;
     use sinex_satellite_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::sinex_test;
-    use sinex_test_utils::{prelude::*, TestRuntime, TestRuntimeBuilder};
+    use sinex_test_utils::{
+        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
+        TestRuntimeBuilder,
+    };
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
@@ -748,7 +755,13 @@ mod tests {
             .with_dry_run(false)
             .build()
             .await?;
-        let _ = nats.client_url();
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
@@ -763,7 +776,8 @@ mod tests {
             "/home/test/.bash_history",
         )?);
 
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
 
         let watcher_ctx = HistoryWatcherContext {
             acquisition,
@@ -839,6 +853,7 @@ mod tests {
             .expect("payload command present");
         assert_eq!(payload_command, command);
 
+        ingest_handle.stop().await?;
         sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
         sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
         ctx.force_cleanup().await?;
@@ -852,7 +867,13 @@ mod tests {
                 .with_dry_run(false)
                 .build()
                 .await?;
-        let _ = nats.client_url();
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: format!("nats://{}", nats.client_url()),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
             sinex_satellite_sdk::event_processor::EventTransport::Nats(publisher) => {
@@ -866,7 +887,8 @@ mod tests {
             "terminal-history",
             "/tmp/history",
         )?);
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
 
         let temp_dir = tempfile::tempdir()?;
         let history_path = temp_dir.path().join("history.txt");
@@ -924,6 +946,7 @@ mod tests {
             );
         }
 
+        ingest_handle.stop().await?;
         Ok(())
     }
 }

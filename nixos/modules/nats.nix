@@ -116,7 +116,7 @@ in
             maxAge = "168h";
           }
           {
-            name = "EVENTS_CONFIRMATIONS";
+            name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
             subjects = [ "events.confirmations.>" ];
             maxAge = "720h"; # 30d
             maxMsgsPerSubject = 1;
@@ -191,13 +191,21 @@ in
               maxMsgsPerSubjectArg = optionalString (stream ? maxMsgsPerSubject) "--max-msgs-per-subject ${toString stream.maxMsgsPerSubject}";
             in ''
               if ! ${natsCli}/bin/nats --server "$NATS_URL" stream info ${stream.name} >/dev/null 2>&1; then
-                ${natsCli}/bin/nats --server "$NATS_URL" stream add ${stream.name} \
+                if ! output=$(${natsCli}/bin/nats --server "$NATS_URL" stream add ${stream.name} \
+                  --defaults \
                   ${subjArgs} \
                   --storage file \
                   --retention limits \
                   --max-age ${stream.maxAge} \
                   --replicas 1 \
-                  ${maxMsgsPerSubjectArg}
+                  ${maxMsgsPerSubjectArg} 2>&1); then
+                  if echo "$output" | grep -q "subjects overlap with an existing stream"; then
+                    echo "Stream ${stream.name} already provisioned elsewhere; skipping bootstrap for it"
+                  else
+                    echo "$output"
+                    exit 1
+                  fi
+                fi
               fi
             '';
           script = concatStringsSep "\n" (map mkStreamCommand namespacedStreams);

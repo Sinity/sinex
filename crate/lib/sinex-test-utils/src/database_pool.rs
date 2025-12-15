@@ -285,14 +285,6 @@ fn migrations_fingerprint() -> Option<String> {
         }
     }
 
-    for extra in ["DDL.sql", "monitoring.sql"] {
-        let file = schema_dir.join(extra);
-        if let Ok(bytes) = fs::read(&file) {
-            hasher.update(extra.as_bytes());
-            hasher.update(bytes);
-        }
-    }
-
     Some(format!("{:x}", hasher.finalize()))
 }
 
@@ -317,7 +309,7 @@ impl Default for PoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(32);
+            .unwrap_or(8);
 
         let mut config = Self {
             size,
@@ -846,7 +838,8 @@ impl DatabasePool {
 
                                 let events_has_subnano = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                     WHERE table_schema = 'core' AND table_name = 'events' \
+                                       AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
                                 )
                                 .fetch_one(&db_pool)
                                 .await;
@@ -883,7 +876,7 @@ impl DatabasePool {
                                     (_, Ok(false), _, _) => {
                                         needs_recreate = true;
                                         eprintln!(
-                                            "  Database {name} missing core.events.ts_orig_subnano; recreating"
+                                            "  Database {name} missing or mis-typed core.events.ts_orig_subnano; recreating"
                                         );
                                     }
                                     (_, _, Ok(false), _) => {
@@ -1459,25 +1452,27 @@ async fn force_event_material_cleanup(pool: &DbPool) -> Result<()> {
             while attempts < 3 {
                 attempts += 1;
 
-                // Delete from all tables that need cleanup (config-driven)
+                // Truncate high-churn tables with CASCADE to avoid FK deadlocks.
+                let _ = sqlx::query("TRUNCATE TABLE core.events CASCADE")
+                    .execute(conn.as_mut())
+                    .await;
+                let _ = sqlx::query("TRUNCATE TABLE raw.source_material_registry CASCADE")
+                    .execute(conn.as_mut())
+                    .await;
+
+                // Delete from remaining tables (config-driven) after cascades to catch ancillary rows.
                 for table in &cleanup_tables {
                     let _ = sqlx::query(&format!("DELETE FROM {}", table))
                         .execute(conn.as_mut())
                         .await;
                 }
 
-                // Hypertable cleanup via DELETE + drop_chunks for events and explicit material purge.
-                let _ = sqlx::query("DELETE FROM core.events")
-                    .execute(conn.as_mut())
-                    .await;
+                // Hypertable cleanup via drop_chunks for events.
                 let _ = sqlx::query(
                     "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
                 )
                 .execute(&pool_for_chunks)
                 .await;
-                let _ = sqlx::query("DELETE FROM raw.source_material_registry")
-                    .execute(conn.as_mut())
-                    .await;
 
                 let counts = crate::db_common::get_row_counts(&pool_for_chunks)
                     .await
@@ -1701,7 +1696,8 @@ async fn ensure_template_database(
 
                                 let events_has_subnano = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'ts_orig_subnano')",
+                                     WHERE table_schema = 'core' AND table_name = 'events' \
+                                       AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
                                 )
                                 .fetch_one(&pool)
                                 .await;
@@ -1741,7 +1737,7 @@ async fn ensure_template_database(
                                     }
                                     (_, Ok(false), _, _) => {
                                         eprintln!(
-                                            "♻️  Template {template_name} missing core.events.ts_orig_subnano; recreating"
+                                            "♻️  Template {template_name} missing or mis-typed core.events.ts_orig_subnano; recreating"
                                         );
                                     }
                                     (_, _, Ok(false), _) => {

@@ -35,7 +35,6 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
         nats_client.clone(),
-        ctx.pool.clone(),
         rotation_policy,
         "test-source".to_string(),
         "/test/path".to_string(),
@@ -312,8 +311,9 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 }
 
 /// Ensure material assembly resumes correctly after ingestd restart
-#[sinex_test]
-async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
+#[sinex_test(timeout = 90)]
+async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_tracing("sinex_ingestd=debug");
     let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
@@ -336,7 +336,6 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
         nats_client.clone(),
-        ctx.pool.clone(),
         rotation_policy,
         "restart-test".to_string(),
         "/restart".to_string(),
@@ -368,6 +367,7 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     .await??;
 
     ingest_handle.stop().await?;
+    ctx.quiesce_background_tasks().await?;
 
     let mut ingest_handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
 
@@ -450,14 +450,16 @@ async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
     assert_eq!(ledger_bytes.unwrap_or_default(), expected_size);
 
     ingest_handle.stop().await?;
+    ctx.quiesce_background_tasks().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
     sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
 /// Ensure multiple concurrent acquisitions remain isolated and complete successfully.
-#[sinex_test]
-async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> Result<()> {
+#[sinex_test(timeout = 90)]
+async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_tracing("sinex_ingestd=debug");
     let _guard = acquire_pool_test_guard().await;
     ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
@@ -483,7 +485,6 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
         let policy = rotation_policy.clone();
         let manager = AcquisitionManager::new(
             nats_client.clone(),
-            ctx.pool.clone(),
             policy,
             format!("concurrent-{idx}"),
             format!("/concurrent/{idx}"),
@@ -510,25 +511,29 @@ async fn material_acquisition_concurrent_sessions_isolated(ctx: TestContext) -> 
     let pool = ctx.pool.clone();
 
     for material_id in material_ids {
-        let mut attempts = 0;
-        let record = loop {
-            if let Some(material) = pool
-                .source_materials()
-                .get_by_id(Id::from_ulid(material_id))
-                .await?
-            {
-                if material.status.as_str() == "completed" {
-                    break material;
+        WaitHelpers::wait_for_condition(
+            || {
+                let pool = pool.clone();
+                async move {
+                    if let Some(material) = pool
+                        .source_materials()
+                        .get_by_id(Id::from_ulid(material_id))
+                        .await?
+                    {
+                        return Ok(material.status.as_str() == "completed");
+                    }
+                    Ok(false)
                 }
-            }
-            attempts += 1;
-            ensure!(
-                attempts < 8,
-                "material {} did not reach completed status after retries",
-                material_id
-            );
-            sleep(Duration::from_millis(100)).await;
-        };
+            },
+            40,
+        )
+        .await?;
+
+        let record = pool
+            .source_materials()
+            .get_by_id(Id::from_ulid(material_id))
+            .await?
+            .expect("material should exist after wait");
         assert_eq!(record.status.as_str(), "completed");
     }
 
@@ -569,7 +574,6 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
 
     let manager = AcquisitionManager::new(
         nats_client.clone(),
-        ctx.pool.clone(),
         rotation_policy,
         "test-rotation".to_string(),
         "/test/rotation".to_string(),

@@ -19,8 +19,16 @@ use color_eyre::eyre::{eyre, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::convert::TryFrom;
+use std::fs::File;
+use std::io::BufReader;
+use std::sync::Arc;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
+use tokio_rustls::{rustls, TlsAcceptor};
 use tokio_stream::StreamExt;
 use tower::{
     limit::ConcurrencyLimitLayer,
@@ -175,6 +183,10 @@ impl GatewayAuth {
         Self {
             mode: GatewayAuthMode::StaticToken(token.to_string()),
         }
+    }
+
+    fn is_disabled(&self) -> bool {
+        matches!(self.mode, GatewayAuthMode::Disabled)
     }
 }
 
@@ -451,6 +463,103 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     Err(eyre!(
         "Invalid TCP listen specification '{spec}'. Expected host:port."
     ))
+}
+
+fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<String>)> {
+    let cert = std::env::var("SINEX_GATEWAY_TLS_CERT")
+        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_CERT is required for TCP bindings"))?;
+    let key = std::env::var("SINEX_GATEWAY_TLS_KEY")
+        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_KEY is required for TCP bindings"))?;
+    let client_ca = std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").ok();
+    Ok((cert, key, client_ca))
+}
+
+fn load_rustls_config(
+    cert_path: &str,
+    key_path: &str,
+    client_ca_path: Option<&str>,
+) -> color_eyre::eyre::Result<rustls::ServerConfig> {
+    let cert_file = &mut BufReader::new(File::open(cert_path)?);
+    let key_file = &mut BufReader::new(File::open(key_path)?);
+
+    let cert_chain: Vec<CertificateDer<'static>> = certs(cert_file)
+        .map_err(|_| eyre!("Failed to read TLS certificate"))?
+        .into_iter()
+        .map(CertificateDer::from)
+        .collect();
+
+    let mut keys: Vec<PrivateKeyDer<'static>> = pkcs8_private_keys(key_file)
+        .map_err(|_| eyre!("Failed to read TLS private key (pkcs8)"))?
+        .into_iter()
+        .map(|raw| {
+            PrivateKeyDer::try_from(raw)
+                .map_err(|_| eyre!("Failed to parse TLS private key (pkcs8): invalid DER"))
+        })
+        .collect::<Result<_, _>>()?;
+    if keys.is_empty() {
+        let mut key_file = BufReader::new(File::open(key_path)?);
+        keys = rsa_private_keys(&mut key_file)
+            .map_err(|_| eyre!("Failed to read TLS private key (rsa)"))?
+            .into_iter()
+            .map(|raw| {
+                PrivateKeyDer::try_from(raw)
+                    .map_err(|_| eyre!("Failed to parse TLS private key (rsa): invalid DER"))
+            })
+            .collect::<Result<_, _>>()?;
+    }
+
+    let key = keys
+        .into_iter()
+        .next()
+        .ok_or_else(|| eyre!("No private keys found in {}", key_path))?;
+
+    if let Some(ca_path) = client_ca_path {
+        let mut ca_reader = BufReader::new(File::open(ca_path)?);
+        let client_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
+            .map_err(|_| eyre!("Failed to read client CA bundle"))?
+            .into_iter()
+            .map(CertificateDer::from)
+            .collect();
+        let mut roots = rustls::RootCertStore::empty();
+        let (added, _ignored) = roots.add_parsable_certificates(client_certs);
+        if added == 0 {
+            return Err(eyre!("No valid client CA certs found in {}", ca_path));
+        }
+
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .map_err(|e| eyre!("Failed to build client verifier: {}", e))?;
+
+        rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(cert_chain, key)
+            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+    } else {
+        rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)
+            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+    }
+}
+
+fn guard_tcp_auth(bind_address: &BindAddress, auth: &GatewayAuth) -> color_eyre::eyre::Result<()> {
+    if let BindAddress::Tcp { host, .. } = bind_address {
+        if auth.is_disabled() {
+            return Err(eyre!(
+                "TCP binding requires SINEX_RPC_TOKEN; insecure mode (SINEX_GATEWAY_ALLOW_INSECURE) is only allowed for Unix socket bindings"
+            ));
+        }
+
+        // Disallow obvious remote exposure on insecure hosts even with token defaults.
+        if host != "127.0.0.1" && host != "localhost" {
+            warn!(
+                bind_host = %host,
+                "Gateway TCP binding is exposed beyond loopback; ensure TLS termination/mTLS is configured"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
@@ -730,6 +839,42 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn tcp_binding_disallows_insecure_mode() -> color_eyre::eyre::Result<()> {
+        let bind = BindAddress::Tcp {
+            host: "127.0.0.1".into(),
+            port: 8080,
+        };
+        let insecure = GatewayAuth {
+            mode: GatewayAuthMode::Disabled,
+        };
+        let secure = GatewayAuth::with_test_token("secret");
+
+        assert!(
+            guard_tcp_auth(&bind, &insecure).is_err(),
+            "TCP binding should reject disabled auth"
+        );
+        assert!(
+            guard_tcp_auth(&bind, &secure).is_ok(),
+            "TCP binding should allow static token auth"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_paths_must_be_set_for_tcp() {
+        // Ensure env is clean
+        let _guard = ENV_LOCK.blocking_lock();
+        std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
+        std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+
+        assert!(
+            tls_paths_from_env().is_err(),
+            "TLS paths should be required when binding TCP"
+        );
+    }
+
     #[sinex_test]
     async fn gateway_auth_blocks_missing_token() -> color_eyre::eyre::Result<()> {
         let auth = GatewayAuth::with_test_token("secret");
@@ -770,6 +915,7 @@ pub async fn run(
         BindAddress::from_env_or_socket_path(Utf8PathBuf::from(socket_path.as_str()), tcp_listen)?;
 
     let auth = GatewayAuth::from_env()?;
+    guard_tcp_auth(&bind_address, &auth)?;
     let state = AppState { services, auth };
 
     let limits = RpcServerLimits::from_env();
@@ -784,8 +930,35 @@ pub async fn run(
         BindAddress::Tcp { host, port } => {
             let addr = format!("{}:{}", host, port);
             let listener = tokio::net::TcpListener::bind(&addr).await?;
-            info!("RPC server listening on TCP {}", addr);
-            axum::serve(listener, app).await?;
+            let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
+            let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
+            let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+            info!("RPC server listening on TLS {}", addr);
+
+            loop {
+                let (stream, peer) = listener.accept().await?;
+                let app_clone = app.clone();
+                let acceptor = acceptor.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(app_clone);
+                            let io = TokioIo::new(tls_stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(
+                                    ?err,
+                                    "TLS RPC connection from {:?} closed with error", peer
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "TLS handshake failed for {:?}", peer);
+                        }
+                    }
+                });
+            }
         }
         BindAddress::UnixSocket { path } => {
             let path_str = path.as_str();

@@ -5,6 +5,9 @@ use color_eyre::eyre::{bail, eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use subtle::ConstantTimeEq;
 use tokio::task;
 use tracing::{debug, error, info, warn};
 
@@ -23,6 +26,16 @@ pub struct NativeMessagingConfig {
 struct TrustedExtension {
     id: String,
     secret: Option<String>,
+}
+
+#[cfg(test)]
+static SECRET_COMPARE_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn secrets_match(expected: &str, provided: &str) -> bool {
+    #[cfg(test)]
+    SECRET_COMPARE_CALLS.fetch_add(1, Ordering::Relaxed);
+
+    bool::from(expected.as_bytes().ct_eq(provided.as_bytes()))
 }
 
 impl NativeMessagingConfig {
@@ -116,7 +129,7 @@ impl NativeMessagingConfig {
                     return Err(eyre!("Missing extension_secret"));
                 }
             };
-            if provided != expected_secret {
+            if !secrets_match(expected_secret, provided) {
                 warn!(
                     event = "native_messaging.auth",
                     extension_id = incoming_id,
@@ -157,6 +170,41 @@ fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn trusted_message(secret: &str) -> NativeMessage {
+        NativeMessage {
+            msg_type: "request".to_string(),
+            method: None,
+            params: None,
+            id: None,
+            extension_id: Some("ext-1".to_string()),
+            extension_secret: Some(secret.to_string()),
+        }
+    }
+
+    #[test]
+    fn secret_comparison_is_routed_through_constant_time_helper() {
+        SECRET_COMPARE_CALLS.store(0, Ordering::Relaxed);
+
+        let config = NativeMessagingConfig::with_trusted_entries([("ext-1", Some("topsecret"))]);
+
+        // Successful path still calls the constant-time helper
+        config
+            .enforce_extension(&trusted_message("topsecret"))
+            .expect("trusted secret should pass");
+
+        // Failure path also uses the same helper
+        assert!(config
+            .enforce_extension(&trusted_message("wrongsecret"))
+            .is_err());
+
+        assert!(SECRET_COMPARE_CALLS.load(Ordering::Relaxed) >= 2);
+    }
 }
 
 /// Transport abstraction so tests can drive the native messaging loop without stdin/stdout.

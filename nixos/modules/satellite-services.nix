@@ -67,6 +67,15 @@ let
     CPUQuota = resources.cpuQuota;
   };
 
+  readWritePaths = [
+    stateRoot
+    runtimeDir
+    ingestSpool
+    satelliteSpool
+    logDir
+    dlqPath
+  ];
+
   mkServiceEnv = additionalEnv: baseEnv ++ coordinationEnv ++ additionalEnv;
 
   mkBaseServiceConfig = resources: env: extra:
@@ -77,6 +86,16 @@ let
       Restart = "on-failure";
       RestartSec = 10;
       Environment = env;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+      ProtectKernelTunables = true;
+      ProtectControlGroups = true;
+      RestrictRealtime = true;
+      LockPersonality = true;
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      ReadWritePaths = readWritePaths;
     }
     // renderResources resources
     // extra;
@@ -93,10 +112,14 @@ let
       gatewayArgs = concatStringsSep " " ([
         "rpc-server"
         "--database-url ${databaseUrl}"
+        # Force TCP bindings to use TLS by providing cert/key env vars; flags remain optional.
       ] ++ coreCfg.gateway.extraArgs);
       gatewayEnv = mkServiceEnv (
         [ "RUST_LOG=${coreCfg.gateway.logLevel}" ]
         ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenFile}"
+        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${cfg.core.gateway.tlsCertFile}"
+        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${cfg.core.gateway.tlsKeyFile}"
+        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${cfg.core.gateway.tlsClientCAFile}"
       );
       commonAfter = [ "postgresql.service" ];
     in

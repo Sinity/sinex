@@ -21,6 +21,7 @@ use crate::{
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     SatelliteError, SatelliteResult,
 };
+use async_nats::jetstream::kv;
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
@@ -33,7 +34,32 @@ use sinex_core::JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
+
+#[derive(Clone, Debug, Default)]
+pub struct SchemaBroadcastCache {
+    schemas: Arc<RwLock<Vec<SchemaBroadcastEntry>>>,
+}
+
+impl SchemaBroadcastCache {
+    pub async fn update(&self, entries: Vec<SchemaBroadcastEntry>) {
+        let mut guard = self.schemas.write().await;
+        *guard = entries;
+    }
+
+    pub async fn get(&self) -> Vec<SchemaBroadcastEntry> {
+        self.schemas.read().await.clone()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SchemaBroadcastEntry {
+    pub name: String,
+    pub version: String,
+    pub schema_id: String,
+}
 #[derive(Clone)]
 struct RunnerConfirmedEventHandler {
     sender: mpsc::UnboundedSender<ProvisionalEvent>,
@@ -90,6 +116,89 @@ impl Default for ScanArgs {
             config: HashMap::new(),
         }
     }
+}
+
+async fn maybe_create_checkpoint_kv(
+    transport: &EventTransport,
+) -> SatelliteResult<Option<kv::Store>> {
+    let enabled = matches!(
+        std::env::var("SINEX_CHECKPOINT_KV")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    ) || matches!(
+        std::env::var("SINEX_EDGE_MODE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    );
+
+    if !enabled {
+        return Ok(None);
+    }
+
+    let client = match transport {
+        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+    };
+
+    let js = async_nats::jetstream::new(client);
+    let bucket = "KV_sinex_checkpoints";
+    let kv_store = js
+        .create_key_value(kv::Config {
+            bucket: bucket.to_string(),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| {
+            SatelliteError::General(eyre!("Failed to create checkpoint KV bucket: {e}"))
+        })?;
+
+    Ok(Some(kv_store))
+}
+
+async fn maybe_start_schema_listener(
+    transport: &EventTransport,
+) -> SatelliteResult<Option<Arc<SchemaBroadcastCache>>> {
+    let enabled = matches!(
+        std::env::var("SINEX_EDGE_MODE")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    );
+
+    if !enabled {
+        return Ok(None);
+    }
+
+    let client = match transport {
+        EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+    };
+    let env = sinex_core::environment();
+    let subject = env.nats_subject("system.schemas.active");
+    let mut sub = client.subscribe(subject.clone()).await.map_err(|e| {
+        SatelliteError::General(eyre!("Failed to subscribe to schema broadcasts: {e}"))
+    })?;
+    let cache = Arc::new(SchemaBroadcastCache::default());
+    let cache_clone = cache.clone();
+
+    tokio::spawn(async move {
+        while let Some(msg) = sub.next().await {
+            match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
+                Ok(entries) => {
+                    cache_clone.update(entries).await;
+                    debug!("Updated schema broadcast cache from {}", subject);
+                }
+                Err(err) => {
+                    warn!(error = %err, "Failed to decode schema broadcast payload");
+                }
+            }
+        }
+    });
+
+    Ok(Some(cache))
 }
 
 /// Report from a completed scan operation
@@ -454,6 +563,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
+        let kv_store = maybe_create_checkpoint_kv(&transport).await?;
+        let schema_cache = maybe_start_schema_listener(&transport).await?;
         // Initialize checkpoint manager
         let checkpoint_manager = Arc::new(CheckpointManager::new(
             db_pool.clone(),
@@ -461,6 +572,17 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             "default".to_string(), // Default consumer group
             consumer_name.clone(), // Unique consumer name
         ));
+        let checkpoint_manager = if let Some(kv) = kv_store {
+            Arc::new(CheckpointManager::new_with_backends(
+                Some(db_pool.clone()),
+                Some(kv),
+                service_name.clone(),
+                "default".to_string(),
+                consumer_name.clone(),
+            ))
+        } else {
+            checkpoint_manager
+        };
 
         // NATS is the only transport
         let transport_type = "NATS";
@@ -477,6 +599,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             transport_for_context,
             lease_manager_opt,
             confirmation_buffer_opt,
+            schema_cache.clone(),
         );
 
         let service_info = ServiceInfo::new(

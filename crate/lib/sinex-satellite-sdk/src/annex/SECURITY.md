@@ -17,12 +17,11 @@ A comprehensive path validation security review has been completed for the core 
   - Implemented secure temporary file creation patterns
 
 #### 2. **sinex-satellite-sdk** - Blob Manager and File Operations  
-- **Status**: SECURED WITH RECOMMENDATIONS
+- **Status**: SECURED
 - **Key Changes**:
   - Created secure path validator module with `validate_and_convert_path()`
   - Implemented secure temporary file creation with `create_secure_temp_path()`
-  - Documented security patterns in `secure_blob_manager_patch.rs`
-- **Recommendations**: Apply the documented changes in `secure_blob_manager_patch.rs` to the main blob_manager.rs file
+  - Blob manager now validates ingestion paths and cleans up secure temp files automatically
 
 #### 3. **sinex-core** - Database Operations
 - **Status**: SECURED  
@@ -77,8 +76,8 @@ A comprehensive path validation security review has been completed for the core 
 #### 1. Input Validation at API Boundaries
 ```rust
 // SECURE: Validate user input immediately
-pub async fn ingest_file(file_path: &str) -> Result<BlobMetadata> {
-    let validated_path = validate_and_convert_path(file_path)?;
+pub async fn ingest_file(file_path: &VerifiedPath) -> Result<BlobMetadata> {
+    let validated_path = file_path.as_path();
     // ... rest of function uses validated_path
 }
 ```
@@ -134,31 +133,16 @@ let sanitized = validate_test_path(path)?;
 
 ### High Priority Actions
 
-1. **Apply Blob Manager Patches**
-   ```bash
-   # Review and apply the changes documented in:
-   crate/lib/sinex-satellite-sdk/src/annex/secure_blob_manager_patch.rs
+1. **Update Function Signatures**
+   ```rust
+   // Require a VerifiedPath everywhere user input reaches the filesystem.
+   pub async fn ingest_file(&self, file_path: &VerifiedPath, ...) -> Result<BlobMetadata>;
    ```
 
-2. **Update Function Signatures**
+2. **Update Callers**
    ```rust
-   // Change from:
-   pub async fn ingest_file(&self, file_path: &Utf8Path, ...) -> Result<BlobMetadata>
-   
-   // To:
-   pub async fn ingest_file(&self, file_path: &str, ...) -> Result<BlobMetadata> {
-       let validated_path = validate_and_convert_path(file_path)?;
-       // ... rest of function
-   }
-   ```
-
-3. **Update Test Callers**
-   ```rust
-   // Update test calls from:
-   manager.ingest_file(&file_path, Some("test.txt"))
-   
-   // To:
-   manager.ingest_file(file_path.as_str(), Some("test.txt"))
+   let verified = VerifiedPath::parse(user_supplied_path)?;
+   manager.ingest_file(&verified, Some("test.txt")).await?;
    ```
 
 ### Security Testing
