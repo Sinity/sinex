@@ -13,6 +13,14 @@ let
       inputs.fenix.packages.${system}.complete
     else
       null;
+  pg_jsonschema = pkgs.callPackage ./nix/pkgs/pg_jsonschema { };
+  postgresForSqlx =
+    pkgs.postgresql_16.withPackages (ps: [
+      ps.timescaledb
+      ps.pgvector
+      ps.pgx_ulid
+      pg_jsonschema
+    ]);
   pythonDeps = with pkgs.python3Packages; [
     click
     psycopg2
@@ -45,6 +53,7 @@ let
       mold
       python3
       nats-server
+      postgresForSqlx
       mprocs
       btop
       jq
