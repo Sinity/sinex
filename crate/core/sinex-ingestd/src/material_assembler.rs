@@ -65,6 +65,7 @@ struct MaterialEndMessage {
     content_hash: String,
     total_slices: usize,
     total_size_bytes: i64,
+    #[serde(default)]
     metadata: JsonValue,
 }
 
@@ -226,12 +227,27 @@ fn build_finalize_metadata(
 /// Material assembler service
 pub struct MaterialAssembler {
     js: jetstream::Context,
+    nats_client: NatsClient,
     pool: DbPool,
     env: SinexEnvironment,
     annex: Arc<GitAnnex>,
     assembler_state: Arc<RwLock<HashMap<Ulid, Arc<Mutex<AssemblerState>>>>>,
     state_root: PathBuf,
     dlq_subject: String,
+}
+
+struct MaterialConsumerHandles {
+    begin: tokio::task::JoinHandle<IngestdResult<()>>,
+    slices: tokio::task::JoinHandle<IngestdResult<()>>,
+    end: tokio::task::JoinHandle<IngestdResult<()>>,
+}
+
+impl Drop for MaterialConsumerHandles {
+    fn drop(&mut self) {
+        self.begin.abort();
+        self.slices.abort();
+        self.end.abort();
+    }
 }
 
 impl MaterialAssembler {
@@ -250,11 +266,12 @@ impl MaterialAssembler {
             )));
         }
 
-        let js = jetstream::new(nats_client);
+        let js = jetstream::new(nats_client.clone());
         let env = sinex_core::environment().clone();
 
         Ok(Self {
             js,
+            nats_client,
             pool,
             env: env.clone(),
             annex,
@@ -912,29 +929,18 @@ impl MaterialAssembler {
 
         match serde_json::to_vec(&payload) {
             Ok(bytes) => {
-                match self
-                    .js
+                if let Err(e) = self
+                    .nats_client
                     .publish(self.dlq_subject.clone(), bytes.into())
                     .await
                 {
-                    Ok(ack) => {
-                        if let Err(e) = ack.await {
-                            error!(
-                                material_id = %material_id,
-                                "Failed to confirm DLQ publish: {}",
-                                e
-                            );
-                        } else {
-                            debug!(material_id = %material_id, "Routed to DLQ");
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            material_id = %material_id,
-                            "Failed to publish material DLQ entry: {}",
-                            e
-                        );
-                    }
+                    error!(
+                        material_id = %material_id,
+                        "Failed to publish material DLQ entry: {}",
+                        e
+                    );
+                } else {
+                    debug!(material_id = %material_id, "Routed to DLQ");
                 }
             }
             Err(e) => {
@@ -1068,9 +1074,9 @@ impl MaterialAssembler {
             "Processing end message"
         );
 
-        // If no slices were processed or the payload claims zero bytes, avoid annex/blob work
-        // and treat this as an empty material. Persist a DLQ entry so publishers can diagnose.
-        if slice_count == 0 || end.total_size_bytes == 0 {
+        // If the payload claims zero bytes, avoid annex/blob work and treat this as an empty
+        // material. Persist a DLQ entry so publishers can diagnose.
+        if end.total_size_bytes == 0 {
             warn!(
                 material_id = %material_id,
                 slices = slice_count,
@@ -1121,8 +1127,8 @@ impl MaterialAssembler {
             );
         }
 
-        // Sanity checks: ensure we assembled something and sizes line up before annex import.
-        if assembled_bytes == 0 || end.total_size_bytes <= 0 {
+        // Sanity checks: ensure sizes line up before annex import.
+        if end.total_size_bytes <= 0 {
             warn!(
                 material_id = %material_id,
                 assembled_bytes,
@@ -1135,7 +1141,8 @@ impl MaterialAssembler {
                 json!({
                     "assembled_bytes": assembled_bytes,
                     "reported_total": end.total_size_bytes,
-                    "slice_count": slice_count
+                    "slice_count": slice_count,
+                    "buffered_slices": final_state.buffered_count
                 }),
             )
             .await;
@@ -1156,7 +1163,8 @@ impl MaterialAssembler {
                 json!({
                     "assembled_bytes": assembled_bytes,
                     "reported_total": end.total_size_bytes,
-                    "slice_count": slice_count
+                    "slice_count": slice_count,
+                    "buffered_slices": final_state.buffered_count
                 }),
             )
             .await;
@@ -1534,6 +1542,7 @@ impl MaterialAssembler {
     fn clone_for_task(&self) -> Self {
         Self {
             js: self.js.clone(),
+            nats_client: self.nats_client.clone(),
             pool: self.pool.clone(),
             env: self.env.clone(),
             annex: self.annex.clone(),
@@ -1590,24 +1599,20 @@ impl MaterialAssembler {
         self.bootstrap_streams().await?;
         self.restore_state().await?;
 
-        let mut begin_handle = self.spawn_begin_consumer();
-        let mut slices_handle = self.spawn_slices_consumer();
-        let mut end_handle = self.spawn_end_consumer();
+        let mut consumers = MaterialConsumerHandles {
+            begin: self.spawn_begin_consumer(),
+            slices: self.spawn_slices_consumer(),
+            end: self.spawn_end_consumer(),
+        };
 
         tokio::select! {
-            result = &mut begin_handle => {
-                slices_handle.abort();
-                end_handle.abort();
+            result = &mut consumers.begin => {
                 return Self::handle_task_exit("material begin consumer", result);
             }
-            result = &mut slices_handle => {
-                begin_handle.abort();
-                end_handle.abort();
+            result = &mut consumers.slices => {
                 return Self::handle_task_exit("material slice consumer", result);
             }
-            result = &mut end_handle => {
-                begin_handle.abort();
-                slices_handle.abort();
+            result = &mut consumers.end => {
                 return Self::handle_task_exit("material end consumer", result);
             }
         }
