@@ -15,6 +15,17 @@ Primary session log (Codex CLI JSONL):
 - `~/.codex/sessions/2025/12/12/rollout-2025-12-12T01-53-33-019b100c-7f40-73e3-9e95-7bf96e3cb7f3.jsonl`
   - See especially around `:1780` (pool + parallelism discussion and the “clean-after-use” direction).
 
+Follow-up sessions (implementation + debugging):
+
+- `~/.codex/sessions/2025/12/18/rollout-2025-12-18T21-56-24-019b333f-e4f5-7501-9d8b-94eba7df30bf.jsonl`
+
+## Status (what’s implemented)
+
+- Phase 0 (template/pool provisioning correctness): implemented.
+- Phase 1 (nextest test groups / “Tetris scheduling”): implemented.
+- Phase 2 (clean-after-use): not implemented (still clean-on-acquire).
+- Phase 3 (DB-optional tests): not implemented.
+
 ## Current reality (as of now)
 
 ### How template DB works
@@ -192,4 +203,3 @@ Success criteria:
 - When heavy tests bottleneck on shared infra, we cap them *in nextest*, not by lowering global threads.
 - If the harness needs to scale beyond a single local Postgres, we can later introduce a dedicated
   test Postgres service (or multiple clusters), but that is not required for the current phase.
-

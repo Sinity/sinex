@@ -121,6 +121,10 @@ test-group = "db-nats-heavy"
 filter = "binary_id(sinex-satellite-sdk::stage_as_you_go_integration)"
 test-group = "db-nats-heavy"
 
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-core::property_tests) & test(/test_ulid_ordering_with_timing_patterns/)"
+slow-timeout = { period = "120s", terminate-after = 1 }
+
 [[profile.reliable.overrides]]
 filter = "binary_id(sinex-e2e-tests::jetstream_bootstrap_test)"
 test-group = "db-nats-heavy"

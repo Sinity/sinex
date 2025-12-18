@@ -1,24 +1,26 @@
 # Database Pool – High-Performance Test Database Isolation
 
 Provides a sophisticated database pooling system optimized for parallel test execution. It maintains
-a pool of pre-warmed, migrated databases that are cleaned and reused between tests for optimal
-performance.
+a pool of migrated databases that are cleaned and reused between tests for optimal performance.
 
 ## Architecture
 
 The pool uses a multi-layered approach:
 
-1. **Template Database** – single migrated template created once per test run.
-2. **Database Pool** – 64 pre-created databases cloned from the template.
+1. **Template Database** – a shared migrated template (`sinex_test_template_shared`) tagged with a
+   schema fingerprint and extension versions.
+2. **Database Pool** – `sinex_test_pool_0..N-1` cloned from the template (size is configurable).
 3. **Advisory Locks** – PostgreSQL advisory locks for inter-process coordination.
-4. **Smart Cleanup** – efficient truncation with foreign key awareness.
+4. **Smart Cleanup** – efficient reset/truncate with verification and slot quarantine on failure.
 
 ## Performance Characteristics
 
-- Acquisition time: ~5–10 ms per database (after initial warmup).
-- Cleanup time: ~20–30 ms with optimised truncation.
-- Parallelism: supports 64 concurrent tests without contention.
-- Memory usage: ~50 MB per database (configurable).
+The pool is designed so that:
+
+- Database creation happens rarely (first run, or when the schema fingerprint changes).
+- Each test acquires a DB via advisory locks, resets it, then runs assertions.
+- Under `cargo nextest`, pool DBs are lazily created on-demand to avoid heavy DDL in every per-test
+  process.
 
 ## Usage Pattern
 
@@ -26,7 +28,7 @@ The pool uses a multi-layered approach:
 // Automatic through TestContext (recommended)
 #[sinex_test]
 async fn test_something(ctx: TestContext) -> Result<()> {
-    // Database automatically acquired and cleaned
+    // Database automatically acquired (from the pool) and cleaned before use
     ctx.create_test_event("test", "test.event", json!({})).await?;
     Ok(())
 }
@@ -42,11 +44,14 @@ let pool = db.pool();
 
 ### Database Lifecycle
 
-1. Template creation – first test creates migrated template.
-2. Pool initialization – 64 databases created from template.
-3. Test acquisition – clean database acquired with advisory lock.
+1. Template creation – first process creates the migrated template; later processes reuse it if the
+   schema fingerprint matches.
+2. Pool initialization
+   - Non-nextest runs may eagerly create pool DBs.
+   - Nextest runs lazily create pool DBs on-demand.
+3. Test acquisition – DB acquired with an advisory lock and reset/verified clean.
 4. Test execution – isolated database operations.
-5. Cleanup & return – data truncated, returned to pool.
+5. Release – advisory lock is released and the connection pool is closed.
 
 ### Foreign Key Handling
 
@@ -62,8 +67,8 @@ The cleanup process respects foreign key constraints:
 Advisory locks prevent race conditions:
 
 - Lock ID = `hash(database_name) % 2^31`.
-- Exclusive locks during acquisition/cleanup.
-- Automatic release on connection drop.
+- Exclusive slot locks during acquisition/use.
+- Shared/exclusive template locks to prevent template recreation during cloning.
 
 ## Monitoring
 

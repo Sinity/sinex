@@ -14,6 +14,7 @@ set -euo pipefail
 
 RUNS="${RUNS:-3}"
 NIX_NO_LINK="${NIX_NO_LINK:-1}"
+BENCH_NO_SQLX_DIR="${BENCH_NO_SQLX_DIR:-0}"
 
 repo_root() {
   local dir
@@ -86,6 +87,29 @@ bench() {
   echo
 }
 
+hide_sqlx_dir() {
+  if [[ ! -d ".sqlx" ]]; then
+    echo ""
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp -d)"
+  mv .sqlx "$tmp/sqlx"
+  echo "$tmp/sqlx"
+}
+
+restore_sqlx_dir() {
+  local saved="$1"
+  if [[ -z "$saved" ]]; then
+    return 0
+  fi
+  if [[ -d ".sqlx" ]]; then
+    echo "ERROR: refusing to restore .sqlx; directory already exists at repo root" >&2
+    exit 1
+  fi
+  mv "$saved" .sqlx
+}
+
 main() {
   local root
   root="$(repo_root)"
@@ -94,30 +118,49 @@ main() {
   echo "Repository root: $root"
   echo "RUNS=$RUNS"
   echo "NIX_NO_LINK=$NIX_NO_LINK"
-  echo "Git: $(git rev-parse --short HEAD)$(git diff --quiet || echo ' (dirty)')"
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Git: $(git rev-parse --short HEAD) (dirty)"
+  else
+    echo "Git: $(git rev-parse --short HEAD)"
+  fi
   echo "Toolchain: $(rustc --version 2>/dev/null || echo 'rustc not found') / $(cargo --version 2>/dev/null || echo 'cargo not found')"
   echo "Nix: $(nix --version 2>/dev/null || echo 'nix not found')"
   if [[ -z "${SINEX_DEVENV_SYSTEM:-}" ]]; then
     echo "NOTE: SINEX_DEVENV_SYSTEM is not set; you probably want to run this inside 'devenv shell'." >&2
   fi
+  if [[ "$BENCH_NO_SQLX_DIR" == "1" ]]; then
+    echo "BENCH_NO_SQLX_DIR=1 (temporarily hides .sqlx and runs only online variants)"
+  fi
   echo
 
+  local saved_sqlx=""
+  if [[ "$BENCH_NO_SQLX_DIR" == "1" ]]; then
+    saved_sqlx="$(hide_sqlx_dir)"
+    trap 'restore_sqlx_dir "$saved_sqlx"' EXIT
+  fi
+
   # 1) Fast-ish baseline: core correctness checks (includes sqlx prepare --check with SQLX_OFFLINE=1)
-  bench "cargo xtask check" \
-    cargo xtask check
+  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
+    bench "cargo xtask check" \
+      cargo xtask check
+  fi
 
   # 2) SQLx offline vs online compile-time checking
   # Offline: uses .sqlx JSON cache, SQLX_OFFLINE=1
-  bench "cargo xtask sqlx-check (offline, .sqlx)" \
-    cargo xtask sqlx-check
+  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
+    bench "cargo xtask sqlx-check (offline, .sqlx)" \
+      cargo xtask sqlx-check
+  fi
 
   # Online: skips .sqlx and talks to a live Postgres, requires DATABASE_URL
   bench "cargo xtask sqlx-check --online (no .sqlx)" \
     cargo xtask sqlx-check --online
 
   # 3) SQLx offline metadata regeneration cost (writes/refreshes .sqlx)
-  bench "cargo xtask sqlx-prepare (regen .sqlx)" \
-    cargo xtask sqlx-prepare
+  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
+    bench "cargo xtask sqlx-prepare (regen .sqlx)" \
+      cargo xtask sqlx-prepare
+  fi
 
   # 4) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
   bench "cargo xtask ci postgres -- cargo xtask ci workspace" \
@@ -130,16 +173,20 @@ main() {
     nix_args+=(--no-link)
   fi
 
-  bench "nix build .#sinexIngestd (offline, .sqlx)" \
-    nix build "${nix_args[@]}" .#sinexIngestd
+  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
+    bench "nix build .#sinexIngestd (offline, .sqlx)" \
+      nix build "${nix_args[@]}" .#sinexIngestd
+  fi
 
   # Online: experimental path using ephemeral Postgres for SQLx at build time
   bench "nix build .#sinexIngestdOnline (online, no .sqlx)" \
     nix build "${nix_args[@]}" .#sinexIngestdOnline
 
   # 6) Nix flake build for the full suite (symlinkJoin).
-  bench "nix build .#sinex (offline, .sqlx)" \
-    nix build "${nix_args[@]}" .#sinex
+  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
+    bench "nix build .#sinex (offline, .sqlx)" \
+      nix build "${nix_args[@]}" .#sinex
+  fi
 
   bench "nix build .#sinexOnline (online, no .sqlx)" \
     nix build "${nix_args[@]}" .#sinexOnline
