@@ -477,9 +477,10 @@ fn ci_postgres(
         operation_id: operation_id.clone(),
     };
 
-    let initial_user = env::var("PGUSER")
-        .or_else(|_| env::var("USER"))
-        .unwrap_or_else(|_| superuser.clone());
+    // `initdb` creates the bootstrap superuser role using the OS username, not `PGUSER`.
+    // In CI, our devenv sets `PGUSER=sinity` by default, but that role doesn't exist yet
+    // for a fresh ephemeral cluster, so prefer `USER`.
+    let initial_user = env::var("USER").unwrap_or_else(|_| superuser.clone());
 
     create_role_if_missing(&env, &superuser, true, &initial_user)?;
     create_role_if_missing(&env, &app_user, true, &superuser)?;
@@ -533,7 +534,12 @@ fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String> {
         .with_context(|| format!("failed to run psql for query {sql}"))?;
 
     if !output.status.success() {
-        bail!("psql exited with status {} for query {sql}", output.status);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql exited with status {} for query {sql}\n{}",
+            output.status,
+            stderr.trim()
+        );
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
