@@ -53,14 +53,16 @@ jobs:
         key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: cargo-git-${{ runner.os }}-
 
-	    - uses: ./.github/actions/nix-bootstrap
-	      with:
-	        cache-name: sinity
-	        cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-	
-	    - name: Run migrations and tests
-	      shell: bash
-	      run: |
-	        nix develop --accept-flake-config --no-pure-eval --command \
-	          cargo xtask ci postgres -- \
-	          cargo xtask ci workspace
+    - uses: ./.github/actions/nix-bootstrap
+      with:
+        cache-name: sinity
+        cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+    - name: Run migrations and tests
+      env:
+        SQLX_OFFLINE: '1'
+      shell: bash
+      run: |
+        nix develop --accept-flake-config --no-pure-eval --command \
+          cargo xtask ci postgres -- \
+          cargo xtask ci workspace
