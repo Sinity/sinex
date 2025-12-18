@@ -362,7 +362,10 @@ impl EphemeralNats {
                 }
             }
         }
-        Err(eyre!("nats-server at {url} did not become ready: {:?}", last_err))
+        Err(eyre!(
+            "nats-server at {url} did not become ready: {:?}",
+            last_err
+        ))
     }
 }
 
