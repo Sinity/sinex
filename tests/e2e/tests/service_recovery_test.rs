@@ -23,6 +23,12 @@ use sinex_test_utils::prelude::*;
 use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
 use tokio::time::sleep;
 
+fn is_jetstream_no_messages_error(msg: &str) -> bool {
+    msg.contains("No Messages")
+        || msg.contains("No Messages Available")
+        || (msg.contains("404") && msg.contains("No Messages"))
+}
+
 async fn ensure_raw_event_streams(
     nats_client: &async_nats::Client,
     env: &sinex_core::environment::SinexEnvironment,
@@ -164,14 +170,32 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                     }),
                 );
 
-                match pool.events().insert(event.clone()).await {
-                    Ok(_) => {
-                        successes.fetch_add(1, Ordering::SeqCst);
+                let mut inserted = false;
+                for attempt in 0..3 {
+                    match pool.events().insert(event.clone()).await {
+                        Ok(_) => {
+                            successes.fetch_add(1, Ordering::SeqCst);
+                            inserted = true;
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "Concurrent insert failed (task_id={}, iteration={}, attempt={}): {}",
+                                task_id,
+                                iteration,
+                                attempt,
+                                e
+                            );
+                            if attempt < 2 {
+                                tokio::time::sleep(Duration::from_millis(20 * (attempt + 1))).await;
+                                continue;
+                            }
+                        }
                     }
-                    Err(e) => {
-                        tracing::debug!("Concurrent insert failed: {}", e);
-                        failures.fetch_add(1, Ordering::SeqCst);
-                    }
+                }
+
+                if !inserted {
+                    failures.fetch_add(1, Ordering::SeqCst);
                 }
 
                 // Small delay to allow for connection churn
@@ -216,7 +240,6 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 /// restarted, and new events should still be captured.
 #[sinex_test]
 async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
@@ -236,7 +259,6 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     // Start first ingestd instance
     let mut ingest_handle =
         start_test_ingestd_with_config(ingest_config.clone(), Some(&ctx)).await?;
-    sleep(Duration::from_millis(300)).await;
 
     // Publish events to first instance
     let publisher = TestSatellitePublisher::new(nats_client.clone(), "restart-test");
@@ -246,10 +268,26 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
             .await?;
     }
 
-    // Wait for events to be ingested
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 5, 10).await?;
+    // Wait for *our* events, not just "some events".
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_type_events(
+        &ctx.pool,
+        &EventType::from("before.restart"),
+        5,
+        20,
+    )
+    .await?;
+
     let before_count = ctx.pool.events().count_all().await?;
-    tracing::info!("Events before restart: {}", before_count);
+    let before_restart_count = ctx
+        .pool
+        .events()
+        .count_by_event_type(&EventType::from("before.restart"))
+        .await? as usize;
+    tracing::info!(
+        "Events before restart: total={}, before.restart={}",
+        before_count,
+        before_restart_count
+    );
 
     // Stop first ingestd instance
     ingest_handle.stop().await?;
@@ -261,7 +299,6 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     // Start second ingestd instance
     let mut ingest_handle2 =
         start_test_ingestd_with_config(ingest_config.clone(), Some(&ctx)).await?;
-    sleep(Duration::from_millis(300)).await;
     tracing::info!("Ingestd restarted");
 
     // Publish events to second instance
@@ -271,17 +308,35 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
             .await?;
     }
 
-    // Wait for new events to be ingested
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 10, 10).await?;
+    // Be explicit: ensure the *after.restart* events made it through, not just "some events".
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_type_events(
+        &ctx.pool,
+        &EventType::from("after.restart"),
+        5,
+        30,
+    )
+    .await?;
+
     let after_count = ctx.pool.events().count_all().await?;
-    tracing::info!("Events after restart: {}", after_count);
+    let after_restart_count = ctx
+        .pool
+        .events()
+        .count_by_event_type(&EventType::from("after.restart"))
+        .await? as usize;
+    tracing::info!(
+        "Events after restart: total={}, after.restart={}",
+        after_count,
+        after_restart_count
+    );
 
     // Verify new events were captured after restart
     assert!(
-        after_count > before_count,
-        "Should have more events after restart: before={}, after={}",
+        after_count >= before_count + 5,
+        "Should have more events after restart: before_total={}, after_total={}, before.restart={}, after.restart={}",
         before_count,
-        after_count
+        after_count,
+        before_restart_count,
+        after_restart_count
     );
 
     // Query for after-restart events specifically
@@ -320,6 +375,19 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
     ctx.ensure_clean().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
+    // Be strict here: this test relies on per-source counts, so tolerate no residual events.
+    let existing = ctx.pool.events().count_all().await?;
+    if existing != 0 {
+        tracing::warn!(
+            "Database not empty after reset ({} events); forcing cleanup",
+            existing
+        );
+        ctx.force_cleanup().await?;
+        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+        let after = ctx.pool.events().count_all().await?;
+        assert_eq!(after, 0, "Database should be empty after forced cleanup");
+    }
+
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
 
@@ -333,7 +401,6 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    sleep(Duration::from_millis(300)).await;
 
     // Define multiple source types (mirrors VM satellite matrix)
     let sources = vec![
@@ -357,7 +424,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 
         let handle = tokio::spawn(async move {
             for i in 0..events_per_source {
-                if let Err(e) = publisher
+                publisher
                     .publish_event(
                         &event_type,
                         json!({
@@ -367,14 +434,12 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
                             "concurrent": true
                         }),
                     )
-                    .await
-                {
-                    tracing::warn!("Failed to publish event: {}", e);
-                }
+                    .await?;
 
                 // Stagger publishes slightly
                 sleep(Duration::from_millis(5)).await;
             }
+            Ok::<(), color_eyre::Report>(())
         });
 
         handles.push(handle);
@@ -382,21 +447,26 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 
     // Wait for all publishers
     for handle in handles {
-        handle.await?;
+        handle.await??;
     }
 
-    // Wait for ingestion to complete
-    let expected_events = sources.len() * events_per_source;
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(
-        &ctx.pool,
-        expected_events,
-        30,
-    )
-    .await?;
+    // Wait for ingestion per source (avoid false positives when leftover events exist).
+    let mut expected_by_source: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for (source, _) in &sources {
+        *expected_by_source.entry(*source).or_insert(0) += events_per_source;
+    }
+
+    for (source, expected) in &expected_by_source {
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+            &ctx.pool, source, *expected, 30,
+        )
+        .await?;
+    }
 
     // Verify events from each source
     let mut source_counts = std::collections::HashMap::new();
-    for (source, _) in &sources {
+    for (source, _) in &expected_by_source {
         let events = ctx
             .pool
             .events()
@@ -405,15 +475,14 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
                 sinex_core::types::Pagination::new(Some(100), None),
             )
             .await?;
-        *source_counts.entry(*source).or_insert(0) += events.len();
+        source_counts.insert(*source, events.len());
     }
 
     tracing::info!("Events by source: {:?}", source_counts);
 
     // Verify all sources have events
-    let unique_sources: std::collections::HashSet<_> = sources.iter().map(|(s, _)| *s).collect();
-    for source in unique_sources {
-        let count = source_counts.get(&source).copied().unwrap_or(0);
+    for source in expected_by_source.keys() {
+        let count = source_counts.get(*source).copied().unwrap_or(0);
         assert!(
             count > 0,
             "Source {} should have events, got {}",
@@ -722,20 +791,57 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
         .await
         .map_err(|e| eyre!(e))?;
 
-    // Fetch and ack first 3 messages
-    let mut messages = consumer
-        .fetch()
-        .max_messages(3)
-        .messages()
-        .await
-        .map_err(|e| eyre!(e))?;
-    let mut acked_count = 0;
-    while let Some(msg) = messages.next().await {
-        let msg = msg.map_err(|e| eyre!(e))?;
-        msg.ack().await.map_err(|e| eyre!(e))?;
-        acked_count += 1;
+    // Fetch and ack first 3 messages. JetStream can briefly respond with a transient
+    // "No Messages" status even when messages exist, so tolerate a short warm-up.
+    let mut acked_count: usize = 0;
+    let start = std::time::Instant::now();
+    while acked_count < 3 && start.elapsed() < std::time::Duration::from_secs(5) {
+        let fetch_result = consumer
+            .fetch()
+            .max_messages(3 - acked_count)
+            .expires(std::time::Duration::from_secs(1))
+            .messages()
+            .await;
+
+        match fetch_result {
+            Ok(mut messages) => {
+                while let Some(item) = messages.next().await {
+                    match item {
+                        Ok(msg) => {
+                            msg.ack().await.map_err(|e| eyre!(e))?;
+                            acked_count += 1;
+                            if acked_count >= 3 {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if is_jetstream_no_messages_error(&msg) {
+                                break;
+                            }
+                            return Err(eyre!(e));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if is_jetstream_no_messages_error(&msg) {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+                return Err(eyre!(e));
+            }
+        }
+
+        if acked_count < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
-    assert_eq!(acked_count, 3, "Should have acked 3 messages");
+    assert_eq!(
+        acked_count, 3,
+        "Should have acked 3 messages (acked_count={acked_count})"
+    );
 
     // Drop consumer (simulates disconnect)
     drop(consumer);
@@ -759,16 +865,31 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // Fetch remaining messages - should start from where we left off. JetStream can
     // legitimately respond with a transient "No Messages" status while messages are
     // in-flight, so we tolerate a few empty polls and retry briefly.
-    let mut remaining_count = 0;
+    let mut remaining_count: usize = 0;
     let start = std::time::Instant::now();
     while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(5) {
-        let fetch_result = consumer.fetch().max_messages(10).messages().await;
+        let fetch_result = consumer
+            .fetch()
+            .max_messages(10)
+            .expires(std::time::Duration::from_secs(1))
+            .messages()
+            .await;
         match fetch_result {
             Ok(mut messages) => {
-                while let Some(msg) = messages.next().await {
-                    let msg = msg.map_err(|e| eyre!(e))?;
-                    msg.ack().await.map_err(|e| eyre!(e))?;
-                    remaining_count += 1;
+                while let Some(item) = messages.next().await {
+                    match item {
+                        Ok(msg) => {
+                            msg.ack().await.map_err(|e| eyre!(e))?;
+                            remaining_count += 1;
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if is_jetstream_no_messages_error(&msg) {
+                                break;
+                            }
+                            return Err(eyre!(e));
+                        }
+                    }
                 }
                 if remaining_count >= 7 {
                     break;
@@ -776,7 +897,7 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("No Messages") || msg.contains("No Messages Available") {
+                if is_jetstream_no_messages_error(&msg) {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }

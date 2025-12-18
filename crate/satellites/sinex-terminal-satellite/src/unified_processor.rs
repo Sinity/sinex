@@ -805,31 +805,25 @@ mod tests {
             _ => panic!("expected material provenance"),
         };
 
-        let record = ctx
-            .pool
-            .source_materials()
-            .get_by_id(Id::from_ulid(material_ulid))
-            .await?
-            .expect("source material persisted");
-        assert_eq!(record.status.as_str(), "completed");
-
-        let total_bytes: Option<i64> = sqlx::query_scalar(
-            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-        )
-        .bind(ulid_to_uuid(material_ulid))
-        .fetch_optional(&ctx.pool)
-        .await?;
-
-        assert_eq!(
-            total_bytes.unwrap_or_default(),
-            command.as_bytes().len() as i64
-        );
+        let expected_bytes = command.as_bytes().len() as i64;
         sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
                 let material_ulid = material_ulid;
-                let expected = command.as_bytes().len() as i64;
+                let expected = expected_bytes;
                 async move {
+                    if let Some(material) = pool
+                        .source_materials()
+                        .get_by_id(Id::from_ulid(material_ulid))
+                        .await?
+                    {
+                        if material.status.as_str() != "completed" {
+                            return Ok::<bool, sinex_test_utils::SinexError>(false);
+                        }
+                    } else {
+                        return Ok::<bool, sinex_test_utils::SinexError>(false);
+                    }
+
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
                         "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
                     )
@@ -845,6 +839,23 @@ mod tests {
             20,
         )
         .await?;
+
+        let record = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_ulid(material_ulid))
+            .await?
+            .expect("source material persisted");
+        assert_eq!(record.status.as_str(), "completed");
+
+        let total_bytes: Option<i64> = sqlx::query_scalar(
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+        )
+        .bind(ulid_to_uuid(material_ulid))
+        .fetch_optional(&ctx.pool)
+        .await?;
+
+        assert_eq!(total_bytes.unwrap_or_default(), expected_bytes);
 
         let payload_command = event
             .payload
