@@ -227,6 +227,38 @@ impl WaitHelpers {
         Ok(final_count as usize)
     }
 
+    /// Wait for events of a specific type using production wait helpers and queries.
+    pub async fn wait_for_event_type_events(
+        pool: &DbPool,
+        event_type: &EventType,
+        expected_count: usize,
+        timeout_secs: u64,
+    ) -> TestResult<usize> {
+        let pool = pool.clone();
+        let event_type = event_type.clone();
+
+        sinex_core::types::utils::wait_for_condition_adaptive(
+            || async {
+                let count = pool.events().count_by_event_type(&event_type).await? as usize;
+                Ok(count >= expected_count)
+            },
+            timeout_secs,
+            &format!("event type '{event_type}' count >= {expected_count}"),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Wait for event type events failed")
+                .with_context("event_type", event_type.as_str())
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_event_type_events")
+        })?;
+
+        let final_count = pool.events().count_by_event_type(&event_type).await? as usize;
+        Ok(final_count)
+    }
+
     /// Wait for condition with timeout using production adaptive wait helpers
     pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> TestResult<()>
     where

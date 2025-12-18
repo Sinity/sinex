@@ -18,5 +18,8 @@ async fn bounded_channel_reports_full_without_dropping_silently() {
     // Drain to prove the first two messages are still present and ordered.
     assert_eq!(rx.recv().await, Some(1));
     assert_eq!(rx.recv().await, Some(2));
+
+    // Close the channel so `recv()` can return `None`.
+    drop(tx);
     assert!(rx.recv().await.is_none());
 }

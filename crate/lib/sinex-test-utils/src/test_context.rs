@@ -1039,13 +1039,23 @@ impl BackgroundRegistry {
         // Wait for tracked background tasks to finish, aborting on timeout.
         let tasks = std::mem::take(&mut self.tasks);
         for (label, handle) in tasks {
-            match tokio::time::timeout(Duration::from_secs(timeout_secs), handle).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(join_err)) => {
-                    warn!(%label, error = %join_err, "Background task join failed")
+            let mut handle = handle;
+            let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
+            tokio::pin!(timeout_sleep);
+
+            tokio::select! {
+                result = &mut handle => {
+                    match result {
+                        Ok(()) => {}
+                        Err(join_err) => warn!(%label, error = %join_err, "Background task join failed"),
+                    }
                 }
-                Err(_) => warn!(%label, "Background task did not finish within timeout; aborting"),
-            }
+                _ = &mut timeout_sleep => {
+                    warn!(%label, "Background task did not finish within timeout; aborting");
+                    handle.abort();
+                    let _ = handle.await;
+                }
+            };
         }
     }
 }
