@@ -26,11 +26,13 @@ jobs:
           cache-name: sinity
           cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-      - name: Run schema compatibility check
-        env:
-          SQLX_OFFLINE: '1'
-        run: |
-          CI_BASE_BRANCH=${{ github.base_ref }} cargo xtask schema compat
+	      - name: Run schema compatibility check
+	        run: |
+	          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
+	            set -euo pipefail
+	            export SQLX_OFFLINE=1
+	            CI_BASE_BRANCH=${{ github.base_ref }} cargo xtask schema compat
+	          '
 
       - name: Comment on PR
         if: failure()
