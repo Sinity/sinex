@@ -480,6 +480,9 @@ fn ci_postgres(
         writeln!(conf, "unix_socket_directories = '{}'", socket_dir.display())?;
         writeln!(conf, "listen_addresses = '127.0.0.1'")?;
         writeln!(conf, "port = {}", port)?;
+        // Tests assume a relatively high connection ceiling (NixOS module uses >=500). Keep the
+        // ephemeral CI cluster aligned so parallel nextest runs don't wedge on connection limits.
+        writeln!(conf, "max_connections = 500")?;
         writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
     }
 

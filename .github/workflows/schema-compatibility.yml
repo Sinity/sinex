@@ -14,6 +14,9 @@ on:
 jobs:
   check-schemas:
     runs-on: ubuntu-latest
+    env:
+      DEVENV_ROOT: ${{ github.workspace }}
+      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

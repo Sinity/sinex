@@ -88,13 +88,29 @@ static CLEANUP_HANDLES: Lazy<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
     Lazy::new(|| AsyncMutex::new(Vec::new()));
 
 async fn await_pending_cleanups() {
+    let timeout_secs = std::env::var("SINEX_TESTUTILS_CLEANUP_AWAIT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(2);
+    let timeout = Duration::from_secs(timeout_secs);
+
     let mut handles = CLEANUP_HANDLES.lock().await;
     let pending = mem::take(&mut *handles);
     drop(handles);
 
-    for handle in pending {
-        if let Err(err) = handle.await {
-            warn!("Background cleanup task failed: {}", err);
+    for mut handle in pending {
+        match tokio::time::timeout(timeout, &mut handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                warn!("Background cleanup task failed: {}", err);
+            }
+            Err(_) => {
+                handle.abort();
+                warn!(
+                    "Background cleanup task exceeded {:?}; aborting to avoid cross-test deadlocks",
+                    timeout
+                );
+            }
         }
     }
 }
