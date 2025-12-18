@@ -451,8 +451,14 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        // Postgres timestamps are microsecond precision. Persist the sub-microsecond
+        // remainder separately so we can reconstruct full nanosecond timestamps on read.
         let ts_orig = event.ts_orig;
-        let ts_orig_subnano = ts_orig.map(|ts| ts.nanosecond() as i32);
+        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i32);
+        let ts_orig = ts_orig.map(|ts| {
+            let truncated = (ts.nanosecond() / 1_000) * 1_000;
+            ts.with_nanosecond(truncated).unwrap_or(ts)
+        });
 
         #[cfg(any(test, feature = "testing"))]
         if let Some(material_ulid) = source_material_id {
@@ -893,8 +899,14 @@ impl<'a> EventRepository<'a> {
             .as_ref()
             .map(|ids| ids.iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
 
+        // Postgres timestamps are microsecond precision. Persist the sub-microsecond
+        // remainder separately so we can reconstruct full nanosecond timestamps on read.
         let ts_orig = event.ts_orig;
-        let ts_orig_subnano = ts_orig.map(|ts| ts.nanosecond() as i32);
+        let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i32);
+        let ts_orig = ts_orig.map(|ts| {
+            let truncated = (ts.nanosecond() / 1_000) * 1_000;
+            ts.with_nanosecond(truncated).unwrap_or(ts)
+        });
 
         let record = sqlx::query_as!(
             EventRecord,

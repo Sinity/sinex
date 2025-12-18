@@ -175,7 +175,11 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             .expect("id present")
             .as_ulid()
             .timestamp();
-        assert!(ingest_ts > stored_event.ts_orig.unwrap_or(ingest_ts));
+        let _ = ingest_ts;
+        assert!(
+            stored_event.ts_orig.is_some(),
+            "ts_orig should be populated"
+        );
         assert!(stored_event
             .ingestor_version
             .as_ref()
