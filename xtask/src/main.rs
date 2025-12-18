@@ -772,7 +772,7 @@ fn ci_workspace(target_dir: &str) -> Result<()> {
 
     run_cmd("xtask test reliable", {
         let mut c = Command::new("cargo");
-        c.args(["xtask", "test", "--profile", "reliable"]);
+        c.args(["xtask", "test", "--online-sqlx", "--profile", "reliable"]);
         c
     })?;
 
