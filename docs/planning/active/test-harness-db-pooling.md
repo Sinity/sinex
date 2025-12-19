@@ -25,6 +25,7 @@ Follow-up sessions (implementation + debugging):
 - Phase 1 (nextest test groups / “Tetris scheduling”): implemented.
 - Phase 2 (clean-after-use): not implemented (still clean-on-acquire).
 - Phase 3 (DB-optional tests): not implemented.
+- Follow-ups (2025-12-19): implemented (see “Recent fixes” below).
 
 ## Current reality (as of now)
 
@@ -82,6 +83,47 @@ We want:
 - Non-DB tests should still saturate remaining threads while heavy tests run.
 
 In other words: cap the “heavy lane”, not the whole highway.
+
+## Recent fixes (2025-12-19)
+
+These were discovered while benchmarking and running the CI harness on a machine where
+Postgres extensions are provided via Nix (versioned shared objects).
+
+### A) Stale pool DBs after TimescaleDB upgrade
+
+Symptom:
+
+- Tests fail early with `could not access file "$libdir/timescaledb-<old-version>"`.
+- Root cause: old pool databases were cloned when TimescaleDB was at `<old-version>`, and keep
+  referencing the old versioned `.so` filename; after upgrading TimescaleDB, that file no longer exists.
+
+Fix (implemented):
+
+- Add a fast liveness check in `DatabasePool::acquire` (`SELECT 1`) and treat the missing-library
+  error as recoverable: drop + recreate the pool DB from the current template.
+- Add the same recovery path for connect failures, session preflight failures, and advisory-lock
+  query failures.
+- Treat the missing-library error as “retryable” in `clean_database` so cleanup can self-heal too.
+
+### B) `xtask ci postgres` lifetime correctness
+
+Symptom:
+
+- Postgres would sometimes shut down immediately after “server started”, causing downstream commands
+  to fail.
+
+Fix (implemented):
+
+- Ensure the `PgInstance` guard in `xtask ci postgres` remains alive until after the wrapped command
+  exits (avoid early drop under NLL).
+
+### C) Make Postgres selection deterministic in devenv
+
+Fix (implemented):
+
+- `devenv.nix` now exports `SINEX_PG_BIN=${postgresForSqlx}/bin` so `cargo xtask ci postgres` uses the
+  pinned Postgres build that includes required extensions (TimescaleDB, pg_jsonschema, pgvector, …),
+  regardless of host PATH ordering.
 
 ## Target design (agreed direction)
 
