@@ -120,33 +120,37 @@ in
     # sqlx: no auto-check on entry to keep shell startup fast.
     # Run `xt sqlx-prepare` (alias below) when queries/migrations change.
 
-    if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
-      "$PWD/scripts/dev-env-banner.sh" || true
-      export SINEX_DEVENV_MOTD_ONCE=1
-    fi
     alias sinex-cli="python3 cli/exo.py"
     xt() { cargo xtask "$@"; }
     alias e2e-test="cargo nextest run -p sinex-e2e-tests"
     alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
-    if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
-      echo ""
-      echo "xtask quick reference:"
-      echo "  xtask check        # sqlx check + fmt check + cargo check"
-      echo "  xtask lint         # clippy -D warnings"
-      echo "  xtask test         # nextest workspace (profile=reliable)"
-      echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
+
+    # Keep non-interactive `direnv exec` / scripts quiet and fast.
+    if [ -n "''${PS1:-}" ]; then
+      if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
+        "$PWD/scripts/dev-env-banner.sh" || true
+        export SINEX_DEVENV_MOTD_ONCE=1
+      fi
+      if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
+        echo ""
+        echo "xtask quick reference:"
+        echo "  xtask check        # sqlx check + fmt check + cargo check"
+        echo "  xtask lint         # clippy -D warnings"
+        echo "  xtask test         # nextest workspace (profile=reliable)"
+        echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
+      fi
+      # Generate shell completions once per interactive shell session (writes to /tmp)
+      case "''${SHELL:-bash}" in
+        *zsh)
+          cargo xtask completions zsh > /tmp/xtask-completions.zsh 2>/dev/null || true
+          . /tmp/xtask-completions.zsh 2>/dev/null || true
+          ;;
+        *)
+          cargo xtask completions bash > /tmp/xtask-completions.bash 2>/dev/null || true
+          . /tmp/xtask-completions.bash 2>/dev/null || true
+          ;;
+      esac
     fi
-    # Generate shell completions once per shell session (writes to /tmp)
-    case "''${SHELL:-bash}" in
-      *zsh)
-        cargo xtask completions zsh > /tmp/xtask-completions.zsh 2>/dev/null || true
-        . /tmp/xtask-completions.zsh 2>/dev/null || true
-        ;;
-      *)
-        cargo xtask completions bash > /tmp/xtask-completions.bash 2>/dev/null || true
-        . /tmp/xtask-completions.bash 2>/dev/null || true
-        ;;
-    esac
   '';
 
   processes = {
