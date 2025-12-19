@@ -53,14 +53,21 @@ pub fn validate_path(path: &str) -> Result<camino::Utf8PathBuf> {
         return Err(ValidationError::Path("Path contains null bytes".into()));
     }
 
+    // On Unix, backslashes are valid filename characters. Rewriting them into `/` changes
+    // semantics and violates filename-preservation invariants relied on by tests.
+    if path.contains('\\') {
+        return Err(ValidationError::Path(
+            "Path contains backslashes (\\)".into(),
+        ));
+    }
+
     // Check length
     if path.len() > 4096 {
         return Err(ValidationError::Path("Path too long".into()));
     }
 
     // Create PathBuf and clean it to normalize .. and . components
-    let normalized = path.replace('\\', "/");
-    let path_buf = PathBuf::from(normalized.as_str());
+    let path_buf = PathBuf::from(path);
     let cleaned_path = clean_path(&path_buf);
     ensure_path_does_not_traverse(&cleaned_path)?;
 
@@ -143,7 +150,13 @@ fn decode_percent_encoded_path(path: &str) -> Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    Ok(Some(PathBuf::from(current.replace('\\', "/"))))
+    if current.contains('\\') {
+        return Err(ValidationError::Path(
+            "Path contains backslashes (\\)".into(),
+        ));
+    }
+
+    Ok(Some(PathBuf::from(current)))
 }
 
 /// Sanitize a filename component for safe storage and display  

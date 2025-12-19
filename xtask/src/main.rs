@@ -496,7 +496,7 @@ fn ci_postgres(
             .arg(format!("-k {} -p {}", socket_dir.display(), port));
         c
     })?;
-    let _guard = PgInstance {
+    let pg_guard = PgInstance {
         data_dir: data_dir.clone(),
     };
 
@@ -549,6 +549,7 @@ fn ci_postgres(
     if !status.success() {
         bail!("command {:?} failed with status {status}", command);
     }
+    drop(pg_guard);
     Ok(())
 }
 

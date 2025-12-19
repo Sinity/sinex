@@ -1162,12 +1162,55 @@ impl DatabasePool {
                                         continue;
                                     }
                                 }
+                            } else if is_timescaledb_missing_library_error(&err) {
+                                eprintln!(
+                                    "♻️  Slot {} appears to reference a missing TimescaleDB library; recreating it",
+                                    slot.name
+                                );
+                                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                                continue;
                             } else {
                                 continue; // Try next slot
                             }
                         }
                     },
                 };
+
+                // Fast liveness check: stale pool DBs can be present but unusable after a
+                // TimescaleDB upgrade (versioned shared object filenames). Detect early and heal.
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        if is_timescaledb_missing_library_error(&err) {
+                            eprintln!(
+                                "♻️  Slot {} is broken (missing TimescaleDB library); recreating it",
+                                slot.name
+                            );
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                        } else {
+                            eprintln!(
+                                "⚠️  Slot {} failed liveness check ({}); trying next slot",
+                                slot.name, err
+                            );
+                            let _ = pool.close().await;
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Slot {} liveness check timed out; trying next slot",
+                            slot.name
+                        );
+                        let _ = pool.close().await;
+                        continue;
+                    }
+                }
 
                 // Preflight session state sanity on a fresh slot pool.
                 // Guard it with a timeout: under heavy parallelism (or slow connection startup),
@@ -1181,6 +1224,15 @@ impl DatabasePool {
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
+                        if is_timescaledb_missing_library_error_message(&e.to_string()) {
+                            eprintln!(
+                                "♻️  Slot {} session preflight hit missing TimescaleDB library; recreating it",
+                                slot.name
+                            );
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                            continue;
+                        }
                         eprintln!(
                             "⚠️  Slot {} failed session preflight ({}); trying next slot",
                             slot.name, e
@@ -1221,14 +1273,44 @@ impl DatabasePool {
                         }
                     };
 
-                let lock_acquired: bool = tokio::time::timeout(
+                let lock_acquired: bool = match tokio::time::timeout(
                     Duration::from_secs(5),
                     sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
                         .bind(lock_id)
                         .fetch_one(lock_conn.as_mut()),
                 )
                 .await
-                .map_err(|_| SinexError::database("Advisory lock query timeout".to_string()))??;
+                {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(err)) => {
+                        if is_timescaledb_missing_library_error(&err) {
+                            eprintln!(
+                                "♻️  Slot {} advisory-lock query hit missing TimescaleDB library; recreating it",
+                                slot.name
+                            );
+                            drop(lock_conn);
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                        } else {
+                            eprintln!(
+                                "⚠️  Advisory-lock query failed for {}: {}; trying next slot",
+                                slot.name, err
+                            );
+                            drop(lock_conn);
+                            let _ = pool.close().await;
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Advisory-lock query timed out for {}; trying next slot",
+                            slot.name
+                        );
+                        drop(lock_conn);
+                        let _ = pool.close().await;
+                        continue;
+                    }
+                };
 
                 if !lock_acquired {
                     // Another process has this database, try next
@@ -1354,6 +1436,28 @@ fn is_missing_database_error(err: &sqlx::Error) -> bool {
                 || db_err.message().contains("does not exist")
         }
         _ => err.to_string().contains("does not exist"),
+    }
+}
+
+fn is_timescaledb_missing_library_error_message(message: &str) -> bool {
+    // Nix-packaged TimescaleDB uses versioned shared objects (e.g. `timescaledb-2.23.0`).
+    // Stale cloned databases can keep referencing the old filename and fail to run even `SELECT 1`.
+    let msg = message.to_ascii_lowercase();
+    msg.contains("could not access file \"$libdir/timescaledb-")
+        || (msg.contains("could not access file")
+            && msg.contains("timescaledb-")
+            && msg.contains("no such file"))
+        || (msg.contains("could not load library")
+            && msg.contains("timescaledb")
+            && msg.contains("no such file"))
+}
+
+fn is_timescaledb_missing_library_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            is_timescaledb_missing_library_error_message(db_err.message())
+        }
+        _ => is_timescaledb_missing_library_error_message(&err.to_string()),
     }
 }
 
@@ -1663,7 +1767,8 @@ async fn clean_database(
                 let retryable = msg.contains("does not exist")
                     || msg.contains("terminating connection")
                     || msg.contains("Broken pipe")
-                    || msg.contains("connection");
+                    || msg.contains("connection")
+                    || is_timescaledb_missing_library_error_message(&msg);
 
                 if retryable && attempt < 3 {
                     eprintln!(
@@ -1763,6 +1868,14 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
     let template_name = template_guard.info.name.clone();
 
     let recreate_result: Result<()> = async {
+        // Prevent multiple processes from concurrently dropping/recreating the same pool DB.
+        // We rely on closing `template_guard.admin_conn` to release this lock.
+        let recreate_lock_id = advisory_lock_key(&format!("{db_name}::recreate"));
+        let _ = sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(recreate_lock_id)
+            .execute(&mut template_guard.admin_conn)
+            .await;
+
         drop_database_if_exists_admin(&mut template_guard.admin_conn, db_name).await?;
         wait_for_database_absence_admin(&mut template_guard.admin_conn, db_name).await?;
 
