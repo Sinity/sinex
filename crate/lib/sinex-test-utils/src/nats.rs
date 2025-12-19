@@ -36,28 +36,46 @@ impl EphemeralNats {
     pub async fn start() -> Result<Self> {
         let binary = Self::resolve_binary()?;
 
-        let port = Self::reserve_port()?;
-        let url = format!("127.0.0.1:{port}");
-
         let store_dir = TempDir::new()?;
         tokio::fs::create_dir_all(store_dir.path()).await?;
 
-        let mut child = Command::new(binary)
-            .arg("--jetstream")
-            .arg("--store_dir")
-            .arg(store_dir.path())
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--http_port")
-            .arg("0")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
+        // Nextest runs tests concurrently in separate processes. The old "reserve a port then
+        // spawn" approach can race and accidentally attach multiple EphemeralNats instances to
+        // the same port, which later causes cross-test interference when one test kills the
+        // shared server. Retry a few times and ensure the spawned child is the server we connect
+        // to before declaring readiness.
+        let (url, child) = {
+            const MAX_ATTEMPTS: usize = 10;
+            let mut attempt = 0usize;
+            loop {
+                attempt += 1;
+                let port = Self::reserve_port()?;
+                let url = format!("127.0.0.1:{port}");
 
-        Self::wait_for_ready(&url).await.map_err(|err| {
-            let _ = child.start_kill();
-            err
-        })?;
+                let mut child = Command::new(&binary)
+                    .arg("--jetstream")
+                    .arg("--store_dir")
+                    .arg(store_dir.path())
+                    .arg("--port")
+                    .arg(port.to_string())
+                    .arg("--http_port")
+                    .arg("0")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+
+                match Self::wait_for_ready(&url, &mut child).await {
+                    Ok(()) => break (url, child),
+                    Err(err) => {
+                        let _ = child.start_kill();
+                        let _ = timeout(Duration::from_secs(1), child.wait()).await;
+                        if attempt >= MAX_ATTEMPTS {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        };
 
         Ok(Self {
             process: Arc::new(AsyncMutex::new(Some(child))),
@@ -84,8 +102,9 @@ impl EphemeralNats {
             cfg.simulate_latency().await;
             cfg.maybe_fail("simulated connection failure")?;
         }
-        async_nats::connect(&self.url)
+        timeout(Duration::from_secs(5), async_nats::connect(&self.url))
             .await
+            .map_err(|_| eyre!("timed out connecting to NATS at {}", self.url))?
             .map_err(|err| eyre!("failed to connect to NATS at {}: {err}", self.url))
     }
 
@@ -313,16 +332,32 @@ impl EphemeralNats {
         Ok(port)
     }
 
-    async fn wait_for_ready(url: &str) -> Result<()> {
+    async fn wait_for_ready(url: &str, child: &mut Child) -> Result<()> {
         let mut last_err = None;
         for _ in 0..50 {
-            match async_nats::connect(url).await {
-                Ok(client) => {
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(eyre!(
+                    "nats-server process exited before becoming ready (status: {status})"
+                ));
+            }
+
+            match timeout(Duration::from_millis(250), async_nats::connect(url)).await {
+                Ok(Ok(client)) => {
                     drop(client);
+                    // Ensure we didn't accidentally connect to some other NATS instance while our
+                    // child failed to bind (common in port races).
+                    if let Ok(Some(status)) = child.try_wait() {
+                        return Err(eyre!(
+                            "nats-server process exited during startup (status: {status})"
+                        ));
+                    }
                     return Ok(());
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     last_err = Some(err);
+                    sleep(Duration::from_millis(100)).await;
+                }
+                Err(_) => {
                     sleep(Duration::from_millis(100)).await;
                 }
             }

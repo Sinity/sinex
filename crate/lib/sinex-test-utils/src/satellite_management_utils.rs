@@ -129,17 +129,37 @@ pub async fn start_test_ingestd_with_config(
         }
     });
 
-    // Verify service is ready by checking NATS stream exists
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // Verify service is ready by checking NATS stream exists and the durable consumer
+    // is created (so tests don't have to guess with arbitrary sleeps).
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
-            match jetstream.get_stream(&ingest_config.nats_stream_name).await {
-                Ok(_) => break,
+            if join_handle.is_finished() {
+                return Err(SinexError::service(
+                    "ingestd runner exited before becoming ready",
+                ));
+            }
+
+            let stream = match jetstream.get_stream(&ingest_config.nats_stream_name).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+
+            match stream
+                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
+                    &ingest_config.nats_consumer_name,
+                )
+                .await
+            {
+                Ok(_) => return Ok(()),
                 Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
             }
         }
     })
     .await
-    .map_err(|_| SinexError::service("ingestd stream did not become ready"))?;
+    .map_err(|_| SinexError::service("ingestd consumer did not become ready"))??;
 
     let handle = TestIngestdHandle {
         stream_name: ingest_config.nats_stream_name,

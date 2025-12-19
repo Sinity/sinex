@@ -854,10 +854,6 @@ mod tests {
 
     #[sinex_test]
     async fn handle_file_created_emits_event(ctx: TestContext) -> color_eyre::Result<()> {
-        let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
         let nats = EphemeralNats::start().await?;
         let nats_client = nats.connect().await?;
 
@@ -898,13 +894,17 @@ mod tests {
             _ => panic!("expected material provenance"),
         };
 
+        // Acquisition is JetStream-first; ingestd is the sole writer for DB material state.
+        // This unit test runs without ingestd, so nothing should be persisted.
         let record = ctx
             .pool
             .source_materials()
             .get_by_id(Id::from_ulid(material_ulid))
-            .await?
-            .expect("source material persisted");
-        assert_eq!(record.status.as_str(), "completed");
+            .await?;
+        assert!(
+            record.is_none(),
+            "source material unexpectedly persisted; ingestd should be the sole DB writer"
+        );
 
         let total_bytes: Option<i64> = sqlx::query_scalar(
             "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
@@ -913,11 +913,10 @@ mod tests {
         .fetch_optional(&ctx.pool)
         .await?;
 
-        assert_eq!(total_bytes.unwrap_or_default(), 11);
-
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-        ctx.force_cleanup().await?;
+        assert!(
+            total_bytes.is_none(),
+            "temporal ledger unexpectedly persisted; ingestd should be the sole DB writer"
+        );
         Ok(())
     }
 }

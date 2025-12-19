@@ -12,8 +12,9 @@ use sinex_core::types::ulid::Ulid;
 
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
-use sqlx::postgres::{PgConnection, PgPoolOptions};
+use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Error, Postgres};
+use sqlx::Row;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -213,53 +214,106 @@ pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct TemplateStamp {
-    template_name: String,
+struct TemplateMeta {
     fingerprint: String,
     extensions: HashMap<String, String>,
 }
 
-fn template_stamp_path() -> Option<PathBuf> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .map(PathBuf::from)
-        .unwrap_or(manifest_dir);
+#[derive(Debug, Clone)]
+struct TemplateInfo {
+    name: String,
+    extensions: HashMap<String, String>,
+}
 
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join("target"));
+/// Holds a shared advisory lock for the template database on a live admin connection.
+///
+/// Nextest runs each test in its own process, so we need a cross-process coordination mechanism
+/// that ensures the template database cannot be dropped/recreated while this process is cloning
+/// pool databases from it.
+struct TemplateGuard {
+    info: TemplateInfo,
+    lock_key: i64,
+    admin_conn: PgConnection,
+}
 
-    Some(
-        target_dir
-            .join("sinex-test-utils")
-            .join("template_stamp.json"),
+impl TemplateGuard {
+    async fn release(mut self) -> Result<()> {
+        let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+            .bind(self.lock_key)
+            .execute(&mut self.admin_conn)
+            .await;
+        self.admin_conn.close().await?;
+        Ok(())
+    }
+}
+
+async fn load_template_meta(
+    conn: &mut PgConnection,
+    template_name: &str,
+) -> Result<Option<TemplateMeta>> {
+    let comment: Option<String> = sqlx::query_scalar(
+        "SELECT shobj_description(d.oid, 'pg_database') \
+         FROM pg_database d \
+         WHERE d.datname = $1",
     )
+    .bind(template_name)
+    .fetch_optional(conn)
+    .await?
+    .flatten();
+
+    let Some(comment) = comment else {
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<TemplateMeta>(&comment) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(_) => Ok(None),
+    }
 }
 
-fn load_template_stamp() -> Option<TemplateStamp> {
-    let path = template_stamp_path()?;
-    let data = fs::read(path).ok()?;
-    serde_json::from_slice(&data).ok()
-}
+async fn default_extension_versions(conn: &mut PgConnection) -> Result<HashMap<String, String>> {
+    // We only care about extensions that can invalidate a previously-created template/pool DB
+    // across a NixOS upgrade (due to versioned shared-object filenames).
+    //
+    // Do this query on an admin connection (not the template DB) so we don't block cloning with
+    // a live session connected to the template.
+    let rows = sqlx::query(
+        "SELECT name, default_version \
+         FROM pg_available_extensions \
+         WHERE name IN ('timescaledb','ulid','pg_jsonschema','vector')",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
 
-fn store_template_stamp(stamp: &TemplateStamp) {
-    if let Some(path) = template_stamp_path() {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        match serde_json::to_vec_pretty(stamp) {
-            Ok(payload) => {
-                if let Err(err) = fs::write(&path, payload) {
-                    warn!("Failed to write template stamp to {:?}: {}", path, err);
-                }
-            }
-            Err(err) => warn!("Failed to serialize template stamp: {}", err),
+    let mut versions = HashMap::new();
+    for row in rows {
+        let name: String = row.try_get("name")?;
+        let default_version: Option<String> = row.try_get("default_version")?;
+        if let Some(v) = default_version {
+            versions.insert(name, v);
         }
     }
+    Ok(versions)
+}
+
+async fn store_template_meta(
+    conn: &mut PgConnection,
+    template_name: &str,
+    meta: &TemplateMeta,
+) -> Result<()> {
+    let payload = serde_json::to_string(meta)
+        .map_err(|e| SinexError::unknown(format!("Failed to serialize template meta: {e}")))?;
+
+    // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
+    // so embed a properly escaped string literal. JSON doesn't normally contain
+    // single quotes, but escape defensively anyway.
+    let escaped = payload.replace('\'', "''");
+    let quoted = quote_ident(template_name);
+    sqlx::query(&format!("COMMENT ON DATABASE {quoted} IS '{escaped}'"))
+        .execute(conn)
+        .await?;
+
+    Ok(())
 }
 
 fn migrations_fingerprint() -> Option<String> {
@@ -305,11 +359,15 @@ impl Default for PoolConfig {
         let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
             .or_else(|_| std::env::var("SINEX_TESTUTILS_ADMIN_URL"))
             .unwrap_or_else(|_| force_user(&replace_db_name(&base_url, "postgres"), "postgres"));
+        let default_size = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8)
+            .clamp(8, 32);
         let size = std::env::var("SINEX_TESTUTILS_POOL_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|&s: &usize| s > 0)
-            .unwrap_or(8);
+            .unwrap_or(default_size);
 
         let mut config = Self {
             size,
@@ -401,14 +459,24 @@ impl PoolConfig {
 
 /// A test database handle that automatically returns to pool on Drop
 /// This is the primary interface for test database access
-#[derive(Debug)]
 pub struct TestDatabase {
     name: String,
     pool: DbPool,
     slot: Arc<DatabaseSlot>,
     lock_id: i64, // Store advisory lock ID for cleanup
+    lock_conn: Option<PoolConnection<Postgres>>,
     acquired_at: Instant,
     acquisition_process_id: u32,
+}
+
+impl std::fmt::Debug for TestDatabase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestDatabase")
+            .field("name", &self.name)
+            .field("lock_id", &self.lock_id)
+            .field("acquisition_process_id", &self.acquisition_process_id)
+            .finish()
+    }
 }
 
 impl TestDatabase {
@@ -488,11 +556,12 @@ pub struct DatabaseStats {
 }
 
 /// Cleanup task for background processing
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CleanupTask {
     lock_id: i64,
     pool: DbPool,
     slot_name: String,
+    lock_conn: Option<PoolConnection<Postgres>>,
 }
 
 /// Background cleanup manager to handle resource cleanup safely
@@ -515,38 +584,49 @@ impl CleanupManager {
     }
 
     fn schedule_cleanup(&self, task: CleanupTask) {
-        if self.sender.send(task.clone()).is_err() {
-            eprintln!("⚠️  Cleanup manager channel closed, running cleanup inline");
-            tokio::spawn(async move {
-                CleanupManager::process_cleanup_task(task).await;
-            });
+        match self.sender.send(task) {
+            Ok(()) => {}
+            Err(err) => {
+                let task = err.0;
+                eprintln!("⚠️  Cleanup manager channel closed, running cleanup inline");
+                tokio::spawn(async move {
+                    CleanupManager::process_cleanup_task(task).await;
+                });
+            }
         }
     }
 
     async fn process_cleanup_task(task: CleanupTask) {
-        // Try to release the advisory lock with a timeout
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            sqlx::query("SELECT pg_advisory_unlock($1)")
-                .bind(task.lock_id)
-                .execute(&task.pool),
-        )
-        .await
-        {
-            Ok(Ok(_)) => eprintln!(
-                "✅ Released advisory lock {} for {}",
-                task.lock_id, task.slot_name
-            ),
-            Ok(Err(e)) => {
-                eprintln!(
-                    "⚠️  Failed to release advisory lock {} for {}: {}",
-                    task.lock_id, task.slot_name, e
-                )
+        // Advisory locks are per-session; we must unlock on the same connection that acquired it.
+        if let Some(mut lock_conn) = task.lock_conn {
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                sqlx::query("SELECT pg_advisory_unlock($1)")
+                    .bind(task.lock_id)
+                    .execute(lock_conn.as_mut()),
+            )
+            .await
+            {
+                Ok(Ok(_)) => eprintln!(
+                    "✅ Released advisory lock {} for {}",
+                    task.lock_id, task.slot_name
+                ),
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "⚠️  Failed to release advisory lock {} for {}: {}",
+                        task.lock_id, task.slot_name, e
+                    )
+                }
+                Err(_) => eprintln!(
+                    "⚠️  Timeout releasing advisory lock {} for {} (pool may be shutting down)",
+                    task.lock_id, task.slot_name
+                ),
             }
-            Err(_) => eprintln!(
-                "⚠️  Timeout releasing advisory lock {} for {} (pool may be shutting down)",
-                task.lock_id, task.slot_name
-            ),
+        } else {
+            eprintln!(
+                "⚠️  Missing lock connection for {} (lock_id: {}); forcing pool close",
+                task.slot_name, task.lock_id
+            );
         }
 
         // Close the pool with a timeout
@@ -578,6 +658,7 @@ impl Drop for TestDatabase {
             lock_id,
             pool: self.pool.clone(),
             slot_name: self.name.clone(),
+            lock_conn: self.lock_conn.take(),
         });
 
         // Clear the pool reference immediately
@@ -672,19 +753,67 @@ impl DatabasePool {
             config.slot_max_connections, config.admin_max_connections
         );
 
-        // Ensure template exists
-        ensure_template_database(
+        // Nextest runs each test in its own process; doing eager DDL (template checks + creating
+        // N pool DBs) in every process causes severe lock contention and tests hit the per-test
+        // 30s watchdog. Under nextest, we build the in-memory slot list only, and provision pool
+        // databases lazily when acquired.
+        let is_nextest =
+            std::env::var_os("NEXTEST_RUN_ID").is_some() || std::env::var_os("NEXTEST").is_some();
+        let eager_override = std::env::var_os("SINEX_TESTUTILS_EAGER_PROVISION").is_some();
+        if is_nextest && !eager_override {
+            let template_guard = ensure_template_database(
+                &config.admin_url,
+                &config.base_url,
+                config.slot_max_connections,
+            )
+            .await?;
+            let _ = template_guard.release().await;
+
+            let mut slots = Vec::with_capacity(config.size);
+            for i in 0..config.size {
+                let name = format!("sinex_test_pool_{i}");
+                let url = config.base_url.replace("/sinex_dev", &format!("/{name}"));
+                slots.push(Arc::new(DatabaseSlot {
+                    name,
+                    url,
+                    pool: Mutex::new(None),
+                    in_use: AtomicBool::new(false),
+                    last_acquired: Mutex::new(None),
+                    last_released: Mutex::new(None),
+                    last_clean_time: Mutex::new(None),
+                    last_clean_result: Mutex::new(None),
+                    last_residuals: Mutex::new(None),
+                    quarantined: AtomicBool::new(false),
+                }));
+            }
+
+            eprintln!(
+                "✅ Database pool initialized with {} databases (nextest lazy provisioning)",
+                slots.len()
+            );
+
+            return Ok(Self {
+                slots,
+                slot_max_connections: config.slot_max_connections.max(1),
+            });
+        }
+
+        // Ensure template exists and capture its extension versions (without connecting to the
+        // template DB outside the advisory lock).
+        let template_guard = ensure_template_database(
             &config.admin_url,
             &config.base_url,
             config.slot_max_connections,
         )
         .await?;
+        let template = template_guard.info.clone();
 
-        // Create admin connection
-        let admin_pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(config.admin_max_connections)
-            .connect(&config.admin_url)
-            .await?;
+        let result: Result<Self> = async {
+            // Create admin connection
+            let admin_pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(config.admin_max_connections)
+                .connect(&config.admin_url)
+                .await?;
 
         // Clean up any non-pool test databases (from old test runs)
         let non_pool_count: i64 = sqlx::query_scalar(
@@ -715,43 +844,29 @@ impl DatabasePool {
             }
         }
 
+        // Pool provisioning lock: ensure only one nextest process performs the (potentially
+        // expensive) pool database creation/recreation at a time. Without this, multiple tests
+        // can race to provision the pool and end up spending most of the per-test timeout just
+        // queueing behind `CREATE DATABASE ... TEMPLATE ...`.
+        let mut provision_conn = connect_admin_with_retry(&config.admin_url).await?;
+        let provision_lock = advisory_lock_key(&format!("{}::pool_provision", template.name));
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(provision_lock)
+            .execute(&mut provision_conn)
+            .await?;
+
         // Create all databases in parallel
         let mut slots = Vec::with_capacity(config.size);
         let mut tasks = Vec::new();
 
-        // Compute template URL and capture extension versions from the fresh template
-        let template_url = config
-            .base_url
-            .replace("/sinex_dev", &format!("/{}", config.template_name));
-        // Fetch extension versions from template for drift detection
-        let template_ext_versions: std::collections::HashMap<String, String> = {
-            let mut map = std::collections::HashMap::new();
-            if let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .connect(&template_url)
-                .await
-            {
-                if let Ok(rows) = sqlx::query!(
-        r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pg_jsonschema','vector')"#
-                )
-                .fetch_all(&pool)
-                .await
-                {
-                    for row in rows {
-                        map.insert(row.extname, row.extversion);
-                    }
-                }
-                let _ = pool.close().await;
-            }
-            map
-        };
+        let template_ext_versions = template.extensions.clone();
 
         let slot_max_conns = config.slot_max_connections;
 
         for i in 0..config.size {
             let admin_pool = admin_pool.clone();
             let base_url = config.base_url.clone();
-            let template_name = config.template_name.clone();
+            let template_name = template.name.clone();
             let template_ext_versions = template_ext_versions.clone();
 
             let task = tokio::spawn(async move {
@@ -976,15 +1091,30 @@ impl DatabasePool {
             }));
         }
 
-        eprintln!(
-            "✅ Database pool initialized with {} databases",
-            slots.len()
-        );
+        provision_conn.close().await?;
 
-        Ok(Self {
-            slots,
-            slot_max_connections: slot_max_conns.max(1),
-        })
+            eprintln!(
+                "✅ Database pool initialized with {} databases",
+                slots.len()
+            );
+
+            Ok(Self {
+                slots,
+                slot_max_connections: slot_max_conns.max(1),
+            })
+        }
+        .await;
+
+        match result {
+            Ok(pool) => {
+                template_guard.release().await?;
+                Ok(pool)
+            }
+            Err(err) => {
+                let _ = template_guard.release().await;
+                Err(err)
+            }
+        }
     }
 
     /// Acquire a database from the pool
@@ -1014,37 +1144,203 @@ impl DatabasePool {
                     continue;
                 }
 
-                // Try to connect to this database
-                let pool = match sqlx::postgres::PgPoolOptions::new()
-                    .max_connections(self.slot_max_connections)
-                    .acquire_timeout(Duration::from_secs(2)) // Shorter timeout for faster iteration
-                    .connect(&slot.url)
-                    .await
-                {
-                    Ok(pool) => pool,
-                    Err(_) => continue, // Try next slot
+                // Try to connect to this database. Under nextest we provision pool databases
+                // lazily; if the DB is missing, create it from the shared template then retry.
+                let connect_opts = || {
+                    sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(self.slot_max_connections)
+                        .acquire_timeout(Duration::from_secs(2)) // Shorter timeout for faster iteration
+                        .connect(&slot.url)
                 };
 
-                // Preflight session state sanity on a fresh slot pool
-                if let Err(e) = ensure_default_session_state(&pool).await {
-                    eprintln!(
-                        "⚠️  Slot {} failed session preflight ({}); recreating slot pool",
-                        slot.name, e
-                    );
-                    let _ = pool.close().await;
-                    continue;
+                let pool = match tokio::time::timeout(Duration::from_secs(5), connect_opts()).await
+                {
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Timed out connecting to {}; trying next slot",
+                            slot.name
+                        );
+                        continue;
+                    }
+                    Ok(res) => match res {
+                        Ok(pool) => pool,
+                        Err(err) => {
+                            if is_missing_database_error(&err) {
+                                if let Err(e) =
+                                    ensure_pool_database_exists(&slot.name, &slot.url).await
+                                {
+                                    eprintln!(
+                                        "⚠️  Failed to lazily provision {}: {}; trying next slot",
+                                        slot.name, e
+                                    );
+                                    continue;
+                                }
+                                match tokio::time::timeout(Duration::from_secs(5), connect_opts())
+                                    .await
+                                {
+                                    Ok(Ok(pool)) => pool,
+                                    Ok(Err(_)) => continue,
+                                    Err(_) => {
+                                        eprintln!(
+                                        "⚠️  Timed out connecting to {} after provisioning; trying next slot",
+                                        slot.name
+                                    );
+                                        continue;
+                                    }
+                                }
+                            } else if is_timescaledb_missing_library_error(&err) {
+                                eprintln!(
+                                    "♻️  Slot {} appears to reference a missing TimescaleDB library; recreating it",
+                                    slot.name
+                                );
+                                let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                                continue;
+                            } else {
+                                continue; // Try next slot
+                            }
+                        }
+                    },
+                };
+
+                // Fast liveness check: stale pool DBs can be present but unusable after a
+                // TimescaleDB upgrade (versioned shared object filenames). Detect early and heal.
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        if is_timescaledb_missing_library_error(&err) {
+                            eprintln!(
+                                "♻️  Slot {} is broken (missing TimescaleDB library); recreating it",
+                                slot.name
+                            );
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                        } else {
+                            eprintln!(
+                                "⚠️  Slot {} failed liveness check ({}); trying next slot",
+                                slot.name, err
+                            );
+                            let _ = pool.close().await;
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Slot {} liveness check timed out; trying next slot",
+                            slot.name
+                        );
+                        let _ = pool.close().await;
+                        continue;
+                    }
                 }
 
-                // Try to acquire an advisory lock for this database
-                // Use a compound lock ID: slot_index + process_id for better uniqueness
-                let lock_id = (1000 + slot_index as i64) * 100000 + (pid as i64);
-                let lock_acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-                    .bind(lock_id)
-                    .fetch_one(&pool)
-                    .await?;
+                // Preflight session state sanity on a fresh slot pool.
+                // Guard it with a timeout: under heavy parallelism (or slow connection startup),
+                // we prefer to proceed and rely on `clean_database` to establish a good session
+                // state rather than hanging until the per-test watchdog trips.
+                match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    ensure_default_session_state(&pool),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        if is_timescaledb_missing_library_error_message(&e.to_string()) {
+                            eprintln!(
+                                "♻️  Slot {} session preflight hit missing TimescaleDB library; recreating it",
+                                slot.name
+                            );
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                            continue;
+                        }
+                        eprintln!(
+                            "⚠️  Slot {} failed session preflight ({}); trying next slot",
+                            slot.name, e
+                        );
+                        let _ = pool.close().await;
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Slot {} session preflight timed out; continuing without it",
+                            slot.name
+                        );
+                    }
+                }
+
+                // Acquire an advisory lock for this slot using a stable key.
+                // Advisory locks are per-session; hold the lock on a dedicated connection for
+                // the duration of the test to guarantee cross-process mutual exclusion.
+                let lock_id = advisory_lock_key(&slot.name);
+                let mut lock_conn =
+                    match tokio::time::timeout(Duration::from_secs(5), pool.acquire()).await {
+                        Ok(Ok(conn)) => conn,
+                        Ok(Err(err)) => {
+                            eprintln!(
+                            "⚠️  Failed to acquire lock connection for {}: {}; trying next slot",
+                            slot.name, err
+                        );
+                            let _ = pool.close().await;
+                            continue;
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "⚠️  Timed out acquiring lock connection for {}; trying next slot",
+                                slot.name
+                            );
+                            let _ = pool.close().await;
+                            continue;
+                        }
+                    };
+
+                let lock_acquired: bool = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                        .bind(lock_id)
+                        .fetch_one(lock_conn.as_mut()),
+                )
+                .await
+                {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(err)) => {
+                        if is_timescaledb_missing_library_error(&err) {
+                            eprintln!(
+                                "♻️  Slot {} advisory-lock query hit missing TimescaleDB library; recreating it",
+                                slot.name
+                            );
+                            drop(lock_conn);
+                            let _ = pool.close().await;
+                            let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                        } else {
+                            eprintln!(
+                                "⚠️  Advisory-lock query failed for {}: {}; trying next slot",
+                                slot.name, err
+                            );
+                            drop(lock_conn);
+                            let _ = pool.close().await;
+                        }
+                        continue;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "⚠️  Advisory-lock query timed out for {}; trying next slot",
+                            slot.name
+                        );
+                        drop(lock_conn);
+                        let _ = pool.close().await;
+                        continue;
+                    }
+                };
 
                 if !lock_acquired {
                     // Another process has this database, try next
+                    drop(lock_conn);
                     pool.close().await;
                     continue;
                 }
@@ -1055,8 +1351,9 @@ impl DatabasePool {
                     pid, slot.name, lock_id
                 );
 
-                // Store lock info in the slot for cleanup
-                // Immediately mark as in use to prevent intra-process races\n                slot.in_use.store(true, Ordering::SeqCst);\n\n                // Verify we still hold the lock after setting in_use flag\n                let lock_verified: bool = sqlx::query_scalar(\n                    \"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND pid = pg_backend_pid())\"\n                )\n                .bind(lock_id)\n                .fetch_one(&pool)\n                .await?;\n\n                if !lock_verified {\n                    // We lost the lock somehow, mark as not in use and try next\n                    slot.in_use.store(false, Ordering::SeqCst);\n                    pool.close().await;\n                    eprintln!(\"⚠️  Lock verification failed for slot {}, trying next\", slot.name);\n                    continue;\n                }
+                // Mark as in use (intra-process coordination). Inter-process coordination is
+                // enforced by holding the advisory lock on `lock_conn`.
+                slot.in_use.store(true, Ordering::SeqCst);
                 {
                     let mut pool_opt = slot.pool.lock();
                     *pool_opt = Some(pool.clone());
@@ -1079,6 +1376,7 @@ impl DatabasePool {
                             pool: pool.clone(),
                             slot: slot.clone(),
                             lock_id,
+                            lock_conn: Some(lock_conn),
                             acquired_at: Instant::now(),
                             acquisition_process_id: pid,
                         });
@@ -1087,11 +1385,12 @@ impl DatabasePool {
                         eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
                         POOL_METRICS.record_cleanup_failure();
 
-                        // Release the advisory lock
+                        // Release the advisory lock on the same session that acquired it.
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                             .bind(lock_id)
-                            .execute(&pool)
+                            .execute(lock_conn.as_mut())
                             .await;
+                        drop(lock_conn);
                         pool.close().await;
                         {
                             let mut pool_opt = slot.pool.lock();
@@ -1139,14 +1438,134 @@ async fn database_exists(conn: &mut PoolConnection<Postgres>, name: &str) -> Res
     Ok(exists)
 }
 
+async fn database_exists_admin(conn: &mut PgConnection, name: &str) -> Result<bool> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+            .bind(name)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok(exists)
+}
+
+fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+fn is_missing_database_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            db_err
+                .code()
+                .as_ref()
+                .map(|c| c.as_ref() == "3D000")
+                .unwrap_or(false)
+                || db_err.message().contains("does not exist")
+        }
+        _ => err.to_string().contains("does not exist"),
+    }
+}
+
+fn is_timescaledb_missing_library_error_message(message: &str) -> bool {
+    // Nix-packaged TimescaleDB uses versioned shared objects (e.g. `timescaledb-2.23.0`).
+    // Stale cloned databases can keep referencing the old filename and fail to run even `SELECT 1`.
+    let msg = message.to_ascii_lowercase();
+    msg.contains("could not access file \"$libdir/timescaledb-")
+        || (msg.contains("could not access file")
+            && msg.contains("timescaledb-")
+            && msg.contains("no such file"))
+        || (msg.contains("could not load library")
+            && msg.contains("timescaledb")
+            && msg.contains("no such file"))
+}
+
+fn is_timescaledb_missing_library_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            is_timescaledb_missing_library_error_message(db_err.message())
+        }
+        _ => is_timescaledb_missing_library_error_message(&err.to_string()),
+    }
+}
+
+async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> Result<()> {
+    let admin_url = admin_url_from_slot(slot_url)?;
+    let base_url = base_url_from_slot(slot_url)?;
+
+    let slot_max_connections = std::env::var("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(4);
+
+    let mut template_guard =
+        ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
+    let template_name = template_guard.info.name.clone();
+    let start = Instant::now();
+
+    let provision_result: Result<()> = async {
+        if !database_exists_admin(&mut template_guard.admin_conn, db_name).await? {
+            match create_database_from_template_admin(
+                &mut template_guard.admin_conn,
+                db_name,
+                &template_name,
+            )
+            .await?
+            {
+                CreateDatabaseOutcome::Created => {
+                    eprintln!(
+                        "  Created missing pool database: {db_name} (clone: {:?})",
+                        start.elapsed()
+                    );
+                }
+                CreateDatabaseOutcome::AlreadyExists => {}
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    let release_result = template_guard.release().await;
+    match provision_result {
+        Ok(()) => {
+            release_result?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = release_result;
+            Err(e)
+        }
+    }
+}
+
 async fn drop_database_if_exists(conn: &mut PoolConnection<Postgres>, name: &str) -> Result<()> {
-    let drop_force = sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+    let quoted = quote_ident(name);
+    let drop_force = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
         .execute(conn.as_mut())
         .await;
 
     if let Err(force_err) = drop_force {
-        let fallback = sqlx::query(&format!("DROP DATABASE IF EXISTS {name}"))
+        let fallback = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
             .execute(conn.as_mut())
+            .await;
+
+        if let Err(drop_err) = fallback {
+            return Err(SinexError::database(format!(
+                "Failed to drop database {name}: {force_err}; fallback error: {drop_err}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+async fn drop_database_if_exists_admin(conn: &mut PgConnection, name: &str) -> Result<()> {
+    let quoted = quote_ident(name);
+    let drop_force = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+        .execute(&mut *conn)
+        .await;
+
+    if let Err(force_err) = drop_force {
+        let fallback = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
+            .execute(&mut *conn)
             .await;
 
         if let Err(drop_err) = fallback {
@@ -1175,6 +1594,22 @@ async fn wait_for_database_absence(conn: &mut PoolConnection<Postgres>, name: &s
     )))
 }
 
+async fn wait_for_database_absence_admin(conn: &mut PgConnection, name: &str) -> Result<()> {
+    const MAX_ATTEMPTS: usize = 20;
+    for attempt in 0..MAX_ATTEMPTS {
+        if !database_exists_admin(conn, name).await? {
+            return Ok(());
+        }
+
+        let delay = Duration::from_millis(50 + (attempt as u64 * 10));
+        tokio::time::sleep(delay).await;
+    }
+
+    Err(SinexError::database(format!(
+        "Database {name} still present after drop attempts"
+    )))
+}
+
 /// Grant schema permissions to app user on a newly created pool database.
 ///
 /// This uses the centralized permissions module which automatically grants on ALL
@@ -1188,8 +1623,26 @@ async fn create_database_from_template(
     name: &str,
     template_name: &str,
 ) -> Result<CreateDatabaseOutcome> {
-    match sqlx::query(&format!(
-        "CREATE DATABASE {name} WITH TEMPLATE {template_name}"
+    // Prevent concurrent template recreation while cloning.
+    let template_lock_id = advisory_lock_key(template_name);
+    sqlx::query("SELECT pg_advisory_lock_shared($1)")
+        .bind(template_lock_id)
+        .execute(conn.as_mut())
+        .await?;
+
+    // Serialize CREATE DATABASE ... TEMPLATE ... calls; Postgres can error when the template is
+    // concurrently used as a copy source.
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(conn.as_mut())
+        .await?;
+
+    let quoted_name = quote_ident(name);
+    let quoted_template = quote_ident(template_name);
+
+    let result = match sqlx::query(&format!(
+        "CREATE DATABASE {quoted_name} WITH TEMPLATE {quoted_template}"
     ))
     .execute(conn.as_mut())
     .await
@@ -1210,13 +1663,82 @@ async fn create_database_from_template(
                     })
                     .unwrap_or(false);
                 if duplicate_code || db_err.message().contains("already exists") {
-                    return Ok(CreateDatabaseOutcome::AlreadyExists);
+                    Ok(CreateDatabaseOutcome::AlreadyExists)
+                } else {
+                    Err(SinexError::database(err.to_string()))
                 }
+            } else {
+                Err(SinexError::database(err.to_string()))
             }
-
-            Err(SinexError::database(err.to_string()))
         }
-    }
+    };
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(conn.as_mut())
+        .await;
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+        .bind(template_lock_id)
+        .execute(conn.as_mut())
+        .await;
+
+    result
+}
+
+async fn create_database_from_template_admin(
+    admin_conn: &mut PgConnection,
+    name: &str,
+    template_name: &str,
+) -> Result<CreateDatabaseOutcome> {
+    // Serialize CREATE DATABASE ... TEMPLATE ... calls; Postgres can error when the template is
+    // concurrently used as a copy source.
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await?;
+
+    let quoted_name = quote_ident(name);
+    let quoted_template = quote_ident(template_name);
+
+    let result = match sqlx::query(&format!(
+        "CREATE DATABASE {quoted_name} WITH TEMPLATE {quoted_template}"
+    ))
+    .execute(&mut *admin_conn)
+    .await
+    {
+        Ok(_) => {
+            let _ = grant_pool_database_permissions(name).await;
+            Ok(CreateDatabaseOutcome::Created)
+        }
+        Err(err) => {
+            if let Error::Database(db_err) = &err {
+                let duplicate_code = db_err
+                    .code()
+                    .as_ref()
+                    .map(|c| {
+                        let code = c.as_ref();
+                        code == "42P04" || code == "23505"
+                    })
+                    .unwrap_or(false);
+                if duplicate_code || db_err.message().contains("already exists") {
+                    Ok(CreateDatabaseOutcome::AlreadyExists)
+                } else {
+                    Err(SinexError::database(err.to_string()))
+                }
+            } else {
+                Err(SinexError::database(err.to_string()))
+            }
+        }
+    };
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await;
+
+    result
 }
 
 /// Clean a database for reuse
@@ -1271,7 +1793,8 @@ async fn clean_database(
                 let retryable = msg.contains("does not exist")
                     || msg.contains("terminating connection")
                     || msg.contains("Broken pipe")
-                    || msg.contains("connection");
+                    || msg.contains("connection")
+                    || is_timescaledb_missing_library_error_message(&msg);
 
                 if retryable && attempt < 3 {
                     eprintln!(
@@ -1351,31 +1874,59 @@ fn admin_url_from_slot(slot_url: &str) -> Result<String> {
     Ok(url.to_string())
 }
 
+fn base_url_from_slot(slot_url: &str) -> Result<String> {
+    let mut url =
+        Url::parse(slot_url).map_err(|e| SinexError::database(format!("Invalid slot url: {e}")))?;
+    url.set_path("/sinex_dev");
+    Ok(url.to_string())
+}
+
 async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
     let admin_url = admin_url_from_slot(slot_url)?;
-    let template_name = TEMPLATE_DB_NAME
-        .get()
-        .cloned()
-        .unwrap_or_else(|| "sinex_test_template_shared".to_string());
+    let base_url = base_url_from_slot(slot_url)?;
+    let slot_max_connections = std::env::var("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(4);
 
-    let admin_pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(5))
-        .connect(&admin_url)
-        .await
-        .map_err(|e| SinexError::database(format!("Admin connect failed: {e}")))?;
+    let mut template_guard =
+        ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
+    let template_name = template_guard.info.name.clone();
 
-    // Drop and recreate from template
-    sqlx::query(&format!("DROP DATABASE IF EXISTS {db_name}"))
-        .execute(&admin_pool)
-        .await
-        .map_err(|e| SinexError::database(format!("Drop {db_name} failed: {e}")))?;
+    let recreate_result: Result<()> = async {
+        // Prevent multiple processes from concurrently dropping/recreating the same pool DB.
+        // We rely on closing `template_guard.admin_conn` to release this lock.
+        let recreate_lock_id = advisory_lock_key(&format!("{db_name}::recreate"));
+        let _ = sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(recreate_lock_id)
+            .execute(&mut template_guard.admin_conn)
+            .await;
 
-    create_database_from_template(&mut admin_pool.acquire().await?, db_name, &template_name)
+        drop_database_if_exists_admin(&mut template_guard.admin_conn, db_name).await?;
+        wait_for_database_absence_admin(&mut template_guard.admin_conn, db_name).await?;
+
+        create_database_from_template_admin(
+            &mut template_guard.admin_conn,
+            db_name,
+            &template_name,
+        )
         .await?;
+        let _ = grant_pool_database_permissions(db_name).await;
+        Ok(())
+    }
+    .await;
 
-    let _ = grant_pool_database_permissions(db_name).await;
-    Ok(())
+    let release_result = template_guard.release().await;
+    match recreate_result {
+        Ok(()) => {
+            release_result?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = release_result;
+            Err(e)
+        }
+    }
 }
 
 /// Ensure a pooled connection is returned to default session state; best-effort only.
@@ -1591,42 +2142,41 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
     )))
 }
 
+async fn harden_template_database(
+    admin_conn: &mut PgConnection,
+    template_name: &str,
+) -> Result<()> {
+    let quoted = quote_ident(template_name);
+    // Ensure no new sessions can connect to the template DB; lingering connections make
+    // CREATE DATABASE ... TEMPLATE ... fail.
+    let _ = sqlx::query(&format!(
+        "ALTER DATABASE {quoted} WITH ALLOW_CONNECTIONS false"
+    ))
+    .execute(&mut *admin_conn)
+    .await;
+
+    let _ = sqlx::query(
+        "SELECT pg_terminate_backend(pid) \
+         FROM pg_stat_activity \
+         WHERE datname = $1 AND pid <> pg_backend_pid()",
+    )
+    .bind(template_name)
+    .execute(&mut *admin_conn)
+    .await;
+
+    Ok(())
+}
+
 async fn ensure_template_database(
     admin_url: &str,
-    base_url: &str,
+    _base_url: &str,
     slot_max_connections: u32,
-) -> Result<String> {
-    // Fast-path reuse if cached template is reachable.
-    if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        let template_url = replace_db_name(base_url, template_name);
-        if PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(Duration::from_millis(750))
-            .connect(&template_url)
-            .await
-            .is_ok()
-        {
-            return Ok(template_name.clone());
-        } else {
-            eprintln!("♻️  Cached template {template_name} is inaccessible; forcing rebuild");
-        }
-    }
+) -> Result<TemplateGuard> {
+    // Important: never connect to the template database just to "check it exists". Any session
+    // connected to the template makes `CREATE DATABASE ... TEMPLATE ...` fail.
 
     // Acquire lock to prevent race condition between parallel tests
     let _lock = TEMPLATE_CREATION_LOCK.lock().await;
-
-    if let Some(template_name) = TEMPLATE_DB_NAME.get() {
-        let template_url = replace_db_name(base_url, template_name);
-        if PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(Duration::from_millis(750))
-            .connect(&template_url)
-            .await
-            .is_ok()
-        {
-            return Ok(template_name.clone());
-        }
-    }
 
     // Create the template database name - use a shared name based on migrations hash
     // This allows multiple test processes to share the same template
@@ -1641,296 +2191,326 @@ async fn ensure_template_database(
             "⚠️  Unable to compute migrations fingerprint; template caching disabled for this run"
         );
     }
-    let cached_stamp = load_template_stamp();
-    if cached_stamp.is_none() {
-        eprintln!("ℹ️  No template stamp found; first build or stamp unavailable");
-    }
 
     // Connect to admin database with timeout
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
 
     let lock_key = advisory_lock_key(template_name);
-    tokio::time::timeout(
-        Duration::from_secs(120),
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(lock_key)
-            .execute(&mut admin_conn),
-    )
-    .await
-    .map_err(|_| SinexError::database("Template advisory lock timeout"))?
-    .map_err(|e| SinexError::database(format!("Template advisory lock failed: {e}")))?;
 
-    let slot_max_connections = slot_max_connections.max(1);
-    let template_pool_max = slot_max_connections.saturating_mul(2).max(4);
+    // IMPORTANT: nextest runs each test in its own process, so multiple processes can race to
+    // ensure the template at the same time. If we take an exclusive advisory lock up-front, any
+    // process holding a shared lock (e.g. while provisioning the pool) will block all others and
+    // tests will hit the 30s watchdog timeout. Instead:
+    // - take a shared lock to check/reuse (shared/shared is fine)
+    // - only take an exclusive lock when we truly need to recreate
+    // - use try-lock + retry so we never block behind long-lived shared locks
+    let ensure_deadline = Instant::now() + Duration::from_secs(45);
+    let mut backoff = Duration::from_millis(25);
+    loop {
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            sqlx::query("SELECT pg_advisory_lock_shared($1)")
+                .bind(lock_key)
+                .execute(&mut admin_conn),
+        )
+        .await
+        .map_err(|_| SinexError::database("Template shared-lock timeout"))?
+        .map_err(|e| SinexError::database(format!("Template shared-lock failed: {e}")))?;
 
-    let template_url = replace_db_name(base_url, template_name);
-    let template_admin_url = replace_db_name(admin_url, template_name);
+        let slot_max_connections = slot_max_connections.max(1);
+        let template_pool_max = slot_max_connections.saturating_mul(2).max(4);
 
-    // Check if template already exists
-    let exists: bool = sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
-    ))
-    .fetch_one(&mut admin_conn)
-    .await?;
+        let template_admin_url = replace_db_name(admin_url, template_name);
 
-    // Determine if we can reuse the existing template without rebuild
-    let mut reuse_allowed = false;
-    if exists {
-        if let (Some(fp), Some(stamp)) = (&desired_fingerprint, cached_stamp.as_ref()) {
-            if stamp.template_name == template_name && stamp.fingerprint == *fp {
-                if let Ok(pool) = PgPoolOptions::new()
-                    .max_connections(1)
-                    .acquire_timeout(Duration::from_secs(5))
-                    .connect(&template_url)
-                    .await
-                {
-                    match collect_extension_versions(&pool).await {
-                        Ok(current_exts) => {
-                            if current_exts == stamp.extensions {
-                                let events_has_blobs = sqlx::query_scalar::<_, bool>(
-                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
-                                )
-                                .fetch_one(&pool)
-                                .await;
+        // Check if template already exists
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
+        ))
+        .fetch_one(&mut admin_conn)
+        .await?;
 
-                                let events_has_subnano = sqlx::query_scalar::<_, bool>(
-                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'events' \
-                                       AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
-                                )
-                                .fetch_one(&pool)
-                                .await;
-
-                                let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
-                                    "SELECT COUNT(*) = 2 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
-                                       AND column_name IN ('checkpoint_version', 'created_at')",
-                                )
-                                .fetch_one(&pool)
-                                .await;
-
-                                let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
-                                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-                                     WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
-                                       AND column_name = 'updated_at')",
-                                )
-                                .fetch_one(&pool)
-                                .await;
-
-                                match (
-                                    events_has_blobs,
-                                    events_has_subnano,
-                                    checkpoints_has_metadata,
-                                    payload_has_updated_at,
-                                ) {
-                                    (Ok(true), Ok(true), Ok(true), Ok(true)) => {
-                                        eprintln!(
-                                            "✅ Template database {template_name} reused (migrations unchanged)"
-                                        );
-                                        reuse_allowed = true;
-                                    }
-                                    (Ok(false), _, _, _) => {
-                                        eprintln!(
-                                            "♻️  Template {template_name} missing core.events.associated_blob_ids; recreating"
-                                        );
-                                    }
-                                    (_, Ok(false), _, _) => {
-                                        eprintln!(
-                                            "♻️  Template {template_name} missing or mis-typed core.events.ts_orig_subnano; recreating"
-                                        );
-                                    }
-                                    (_, _, Ok(false), _) => {
-                                        eprintln!(
-                                            "♻️  Template {template_name} missing core.processor_checkpoints metadata columns; recreating"
-                                        );
-                                    }
-                                    (_, _, _, Ok(false)) => {
-                                        eprintln!(
-                                            "♻️  Template {template_name} missing sinex_schemas.event_payload_schemas.updated_at; recreating"
-                                        );
-                                    }
-                                    (Err(err), _, _, _)
-                                    | (_, Err(err), _, _)
-                                    | (_, _, Err(err), _)
-                                    | (_, _, _, Err(err)) => {
-                                        eprintln!(
-                                            "⚠️  Failed to inspect template schema ({err}); forcing recreation"
-                                        );
-                                    }
-                                }
-                            } else {
-                                eprintln!(
-                                    "♻️  Template database '{template_name}' extensions drifted; recreating"
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!(
-                                "⚠️  Failed to inspect template extensions ({err}); forcing recreation"
-                            );
-                        }
+        // Determine if we can reuse the existing template without rebuild
+        let mut reuse_allowed = false;
+        let mut reused_extensions: HashMap<String, String> = HashMap::new();
+        if exists {
+            if let Some(fp) = &desired_fingerprint {
+                match load_template_meta(&mut admin_conn, template_name).await? {
+                    Some(meta) if meta.fingerprint == *fp => {
+                        eprintln!(
+                            "✅ Template database {template_name} reused (migrations unchanged)"
+                        );
+                        reuse_allowed = true;
+                        reused_extensions = meta.extensions;
                     }
-                    let _ = pool.close().await;
+                    Some(meta) => {
+                        eprintln!(
+                            "♻️  Migration fingerprint changed ({} -> {}); recreating template",
+                            meta.fingerprint, fp
+                        );
+                    }
+                    None => {
+                        eprintln!("ℹ️  No template metadata found; recreating template");
+                    }
                 }
+            } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
+                // Best effort: reuse when we can't compute the fingerprint, but still surface
+                // extension metadata if available.
+                eprintln!("✅ Template database {template_name} reused (no fingerprint)");
+                reuse_allowed = true;
+                reused_extensions = meta.extensions;
             } else {
-                eprintln!(
-                    "♻️  Migration fingerprint changed ({} -> {}); recreating template",
-                    stamp.fingerprint, fp
-                );
+                eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
             }
         }
-    }
 
-    if reuse_allowed {
-        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        if reuse_allowed && !reused_extensions.is_empty() {
+            let defaults = default_extension_versions(&mut admin_conn).await?;
+            for (ext, template_ver) in &reused_extensions {
+                if let Some(default_ver) = defaults.get(ext) {
+                    if default_ver != template_ver {
+                        eprintln!(
+                            "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
+                        );
+                        reuse_allowed = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if reuse_allowed {
+            // Keep the template clone-safe across parallel nextest processes.
+            harden_template_database(&mut admin_conn, template_name).await?;
+
+            if TEMPLATE_DB_NAME.get().is_none() {
+                let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
+            }
+            return Ok(TemplateGuard {
+                info: TemplateInfo {
+                    name: template_name.to_string(),
+                    extensions: reused_extensions,
+                },
+                lock_key,
+                admin_conn,
+            });
+        }
+
+        // We need to rebuild the template. Release our shared lock, then race to become the
+        // one process that does the rebuild. If we lose the race, retry (under shared) until
+        // the winner finishes.
+        let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
             .bind(lock_key)
             .execute(&mut admin_conn)
             .await;
-        admin_conn.close().await?;
-        TEMPLATE_DB_NAME
-            .set(template_name.to_string())
-            .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
-        return Ok(template_name.to_string());
-    }
 
-    // We need to rebuild the template
-    POOL_METRICS.record_template_recreation();
-    eprintln!(
-        "♻️  Template database '{template_name}' requires recreation; rebuilding from scratch"
-    );
-
-    // Terminate connections and drop if necessary
-    let terminate_query = format!(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-         WHERE datname = '{template_name}' AND pid <> pg_backend_pid()"
-    );
-    let _ = sqlx::query(&terminate_query).execute(&mut admin_conn).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-    match sqlx::query(&drop_query).execute(&mut admin_conn).await {
-        Ok(_) => {}
-        Err(_) => {
-            let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
-            sqlx::query(&fallback).execute(&mut admin_conn).await?;
+        if Instant::now() > ensure_deadline {
+            return Err(SinexError::database(
+                "Template database was not ready before deadline (another test process may be stuck recreating it)".to_string(),
+            ));
         }
-    }
 
-    let create_query = format!("CREATE DATABASE {template_name}");
-    match tokio::time::timeout(
-        Duration::from_secs(10),
-        sqlx::query(&create_query).execute(&mut admin_conn),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            let err_str = err.to_string();
-            if err_str.contains("already exists") || err_str.contains("duplicate key value") {
-                eprintln!(
-                    "  Template database {template_name} already exists; reusing existing instance"
-                );
-            } else {
-                return Err(SinexError::database(format!(
-                    "Create database failed: {err}"
-                )));
-            }
-        }
-        Err(_) => {
-            return Err(SinexError::database("Create database timeout"));
-        }
-    }
-
-    // Connect to template database and run all migrations
-    let template_pool_future = async {
-        // Use DATABASE_URL_SUPERUSER if available (CI environment), otherwise use admin URL
-        let template_migration_url = std::env::var("DATABASE_URL_SUPERUSER")
-            .unwrap_or_else(|_| template_admin_url.clone())
-            .replace("/sinex_dev", &format!("/{}", template_name));
-
-        let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(template_pool_max)
-            .min_connections(1)
-            .max_lifetime(Duration::from_secs(300))
-            .idle_timeout(Duration::from_secs(10))
-            .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
-            .connect(&template_migration_url)
+        let got_exclusive: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(lock_key)
+            .fetch_one(&mut admin_conn)
             .await?;
 
-        // Apply test-specific optimizations for this session only
-        apply_test_session_optimizations(&template_pool).await?;
+        if !got_exclusive {
+            // Someone else is recreating (exclusive) or many processes are concurrently checking
+            // (shared). Back off briefly and retry; the next iteration will take a shared lock and
+            // likely see a reusable template.
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_millis(250));
+            continue;
+        }
 
-        // Run all migrations on template (this is the expensive part, but only once!)
-        eprintln!("  📋 Running migrations on template database...");
+        // Under exclusive lock: re-check before doing destructive work.
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = '{template_name}')"
+        ))
+        .fetch_one(&mut admin_conn)
+        .await?;
 
-        // Check for required extensions first
-        match check_required_extensions(&template_pool).await {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("❌ Missing required PostgreSQL extensions: {e}");
-                eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
-                return Err(e);
+        let mut reuse_allowed = false;
+        let mut reused_extensions: HashMap<String, String> = HashMap::new();
+        if exists {
+            if let Some(fp) = &desired_fingerprint {
+                if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
+                    if meta.fingerprint == *fp {
+                        reuse_allowed = true;
+                        reused_extensions = meta.extensions;
+                    }
+                }
+            } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
+                reuse_allowed = true;
+                reused_extensions = meta.extensions;
             }
         }
 
-        // Run migrations against the template database. The sinex-core migration helper
-        // reads DATABASE_URL, so temporarily point it at the template DB with superuser credentials.
-        let prev_db_url = std::env::var("DATABASE_URL").ok();
-        std::env::set_var("DATABASE_URL", &template_migration_url);
+        if reuse_allowed {
+            // Downgrade exclusive -> shared to be compatible with callers that expect a guard.
+            sqlx::query("SELECT pg_advisory_lock_shared($1)")
+                .bind(lock_key)
+                .execute(&mut admin_conn)
+                .await?;
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(lock_key)
+                .execute(&mut admin_conn)
+                .await;
 
-        let migrate_result = tokio::time::timeout(
-            Duration::from_secs(30),
-            sinex_core::db::run_migrations_for_url(&template_migration_url),
-        )
-        .await
-        .map_err(|_| {
-            SinexError::database(
-                "Migration timeout - check if all required extensions are installed".to_string(),
-            )
-        })
-        .and_then(|res| res.map_err(|e| SinexError::database(format!("Migration failed: {e}"))));
-
-        // Restore original DATABASE_URL
-        if let Some(url) = prev_db_url {
-            std::env::set_var("DATABASE_URL", url);
+            harden_template_database(&mut admin_conn, template_name).await?;
+            if TEMPLATE_DB_NAME.get().is_none() {
+                let _ = TEMPLATE_DB_NAME.set(template_name.to_string());
+            }
+            return Ok(TemplateGuard {
+                info: TemplateInfo {
+                    name: template_name.to_string(),
+                    extensions: reused_extensions,
+                },
+                lock_key,
+                admin_conn,
+            });
         }
 
-        // Propagate migration result
-        migrate_result?;
+        // We really do need to rebuild the template.
+        POOL_METRICS.record_template_recreation();
+        eprintln!(
+            "♻️  Template database '{template_name}' requires recreation; rebuilding from scratch"
+        );
 
-        // Grant schema permissions to the non-superuser role for template database operations
-        // Uses centralized permissions module which grants on ALL schemas (including public)
-        if let Some(granter) = crate::permissions::PermissionGranter::from_env()? {
-            if let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
-                url.split("://")
-                    .nth(1)
-                    .and_then(|s| s.split('@').next().map(|u| u.to_string()))
-            }) {
-                eprintln!(
+        // Terminate connections and drop if necessary
+        let terminate_query = format!(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE datname = '{template_name}' AND pid <> pg_backend_pid()"
+        );
+        let _ = sqlx::query(&terminate_query).execute(&mut admin_conn).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
+        match sqlx::query(&drop_query).execute(&mut admin_conn).await {
+            Ok(_) => {}
+            Err(_) => {
+                let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
+                sqlx::query(&fallback).execute(&mut admin_conn).await?;
+            }
+        }
+
+        let create_query = format!("CREATE DATABASE {template_name}");
+        match tokio::time::timeout(
+            Duration::from_secs(10),
+            sqlx::query(&create_query).execute(&mut admin_conn),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                let err_str = err.to_string();
+                if err_str.contains("already exists") || err_str.contains("duplicate key value") {
+                    eprintln!(
+                    "  Template database {template_name} already exists; reusing existing instance"
+                );
+                } else {
+                    return Err(SinexError::database(format!(
+                        "Create database failed: {err}"
+                    )));
+                }
+            }
+            Err(_) => {
+                return Err(SinexError::database("Create database timeout"));
+            }
+        }
+
+        // Connect to template database and run all migrations
+        let template_pool_future = async {
+            // Use DATABASE_URL_SUPERUSER if available (CI environment), otherwise use admin URL
+            let template_migration_url = std::env::var("DATABASE_URL_SUPERUSER")
+                .unwrap_or_else(|_| template_admin_url.clone())
+                .replace("/sinex_dev", &format!("/{}", template_name));
+
+            let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(template_pool_max)
+                .min_connections(1)
+                .max_lifetime(Duration::from_secs(300))
+                .idle_timeout(Duration::from_secs(10))
+                .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
+                .connect(&template_migration_url)
+                .await?;
+
+            // Apply test-specific optimizations for this session only
+            apply_test_session_optimizations(&template_pool).await?;
+
+            // Run all migrations on template (this is the expensive part, but only once!)
+            eprintln!("  📋 Running migrations on template database...");
+
+            // Check for required extensions first
+            match check_required_extensions(&template_pool).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("❌ Missing required PostgreSQL extensions: {e}");
+                    eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
+                    return Err(e);
+                }
+            }
+
+            // Run migrations against the template database. The sinex-core migration helper
+            // reads DATABASE_URL, so temporarily point it at the template DB with superuser credentials.
+            let prev_db_url = std::env::var("DATABASE_URL").ok();
+            std::env::set_var("DATABASE_URL", &template_migration_url);
+
+            let migrate_result = tokio::time::timeout(
+                Duration::from_secs(30),
+                sinex_core::db::run_migrations_for_url(&template_migration_url),
+            )
+            .await
+            .map_err(|_| {
+                SinexError::database(
+                    "Migration timeout - check if all required extensions are installed"
+                        .to_string(),
+                )
+            })
+            .and_then(|res| {
+                res.map_err(|e| SinexError::database(format!("Migration failed: {e}")))
+            });
+
+            // Restore original DATABASE_URL
+            if let Some(url) = prev_db_url {
+                std::env::set_var("DATABASE_URL", url);
+            }
+
+            // Propagate migration result
+            migrate_result?;
+
+            // Grant schema permissions to the non-superuser role for template database operations
+            // Uses centralized permissions module which grants on ALL schemas (including public)
+            if let Some(granter) = crate::permissions::PermissionGranter::from_env()? {
+                if let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
+                    url.split("://")
+                        .nth(1)
+                        .and_then(|s| s.split('@').next().map(|u| u.to_string()))
+                }) {
+                    eprintln!(
                     "  🔑 Granting schema permissions to user '{username}' in template database"
                 );
 
-                // Use the centralized granter to grant all schemas
-                use sinex_schema::schema_registry;
-                for schema in schema_registry::SINEX_SCHEMAS {
-                    if let Err(e) = granter
-                        .grant_schema_access(&template_pool, schema.name)
-                        .await
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            schema = schema.name,
-                            "Failed to grant permissions on schema in template database"
-                        );
+                    // Use the centralized granter to grant all schemas
+                    use sinex_schema::schema_registry;
+                    for schema in schema_registry::SINEX_SCHEMAS {
+                        if let Err(e) = granter
+                            .grant_schema_access(&template_pool, schema.name)
+                            .await
+                        {
+                            tracing::warn!(
+                                error = %e,
+                                schema = schema.name,
+                                "Failed to grant permissions on schema in template database"
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        // Seed a canonical test source material so Event::test_event() inserts pass FK checks.
-        sqlx::query(
-            r#"
+            // Seed a canonical test source material so Event::test_event() inserts pass FK checks.
+            sqlx::query(
+                r#"
             INSERT INTO raw.source_material_registry (
                 id,
                 material_kind,
@@ -1948,14 +2528,14 @@ async fn ensure_template_database(
             )
             ON CONFLICT (id) DO NOTHING
             "#,
-        )
-        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-        .execute(&template_pool)
-        .await?;
+            )
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(&template_pool)
+            .await?;
 
-        // Ensure canonical bootstrap material exists for test events
-        sqlx::query(
-            r#"
+            // Ensure canonical bootstrap material exists for test events
+            sqlx::query(
+                r#"
             INSERT INTO raw.source_material_registry (
                 id,
                 material_kind,
@@ -1977,57 +2557,73 @@ async fn ensure_template_database(
                 timing_info_type = EXCLUDED.timing_info_type,
                 metadata = EXCLUDED.metadata
             "#,
-        )
-        .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-        .execute(&template_pool)
-        .await?;
+            )
+            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
+            .execute(&template_pool)
+            .await?;
 
-        // Optimize template for faster copying
-        optimize_template_for_tests(&template_pool).await?;
+            // Optimize template for faster copying
+            optimize_template_for_tests(&template_pool).await?;
 
-        let extensions = collect_extension_versions(&template_pool).await?;
+            let extensions = collect_extension_versions(&template_pool).await?;
 
-        template_pool.close().await;
-        Ok::<HashMap<String, String>, SinexError>(extensions)
-    };
-
-    let migration_result: Result<HashMap<String, String>> =
-        tokio::time::timeout(Duration::from_secs(45), template_pool_future)
-            .await
-            .map_err(|_| SinexError::database("Template setup timeout"))?;
-
-    let extensions = migration_result?;
-
-    let template_elapsed = template_start.elapsed();
-    eprintln!("✅ Template database created in {template_elapsed:?}");
-
-    if let Some(fp) = desired_fingerprint {
-        let stamp = TemplateStamp {
-            template_name: template_name.to_string(),
-            fingerprint: fp,
-            extensions,
+            template_pool.close().await;
+            Ok::<HashMap<String, String>, SinexError>(extensions)
         };
-        store_template_stamp(&stamp);
+
+        let migration_result: Result<HashMap<String, String>> =
+            tokio::time::timeout(Duration::from_secs(45), template_pool_future)
+                .await
+                .map_err(|_| SinexError::database("Template setup timeout"))?;
+
+        let extensions = migration_result?;
+
+        let template_elapsed = template_start.elapsed();
+        eprintln!("✅ Template database created in {template_elapsed:?}");
+
+        if let Some(fp) = desired_fingerprint {
+            let meta = TemplateMeta {
+                fingerprint: fp,
+                extensions: extensions.clone(),
+            };
+            if let Err(err) = store_template_meta(&mut admin_conn, template_name, &meta).await {
+                eprintln!("⚠️  Failed to persist template metadata for {template_name}: {err}");
+                warn!("Failed to persist template metadata: {err}");
+            }
+        }
+
+        // Cache the template name for future use
+        if TEMPLATE_DB_NAME.get().is_none() {
+            TEMPLATE_DB_NAME
+                .set(template_name.to_string())
+                .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
+        }
+
+        harden_template_database(&mut admin_conn, template_name).await?;
+
+        // Downgrade exclusive -> shared so the caller can safely clone pool databases while the
+        // template is protected from recreation.
+        sqlx::query("SELECT pg_advisory_lock_shared($1)")
+            .bind(lock_key)
+            .execute(&mut admin_conn)
+            .await?;
+        if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(lock_key)
+            .execute(&mut admin_conn)
+            .await
+        {
+            eprintln!("⚠️  Failed to release template advisory lock for {template_name}: {e}");
+        }
+
+        return Ok(TemplateGuard {
+            info: TemplateInfo {
+                name: template_name.to_string(),
+                extensions,
+            },
+            lock_key,
+            admin_conn,
+        });
     }
-
-    // Cache the template name for future use
-    if TEMPLATE_DB_NAME.get().is_none() {
-        TEMPLATE_DB_NAME
-            .set(template_name.to_string())
-            .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
-    }
-
-    if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(lock_key)
-        .execute(&mut admin_conn)
-        .await
-    {
-        eprintln!("⚠️  Failed to release template advisory lock for {template_name}: {e}");
-    }
-
-    admin_conn.close().await?;
-
-    Ok(template_name.to_string())
 }
 
 /// Check if required PostgreSQL extensions are available
@@ -2538,12 +3134,13 @@ mod benches {
     fn bench_ensure_template_database() -> color_eyre::eyre::Result<()> {
         let config = PoolConfig::default();
         // This should be fast after first run (cached)
-        ensure_template_database(
+        let guard = ensure_template_database(
             &config.admin_url,
             &config.base_url,
             config.slot_max_connections,
         )
         .await?;
+        guard.release().await?;
         Ok(())
     }
 

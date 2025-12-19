@@ -413,11 +413,19 @@ mod migration_tests {
     async fn test_migration_up_down_cycle() -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
-        // SeaORM SchemaManager expects a sea-orm DatabaseConnection; here we directly run SQL
+        // This test must not mutate the shared `core.events` table because the test harness reuses
+        // pooled databases across tests and only truncates data (it does not reset schema).
+        //
+        // Use a transaction-scoped, scratch table to validate the up/down DDL shape, then roll back.
+        let mut tx = pool.begin().await?;
 
-        // Create a minimal events table without the column
+        sqlx::query("DROP TABLE IF EXISTS core.events_migration_test")
+            .execute(&mut *tx)
+            .await?;
+
+        // Create a minimal events-like table without the column.
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS core.events (
+            "CREATE TABLE core.events_migration_test (
                 id ULID PRIMARY KEY DEFAULT gen_ulid(),
                 source TEXT NOT NULL,
                 event_type TEXT NOT NULL,
@@ -427,29 +435,46 @@ mod migration_tests {
                 ts_ingest TIMESTAMPTZ NOT NULL
             )",
         )
-        .execute(pool)
-        .await
-        .unwrap();
+        .execute(&mut *tx)
+        .await?;
 
-        // Simulate migration UP: add associated_blob_ids column
-        sqlx::query("ALTER TABLE core.events ADD COLUMN IF NOT EXISTS associated_blob_ids ULID[]")
-            .execute(pool)
-            .await
-            .unwrap();
+        // Simulate migration UP: add associated_blob_ids column.
+        sqlx::query(
+            "ALTER TABLE core.events_migration_test ADD COLUMN IF NOT EXISTS associated_blob_ids ULID[]",
+        )
+        .execute(&mut *tx)
+        .await?;
 
-        // Verify the column was added
-        let columns = get_table_columns(pool, "core", "events").await;
-        assert!(columns.contains_key("associated_blob_ids"));
+        // Verify the column was added.
+        let columns: Vec<String> = sqlx::query(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'core' AND table_name = 'events_migration_test'",
+        )
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(|row| row.get::<String, _>("column_name"))
+        .collect();
+        assert!(columns.iter().any(|c| c == "associated_blob_ids"));
 
-        // Simulate migration DOWN: drop the column
-        sqlx::query("ALTER TABLE core.events DROP COLUMN IF EXISTS associated_blob_ids")
-            .execute(pool)
-            .await
-            .unwrap();
+        // Simulate migration DOWN: drop the column.
+        sqlx::query(
+            "ALTER TABLE core.events_migration_test DROP COLUMN IF EXISTS associated_blob_ids",
+        )
+        .execute(&mut *tx)
+        .await?;
 
-        // Verify the column was removed
-        let columns = get_table_columns(pool, "core", "events").await;
-        assert!(!columns.contains_key("associated_blob_ids"));
+        // Verify the column was removed.
+        let columns: Vec<String> = sqlx::query(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'core' AND table_name = 'events_migration_test'",
+        )
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(|row| row.get::<String, _>("column_name"))
+        .collect();
+        assert!(!columns.iter().any(|c| c == "associated_blob_ids"));
+
+        tx.rollback().await?;
         Ok(())
     }
 }

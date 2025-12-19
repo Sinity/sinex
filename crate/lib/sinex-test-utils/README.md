@@ -35,7 +35,7 @@ async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
 ## Key Features
 
-- **Database Isolation**: Each test gets its own isolated database from a 64-database pool
+- **Database Isolation**: Each test gets its own isolated database from a pooled set of databases
 - **Production API Usage**: Tests use real production APIs, not mocks or wrappers
 - **Rich Fixtures**: Pre-built fixtures for common testing scenarios
 - **Comprehensive Assertions**: Context-aware assertions with clear error messages
@@ -57,7 +57,8 @@ captured logs when a `TestContext` is present.
 
 ### Database Pool Strategy
 
-The test utilities use a sophisticated 64-database pool system that provides true isolation:
+The test utilities use a pooled-database strategy that provides true isolation while keeping setup
+costs amortized across the suite:
 
 ```
 ┌─────────────┐ ┌─────────────┐ ┌─────────────┐     ┌─────────────┐
@@ -69,8 +70,18 @@ The test utilities use a sophisticated 64-database pool system that provides tru
 
 - Each test acquires an exclusive database via PostgreSQL advisory locks
 - Parallel test execution with no interference
-- Automatic cleanup after test completion
+- Databases are reset/cleaned on acquisition (so each test starts from a known-clean state)
 - Pool recycling for optimal performance
+
+#### Configuration knobs
+
+- `SINEX_TESTUTILS_POOL_SIZE`: number of pool DBs (default: `available_parallelism` clamped to `8..=32`)
+- `SINEX_TESTUTILS_CONN_BUDGET`: overall connection budget across the pool (default: `480`)
+- `SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS`: per-test DB pool max connections (default: `4`)
+- `SINEX_TESTUTILS_ADMIN_MAX_CONNECTIONS`: admin pool max connections (default: `max(1, slot_max)` clamped to `<=8`)
+
+Under `cargo nextest`, pool DBs are lazily provisioned (created from a shared template DB on-demand),
+which avoids doing heavy DDL in every per-test process.
 
 ### Production API Integration
 
