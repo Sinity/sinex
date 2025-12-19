@@ -58,10 +58,12 @@ cf = [
 # Environment variables for coverage and testing
 [env]
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
-PGHOST = "/run/postgresql"
-PGUSER = "sinity"
-PGDATABASE = "sinex_dev"
-DATABASE_URL = "postgresql:///sinex_dev?host=/run/postgresql"
+# Allow callers (e.g. `cargo xtask ci postgres`) to override these when they
+# intentionally point at an ephemeral database.
+PGHOST = { value = "/run/postgresql", force = false }
+PGUSER = { value = "sinity", force = false }
+PGDATABASE = { value = "sinex_dev", force = false }
+DATABASE_URL = { value = "postgresql:///sinex_dev?host=/run/postgresql", force = false }
 
 # Speed optimizations via environment variables
 CARGO_INCREMENTAL = "1"                # Enable incremental compilation

@@ -132,6 +132,12 @@ enum CiCommand {
         #[arg(long, default_value_t = false)]
         skip_clean: bool,
     },
+    /// Schema validation pipeline (migrate, check-ready, seed registry, sync)
+    SchemaSync {
+        /// Target directory for build artifacts
+        #[arg(long, default_value = "target-ci")]
+        target_dir: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -299,6 +305,26 @@ fn test(online_sqlx: bool, profile: &str) -> Result<()> {
 }
 
 fn sqlx_prepare() -> Result<()> {
+    let super_url = env::var("DATABASE_URL_SUPERUSER")
+        .or_else(|_| env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+
+    // Ensure the DB schema is up-to-date before validating queries.
+    run_cmd("migrate", {
+        let mut c = Command::new("cargo");
+        c.args([
+            "run",
+            "--manifest-path",
+            "crate/lib/sinex-schema/Cargo.toml",
+            "--bin",
+            "sinex-schema",
+            "--",
+            "up",
+        ])
+        .env("DATABASE_URL", &super_url);
+        c
+    })?;
+
     let mut c = Command::new("cargo");
     c.arg("sqlx")
         .arg("prepare")
@@ -306,6 +332,8 @@ fn sqlx_prepare() -> Result<()> {
         .arg("--")
         .arg("--all-targets")
         .arg("--all-features");
+    // `cargo sqlx prepare` should validate queries against a live DB, regardless of any global CI flag.
+    c.env_remove("SQLX_OFFLINE");
     run_cmd("cargo sqlx prepare", c)
 }
 
@@ -391,6 +419,7 @@ fn ci(cmd: CiCommand) -> Result<()> {
             target_dir,
             skip_clean,
         } => ci_schema_only(&target_dir, skip_clean),
+        CiCommand::SchemaSync { target_dir } => ci_schema_sync(&target_dir),
     }
 }
 
@@ -451,6 +480,9 @@ fn ci_postgres(
         writeln!(conf, "unix_socket_directories = '{}'", socket_dir.display())?;
         writeln!(conf, "listen_addresses = '127.0.0.1'")?;
         writeln!(conf, "port = {}", port)?;
+        // Tests assume a relatively high connection ceiling (NixOS module uses >=500). Keep the
+        // ephemeral CI cluster aligned so parallel nextest runs don't wedge on connection limits.
+        writeln!(conf, "max_connections = 500")?;
         writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
     }
 
@@ -464,7 +496,7 @@ fn ci_postgres(
             .arg(format!("-k {} -p {}", socket_dir.display(), port));
         c
     })?;
-    let _guard = PgInstance {
+    let pg_guard = PgInstance {
         data_dir: data_dir.clone(),
     };
 
@@ -477,9 +509,10 @@ fn ci_postgres(
         operation_id: operation_id.clone(),
     };
 
-    let initial_user = env::var("PGUSER")
-        .or_else(|_| env::var("USER"))
-        .unwrap_or_else(|_| superuser.clone());
+    // `initdb` creates the bootstrap superuser role using the OS username, not `PGUSER`.
+    // In CI, our devenv sets `PGUSER=sinity` by default, but that role doesn't exist yet
+    // for a fresh ephemeral cluster, so prefer `USER`.
+    let initial_user = env::var("USER").unwrap_or_else(|_| superuser.clone());
 
     create_role_if_missing(&env, &superuser, true, &initial_user)?;
     create_role_if_missing(&env, &app_user, true, &superuser)?;
@@ -505,7 +538,10 @@ fn ci_postgres(
         .env("DATABASE_URL_APP", &app_url)
         .env("DATABASE_URL_SUPERUSER", &super_url)
         .env("SUPERUSER", &superuser)
-        .env("SINEX_OPERATION_ID", &operation_id);
+        .env("SINEX_OPERATION_ID", &operation_id)
+        // CI often exports `SQLX_OFFLINE=1` globally, but anything run under `ci postgres`
+        // should validate queries against the ephemeral DB.
+        .env_remove("SQLX_OFFLINE");
 
     let status = cmd
         .status()
@@ -513,6 +549,7 @@ fn ci_postgres(
     if !status.success() {
         bail!("command {:?} failed with status {status}", command);
     }
+    drop(pg_guard);
     Ok(())
 }
 
@@ -533,7 +570,12 @@ fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String> {
         .with_context(|| format!("failed to run psql for query {sql}"))?;
 
     if !output.status.success() {
-        bail!("psql exited with status {} for query {sql}", output.status);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql exited with status {} for query {sql}\n{}",
+            output.status,
+            stderr.trim()
+        );
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -730,6 +772,88 @@ fn ci_schema_only(target_dir: &str, skip_clean: bool) -> Result<()> {
     Ok(())
 }
 
+fn ci_schema_sync(target_dir: &str) -> Result<()> {
+    env::set_var("CARGO_TARGET_DIR", target_dir);
+    let super_url = env::var("DATABASE_URL_SUPERUSER")
+        .or_else(|_| env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+
+    run_cmd("migrate", {
+        let mut c = Command::new("cargo");
+        c.args([
+            "run",
+            "--manifest-path",
+            "crate/lib/sinex-schema/Cargo.toml",
+            "--bin",
+            "sinex-schema",
+            "--",
+            "up",
+        ])
+        .env("DATABASE_URL", &super_url);
+        c
+    })?;
+
+    run_cmd("schema check-ready", {
+        let mut c = Command::new("cargo");
+        c.args(["xtask", "schema", "check-ready"]);
+        c
+    })?;
+
+    let db_url = env::var("DATABASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+
+    psql_exec(
+        &db_url,
+        "INSERT INTO sinex_schemas.event_payload_schemas (source, event_type, schema_version, schema_content, content_hash)\n\
+         VALUES ('test.source', 'test.event', '1.0.0', '{}'::jsonb, md5(random()::text))\n\
+         ON CONFLICT (source, event_type, schema_version) DO NOTHING;",
+    )?;
+    psql_exec(
+        &db_url,
+        "UPDATE sinex_schemas.event_payload_schemas SET is_active = true\n\
+         WHERE source = 'test.source' AND event_type = 'test.event';",
+    )?;
+    psql_exec(
+        &db_url,
+        "SELECT COUNT(*) FROM sinex_schemas.event_payload_schemas WHERE source = 'test.source';",
+    )?;
+
+    let tmp_dir = tempfile::tempdir()?;
+    schema_generate(
+        tmp_dir
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow!("temp dir path is not valid UTF-8"))?,
+        true,
+    )?;
+
+    Ok(())
+}
+
+fn psql_exec(db_url: &str, sql: &str) -> Result<()> {
+    let output = pg_command("psql")
+        .arg(db_url)
+        .arg("-v")
+        .arg("ON_ERROR_STOP=1")
+        .arg("-c")
+        .arg(sql)
+        .output()
+        .with_context(|| "failed to run psql")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql exited with status {} for SQL:\n{}\n{}",
+            output.status,
+            sql,
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
+
 fn ensure_schemas_clean() -> Result<()> {
     let status = Command::new("git")
         .args(["diff", "--quiet", "--", "schemas"])
@@ -772,7 +896,7 @@ fn ci_workspace(target_dir: &str) -> Result<()> {
 
     run_cmd("xtask test reliable", {
         let mut c = Command::new("cargo");
-        c.args(["xtask", "test", "--profile", "reliable"]);
+        c.args(["xtask", "test", "--online-sqlx", "--profile", "reliable"]);
         c
     })?;
 

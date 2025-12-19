@@ -53,6 +53,11 @@ if you prefer to keep it outside `$PATH`.
 - `cargo xtask doctor` – prints pool stats, normalises session state (RLS/replication/triggers), and dumps table row counts using the CI connection. Use when cleanup is suspected to be stuck or permissions look wrong.
 - `snapshot_helper::retry_with_snapshot` – wrap flaky integration tests to capture failure snapshots (pool stats, context logs) on first failure, attempt cleanup, then retry once. This is now used in fixture, satellite, and timing utilities; mirror the pattern if you add a test that can be sensitive to timing or FK races.
 
+## Benchmarking
+
+- `scripts/bench-builds.sh` – build + SQLx + nix build baselines
+- `scripts/bench-nextest.sh` – nextest + DB pool tuning (threads / heavy cap / pool size)
+
 ## Test Layout at a Glance
 
 | Location | What lives here | Notes |

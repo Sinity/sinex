@@ -25,7 +25,8 @@ store-failure-output = true
 
 # Fast profile for development - shorter timeout and fewer threads
 [profile.fast]
-test-threads = 4
+# Fast local runs: use available CPU; heavy DB/NATS tests are capped via test groups.
+test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
 retries = 0
@@ -34,7 +35,8 @@ slow-timeout = { period = "60s", terminate-after = 1 }
 
 # Reliable profile for CI - more retries, limited parallelism
 [profile.reliable]
-test-threads = 2
+# CI/reliable runs: keep overall concurrency high while capping DB/NATS-heavy tests.
+test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
 retries = 3
@@ -72,3 +74,109 @@ success-output = "never"
 # One retry for flaky tests
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 1 }
+
+# --- Test groups -------------------------------------------------------------
+#
+# “Tetris scheduling”: let non-DB tests saturate CPU while capping DB/NATS-heavy tests so shared
+# infrastructure stays stable under parallelism.
+
+[test-groups]
+db-nats-heavy = { max-threads = 4 }
+
+# --- Per-test overrides ------------------------------------------------------
+#
+# Assign known DB/NATS-heavy integration binaries to the capped group. Everything else runs with
+# the profile's global `test-threads`.
+#
+# Use `binary_id(...)` as listed by:
+#   `cargo nextest list --workspace --list-type binaries-only`
+#
+# Filter syntax: https://nexte.st/docs/filtersets/reference/
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-e2e-tests::jetstream_bootstrap_test)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-e2e-tests::pipeline_end_to_end)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-e2e-tests::service_recovery_test)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-e2e-tests::work_queue_resilience_test)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-ingestd::jetstream_*)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-ingestd::*integration*)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-satellite-sdk::stage_as_you_go_integration)"
+test-group = "db-nats-heavy"
+
+[[profile.fast.overrides]]
+filter = "binary_id(sinex-core::property_tests) & test(/test_ulid_ordering_with_timing_patterns/)"
+slow-timeout = { period = "120s", terminate-after = 1 }
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-e2e-tests::jetstream_bootstrap_test)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-e2e-tests::pipeline_end_to_end)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-e2e-tests::service_recovery_test)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-e2e-tests::work_queue_resilience_test)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-ingestd::jetstream_*)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-ingestd::*integration*)"
+test-group = "db-nats-heavy"
+
+[[profile.reliable.overrides]]
+filter = "binary_id(sinex-satellite-sdk::stage_as_you_go_integration)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-e2e-tests::jetstream_bootstrap_test)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-e2e-tests::pipeline_end_to_end)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-e2e-tests::service_recovery_test)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-e2e-tests::work_queue_resilience_test)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-ingestd::jetstream_*)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-ingestd::*integration*)"
+test-group = "db-nats-heavy"
+
+[[profile.ci-parallel.overrides]]
+filter = "binary_id(sinex-satellite-sdk::stage_as_you_go_integration)"
+test-group = "db-nats-heavy"

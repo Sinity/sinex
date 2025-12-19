@@ -10,7 +10,6 @@ use tokio::time::{timeout, Duration};
 
 #[sinex_test]
 async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
     sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
@@ -50,7 +49,9 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_
         true
     );
 
-    // ensure material persisted and finalized
+    // NOTE: the AcquisitionManager is JetStream-first; ingestd is the sole database writer for
+    // `raw.source_material_registry`. This test runs the processor directly (no ingestd), so the
+    // material should not appear in the database.
     let material_id = match event.provenance {
         sinex_core::Provenance::Material { id, .. } => *id.as_ulid(),
         _ => panic!("expected material provenance"),
@@ -60,9 +61,11 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> color_
         .pool
         .source_materials()
         .get_by_id(Id::from_ulid(material_id))
-        .await?
-        .expect("material persisted");
-    assert_eq!(record.status.as_str(), "completed");
+        .await?;
+    assert!(
+        record.is_none(),
+        "material unexpectedly persisted; ingestd should be the sole DB writer"
+    );
 
     Ok(())
 }
