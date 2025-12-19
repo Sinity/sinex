@@ -98,6 +98,8 @@ in
     PGUSER = "sinity";
     PGDATABASE = "sinex_dev";
     SINEX_TEST_OPTIMIZATIONS = "true";
+    # Force `cargo xtask ci postgres` to use the Postgres build that includes required extensions.
+    SINEX_PG_BIN = "${postgresForSqlx}/bin";
     NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
     # Keep devenv quiet.
     DEVENV_TASKS_QUIET = "1";
