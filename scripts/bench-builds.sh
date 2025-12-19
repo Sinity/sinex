@@ -11,6 +11,8 @@ set -euo pipefail
 #
 # You can comment out individual bench() calls below if you only care about
 # a subset (e.g. just sqlx-prepare or just nix build).
+#
+# For nextest + DB pool tuning, use `scripts/bench-nextest.sh`.
 
 RUNS="${RUNS:-3}"
 NIX_NO_LINK="${NIX_NO_LINK:-1}"

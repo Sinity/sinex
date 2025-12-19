@@ -82,3 +82,5 @@ scripts/git-state-tracker.sh
 combined-bundles/
 postgres_data/
 
+# Bench results (local artifacts)
+test-results/bench-*/
