@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Error, Postgres};
+use sqlx::Row;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -268,6 +269,31 @@ async fn load_template_meta(
         Ok(meta) => Ok(Some(meta)),
         Err(_) => Ok(None),
     }
+}
+
+async fn default_extension_versions(conn: &mut PgConnection) -> Result<HashMap<String, String>> {
+    // We only care about extensions that can invalidate a previously-created template/pool DB
+    // across a NixOS upgrade (due to versioned shared-object filenames).
+    //
+    // Do this query on an admin connection (not the template DB) so we don't block cloning with
+    // a live session connected to the template.
+    let rows = sqlx::query(
+        "SELECT name, default_version \
+         FROM pg_available_extensions \
+         WHERE name IN ('timescaledb','ulid','pg_jsonschema','vector')",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut versions = HashMap::new();
+    for row in rows {
+        let name: String = row.try_get("name")?;
+        let default_version: Option<String> = row.try_get("default_version")?;
+        if let Some(v) = default_version {
+            versions.insert(name, v);
+        }
+    }
+    Ok(versions)
 }
 
 async fn store_template_meta(
@@ -2234,6 +2260,21 @@ async fn ensure_template_database(
                 reused_extensions = meta.extensions;
             } else {
                 eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
+            }
+        }
+
+        if reuse_allowed && !reused_extensions.is_empty() {
+            let defaults = default_extension_versions(&mut admin_conn).await?;
+            for (ext, template_ver) in &reused_extensions {
+                if let Some(default_ver) = defaults.get(ext) {
+                    if default_ver != template_ver {
+                        eprintln!(
+                            "♻️  Extension {ext} default_version changed ({template_ver} -> {default_ver}); recreating template"
+                        );
+                        reuse_allowed = false;
+                        break;
+                    }
+                }
             }
         }
 
