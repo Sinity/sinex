@@ -40,6 +40,8 @@ CONN_BUDGET="${CONN_BUDGET:-480}"
 EAGER_PROVISION="${EAGER_PROVISION:-0}"
 
 MESSAGE_FORMAT="${MESSAGE_FORMAT:-libtest-json-plus}"
+BENCH_NO_FAIL_FAST="${BENCH_NO_FAIL_FAST:-0}"
+BENCH_CONTINUE_ON_FAIL="${BENCH_CONTINUE_ON_FAIL:-0}"
 
 BENCH_RESET_DBS="${BENCH_RESET_DBS:-0}"
 BENCH_ALLOW_DROP="${BENCH_ALLOW_DROP:-0}"
@@ -113,6 +115,11 @@ make_nextest_config() {
     "s/^db-nats-heavy[[:space:]]*=[[:space:]]*\\{[[:space:]]*max-threads[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]*\\}[[:space:]]*$/db-nats-heavy = { max-threads = ${heavy_cap} }/" \
     "$repo/.config/nextest.toml" >"$cfg"
 
+  if ! rg -nq "^db-nats-heavy[[:space:]]*=[[:space:]]*\\{[[:space:]]*max-threads[[:space:]]*=[[:space:]]*${heavy_cap}[[:space:]]*\\}[[:space:]]*$" "$cfg"; then
+    echo "ERROR: failed to override db-nats-heavy max-threads in generated config: $cfg" >&2
+    return 1
+  fi
+
   echo "$cfg"
 }
 
@@ -139,10 +146,11 @@ drop_sinex_test_dbs() {
 
   echo "Dropping sinex test DBs via $admin_url" >&2
 
-  maybe_direnv_exec "$repo" env DATABASE_URL="$admin_url" bash -lc '
+  maybe_direnv_exec "$repo" bash -lc '
     set -euo pipefail
+    admin_url="'"$admin_url"'"
     # Drop pool DBs first, then template.
-    psql -v ON_ERROR_STOP=1 -Atqc "
+    psql "$admin_url" -v ON_ERROR_STOP=1 -Atqc "
       SELECT datname
       FROM pg_database
       WHERE datname = '\''sinex_test_template_shared'\''
@@ -150,8 +158,8 @@ drop_sinex_test_dbs() {
     " | while read -r db; do
       echo "DROP: $db" >&2
       # FORCE is available in newer Postgres; fall back if needed.
-      psql -v ON_ERROR_STOP=1 -d postgres -c "DROP DATABASE IF EXISTS \"${db}\" WITH (FORCE);" 2>/dev/null \
-        || psql -v ON_ERROR_STOP=1 -d postgres -c "DROP DATABASE IF EXISTS \"${db}\";"
+      psql "$admin_url" -v ON_ERROR_STOP=1 -d postgres -c "DROP DATABASE IF EXISTS \"${db}\" WITH (FORCE);" 2>/dev/null \
+        || psql "$admin_url" -v ON_ERROR_STOP=1 -d postgres -c "DROP DATABASE IF EXISTS \"${db}\";"
     done
   '
 }
@@ -209,6 +217,11 @@ run_one() {
   local run_dir="$out/runs/${scenario}/t${threads}-h${heavy_cap}-p${pool_size}"
   mkdir -p "$run_dir"
 
+  local -a nextest_args=()
+  if [[ "$BENCH_NO_FAIL_FAST" == "1" ]]; then
+    nextest_args+=(--no-fail-fast)
+  fi
+
   local -a durs=()
   for i in $(seq 1 "$RUNS"); do
     echo "== $scenario run $i/$RUNS: threads=$threads heavy_cap=$heavy_cap pool=$pool_size ==" | tee -a "$out/bench.log"
@@ -228,6 +241,7 @@ run_one() {
       --config-file "$cfg" \
       --test-threads "$threads" \
       --message-format "$MESSAGE_FORMAT" \
+      "${nextest_args[@]}" \
       --color never \
       >"$out_json"; then
       end_ns="$(date +%s%N)"
@@ -237,6 +251,12 @@ run_one() {
       echo "  duration: ${dur_ms}ms"
     else
       echo "FAILED: $scenario threads=$threads heavy_cap=$heavy_cap pool=$pool_size" >&2
+      if [[ "$BENCH_CONTINUE_ON_FAIL" == "1" ]]; then
+        printf '%s\n' "FAILED" >"$out_meta"
+        printf '%s,%s,%s,%s,%s\n' "$scenario" "$threads" "$heavy_cap" "$pool_size" "FAILED" \
+          >>"$out/results.csv"
+        return 0
+      fi
       return 1
     fi
 
@@ -413,6 +433,9 @@ main() {
     echo "target=$BENCH_TARGET"
     echo "runs=$RUNS"
     echo "mode=$BENCH_MODE"
+    echo "message_format=$MESSAGE_FORMAT"
+    echo "no_fail_fast=$BENCH_NO_FAIL_FAST"
+    echo "continue_on_fail=$BENCH_CONTINUE_ON_FAIL"
     echo "slot_max_connections=$SLOT_MAX_CONNECTIONS"
     echo "conn_budget=$CONN_BUDGET"
     echo "heavy_caps=$HEAVY_CAPS"
