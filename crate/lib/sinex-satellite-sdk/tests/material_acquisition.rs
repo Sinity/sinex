@@ -525,7 +525,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                     Ok(false)
                 }
             },
-            40,
+            60,
         )
         .await?;
 

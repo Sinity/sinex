@@ -492,12 +492,10 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     .await?;
 
     // Test Analytics with time filtering
-    let analytics = AnalyticsService::new(ctx.pool.clone());
+    let analytics = Arc::new(AnalyticsService::new(ctx.pool.clone()));
 
     let one_hour_ago = now - Duration::hours(1);
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 8)
-        .await
-        .ok();
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 20).await?;
 
     let recent_counts = analytics
         .get_event_count_by_source(Some(one_hour_ago), Some(now))
@@ -517,9 +515,24 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
 
     // Test time series analysis
     let three_hours_ago = now - Duration::hours(3);
-    let time_series = analytics
-        .get_events_over_time(three_hours_ago, now, 60)
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let analytics = analytics.clone();
+                async move {
+                    Ok::<bool, sinex_test_utils::SinexError>(
+                        !analytics
+                            .get_events_over_time(three_hours_ago, now, 60)
+                            .await?
+                            .is_empty(),
+                    )
+                }
+            },
+            20,
+        )
         .await?;
+
+    let time_series = analytics.get_events_over_time(three_hours_ago, now, 60).await?;
     assert!(!time_series.is_empty(), "Should have time series data");
     let total_in_series: i64 = time_series.iter().map(|(_, count)| count).sum();
     assert_eq!(
