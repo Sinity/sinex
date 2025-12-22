@@ -517,32 +517,14 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
 
     // Test time series analysis
     let three_hours_ago = now - Duration::hours(3);
-    let mut time_series = analytics
+    let time_series = analytics
         .get_events_over_time(three_hours_ago, now, 60)
         .await?;
-    if time_series.is_empty() {
-        tracing::warn!("Time series empty, backfilling a recent event and retrying");
-        create_test_event_with_timestamp(
-            &ctx,
-            "time-test",
-            "recent.event",
-            json!({"description": "Recent backfill"}),
-            now - Duration::minutes(10),
-        )
-        .await?;
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 8)
-            .await
-            .ok();
-        time_series = analytics
-            .get_events_over_time(three_hours_ago, now, 60)
-            .await?;
-    }
-
     assert!(!time_series.is_empty(), "Should have time series data");
     let total_in_series: i64 = time_series.iter().map(|(_, count)| count).sum();
     assert_eq!(
         total_in_series, 1,
-        "Should find recent event in time series"
+        "Should find only recent event in time series range"
     );
 
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;

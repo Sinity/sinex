@@ -1902,12 +1902,12 @@ impl<'a> EventRepository<'a> {
             TimeBucketResult,
             r#"
             SELECT 
-                time_bucket($1::interval, ts_ingest) as "bucket!",
+                time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) as "bucket!",
                 COUNT(*) as "count!"
             FROM core.events
-            WHERE ts_ingest >= $2 AND ts_ingest <= $3
-            GROUP BY time_bucket($1::interval, ts_ingest)
-            ORDER BY time_bucket($1::interval, ts_ingest) ASC
+            WHERE COALESCE(ts_orig, ts_ingest) >= $2 AND COALESCE(ts_orig, ts_ingest) <= $3
+            GROUP BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest))
+            ORDER BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) ASC
             LIMIT $4
             "#,
             interval,
@@ -1934,10 +1934,10 @@ impl<'a> EventRepository<'a> {
             TimeBucketResult,
             r#"
             SELECT 
-                time_bucket($1::interval, ts_ingest) as "bucket!",
+                time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) as "bucket!",
                 COUNT(*) as "count!"
             FROM core.events
-            GROUP BY time_bucket($1::interval, ts_ingest)
+            GROUP BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest))
             ORDER BY COUNT(*) DESC
             LIMIT $2
             "#,
