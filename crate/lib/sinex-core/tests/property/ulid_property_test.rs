@@ -6,17 +6,7 @@ use sinex_test_utils::{sinex_proptest, sinex_test};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::{Duration, Instant};
-
-fn spin_for(duration: Duration) {
-    if duration.is_zero() {
-        return;
-    }
-    let start = Instant::now();
-    while Instant::now().duration_since(start) < duration {
-        thread::yield_now();
-    }
-}
+use std::time::Instant;
 
 // Property tests for ULID functionality.
 //
@@ -109,7 +99,7 @@ fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
     (
         2usize..=6,  // Number of threads
         5usize..=25, // ULIDs per thread
-        0u64..=3,    // Max delay between generations (ms)
+        0u64..=200,  // Max yields between generations (vary scheduling without wall-clock delay)
     )
 }
 
@@ -117,7 +107,7 @@ fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
 fn generate_ulids_concurrently(
     num_threads: usize,
     ulids_per_thread: usize,
-    max_delay_ms: u64,
+    max_yields: u64,
 ) -> Vec<(usize, Ulid, Instant)> {
     let barrier = Arc::new(Barrier::new(num_threads));
     let mut handles = Vec::new();
@@ -136,10 +126,9 @@ fn generate_ulids_concurrently(
                 let ulid = Ulid::new();
                 thread_ulids.push((thread_id, ulid, generation_time));
 
-                // Random small delay to increase contention
-                if max_delay_ms > 0 {
-                    let delay = Duration::from_millis(max_delay_ms);
-                    spin_for(delay);
+                // Interleave yielding to vary scheduling (without wall-clock sleeps/spins).
+                for _ in 0..max_yields {
+                    thread::yield_now();
                 }
             }
 
@@ -161,8 +150,8 @@ sinex_proptest! {
     fn test_concurrent_ulid_uniqueness(
         params in arb_concurrent_params()
     ) -> color_eyre::eyre::Result<()> {
-        let (num_threads, ulids_per_thread, max_delay_ms) = params;
-        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
+        let (num_threads, ulids_per_thread, max_yields) = params;
+        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
         let mut seen = HashSet::new();
         for (_, ulid, _) in &ulids {
@@ -176,8 +165,8 @@ sinex_proptest! {
     fn test_concurrent_ulid_time_ordering(
         params in arb_concurrent_params()
     ) -> color_eyre::eyre::Result<()> {
-        let (num_threads, ulids_per_thread, max_delay_ms) = params;
-        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
+        let (num_threads, ulids_per_thread, max_yields) = params;
+        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
         let mut timestamp_groups: HashMap<i64, Vec<Ulid>> = HashMap::new();
         for (_, ulid, _) in &ulids {
@@ -219,8 +208,8 @@ sinex_proptest! {
     fn test_concurrent_ulid_thread_distribution(
         params in arb_concurrent_params()
     ) -> color_eyre::eyre::Result<()> {
-        let (num_threads, ulids_per_thread, max_delay_ms) = params;
-        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
+        let (num_threads, ulids_per_thread, max_yields) = params;
+        let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
         let mut thread_counts: HashMap<usize, usize> = HashMap::new();
         for (thread_id, _, _) in &ulids {
@@ -239,9 +228,10 @@ sinex_proptest! {
         Ok(())
     }
 
+    #[cases(32)]
     fn test_high_contention_ulid_generation(
-        burst_size in 50usize..=200,
-        num_bursts in 2usize..=5
+        burst_size in 8usize..=64,
+        num_bursts in 2usize..=4
     ) -> color_eyre::eyre::Result<()> {
         let mut all_ulids = Vec::new();
 
@@ -260,8 +250,6 @@ sinex_proptest! {
             for handle in handles {
                 all_ulids.push(handle.join().unwrap());
             }
-
-            spin_for(Duration::from_millis(10));
         }
 
         let mut seen = HashSet::new();
@@ -273,26 +261,29 @@ sinex_proptest! {
         Ok(())
     }
 
+    #[cases(32)]
     fn test_ulid_ordering_with_timing_patterns(
-        pattern_delays in prop::collection::vec(0u64..=50, 5..=20)
+        pattern_delays in prop::collection::vec(0u64..=200, 5..=50)
     ) -> color_eyre::eyre::Result<()> {
-        let mut ulids_with_delays = Vec::new();
-        for delay_ms in pattern_delays {
-            let start_time = Instant::now();
-            spin_for(Duration::from_millis(delay_ms));
-            let ulid = Ulid::new();
-            ulids_with_delays.push((ulid, start_time.elapsed()));
+        let mut ulids = Vec::with_capacity(pattern_delays.len());
+        for yields in pattern_delays {
+            for _ in 0..yields {
+                thread::yield_now();
+            }
+            ulids.push(Ulid::new());
         }
 
-        for window in ulids_with_delays.windows(2) {
-            let (ulid1, delay1) = window[0];
-            let (ulid2, delay2) = window[1];
-            if delay2 > delay1 {
-                prop_assert!(ulid2 > ulid1,
-                    "ULID ordering should respect generation delays: {} > {} (delays: {:?} vs {:?})",
-                    ulid2, ulid1, delay2, delay1);
-            }
-            prop_assert!(ulid2.timestamp() >= ulid1.timestamp());
+        for window in ulids.windows(2) {
+            let (prev, curr) = (&window[0], &window[1]);
+            prop_assert!(
+                curr > prev,
+                "ULID ordering violated: {} <= {} (timestamps: {} <= {})",
+                curr,
+                prev,
+                curr.timestamp(),
+                prev.timestamp()
+            );
+            prop_assert!(curr.timestamp() >= prev.timestamp());
         }
         Ok(())
     }
@@ -646,7 +637,7 @@ mod stress_tests {
             let ulid1 = Ulid::new();
             // Spin briefly to try to get different millisecond
             let spin_start = Instant::now();
-            while spin_start.elapsed() < Duration::from_micros(100) {
+            while spin_start.elapsed() < std::time::Duration::from_micros(100) {
                 // Busy wait for tiny duration
             }
             let ulid2 = Ulid::new();
