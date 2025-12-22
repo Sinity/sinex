@@ -56,7 +56,7 @@ if you prefer to keep it outside `$PATH`.
 ## Benchmarking
 
 - `scripts/bench-builds.sh` – build + SQLx + nix build baselines
-- `scripts/bench-nextest.sh` – nextest + DB pool tuning (threads / heavy cap / pool size)
+- `scripts/bench-nextest.sh` – nextest + DB pool tuning (threads / pool size / clean-after-use / eager provisioning); see `scripts/bench-nextest.sh --help`
 
 ## Test Layout at a Glance
 

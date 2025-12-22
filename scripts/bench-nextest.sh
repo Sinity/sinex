@@ -56,8 +56,9 @@ Bench modes:
   BENCH_MODE=sweeps           # sweep threads, then sweep pool sizes
   BENCH_MODE=matrix           # full cross-product THREADS_LIST × POOL_SIZES
   BENCH_MODE=refine           # sweeps, pick best candidates, then small matrix
-    REFINE_TOP_THREADS=3      # candidates per (clean_after_use,eager) group
-    REFINE_TOP_POOLS=3
+    # Advanced: tweak selection size for refine
+    # REFINE_TOP_THREADS=3
+    # REFINE_TOP_POOLS=3
 
 Key knobs:
   THREADS_LIST="8 16 24"      # if empty, defaults to half+full nproc
@@ -125,7 +126,9 @@ maybe_direnv_exec() {
   shift
   if command -v direnv >/dev/null 2>&1 && [[ -f "$repo/.envrc" ]]; then
     # Prevent direnv/devenv hooks from treating this as an interactive shell (bench output is noisy).
-    direnv exec "$repo" env -u PS1 -u PROMPT -u PROMPT_COMMAND SINEX_MOTD_SILENT=1 SINEX_DEVENV_MOTD_ONCE=1 "$@"
+    # IMPORTANT: env vars must be set *before* `direnv exec` so `.envrc`/devenv sees them.
+    SINEX_MOTD_SILENT=1 SINEX_DEVENV_MOTD_ONCE=1 DEVENV_TASKS_QUIET=1 \
+      direnv exec "$repo" env -u PS1 -u PROMPT -u PROMPT_COMMAND "$@"
   else
     "$@"
   fi
