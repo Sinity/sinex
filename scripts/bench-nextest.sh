@@ -130,7 +130,8 @@ maybe_direnv_exec() {
     # Prevent direnv/devenv hooks from treating this as an interactive shell (bench output is noisy).
     # IMPORTANT: env vars must be set *before* `direnv exec` so `.envrc`/devenv sees them.
     SINEX_MOTD_SILENT=1 SINEX_DEVENV_MOTD_ONCE=1 DEVENV_TASKS_QUIET=1 \
-      direnv exec "$repo" env -u PS1 -u PROMPT -u PROMPT_COMMAND "$@" \
+      env -u PS1 -u PROMPT -u PROMPT_COMMAND \
+      direnv exec "$repo" "$@" \
       2> >(
         # Suppress a known noisy warning when the locally-installed devenv is newer than the pinned input.
         grep -v 'devenv .* is newer than devenv input' >&2 || true
