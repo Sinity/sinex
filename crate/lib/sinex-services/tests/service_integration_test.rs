@@ -517,7 +517,9 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
 
     // Test time series analysis (should include only the recent event)
     let three_hours_ago = now - Duration::hours(3);
-    let time_series = analytics.get_events_over_time(three_hours_ago, now, 60).await?;
+    let time_series = analytics
+        .get_events_over_time(three_hours_ago, now, 60)
+        .await?;
     assert!(!time_series.is_empty(), "Should have time series data");
     let total_in_series: i64 = time_series.iter().map(|(_, count)| count).sum();
     assert_eq!(
