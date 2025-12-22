@@ -1481,6 +1481,9 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_begin".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Critical for correctness: tests (and real systems) may publish before this
+                        // consumer is created on first startup; don't silently skip earlier messages.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         ..Default::default()
                     },
                 )
@@ -1542,6 +1545,8 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_slices".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Same reasoning as begin/end: don't skip slices published before consumer creation.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         max_ack_pending: 1_000,
                         ..Default::default()
                     },
@@ -1639,6 +1644,8 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_end".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Ensure end messages published before consumer creation are still processed.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         ..Default::default()
                     },
                 )
