@@ -32,7 +32,7 @@ fn spin_for(duration: Duration) {
     }
     let start = Instant::now();
     while Instant::now().duration_since(start) < duration {
-        std::thread::yield_now();
+        std::hint::spin_loop();
     }
 }
 
@@ -304,7 +304,6 @@ mod conversion_tests {
     #[test]
     fn test_uuid_conversion_preserves_order() {
         let ulid1 = Ulid::new();
-        spin_for(Duration::from_millis(1)); // Ensure different timestamp
         let ulid2 = Ulid::new();
 
         assert!(ulid1 < ulid2);

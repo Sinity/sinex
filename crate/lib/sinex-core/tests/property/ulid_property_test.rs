@@ -22,22 +22,13 @@ use std::time::Instant;
 
 sinex_proptest! {
     fn test_ulid_chronological_ordering(
-        count in 2usize..10,
-        delay_micros in 100u64..1000
+        count in 2usize..=100
     ) -> color_eyre::eyre::Result<()> {
-        let mut ulids = Vec::new();
-        for i in 0..count {
-            if i > 0 {
-                for _ in 0..delay_micros {
-                    std::thread::yield_now();
-                }
-            }
-            ulids.push(Ulid::new());
-        }
+        let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
         for window in ulids.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
             prop_assert!(
-                prev <= curr,
+                prev < curr,
                 "ULID ordering violated: {} > {} (timestamps: {} > {})",
                 prev,
                 curr,
@@ -99,7 +90,7 @@ fn arb_concurrent_params() -> impl Strategy<Value = (usize, usize, u64)> {
     (
         2usize..=6,  // Number of threads
         5usize..=25, // ULIDs per thread
-        0u64..=200,  // Max yields between generations (vary scheduling without wall-clock delay)
+        0u64..=200,  // Max spin iterations between generations (vary scheduling cheaply)
     )
 }
 
@@ -126,9 +117,9 @@ fn generate_ulids_concurrently(
                 let ulid = Ulid::new();
                 thread_ulids.push((thread_id, ulid, generation_time));
 
-                // Interleave yielding to vary scheduling (without wall-clock sleeps/spins).
+                // Vary scheduling without expensive OS-level yields.
                 for _ in 0..max_yields {
-                    thread::yield_now();
+                    std::hint::spin_loop();
                 }
             }
 
@@ -263,15 +254,9 @@ sinex_proptest! {
 
     #[cases(32)]
     fn test_ulid_ordering_with_timing_patterns(
-        pattern_delays in prop::collection::vec(0u64..=200, 5..=50)
+        count in 2usize..=200
     ) -> color_eyre::eyre::Result<()> {
-        let mut ulids = Vec::with_capacity(pattern_delays.len());
-        for yields in pattern_delays {
-            for _ in 0..yields {
-                thread::yield_now();
-            }
-            ulids.push(Ulid::new());
-        }
+        let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
         for window in ulids.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
@@ -516,7 +501,7 @@ sinex_proptest! {
         for i in 0..generation_count {
             if delay_microseconds > 0 {
                 for _ in 0..delay_microseconds {
-                    std::thread::yield_now();
+                    std::hint::spin_loop();
                 }
             }
 
@@ -596,7 +581,7 @@ mod stress_tests {
 
                     // Occasional yield to increase contention
                     if i.is_multiple_of(50) {
-                        thread::yield_now();
+                        std::hint::spin_loop();
                     }
                 }
 
