@@ -63,6 +63,8 @@ Bench modes:
 Key knobs:
   THREADS_LIST="8 16 24"      # if empty, defaults to half+full nproc
   POOL_SIZES="8 16 24"        # pool DB count(s) to try (default: "8 16 32")
+  FIXED_POOL_SIZE=24          # for BENCH_MODE=sweeps thread sweep (default: clamped nproc)
+  FIXED_THREADS=24            # for BENCH_MODE=sweeps pool sweep (default: nproc)
   CLEAN_AFTER_USE_LIST="0 1"  # compare pool cleanup semantics (default: "0 1")
   EAGER_PROVISION_LIST="0 1"  # compare nextest lazy vs eager pool provisioning (default: "0")
   SLOT_MAX_CONNECTIONS=4      # per-DB sqlx pool max connections
@@ -128,7 +130,11 @@ maybe_direnv_exec() {
     # Prevent direnv/devenv hooks from treating this as an interactive shell (bench output is noisy).
     # IMPORTANT: env vars must be set *before* `direnv exec` so `.envrc`/devenv sees them.
     SINEX_MOTD_SILENT=1 SINEX_DEVENV_MOTD_ONCE=1 DEVENV_TASKS_QUIET=1 \
-      direnv exec "$repo" env -u PS1 -u PROMPT -u PROMPT_COMMAND "$@"
+      direnv exec "$repo" env -u PS1 -u PROMPT -u PROMPT_COMMAND "$@" \
+      2> >(
+        # Suppress a known noisy warning when the locally-installed devenv is newer than the pinned input.
+        grep -v 'devenv .* is newer than devenv input' >&2 || true
+      )
   else
     "$@"
   fi
