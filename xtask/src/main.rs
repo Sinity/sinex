@@ -1303,6 +1303,8 @@ fn run_rg(pattern: &str) -> Result<Vec<String>> {
             pattern,
             "--glob",
             "*.rs",
+            "--glob",
+            "!docs/agent/**",
         ])
         .output()
         .with_context(|| "failed to invoke ripgrep")?;
