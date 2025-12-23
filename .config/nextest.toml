@@ -1,19 +1,14 @@
 [profile.default]
-# Run tests in parallel - optimized for 24-core system
-# Use num-cpus to dynamically adapt to the system
+# Default: use available CPU parallelism.
 test-threads = "num-cpus"
 
-# Show output for failed tests immediately with full context
 failure-output = "immediate-final"
 success-output = "never"
 
-# Status output - show progress
 status-level = "pass"
 
-# Retry flaky tests once
 retries = 1
 
-# Simple timeout - if a test takes more than 2 minutes, something is wrong
 slow-timeout = { period = "120s", terminate-after = 1 }
 
 
@@ -23,9 +18,8 @@ path = "target/nextest/junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# Fast profile for development - shorter timeout and fewer threads
 [profile.fast]
-# Fast local runs: use available CPU with minimal retries.
+# Fast local runs: keep parallelism high, short timeout, no retries.
 test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
@@ -33,9 +27,8 @@ retries = 0
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 
-# Reliable profile for CI - more retries, same parallelism
 [profile.reliable]
-# CI/reliable runs: keep overall concurrency high while retrying flakes.
+# CI/reliable runs: keep parallelism high and retry flakes more.
 test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
@@ -52,25 +45,19 @@ retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 
-# Parallel profile - maximum parallelism for speed
 [profile.parallel]
-# Use all available CPUs for maximum speed
+# Same parallelism as fast, but with minimal output.
 test-threads = "num-cpus"
-# Minimize output for speed
 failure-output = "final"
 success-output = "never"
-# No retries for speed
 retries = 0
-# Shorter timeout for parallel execution
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 
-# CI parallel profile - balanced for reliability with good parallelism
 [profile.ci-parallel]
-# Use num-cpus and let runners size themselves (set NEXTEST_TEST_THREADS if you need to reserve headroom).
+# CI: balanced reliability with good parallelism.
 test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
-# One retry for flaky tests
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 1 }
