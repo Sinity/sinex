@@ -495,9 +495,17 @@ sweep_threads() {
   local repo="$1" out="$2"
   local pool_size="${FIXED_POOL_SIZE:-}"
   if [[ -z "$pool_size" ]]; then
-    pool_size="$(command -v nproc >/dev/null 2>&1 && nproc || echo 8)"
-    if (( pool_size < 8 )); then pool_size=8; fi
-    if (( pool_size > 32 )); then pool_size=32; fi
+    # If the caller specified exactly one pool size, use it for the thread sweep.
+    # Otherwise clamp to a sane default.
+    local pools
+    pools="$(resolve_pool_sizes_list)"
+    if (( $(wc -w <<<"$pools") == 1 )); then
+      pool_size="$pools"
+    else
+      pool_size="$(command -v nproc >/dev/null 2>&1 && nproc || echo 8)"
+      if (( pool_size < 8 )); then pool_size=8; fi
+      if (( pool_size > 32 )); then pool_size=32; fi
+    fi
   fi
   local threads_list
   threads_list="$(resolve_threads_list)"
@@ -518,7 +526,15 @@ sweep_pool_sizes() {
   local repo="$1" out="$2"
   local threads="${FIXED_THREADS:-}"
   if [[ -z "$threads" ]]; then
-    threads="$(command -v nproc >/dev/null 2>&1 && nproc || echo 8)"
+    # If the caller specified exactly one thread count, use it for the pool sweep.
+    # Otherwise default to nproc.
+    local ts
+    ts="$(resolve_threads_list)"
+    if (( $(wc -w <<<"$ts") == 1 )); then
+      threads="$ts"
+    else
+      threads="$(command -v nproc >/dev/null 2>&1 && nproc || echo 8)"
+    fi
   fi
   local clean_list
   clean_list="$(resolve_clean_after_use_list)"
