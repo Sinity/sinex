@@ -120,7 +120,6 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Ensure JetStream streams exist before manually publishing messages
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
@@ -208,8 +207,11 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     .await?
     .await?;
 
-    // Wait for MaterialAssembler to process using deterministic polling to avoid pool starvation.
-    let wait_result = WaitHelpers::wait_for_condition(
+    // Wait for MaterialAssembler to process.
+    //
+    // This should complete quickly once ingestd has created the material consumers; if it doesn't,
+    // fail with a clear error instead of "backfilling" database state.
+    WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
             async move {
@@ -232,54 +234,9 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                 Ok(false)
             }
         },
-        40,
+        10,
     )
-    .await;
-
-    if let Err(err) = wait_result {
-        let current_status = ctx
-            .pool
-            .source_materials()
-            .get_by_id(sinex_core::Id::from_ulid(material_id))
-            .await?;
-        tracing::warn!(
-            error = %err,
-            material_status = ?current_status.as_ref().map(|m| m.status.as_str()),
-            "Material assembler did not finish in time; backfilling ledger for test stability"
-        );
-        // Ensure the registry entry exists before backfilling to avoid FK violations from temporal_ledger.
-        sqlx::query(
-            r#"
-                INSERT INTO raw.source_material_registry
-                    (id, material_kind, source_identifier, status, timing_info_type, metadata)
-                VALUES ($1::uuid::ulid, $2, $3, 'sensing', 'realtime', '{}'::jsonb)
-                ON CONFLICT (id) DO NOTHING
-            "#,
-        )
-        .bind(material_id as Ulid)
-        .bind("annex")
-        .bind("test-ooo")
-        .execute(&ctx.pool)
-        .await?;
-        sqlx::query!(
-            r#"
-                INSERT INTO raw.temporal_ledger
-                    (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
-                VALUES ($1::uuid::ulid, 0, $2, 'byte', NOW(), 'exact', 'wall', 'realtime_capture')
-                ON CONFLICT DO NOTHING
-            "#,
-            material_id as Ulid,
-            expected_size
-        )
-        .execute(&ctx.pool)
-        .await?;
-        sqlx::query!(
-            "UPDATE raw.source_material_registry SET status = 'completed' WHERE id = $1::uuid::ulid",
-            material_id as Ulid
-        )
-        .execute(&ctx.pool)
-        .await?;
-    }
+    .await?;
 
     // Verify material was assembled correctly despite out-of-order arrival
     let material = ctx
