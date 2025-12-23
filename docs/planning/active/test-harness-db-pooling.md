@@ -223,6 +223,6 @@ Success criteria:
 ## Notes on “how far to go”
 
 - The goal is maximum throughput without hiding real race bugs.
-- When heavy tests bottleneck on shared infra, we cap them *in nextest*, not by lowering global threads.
+- We currently run without nextest test-group caps; if shared infra becomes the bottleneck under high parallelism, reintroduce caps then.
 - If the harness needs to scale beyond a single local Postgres, we can later introduce a dedicated
   test Postgres service (or multiple clusters), but that is not required for the current phase.

@@ -59,6 +59,7 @@ Bench modes:
     # Advanced: tweak selection size for refine
     # REFINE_TOP_THREADS=3
     # REFINE_TOP_POOLS=3
+    # REFINE_SWEEP_RUNS=1      # repetitions for sweeps only (final refine matrix uses RUNS)
 
 Key knobs:
   THREADS_LIST="8 16 24"      # if empty, defaults to half+full nproc
@@ -69,6 +70,8 @@ Key knobs:
   EAGER_PROVISION_LIST="0 1"  # compare nextest lazy vs eager pool provisioning (default: "0")
   SLOT_MAX_CONNECTIONS=4      # per-DB sqlx pool max connections
   CONN_BUDGET=480             # total connection budget for all DBs in a run
+  BENCH_PROPTEST_CASES=32     # (optional) export as SINEX_PROPTEST_CASES for the run
+  BENCH_KEEP_SINEX_PROPTEST_CASES=1  # keep caller's SINEX_PROPTEST_CASES (default: unset for bench)
 
 Failure behavior:
   BENCH_NO_FAIL_FAST=1        # run all tests even after failures
@@ -80,19 +83,12 @@ DB reset (dangerous):
 
 Notes:
   This harness intentionally does NOT implement nextest test-group caps anymore.
-  If you set HEAVY_CAP / HEAVY_CAPS / VERY_HEAVY_CAP*, the script will error.
 USAGE
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
   exit 0
-fi
-
-# Guard against old/removed knobs so we don't silently do nothing.
-if [[ -n "${HEAVY_CAP:-}" || -n "${HEAVY_CAPS:-}" || -n "${VERY_HEAVY_CAP:-}" || -n "${VERY_HEAVY_CAPS:-}" ]]; then
-  echo "ERROR: HEAVY_CAP* knobs were removed (no nextest test-group caps). Unset them." >&2
-  exit 2
 fi
 
 RUNS="${RUNS:-3}"
@@ -107,6 +103,11 @@ THREADS_LIST="${THREADS_LIST:-}"
 POOL_SIZES="${POOL_SIZES:-8 16 32}"
 SLOT_MAX_CONNECTIONS="${SLOT_MAX_CONNECTIONS:-4}"
 CONN_BUDGET="${CONN_BUDGET:-480}"
+
+# Proptest benchmarking: by default, avoid inheriting a global proptest-case override
+# so per-test `#![cases(...)]` defaults apply.
+BENCH_PROPTEST_CASES="${BENCH_PROPTEST_CASES:-}"
+BENCH_KEEP_SINEX_PROPTEST_CASES="${BENCH_KEEP_SINEX_PROPTEST_CASES:-0}"
 
 EAGER_PROVISION="${EAGER_PROVISION:-0}"
 EAGER_PROVISION_LIST="${EAGER_PROVISION_LIST:-}"
@@ -293,6 +294,7 @@ run_one() {
   local pool_size="$5"
   local clean_after_use="$6"
   local eager_provision="$7"
+  local runs="${RUNS_OVERRIDE:-$RUNS}"
 
   local -a target_args=()
   while IFS= read -r arg; do
@@ -315,6 +317,15 @@ run_one() {
     envs+=("NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1")
   fi
 
+  # Ensure per-run environment is fully controlled by the bench script, even if
+  # the caller has these exported.
+  local -a env_cmd=(env -u SINEX_TESTUTILS_EAGER_PROVISION -u SINEX_TESTUTILS_CLEAN_AFTER_USE)
+  if [[ -n "$BENCH_PROPTEST_CASES" ]]; then
+    envs+=("SINEX_PROPTEST_CASES=$BENCH_PROPTEST_CASES")
+  elif [[ "$BENCH_KEEP_SINEX_PROPTEST_CASES" != "1" ]]; then
+    env_cmd+=(-u SINEX_PROPTEST_CASES)
+  fi
+
   local run_dir="$out/runs/${scenario}/t${threads}-p${pool_size}-cau${clean_after_use}-eager${eager_provision}"
   mkdir -p "$run_dir"
 
@@ -324,8 +335,8 @@ run_one() {
   fi
 
   local -a durs=()
-  for i in $(seq 1 "$RUNS"); do
-    echo "== $scenario run $i/$RUNS: threads=$threads pool=$pool_size clean_after_use=$clean_after_use eager_provision=$eager_provision ==" | tee -a "$out/bench.log"
+  for i in $(seq 1 "$runs"); do
+    echo "== $scenario run $i/$runs: threads=$threads pool=$pool_size clean_after_use=$clean_after_use eager_provision=$eager_provision ==" | tee -a "$out/bench.log"
 
     if [[ "$BENCH_RESET_DBS" == "1" ]]; then
       drop_sinex_test_dbs "$repo" | tee -a "$out/bench.log"
@@ -336,7 +347,7 @@ run_one() {
 
     local start_ns end_ns dur_ms
     start_ns="$(date +%s%N)"
-    if maybe_direnv_exec "$repo" env "${envs[@]}" cargo nextest run \
+    if maybe_direnv_exec "$repo" "${env_cmd[@]}" "${envs[@]}" cargo nextest run \
       "${target_args[@]}" \
       --profile "$PROFILE" \
       --test-threads "$threads" \
@@ -613,9 +624,11 @@ refine() {
   local repo="$1" out="$2"
   local top_threads="${REFINE_TOP_THREADS:-3}"
   local top_pools="${REFINE_TOP_POOLS:-3}"
+  local sweep_runs="${REFINE_SWEEP_RUNS:-1}"
 
-  sweep_threads "$repo" "$out"
-  sweep_pool_sizes "$repo" "$out"
+  RUNS_OVERRIDE="$sweep_runs" sweep_threads "$repo" "$out"
+  RUNS_OVERRIDE="$sweep_runs" sweep_pool_sizes "$repo" "$out"
+  unset RUNS_OVERRIDE
 
   echo "Refine: selecting top candidates (threads=$top_threads, pools=$top_pools)..." | tee -a "$out/bench.log"
   local candidates
@@ -667,6 +680,9 @@ main() {
     echo "continue_on_fail=$BENCH_CONTINUE_ON_FAIL"
     echo "slot_max_connections=$SLOT_MAX_CONNECTIONS"
     echo "conn_budget=$CONN_BUDGET"
+    echo "bench_proptest_cases=${BENCH_PROPTEST_CASES:-<unset>}"
+    echo "bench_keep_sinex_proptest_cases=$BENCH_KEEP_SINEX_PROPTEST_CASES"
+    echo "sinex_proptest_cases_inherited=${SINEX_PROPTEST_CASES:-<unset>}"
     echo "pool_sizes=$POOL_SIZES"
     echo "pool_sizes_effective=$(resolve_pool_sizes_list)"
     echo "fixed_pool_size_for_thread_sweep=${FIXED_POOL_SIZE:-<auto(clamped nproc)>}"
@@ -733,6 +749,12 @@ main() {
   echo "Wrote results to: $out"
   echo "CSV: $out/results.csv"
   echo "Per-run summaries: $out/runs/**/summary.txt"
+
+  # Also write a small human-friendly report for quick scanning.
+  if [[ -x "$repo/scripts/bench-nextest-report.sh" ]]; then
+    "$repo/scripts/bench-nextest-report.sh" "$out" >"$out/report.txt" || true
+    echo "Report: $out/report.txt"
+  fi
 }
 
 main "$@"
