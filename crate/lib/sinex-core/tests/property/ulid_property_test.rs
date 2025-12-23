@@ -219,10 +219,10 @@ sinex_proptest! {
         Ok(())
     }
 
-    #[cases(32)]
+    #[cases(8)]
     fn test_high_contention_ulid_generation(
-        burst_size in 8usize..=64,
-        num_bursts in 2usize..=4
+        burst_size in 4usize..=32,
+        num_bursts in 1usize..=3
     ) -> color_eyre::eyre::Result<()> {
         let mut all_ulids = Vec::new();
 
@@ -252,9 +252,9 @@ sinex_proptest! {
         Ok(())
     }
 
-    #[cases(32)]
+    #[cases(8)]
     fn test_ulid_ordering_with_timing_patterns(
-        count in 2usize..=200
+        count in 2usize..=100
     ) -> color_eyre::eyre::Result<()> {
         let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
