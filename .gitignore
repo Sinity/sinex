@@ -61,6 +61,7 @@ target-ci
 .claude-outputs/
 .direnv/
 .devenv/
+.devenv.flake.nix
 compilation*log
 
 # Rust compiler ICE dumps

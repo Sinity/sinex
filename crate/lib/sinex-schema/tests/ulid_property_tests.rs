@@ -16,7 +16,7 @@ fn spin_for(duration: Duration) {
     }
     let start = Instant::now();
     while Instant::now().duration_since(start) < duration {
-        thread::yield_now();
+        std::hint::spin_loop();
     }
 }
 

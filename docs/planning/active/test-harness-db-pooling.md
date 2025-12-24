@@ -1,10 +1,14 @@
-# Test Harness: DB Pooling + Nextest “Tetris” Scheduling
+# Test Harness: DB Pooling (Template + Per-test Databases)
 
 This document captures the agreed direction and execution plan for improving Sinex’s test harness,
 specifically around:
 
 - PostgreSQL template + pooled per-test databases (`sinex-test-utils`)
-- Nextest parallelism (“Tetris scheduling”: cap DB/NATS-heavy tests while letting everything else fan out)
+
+It keeps historical context (including earlier “Tetris scheduling” discussions), but the current
+design goal is simplicity: run nextest with high global parallelism and rely on the DB pool +
+connection budgeting to keep PostgreSQL stable. If we ever see real infra collapse under load,
+we can reintroduce test-group caps later.
 
 It is intentionally detailed so the rationale doesn’t get lost in chat history.
 
@@ -22,9 +26,8 @@ Follow-up sessions (implementation + debugging):
 ## Status (what’s implemented)
 
 - Phase 0 (template/pool provisioning correctness): implemented.
-- Phase 1 (nextest test groups / “Tetris scheduling”): implemented.
-- Phase 2 (clean-after-use): not implemented (still clean-on-acquire).
-- Phase 3 (DB-optional tests): not implemented.
+- Phase 1 (nextest test groups / “Tetris scheduling”): previously experimented with, but intentionally removed/disabled (simplicity first).
+- Phase 2 (clean-after-use): implemented behind `SINEX_TESTUTILS_CLEAN_AFTER_USE=1` (benchmark-only knob for now).
 - Follow-ups (2025-12-19): implemented (see “Recent fixes” below).
 
 ## Current reality (as of now)
@@ -49,7 +52,9 @@ Follow-up sessions (implementation + debugging):
 - Under nextest, pool databases are *lazily provisioned*:
   - a test process will create a missing pool DB by cloning from the template on first acquire.
 - Each test obtains exclusive use of a pool DB via an advisory lock held for the duration of the test.
-- Today, the pool DB is cleaned **on acquisition** (truncate/reset) rather than on release.
+- Default: the pool DB is cleaned **on acquisition** (truncate/reset) rather than on release.
+- Optional (benchmark knob): with `SINEX_TESTUTILS_CLEAN_AFTER_USE=1`, the slot is marked dirty on acquire and
+  cleaned on release (before unlocking) so the next test can skip cleanup if the DB is known-clean.
 
 ### What this implies (and why it feels bad)
 
@@ -57,7 +62,8 @@ Follow-up sessions (implementation + debugging):
   - the next test does cleanup work on the critical path before it can start assertions.
 - Tests that don’t need DB/NATS still frequently pay for DB setup because the default macro path
   constructs a `TestContext` (which acquires a DB).
-- Nextest parallelism is currently conservative in the default profiles, leaving cores idle.
+- Nextest profiles default to `test-threads = "num-cpus"`, so parallelism is mostly gated by
+  external resources (DB pool size, Postgres connections, NATS/JetStream behavior, and timeouts).
 
 ## Problems observed / motivating failures
 
@@ -74,15 +80,11 @@ Follow-up sessions (implementation + debugging):
 - Even on high-core machines, reliable profiles often cap threads too low.
 - Result: DB-pool machinery exists, but tests do not actually run with meaningful concurrency.
 
-3) **We need “Tetris scheduling”**
+3) **(Historical) “Tetris scheduling”**
 
-We want:
-
-- High global test concurrency to use available CPU.
-- A cap for DB+NATS-heavy tests (so shared infra doesn’t collapse into timeouts).
-- Non-DB tests should still saturate remaining threads while heavy tests run.
-
-In other words: cap the “heavy lane”, not the whole highway.
+We previously discussed a nextest test-group cap for DB+NATS-heavy tests (“cap the heavy lane,
+not the whole highway”). We are currently *not* doing this: it added complexity and “shadow”
+mechanisms without clear need once the DB pool became robust.
 
 ## Recent fixes (2025-12-19)
 
@@ -127,26 +129,15 @@ Fix (implemented):
 
 ## Target design (agreed direction)
 
-### A) Nextest “Tetris” scheduling via test groups
+### A) Nextest parallelism (current approach)
 
-Implement nextest test groups and per-test overrides:
+We run with high global parallelism (`test-threads = "num-cpus"`) and tune:
 
-- Define a heavy group, e.g. `db-nats-heavy` with `max-threads = <small number>`.
-- Run the overall profile with a high thread count (`test-threads = "num-cpus"`), and assign only
-  known heavy tests into the capped group.
-- Everything else uses the default group and can fan out.
+- `SINEX_TESTUTILS_POOL_SIZE` / connection budgets
+- per-test timeouts (only when justified by real load, not as a band-aid)
 
-Initial grouping strategy (start coarse, then refine):
-
-- Put JetStream/NATS integration tests into `db-nats-heavy`.
-  - Examples: `sinex-e2e-tests::jetstream_*`, `sinex-ingestd::*jetstream*`, and explicit “pipeline”
-    and “recovery” tests.
-- Keep config validation, auth parsing, request validation, and pure logic tests out of the heavy group.
-
-Validation:
-
-- Use `cargo nextest show-config test-groups --profile <profile>` to confirm grouping is applied.
-- Iterate by moving tests between groups based on observed flake/timeouts and runtime.
+If we later observe credible “shared infra collapse” (NATS/JetStream/DB timeouts that go away
+with fewer concurrent integration tests), we can reintroduce nextest test groups at that point.
 
 ### B) Pool lifecycle: move toward clean-after-use (not clean-on-acquire)
 
@@ -175,15 +166,9 @@ Operational rules:
 
 ### C) Make DB/NATS optional for tests that don’t need them
 
-Add a way to express intent:
-
-- `#[sinex_test(no_db)]` (or a separate macro) for tests that don’t touch Postgres.
-- `ctx.with_nats()` remains opt-in; keep it opt-in and make it cheap when unused.
-
-Goal:
-
-- Reduce unnecessary DB contention.
-- Make “Tetris scheduling” more effective by shrinking the heavy set.
+This was considered but intentionally dropped: it adds macro surface area and test “modes” that
+we don’t want to maintain. The current direction is to keep the harness simple and instead tune
+throughput via pool sizing, connection budgets, and correctness fixes (no hidden scheduling).
 
 ### D) Performance / tuning loop
 
@@ -197,6 +182,17 @@ We will not guess; we will tune based on measurement:
 
 ## Execution plan (phased)
 
+## Benchmarking (how to measure)
+
+Use `scripts/bench-nextest.sh` to compare throughput settings without editing repo config:
+
+- `scripts/bench-nextest.sh --help`
+- Example (ingestd-focused): `RUNS=3 BENCH_TARGET=ingestd BENCH_MODE=refine THREADS_LIST="8 16 24" POOL_SIZES="8 16 24" scripts/bench-nextest.sh`
+- Example (workspace, quick smoke): `RUNS=1 BENCH_TARGET=workspace BENCH_MODE=sweeps scripts/bench-nextest.sh`
+
+The script records a dedicated compile log/duration (`--no-run`) and then run-only timings per
+combo, plus per-run `summary.txt` for slowest tests.
+
 ### Phase 0 — Make template/pool provisioning correct
 
 - Ensure pool provisioning always calls `ensure_template_database` (and holds the shared advisory lock)
@@ -207,17 +203,11 @@ Success criteria:
 
 - `cargo xtask ci postgres -- cargo xtask ci workspace` is green reliably.
 
-### Phase 1 — Add nextest test groups (“Tetris scheduling”)
+### Phase 1 — (Deferred) Nextest test groups (“Tetris scheduling”)
 
-- Update `.config/nextest.toml`:
-  - Add `[test-groups]` definitions.
-  - Add `[[profile.<name>.overrides]]` assigning known heavy tests into `db-nats-heavy`.
-  - Raise `profile.fast.test-threads` to `"num-cpus"` (or a high cap) so non-heavy tests can saturate.
-- Validate grouping with `cargo nextest show-config test-groups`.
-
-Success criteria:
-
-- Under `--profile fast`, we see high overall parallelism, but heavy tests stay capped.
+We intentionally removed the test-group cap mechanism for now. If we later observe repeatable
+“shared infra collapse” under high parallelism (and it’s not fixable via pool sizing/connection
+budgets), we can reintroduce nextest test groups at that point.
 
 ### Phase 2 — Switch pool to clean-after-use (gated rollout)
 
@@ -230,18 +220,9 @@ Success criteria:
 - No cross-test contamination.
 - Wall time improves for multi-test runs where pool size > heavy concurrency.
 
-### Phase 3 — Make DB optional for non-DB tests
-
-- Add macro/config support to skip DB acquisition entirely for tests that don’t need it.
-- Update the obvious e2e config/auth tests to use the lighter mode.
-
-Success criteria:
-
-- E2E config/auth tests no longer trigger DB pool initialization.
-
 ## Notes on “how far to go”
 
 - The goal is maximum throughput without hiding real race bugs.
-- When heavy tests bottleneck on shared infra, we cap them *in nextest*, not by lowering global threads.
+- We currently run without nextest test-group caps; if shared infra becomes the bottleneck under high parallelism, reintroduce caps then.
 - If the harness needs to scale beyond a single local Postgres, we can later introduce a dedicated
   test Postgres service (or multiple clusters), but that is not required for the current phase.

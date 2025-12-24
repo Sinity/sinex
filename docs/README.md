@@ -16,7 +16,7 @@
 
 ## Planning (what’s next)
 
-- `planning/active/` — Execution playbooks (`way.md`, `implementation-plan.md`).
+- `planning/active/` — Active execution playbooks (see files within).
 - `planning/roadmap/` — Roadmap, development/test priorities, feature directions.
 - `planning/backlog/TODO.md` — Backlog of tracked tasks.
 - `planning/proposals/` — Proposals under review (e.g., DB repository migration).

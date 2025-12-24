@@ -13,8 +13,8 @@ use sinex_core::types::ulid::Ulid;
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgConnection;
-use sqlx::{Connection, Error, Postgres};
 use sqlx::Row;
+use sqlx::{Connection, Error, Postgres};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -219,6 +219,15 @@ struct TemplateMeta {
     extensions: HashMap<String, String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PoolMeta {
+    fingerprint: Option<String>,
+    extensions: HashMap<String, String>,
+    dirty: bool,
+    updated_at_rfc3339: String,
+    last_error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct TemplateInfo {
     name: String,
@@ -271,6 +280,27 @@ async fn load_template_meta(
     }
 }
 
+async fn load_pool_meta(conn: &mut PgConnection, db_name: &str) -> Result<Option<PoolMeta>> {
+    let comment: Option<String> = sqlx::query_scalar(
+        "SELECT shobj_description(d.oid, 'pg_database') \
+         FROM pg_database d \
+         WHERE d.datname = $1",
+    )
+    .bind(db_name)
+    .fetch_optional(conn)
+    .await?
+    .flatten();
+
+    let Some(comment) = comment else {
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<PoolMeta>(&comment) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(_) => Ok(None),
+    }
+}
+
 async fn default_extension_versions(conn: &mut PgConnection) -> Result<HashMap<String, String>> {
     // We only care about extensions that can invalidate a previously-created template/pool DB
     // across a NixOS upgrade (due to versioned shared-object filenames).
@@ -280,7 +310,7 @@ async fn default_extension_versions(conn: &mut PgConnection) -> Result<HashMap<S
     let rows = sqlx::query(
         "SELECT name, default_version \
          FROM pg_available_extensions \
-         WHERE name IN ('timescaledb','ulid','pg_jsonschema','vector')",
+         WHERE name IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')",
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -314,6 +344,25 @@ async fn store_template_meta(
         .await?;
 
     Ok(())
+}
+
+async fn store_pool_meta(conn: &mut PgConnection, db_name: &str, meta: &PoolMeta) -> Result<()> {
+    let payload = serde_json::to_string(meta)
+        .map_err(|e| SinexError::unknown(format!("Failed to serialize pool meta: {e}")))?;
+
+    // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
+    // so embed a properly escaped string literal. JSON doesn't normally contain
+    // single quotes, but escape defensively anyway.
+    let escaped = payload.replace('\'', "''");
+    let quoted = quote_ident(db_name);
+    sqlx::query(&format!("COMMENT ON DATABASE {quoted} IS '{escaped}'"))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+fn clean_after_use_enabled() -> bool {
+    std::env::var_os("SINEX_TESTUTILS_CLEAN_AFTER_USE").is_some()
 }
 
 fn migrations_fingerprint() -> Option<String> {
@@ -561,7 +610,10 @@ struct CleanupTask {
     lock_id: i64,
     pool: DbPool,
     slot_name: String,
+    slot_url: String,
+    slot: Arc<DatabaseSlot>,
     lock_conn: Option<PoolConnection<Postgres>>,
+    clean_after_use: bool,
 }
 
 /// Background cleanup manager to handle resource cleanup safely
@@ -597,8 +649,52 @@ impl CleanupManager {
     }
 
     async fn process_cleanup_task(task: CleanupTask) {
+        // If enabled, do best-effort cleanup while the advisory lock is still held so other
+        // processes never observe the slot as “free” while still dirty.
+        let mut lock_conn = task.lock_conn;
+        if task.clean_after_use {
+            let clean_result = tokio::time::timeout(
+                Duration::from_secs(10),
+                clean_database(&task.slot, &task.pool, &task.slot_name, &task.slot_url),
+            )
+            .await;
+
+            match clean_result {
+                Ok(Ok(())) => {
+                    if let Some(conn) = lock_conn.as_mut() {
+                        if let Ok(Some(mut meta)) =
+                            load_pool_meta(conn.as_mut(), &task.slot_name).await
+                        {
+                            meta.dirty = false;
+                            meta.last_error = None;
+                            meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
+                            let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    if let Some(conn) = lock_conn.as_mut() {
+                        if let Ok(Some(mut meta)) =
+                            load_pool_meta(conn.as_mut(), &task.slot_name).await
+                        {
+                            meta.dirty = true;
+                            meta.last_error = Some(e.to_string());
+                            meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
+                            let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!(
+                        "⚠️  Timeout cleaning {} on release; leaving it dirty",
+                        task.slot_name
+                    );
+                }
+            }
+        }
+
         // Advisory locks are per-session; we must unlock on the same connection that acquired it.
-        if let Some(mut lock_conn) = task.lock_conn {
+        if let Some(mut lock_conn) = lock_conn {
             match tokio::time::timeout(
                 Duration::from_secs(5),
                 sqlx::query("SELECT pg_advisory_unlock($1)")
@@ -653,13 +749,37 @@ impl Drop for TestDatabase {
             self.name, lock_id
         );
 
-        // Schedule cleanup via the cleanup manager instead of blocking Drop
-        CLEANUP_MANAGER.schedule_cleanup(CleanupTask {
+        let clean_after_use = clean_after_use_enabled();
+        let task = CleanupTask {
             lock_id,
             pool: self.pool.clone(),
             slot_name: self.name.clone(),
+            slot_url: self.slot.url.clone(),
+            slot: self.slot.clone(),
             lock_conn: self.lock_conn.take(),
-        });
+            clean_after_use,
+        };
+
+        if clean_after_use {
+            // In nextest (process-per-test), the process exits immediately after the test returns.
+            // Best-effort background cleanup may never run. Prefer completing cleanup inline when
+            // a Tokio runtime is available.
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        tokio::task::block_in_place(|| {
+                            handle.block_on(CleanupManager::process_cleanup_task(task))
+                        })
+                    }));
+                }
+                Err(_) => {
+                    CLEANUP_MANAGER.schedule_cleanup(task);
+                }
+            }
+        } else {
+            // Default: schedule cleanup via the cleanup manager instead of blocking Drop.
+            CLEANUP_MANAGER.schedule_cleanup(task);
+        }
 
         // Clear the pool reference immediately
         let mut pool_opt = self.slot.pool.lock();
@@ -739,6 +859,8 @@ impl DatabaseSlot {
 pub(crate) struct DatabasePool {
     slots: Vec<Arc<DatabaseSlot>>,
     slot_max_connections: u32,
+    expected_fingerprint: Option<String>,
+    expected_extensions: HashMap<String, String>,
 }
 
 impl DatabasePool {
@@ -767,7 +889,9 @@ impl DatabasePool {
                 config.slot_max_connections,
             )
             .await?;
+            let expected_extensions = template_guard.info.extensions.clone();
             let _ = template_guard.release().await;
+            let expected_fingerprint = migrations_fingerprint();
 
             let mut slots = Vec::with_capacity(config.size);
             for i in 0..config.size {
@@ -795,6 +919,8 @@ impl DatabasePool {
             return Ok(Self {
                 slots,
                 slot_max_connections: config.slot_max_connections.max(1),
+                expected_fingerprint,
+                expected_extensions,
             });
         }
 
@@ -807,6 +933,7 @@ impl DatabasePool {
         )
         .await?;
         let template = template_guard.info.clone();
+        let expected_fingerprint = migrations_fingerprint();
 
         let result: Result<Self> = async {
             // Create admin connection
@@ -881,6 +1008,14 @@ impl DatabasePool {
                     match create_database_from_template(&mut conn, &name, &template_name).await? {
                         CreateDatabaseOutcome::Created => {
                             eprintln!("  Created new pool database: {name}");
+                            let meta = PoolMeta {
+                                fingerprint: migrations_fingerprint(),
+                                extensions: template_ext_versions.clone(),
+                                dirty: false,
+                                updated_at_rfc3339: Utc::now().to_rfc3339(),
+                                last_error: None,
+                            };
+                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
                         }
                         CreateDatabaseOutcome::AlreadyExists => {
                             eprintln!(
@@ -904,7 +1039,7 @@ impl DatabasePool {
                         .await
                     {
                         if let Ok(rows) = sqlx::query!(
-                    r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','pgx_ulid','pg_jsonschema','vector')"#
+                    r#"SELECT extname, extversion FROM pg_extension WHERE extname IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')"#
                         )
                         .fetch_all(&db_pool)
                         .await
@@ -1048,6 +1183,14 @@ impl DatabasePool {
                         {
                             CreateDatabaseOutcome::Created => {
                                 eprintln!("  Recreated pool database from template: {name}");
+                                let meta = PoolMeta {
+                                    fingerprint: migrations_fingerprint(),
+                                    extensions: template_ext_versions.clone(),
+                                    dirty: false,
+                                    updated_at_rfc3339: Utc::now().to_rfc3339(),
+                                    last_error: None,
+                                };
+                                let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
                             }
                             CreateDatabaseOutcome::AlreadyExists => {
                                 eprintln!(
@@ -1101,6 +1244,8 @@ impl DatabasePool {
             Ok(Self {
                 slots,
                 slot_max_connections: slot_max_conns.max(1),
+                expected_fingerprint: expected_fingerprint.clone(),
+                expected_extensions: template.extensions.clone(),
             })
         }
         .await;
@@ -1359,7 +1504,83 @@ impl DatabasePool {
                     *pool_opt = Some(pool.clone());
                 }
 
-                // Clean it before use
+                let clean_after_use = clean_after_use_enabled();
+
+                if clean_after_use {
+                    let existing_meta = match tokio::time::timeout(
+                        Duration::from_secs(2),
+                        load_pool_meta(lock_conn.as_mut(), &slot.name),
+                    )
+                    .await
+                    {
+                        Ok(Ok(meta)) => meta,
+                        Ok(Err(_)) | Err(_) => None,
+                    };
+
+                    let expected_fp = self.expected_fingerprint.clone();
+                    let expected_ext = self.expected_extensions.clone();
+
+                    let meta_matches = existing_meta
+                        .as_ref()
+                        .map(|m| m.fingerprint == expected_fp && m.extensions == expected_ext)
+                        .unwrap_or(false);
+
+                    // If the DB is from an older template/extension set, prefer recreation over
+                    // cleanup; cleanup can't fix schema/extension drift.
+                    if existing_meta.is_some() && !meta_matches {
+                        eprintln!(
+                            "♻️  Slot {} metadata mismatches current template; recreating it",
+                            slot.name
+                        );
+                        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                            .bind(lock_id)
+                            .execute(lock_conn.as_mut())
+                            .await;
+                        drop(lock_conn);
+                        let _ = pool.close().await;
+                        let _ = recreate_pool_database(&slot.name, &slot.url).await;
+                        {
+                            let mut pool_opt = slot.pool.lock();
+                            *pool_opt = None;
+                        }
+                        slot.in_use.store(false, Ordering::Release);
+                        continue;
+                    }
+
+                    let was_clean = existing_meta.as_ref().map(|m| !m.dirty).unwrap_or(false);
+
+                    // Mark dirty immediately after lock acquisition (crash-safe).
+                    let dirty_meta = PoolMeta {
+                        fingerprint: expected_fp,
+                        extensions: expected_ext,
+                        dirty: true,
+                        updated_at_rfc3339: Utc::now().to_rfc3339(),
+                        last_error: None,
+                    };
+                    if let Err(e) =
+                        store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await
+                    {
+                        eprintln!("⚠️  Failed to persist pool meta for {}: {}", slot.name, e);
+                    }
+
+                    if was_clean {
+                        let acquisition_time = start_time.elapsed();
+                        POOL_METRICS.record_acquisition(acquisition_time);
+
+                        return Ok(TestDatabase {
+                            name: slot.name.clone(),
+                            pool: pool.clone(),
+                            slot: slot.clone(),
+                            lock_id,
+                            lock_conn: Some(lock_conn),
+                            acquired_at: Instant::now(),
+                            acquisition_process_id: pid,
+                        });
+                    }
+                }
+
+                // Clean it before use (default behavior, and also the fallback when the slot is
+                // not known-clean under clean-after-use).
                 let clean_start = std::time::Instant::now();
                 match clean_database(&slot, &pool, &slot.name, &slot.url).await {
                     Ok(_) => {
@@ -1384,6 +1605,18 @@ impl DatabasePool {
                     Err(e) => {
                         eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
                         POOL_METRICS.record_cleanup_failure();
+
+                        if clean_after_use {
+                            let dirty_meta = PoolMeta {
+                                fingerprint: self.expected_fingerprint.clone(),
+                                extensions: self.expected_extensions.clone(),
+                                dirty: true,
+                                updated_at_rfc3339: Utc::now().to_rfc3339(),
+                                last_error: Some(e.to_string()),
+                            };
+                            let _ =
+                                store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
+                        }
 
                         // Release the advisory lock on the same session that acquired it.
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
@@ -1499,6 +1732,7 @@ async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> Result<()
     let mut template_guard =
         ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
     let template_name = template_guard.info.name.clone();
+    let template_extensions = template_guard.info.extensions.clone();
     let start = Instant::now();
 
     let provision_result: Result<()> = async {
@@ -1519,6 +1753,15 @@ async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> Result<()
                 CreateDatabaseOutcome::AlreadyExists => {}
             }
         }
+        let _ = grant_pool_database_permissions(db_name).await;
+        let meta = PoolMeta {
+            fingerprint: migrations_fingerprint(),
+            extensions: template_extensions.clone(),
+            dirty: false,
+            updated_at_rfc3339: Utc::now().to_rfc3339(),
+            last_error: None,
+        };
+        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
         Ok(())
     }
     .await;
@@ -1892,6 +2135,7 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
     let mut template_guard =
         ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
     let template_name = template_guard.info.name.clone();
+    let template_extensions = template_guard.info.extensions.clone();
 
     let recreate_result: Result<()> = async {
         // Prevent multiple processes from concurrently dropping/recreating the same pool DB.
@@ -1912,6 +2156,14 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
         )
         .await?;
         let _ = grant_pool_database_permissions(db_name).await;
+        let meta = PoolMeta {
+            fingerprint: migrations_fingerprint(),
+            extensions: template_extensions.clone(),
+            dirty: false,
+            updated_at_rfc3339: Utc::now().to_rfc3339(),
+            last_error: None,
+        };
+        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
         Ok(())
     }
     .await;
@@ -2235,12 +2487,22 @@ async fn ensure_template_database(
         if exists {
             if let Some(fp) = &desired_fingerprint {
                 match load_template_meta(&mut admin_conn, template_name).await? {
-                    Some(meta) if meta.fingerprint == *fp => {
+                    Some(meta) if meta.fingerprint == *fp && !meta.extensions.is_empty() => {
                         eprintln!(
                             "✅ Template database {template_name} reused (migrations unchanged)"
                         );
                         reuse_allowed = true;
                         reused_extensions = meta.extensions;
+                    }
+                    Some(meta) if meta.fingerprint == *fp => {
+                        // Legacy/partial metadata (e.g. older harness versions) makes extension
+                        // drift undetectable across NixOS upgrades (TimescaleDB uses versioned
+                        // shared objects). Rebuild to avoid reusing a template that can no longer
+                        // load its extensions.
+                        eprintln!(
+                            "♻️  Template metadata missing extension versions ({template_name}); recreating template"
+                        );
+                        let _ = meta;
                     }
                     Some(meta) => {
                         eprintln!(
@@ -2255,9 +2517,15 @@ async fn ensure_template_database(
             } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
                 // Best effort: reuse when we can't compute the fingerprint, but still surface
                 // extension metadata if available.
-                eprintln!("✅ Template database {template_name} reused (no fingerprint)");
-                reuse_allowed = true;
-                reused_extensions = meta.extensions;
+                if meta.extensions.is_empty() {
+                    eprintln!(
+                        "♻️  Template metadata missing extension versions ({template_name}); recreating template"
+                    );
+                } else {
+                    eprintln!("✅ Template database {template_name} reused (no fingerprint)");
+                    reuse_allowed = true;
+                    reused_extensions = meta.extensions;
+                }
             } else {
                 eprintln!("ℹ️  Template metadata unavailable and fingerprint missing; recreating");
             }
@@ -2335,14 +2603,16 @@ async fn ensure_template_database(
         if exists {
             if let Some(fp) = &desired_fingerprint {
                 if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
-                    if meta.fingerprint == *fp {
+                    if meta.fingerprint == *fp && !meta.extensions.is_empty() {
                         reuse_allowed = true;
                         reused_extensions = meta.extensions;
                     }
                 }
             } else if let Some(meta) = load_template_meta(&mut admin_conn, template_name).await? {
-                reuse_allowed = true;
-                reused_extensions = meta.extensions;
+                if !meta.extensions.is_empty() {
+                    reuse_allowed = true;
+                    reused_extensions = meta.extensions;
+                }
             }
         }
 

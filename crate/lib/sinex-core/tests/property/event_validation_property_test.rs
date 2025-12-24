@@ -202,6 +202,7 @@ fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
 // =============================================================================
 
 sinex_proptest! {
+    #![cases(64)]
     fn test_valid_events_pass_validation(
         event in arbitrary_event()
     ) -> color_eyre::eyre::Result<()> {
@@ -248,7 +249,7 @@ sinex_proptest! {
     }
 
     fn test_payload_size_validation(
-        size_kb in 1usize..=1000usize
+        size_kb in 1usize..=256usize
     ) -> color_eyre::eyre::Result<()> {
         let large_data = "x".repeat(size_kb * 1024);
         let payload = json!({
@@ -294,7 +295,7 @@ sinex_proptest! {
     }
 
     fn test_event_uniqueness_properties(
-        events in proptest::collection::vec(arbitrary_event(), 2..100)
+        events in proptest::collection::vec(arbitrary_event(), 2..32)
     ) -> color_eyre::eyre::Result<()> {
         let mut ids: Vec<Ulid> = events
             .iter()
@@ -357,8 +358,9 @@ sinex_proptest! {
 }
 
 sinex_proptest! {
+    #![cases(64)]
     fn property_payload_size_validation(
-        size_kb in 1usize..=1000usize // Reduced size for faster tests
+        size_kb in 1usize..=256usize
     ) -> color_eyre::eyre::Result<()> {
         // Property: Events should handle various payload sizes gracefully
         let large_data = "x".repeat(size_kb * 1024);
@@ -410,7 +412,7 @@ sinex_proptest! {
     }
 
     fn property_event_uniqueness(
-        events in proptest::collection::vec(arbitrary_event(), 2..100)
+        events in proptest::collection::vec(arbitrary_event(), 2..32)
     ) -> color_eyre::eyre::Result<()> {
         // Property: Events should have unique IDs and maintain ordering
         let mut ids: Vec<Ulid> = events

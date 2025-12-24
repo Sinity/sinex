@@ -1,13 +1,13 @@
 # Streaming Architecture & Backpressure
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
 
 
-This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired in Phase 5 of `docs/way.md`; see the historical note below.)
+This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired during the JetStream refactor; see the historical note below.)
 
 > **Accuracy Notice (2025-07-24, refreshed 2025-02-24)**  
-> Legacy references to `docs/TARGET_final.md` were replaced with pointers to `docs/way.md`. If you still find links to removed files, treat them as historical context only and update them to match the JetStream plan.
+> Legacy references to `docs/TARGET_final.md` were replaced with pointers to the JetStream-first architecture docs under `docs/current/architecture/`. If you still find links to removed files, treat them as historical context only and update them to match the JetStream plan.
 
 ## Goals
 - Natural backpressure without arbitrary channel sizes.
@@ -53,7 +53,7 @@ Purpose:
 - Let consumer pace apply backpressure naturally.
 
 ### JetStream Confirmation Flow
-In the JetStream‑first architecture, ingestd persists events inside a single database transaction and, once committed, publishes confirmations back to JetStream (e.g., `events.confirmations.<event_id>`) plus any DLQ entries. Automata and replay tooling consume those confirmation streams via durable consumers, which gives the same ordering and reliability guarantees the old transactional outbox provided—without a second delivery mechanism. See `docs/way.md` for the authoritative subject list.
+In the JetStream‑first architecture, ingestd persists events inside a single database transaction and, once committed, publishes confirmations back to JetStream (e.g., `events.confirmations.<event_id>`) plus any DLQ entries. Automata and replay tooling consume those confirmation streams via durable consumers, which gives the same ordering and reliability guarantees the old transactional outbox provided—without a second delivery mechanism. For default stream/subject bootstrapping (and environment namespacing), see `nixos/modules/nats.nix`.
 
 **Historical note:** older revisions described a Postgres transactional outbox that relayed events to NATS. That component was removed when Phase 5 of the JetStream refactor completed; the section above captures the current behaviour.
 
@@ -87,6 +87,7 @@ streams:
 - For incident response, prefer replay from DB queries and/or events stream.
 
 ## See Also
-- docs/way.md (authoritative JetStream blueprint)
+- nixos/modules/nats.nix (default JetStream streams/subjects + env namespacing)
+- docs/current/architecture/Core_Architecture.md (system overview)
 - docs/vision/project-target-state.md (historical snapshot; see banner)
 - docs/current/architecture/security-architecture.md (reliability/attack surface)

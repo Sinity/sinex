@@ -25,7 +25,6 @@ pub struct EventPipeline {
 
 pub struct PipelineContext {
     pub db_pool: DbPool,
-    // Historical design artifact; use NATS JetStream per docs/way.md
     // Messaging is NATS JetStream; Redis is not used.
     pub metadata: HashMap<String, Value>,
     pub checkpoint: Option<Checkpoint>,

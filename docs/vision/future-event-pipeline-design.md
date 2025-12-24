@@ -1,7 +1,7 @@
 # Future Event Pipeline Design
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
 
 
 *Created: 2025-01-21*

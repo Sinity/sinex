@@ -11,20 +11,11 @@ use std::sync::{Arc, Barrier};
 
 sinex_proptest! {
     fn test_ulid_chronological_ordering(
-        count: usize in 2usize..10,
-        delay_micros: u64 in 100u64..1000
+        count: usize in 2usize..=100
     ) -> TestResult<()> {
-        let mut ulids = Vec::new();
-        for i in 0..count {
-            if i > 0 {
-                for _ in 0..delay_micros {
-                    std::thread::yield_now();
-                }
-            }
-            ulids.push(Ulid::new());
-        }
+        let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
         for window in ulids.windows(2) {
-            prop_assert!(window[0] <= window[1], "ULID ordering violated");
+            prop_assert!(window[0] < window[1], "ULID ordering violated");
         }
         Ok(())
     }
@@ -54,18 +45,12 @@ sinex_proptest! {
     }
 
     fn test_ulid_string_ordering(
-        count: usize in 2usize..5,
-        delay_micros: u64 in 100u64..1000
+        count: usize in 2usize..=20
     ) -> TestResult<()> {
         let mut ulids = Vec::new();
         let mut strings = Vec::new();
 
-        for i in 0..count {
-            if i > 0 {
-                for _ in 0..delay_micros {
-                    std::thread::yield_now();
-                }
-            }
+        for _ in 0..count {
             let ulid = Ulid::new();
             ulids.push(ulid);
             strings.push(ulid.to_string());

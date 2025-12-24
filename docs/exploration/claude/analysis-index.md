@@ -38,14 +38,8 @@ This directory contains the results of a comprehensive codebase analysis coverin
    - Configuration management
    - Design patterns in use
 
-4. **[Quick Wins & Actionable Items](./quick-wins-and-actionable-items.md)**
-   - 25+ actionable improvements
-   - Prioritized by effort/impact
-   - Immediate fixes (< 1 hour)
-   - Small improvements (1-4 hours)
-   - Documentation improvements
-   - Code quality enhancements
-   - First week recommendation
+4. **[Quick Wins & Actionable Items](./codebase-analysis-2025-11-16.md#quick-wins)**
+   - Short list of immediate, high-leverage fixes
 
 ---
 
@@ -208,7 +202,7 @@ This directory contains the results of a comprehensive codebase analysis coverin
 ### For Maintainers
 
 1. Start with [Comprehensive Summary](./comprehensive-analysis-summary.md)
-2. Review [Quick Wins](./quick-wins-and-actionable-items.md) for immediate actions
+2. Review [Quick Wins](./codebase-analysis-2025-11-16.md#quick-wins) for immediate actions
 3. Create GitHub issues from findings
 4. Prioritize based on impact/effort matrix
 

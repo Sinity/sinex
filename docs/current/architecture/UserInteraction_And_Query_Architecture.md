@@ -89,7 +89,7 @@ These modules run synchronously and use shared database pools. Keep transactions
 
 ## 5. Roadmap
 
-- **JetStream command/response:** Revisit once ingestion and automata have stabilised on JetStream (`docs/way.md`). Expected benefits include async processing and richer auditing.
+- **JetStream command/response:** Revisit once ingestion and automata have stabilised on JetStream end-to-end. Expected benefits include async processing and richer auditing.
 - **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
 - **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
 - **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.
@@ -98,4 +98,4 @@ These modules run synchronously and use shared database pools. Keep transactions
 - Gateway source: `crate/core/sinex-gateway/src/main.rs`, `rpc_server.rs`, `handlers.rs`, `service_container.rs`.
 - CLI docs: `cli/README.md`, `cli/DESIGN.md`.
 - Service documentation: `crate/lib/sinex-services/docs/*.md`.
-- Future architecture: `docs/way.md`, `docs/vision/streaming-architecture.md`.
+- Future architecture: `docs/vision/project-target-state.md`, `docs/vision/streaming-architecture.md`.

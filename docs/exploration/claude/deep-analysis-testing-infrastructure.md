@@ -689,7 +689,7 @@ impl Drop for TestContext {
 
 ### 3.2 TestDatabase Pool Architecture
 
-**Reference**: Phase 6 analysis (`docs/deep-analysis-database-patterns.md`)
+**Reference**: Phase 6 analysis ([deep-analysis-database-patterns.md](./deep-analysis-database-patterns.md))
 
 The 64-database pool mechanism is thoroughly analyzed in Phase 6. Key points:
 
@@ -1278,13 +1278,13 @@ fn test_event_insertion_preserves_fields() -> TestResult {
 
 ### Related Analysis Documents
 
-- **Phase 6: Database Patterns** (`docs/deep-analysis-database-patterns.md`)
+- **Phase 6: Database Patterns** ([deep-analysis-database-patterns.md](./deep-analysis-database-patterns.md))
   - 64-database pool architecture
   - Migration fingerprinting
   - Template database cloning
   - Issues 50-52 (pool coordination, lease timeout, template corruption)
 
-- **Phase 10: Concurrency Patterns** (`docs/deep-analysis-concurrency-patterns.md`)
+- **Phase 10: Concurrency Patterns** ([deep-analysis-concurrency-patterns.md](./deep-analysis-concurrency-patterns.md))
   - Channel sizing patterns
   - Lock contention analysis
   - tokio::spawn management

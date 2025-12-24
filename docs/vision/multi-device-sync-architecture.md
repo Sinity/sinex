@@ -1,7 +1,7 @@
 # TIM-MultiDeviceSyncArchitecture: Multi-Device Synchronization
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
 
 
 *   **Relevant ADR:** (N/A directly, enables Vision Doc Part VI.5 for personal multi-device coherence)
@@ -112,4 +112,3 @@ Not primary for single-user multi-device, but informs design.
 *   **Peer-to-Peer (Mesh):** Direct device-to-device or instance-to-instance sync (libp2p, DHT).
 *   **Hybrid:** Personal hub, with P2P federation between hubs.
 *   **Enablers:** Global ULIDs, NTP, `git-annex` for blobs, CRDTs. ACLs and cryptographic sharing for inter-user.
-

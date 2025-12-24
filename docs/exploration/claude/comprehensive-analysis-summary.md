@@ -518,7 +518,7 @@ crate/
 
 ### Phase 1: Static Code Analysis
 
-See: `docs/analysis-findings-phase1-static-code.md`
+See: [analysis-findings-phase1-static-code.md](./analysis-findings-phase1-static-code.md)
 
 **Key Findings:**
 
@@ -530,7 +530,7 @@ See: `docs/analysis-findings-phase1-static-code.md`
 
 ### Phase 2: Architecture & Design
 
-See: `docs/analysis-findings-phase2-architecture.md`
+See: [analysis-findings-phase2-architecture.md](./analysis-findings-phase2-architecture.md)
 
 **Key Findings:**
 

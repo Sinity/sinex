@@ -4,7 +4,7 @@
 //! from JetStreamEventConsumer.
 //!
 //! NOTE: This is a work-in-progress adapter. The full integration requires refactoring
-//! automata to support streaming consumption patterns. See docs/way.md Phase 2.
+//! automata to support streaming consumption patterns.
 
 use crate::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
 use crate::SatelliteResult;
