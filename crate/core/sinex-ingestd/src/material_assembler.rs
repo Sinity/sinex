@@ -57,7 +57,7 @@ struct MaterialBeginMessage {
 }
 
 /// Message from `source_material.end`
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 struct MaterialEndMessage {
     material_id: String,
@@ -79,6 +79,10 @@ struct PersistedState {
     material_kind: String,
     source_identifier: String,
     metadata: JsonValue,
+    #[serde(default)]
+    pending_end: Option<MaterialEndMessage>,
+    #[serde(default)]
+    finalizing: bool,
 }
 
 /// DLQ payload for material failures
@@ -105,6 +109,8 @@ struct AssemblerState {
     source_identifier: String,
     metadata: JsonValue,
     hasher: Hasher,
+    pending_end: Option<MaterialEndMessage>,
+    finalizing: bool,
 }
 
 #[derive(Clone)]
@@ -439,6 +445,8 @@ impl MaterialAssembler {
                 source_identifier: persisted.source_identifier,
                 metadata: normalize_metadata(persisted.metadata),
                 hasher,
+                pending_end: persisted.pending_end,
+                finalizing: persisted.finalizing,
             };
 
             self.insert_state_handle(material_id, state).await;
@@ -459,6 +467,8 @@ impl MaterialAssembler {
             material_kind: state.material_kind.clone(),
             source_identifier: state.source_identifier.clone(),
             metadata: state.metadata.clone(),
+            pending_end: state.pending_end.clone(),
+            finalizing: state.finalizing,
         };
 
         let serialized = serde_json::to_vec_pretty(&persisted).map_err(|e| {
@@ -531,9 +541,15 @@ impl MaterialAssembler {
             .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
-        let temp_file = File::create(&temp_path)
+        // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
+        // "first" on different consumers). Never truncate an existing temp file here, otherwise we
+        // can wipe already-written slice bytes while keeping the in-memory counters.
+        let temp_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
 
         Ok(AssemblerState {
             material_id,
@@ -548,6 +564,8 @@ impl MaterialAssembler {
             source_identifier: "unknown".to_string(),
             metadata: json!({}),
             hasher: Hasher::new(),
+            pending_end: None,
+            finalizing: false,
         })
     }
 
@@ -620,6 +638,8 @@ impl MaterialAssembler {
             source_identifier: begin.source_identifier,
             metadata: begin.metadata,
             hasher: Hasher::new(),
+            pending_end: None,
+            finalizing: false,
         };
 
         let register_metadata = state.metadata.clone();
@@ -686,6 +706,15 @@ impl MaterialAssembler {
         };
 
         let mut state = state_handle.lock().await;
+
+        if state.finalizing {
+            debug!(
+                material_id = %material_id,
+                offset,
+                "Ignoring slice received while material is finalizing"
+            );
+            return Ok(());
+        }
 
         if offset == state.expected_offset {
             if let Some(file) = state.temp_file.as_mut() {
@@ -1034,36 +1063,146 @@ impl MaterialAssembler {
             ));
         }
 
-        let state_handle = {
-            let mut states = self.assembler_state.write().await;
-            states.remove(&material_id)
-        };
-        let Some(state_handle) = state_handle else {
+        let state_handle = if let Some(existing) = self.get_state_handle(&material_id).await {
+            existing
+        } else {
+            // End may arrive before begin/slices (separate streams). Create a placeholder so we can
+            // record the end and finalize once the missing slices arrive.
             warn!(
                 material_id = %material_id,
-                "End message received for unknown material"
+                "End message received before material state existed; creating placeholder"
             );
-            return Err(SinexError::service(format!(
-                "end message received before begin for material {material_id}"
-            )));
+            let placeholder = self.create_placeholder_state(material_id).await?;
+            self.insert_state_handle(material_id, placeholder).await
         };
-        let mut state = state_handle.lock().await;
 
-        if let Some(mut file) = state.temp_file.take() {
-            if let Err(e) = file.flush().await {
-                warn!(
-                    material_id = %material_id,
-                    "Failed to flush temp file during finalization: {}",
-                    e
-                );
+        // Record end so we can tolerate out-of-order delivery across begin/slices/end streams.
+        {
+            let mut state = state_handle.lock().await;
+            if state.finalizing {
+                debug!(material_id = %material_id, "Ignoring end message while finalizing");
+                return Ok(());
             }
+            state.pending_end = Some(end);
+            self.persist_state(&state).await?;
         }
 
-        let final_state = state.finalization_view();
-        let assembled_bytes = final_state.expected_offset;
-        let slice_count = final_state.slice_count;
-        let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
-        drop(state);
+        let (final_state, assembled_bytes, slice_count, computed_hash, end) = {
+            let mut state = state_handle.lock().await;
+            let end_preview = state
+                .pending_end
+                .clone()
+                .expect("pending_end set immediately above");
+
+            let view = state.finalization_view();
+            let assembled_bytes = view.expected_offset;
+            let slice_count = view.slice_count;
+
+            // Not complete yet: keep the end in state and ask JetStream to redeliver later.
+            let expected_slices = end_preview.total_slices;
+            let expected_bytes = end_preview.total_size_bytes;
+            let seen_slices = view.slice_count.saturating_add(view.buffered_count);
+
+            // If the end metadata makes the current buffered state impossible to finalize, treat
+            // it as corruption and route to DLQ instead of NAK-looping forever.
+            //
+            // Example: a slice arrives with an offset beyond the claimed total byte size, or we
+            // have already seen as many slices as the end claims exist but still can't assemble.
+            let has_invalid_offsets = state
+                .buffered_slices
+                .keys()
+                .any(|off| *off < 0 || *off >= expected_bytes);
+
+            if expected_bytes < 0
+                || view.expected_offset > expected_bytes
+                || has_invalid_offsets
+                || (seen_slices >= expected_slices && view.expected_offset != expected_bytes)
+            {
+                let reason = if expected_bytes < 0 {
+                    format!("invalid end.total_size_bytes={expected_bytes}")
+                } else if view.expected_offset > expected_bytes {
+                    format!(
+                        "assembled_bytes={} exceeds expected_bytes={}",
+                        view.expected_offset, expected_bytes
+                    )
+                } else if has_invalid_offsets {
+                    format!(
+                        "buffered slice offsets outside expected_bytes={expected_bytes} (buffered_offsets={:?})",
+                        state.buffered_slices.keys().cloned().collect::<Vec<_>>()
+                    )
+                } else {
+                    format!(
+                        "cannot assemble full material: assembled_bytes={} expected_bytes={} slice_count={} buffered_count={} expected_slices={}",
+                        view.expected_offset,
+                        expected_bytes,
+                        view.slice_count,
+                        view.buffered_count,
+                        expected_slices
+                    )
+                };
+
+                let ctx = json!({
+                    "reason": reason,
+                    "assembled_bytes": view.expected_offset,
+                    "slice_count": view.slice_count,
+                    "buffered_offsets": state.buffered_slices.keys().cloned().collect::<Vec<_>>(),
+                    "expected_bytes": expected_bytes,
+                    "expected_slices": expected_slices,
+                    "end": {
+                        "ended_at": end_preview.ended_at,
+                        "content_hash": end_preview.content_hash,
+                    }
+                });
+
+                drop(state);
+                self.route_material_error(
+                    material_id,
+                    "material assembly corruption detected",
+                    ctx,
+                )
+                .await;
+                self.cleanup_state(material_id).await;
+                let _ = self.assembler_state.write().await.remove(&material_id);
+                return Ok(());
+            }
+
+            if view.buffered_count > 0
+                || view.expected_offset < expected_bytes
+                || view.slice_count < expected_slices
+            {
+                return Err(SinexError::service(format!(
+                    "end received before all slices were processed for {material_id}: assembled_bytes={} slice_count={} buffered={} expected_bytes={} expected_slices={}",
+                    view.expected_offset,
+                    view.slice_count,
+                    view.buffered_count,
+                    expected_bytes,
+                    expected_slices
+                )));
+            }
+
+            // Complete: transition into finalization. Prevent concurrent slice writes by taking
+            // the file handle and marking finalizing.
+            state.finalizing = true;
+            let end = state
+                .pending_end
+                .take()
+                .expect("pending_end must exist when finalizing");
+
+            if let Some(mut file) = state.temp_file.take() {
+                if let Err(e) = file.flush().await {
+                    warn!(
+                        material_id = %material_id,
+                        "Failed to flush temp file during finalization: {}",
+                        e
+                    );
+                }
+            }
+
+            let computed_hash = state.hasher.clone().finalize().to_hex().to_string();
+            self.persist_state(&state).await?;
+
+            (view, assembled_bytes, slice_count, computed_hash, end)
+        };
 
         debug!(
             material_id = %material_id,
@@ -1095,6 +1234,7 @@ impl MaterialAssembler {
             .await;
 
             self.cleanup_state(material_id).await;
+            let _ = self.assembler_state.write().await.remove(&material_id);
             return Ok(());
         }
 
@@ -1147,6 +1287,7 @@ impl MaterialAssembler {
             )
             .await;
             self.cleanup_state(material_id).await;
+            let _ = self.assembler_state.write().await.remove(&material_id);
             return Ok(());
         }
 
@@ -1169,6 +1310,7 @@ impl MaterialAssembler {
             )
             .await;
             self.cleanup_state(material_id).await;
+            let _ = self.assembler_state.write().await.remove(&material_id);
             return Ok(());
         }
 
@@ -1191,6 +1333,7 @@ impl MaterialAssembler {
             .await;
 
             self.cleanup_state(material_id).await;
+            let _ = self.assembler_state.write().await.remove(&material_id);
             return Ok(());
         }
 
@@ -1217,6 +1360,7 @@ impl MaterialAssembler {
             )
             .await;
             self.cleanup_state(material_id).await;
+            let _ = self.assembler_state.write().await.remove(&material_id);
             return Ok(());
         }
 
@@ -1229,8 +1373,12 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                let mut states = self.assembler_state.write().await;
-                states.insert(material_id, state_handle.clone()); // Reinsert state for potential retry
+                {
+                    let mut state = state_handle.lock().await;
+                    state.finalizing = false;
+                    state.pending_end = Some(end);
+                    let _ = self.persist_state(&state).await;
+                }
                 return Err(e);
             }
         };
@@ -1247,8 +1395,12 @@ impl MaterialAssembler {
                     json!({ "error": e.to_string() }),
                 )
                 .await;
-                let mut states = self.assembler_state.write().await;
-                states.insert(material_id, state_handle.clone()); // Reinsert for retry
+                {
+                    let mut state = state_handle.lock().await;
+                    state.finalizing = false;
+                    state.pending_end = Some(end);
+                    let _ = self.persist_state(&state).await;
+                }
                 return Err(e);
             }
         };
@@ -1276,8 +1428,12 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            let mut states = self.assembler_state.write().await;
-            states.insert(material_id, state_handle.clone()); // Reinsert for retry
+            {
+                let mut state = state_handle.lock().await;
+                state.finalizing = false;
+                state.pending_end = Some(end);
+                let _ = self.persist_state(&state).await;
+            }
             return Err(e);
         }
 
@@ -1288,12 +1444,17 @@ impl MaterialAssembler {
                 json!({ "error": e.to_string() }),
             )
             .await;
-            let mut states = self.assembler_state.write().await;
-            states.insert(material_id, state_handle.clone()); // Reinsert for retry
+            {
+                let mut state = state_handle.lock().await;
+                state.finalizing = false;
+                state.pending_end = Some(end);
+                let _ = self.persist_state(&state).await;
+            }
             return Err(e);
         }
 
         self.cleanup_state(material_id).await;
+        let _ = self.assembler_state.write().await.remove(&material_id);
 
         info!(
             material_id = %material_id,
@@ -1326,6 +1487,9 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_begin".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Critical for correctness: tests (and real systems) may publish before this
+                        // consumer is created on first startup; don't silently skip earlier messages.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         ..Default::default()
                     },
                 )
@@ -1387,6 +1551,8 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_slices".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Same reasoning as begin/end: don't skip slices published before consumer creation.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         max_ack_pending: 1_000,
                         ..Default::default()
                     },
@@ -1484,6 +1650,8 @@ impl MaterialAssembler {
                     jetstream::consumer::pull::Config {
                         durable_name: Some("ingestd_material_end".to_string()),
                         ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                        // Ensure end messages published before consumer creation are still processed.
+                        deliver_policy: jetstream::consumer::DeliverPolicy::All,
                         ..Default::default()
                     },
                 )
@@ -1526,7 +1694,11 @@ impl MaterialAssembler {
 
                     if let Err(err) = assembler.handle_end(end_message).await {
                         error!("Failed to process end message: {}", err);
-                        let _ = message.ack_with(jetstream::AckKind::Nak(None)).await;
+                        let _ = message
+                            .ack_with(jetstream::AckKind::Nak(Some(
+                                std::time::Duration::from_millis(200),
+                            )))
+                            .await;
                         continue;
                     }
 
@@ -1658,6 +1830,8 @@ mod tests {
             source_identifier: "test".to_string(),
             metadata: JsonValue::Null,
             hasher: Hasher::new(),
+            pending_end: None,
+            finalizing: false,
         }
     }
 

@@ -1,6 +1,6 @@
 # Sinex Test Utilities
 
-> The workspace-wide testing handbook lives at [`TESTING.md`](../../TESTING.md).
+> The workspace-wide testing handbook lives at [`TESTING.md`](../../../TESTING.md).
 > Use it for quick-start commands, suite layout, and property-testing guidance.
 > This README focuses on the crate itself; API-level details are in
 > `docs/overview.md` and `docs/testing_quality_overview.md`.
@@ -368,6 +368,6 @@ tokio-test = "0.4"
 
 ## Contributing
 
-See the main [Sinex documentation](../../README.md) for contribution guidelines.
+See the main [Sinex documentation](../../../README.md) for contribution guidelines.
 
 ## License

@@ -1,5 +1,5 @@
 # Sinex Vision & Principles
-> **Purpose:** Capture the long-term philosophical north star and design principles; pair with `docs/way.md` for execution details.
+> **Purpose:** Capture the long-term philosophical north star and design principles; pair with `docs/current/architecture/Core_Architecture.md` for execution details.
 
 *Last updated: 2025-10-23*
 
@@ -9,7 +9,7 @@ service of the person who generated it. This document consolidates the
 philosophical intent, the architectural pattern language, and the research
 trajectory that previously lived across dozens of exploratory essays.
 
-For the authoritative ingestion and operational checklist, see `docs/way.md`.
+For the authoritative ingestion and operational checklist, see `docs/current/architecture/provenance.md` and `nixos/README.md`.
 
 ## 1. Purpose & Philosophy
 

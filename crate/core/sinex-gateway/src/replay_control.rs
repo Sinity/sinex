@@ -68,9 +68,55 @@ impl ReplayControlClient {
         Ok(response)
     }
 
+    #[cfg(test)]
+    async fn send_with_timeout(
+        &self,
+        request: ReplayControlRequest,
+        timeout: Duration,
+    ) -> Result<ReplayControlResponse> {
+        let payload = serde_json::to_vec(&request)?;
+        let nats_request = async_nats::Request::new()
+            .timeout(Some(timeout))
+            .payload(payload.into());
+        let message = self
+            .client
+            .send_request(self.subject.clone(), nats_request)
+            .await
+            .wrap_err("Replay control request timed out")?;
+
+        let response: ReplayControlResponse =
+            serde_json::from_slice(&message.payload).wrap_err("Invalid replay control response")?;
+
+        if response.status == "error" {
+            return Err(eyre!(
+                "{}",
+                response
+                    .message
+                    .unwrap_or_else(|| "Replay control request failed".to_string())
+            ));
+        }
+
+        Ok(response)
+    }
+
     pub async fn plan(&self, actor: String, scope: ReplayScope) -> Result<ReplayOperation> {
         let response = self
             .send(ReplayControlRequest::Plan { actor, scope })
+            .await?;
+        response
+            .operation
+            .ok_or_else(|| eyre!("Replay control response missing operation"))
+    }
+
+    #[cfg(test)]
+    pub async fn plan_with_timeout(
+        &self,
+        actor: String,
+        scope: ReplayScope,
+        timeout: Duration,
+    ) -> Result<ReplayOperation> {
+        let response = self
+            .send_with_timeout(ReplayControlRequest::Plan { actor, scope }, timeout)
             .await?;
         response
             .operation
@@ -614,12 +660,15 @@ mod tests {
 
         let scope = sample_scope();
         let err = client
-            .plan("tester".into(), scope)
+            .plan_with_timeout("tester".into(), scope, Duration::from_secs(1))
             .await
-            .expect_err("plan should fail");
+            .expect_err("plan should fail after broker drop");
         let message = err.to_string();
         assert!(
-            message.contains("request") || message.contains("connection"),
+            message.contains("request")
+                || message.contains("connection")
+                || message.contains("timed out")
+                || message.contains("no responders"),
             "unexpected error: {message}"
         );
         Ok(())

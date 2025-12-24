@@ -118,7 +118,7 @@
 - **Permissive gateway CORS:** RPC server stacks `CorsLayer::permissive()` unconditionally (`crate/core/sinex-gateway/src/rpc_server.rs:470`). When TCP mode is enabled this allows any origin; tighten to an allowlist or disable CORS unless explicitly configured.
 
 ### Low Priority / Polish Items
-- **TODO/FIXME inventory:** 16 TODO/FIXME items remain in production code (see `docs/claude/analysis-findings-phase1-static-code.md`); convert each into tracked issues with owners and acceptance criteria.
+- **TODO/FIXME inventory:** 16 TODO/FIXME items remain in production code (see `docs/exploration/claude/analysis-findings-phase1-static-code.md`); convert each into tracked issues with owners and acceptance criteria.
 - **Logging defaults:** `HeartbeatEmitter` and other long-running tasks write to stdout; confirm journald ingestion expectations and consider a toggle to redirect to `tracing` for non-systemd deployments.
 
 ### Quick Wins
@@ -132,4 +132,4 @@
 ## Analysis Log
 
 Starting analysis at: 2025-11-16
-Notes: Used existing `docs/claude/analysis-index.md` metrics as baseline; spot-checked unwrap/expect hotspots, gateway RPC layers, and satellite acquisition manager/heartbeat modules on this pass.
+Notes: Used existing `docs/exploration/claude/analysis-index.md` metrics as baseline; spot-checked unwrap/expect hotspots, gateway RPC layers, and satellite acquisition manager/heartbeat modules on this pass.

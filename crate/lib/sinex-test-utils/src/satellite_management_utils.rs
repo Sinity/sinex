@@ -97,12 +97,19 @@ pub async fn start_test_ingestd_with_config(
         .map_err(|e| SinexError::configuration(e.to_string()))?;
 
     let stream_name = "sinex_test_events";
+    let env = sinex_core::environment::environment();
+    let material_begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    let material_slices_stream = env.nats_stream_name("SOURCE_MATERIAL_SLICES");
+    let material_end_stream = env.nats_stream_name("SOURCE_MATERIAL_END");
 
     let nats_client = async_nats::connect(&config.nats_url)
         .await
         .map_err(|e| SinexError::network(format!("Failed to connect to NATS: {e}")))?;
     let jetstream = async_nats::jetstream::new(nats_client.clone());
     let _ = jetstream.delete_stream(stream_name).await;
+    let _ = jetstream.delete_stream(&material_begin_stream).await;
+    let _ = jetstream.delete_stream(&material_slices_stream).await;
+    let _ = jetstream.delete_stream(&material_end_stream).await;
 
     let annex_path = work_dir.join("annex");
     let state_dir = work_dir.join("assembler_state");
@@ -129,9 +136,9 @@ pub async fn start_test_ingestd_with_config(
         }
     });
 
-    // Verify service is ready by checking NATS stream exists and the durable consumer
-    // is created (so tests don't have to guess with arbitrary sleeps).
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    // Verify service is ready by checking required JetStream streams exist and that the durable
+    // consumers are created (so tests don't have to guess with arbitrary sleeps).
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             if join_handle.is_finished() {
                 return Err(SinexError::service(
@@ -139,7 +146,8 @@ pub async fn start_test_ingestd_with_config(
                 ));
             }
 
-            let stream = match jetstream.get_stream(&ingest_config.nats_stream_name).await {
+            let events_stream = match jetstream.get_stream(&ingest_config.nats_stream_name).await
+            {
                 Ok(stream) => stream,
                 Err(_) => {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -147,15 +155,74 @@ pub async fn start_test_ingestd_with_config(
                 }
             };
 
-            match stream
+            match events_stream
                 .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
                     &ingest_config.nats_consumer_name,
                 )
                 .await
             {
-                Ok(_) => return Ok(()),
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+                Ok(_) => {}
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
             }
+
+            let begin_stream = match jetstream.get_stream(&material_begin_stream).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            if begin_stream
+                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
+                    "ingestd_material_begin",
+                )
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
+
+            let slices_stream = match jetstream.get_stream(&material_slices_stream).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            if slices_stream
+                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
+                    "ingestd_material_slices",
+                )
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
+
+            let end_stream = match jetstream.get_stream(&material_end_stream).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            if end_stream
+                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
+                    "ingestd_material_end",
+                )
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
+
+            return Ok(());
         }
     })
     .await

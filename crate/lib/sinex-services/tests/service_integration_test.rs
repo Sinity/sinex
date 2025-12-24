@@ -1,6 +1,6 @@
 // Service integration tests covering cross-service flows.
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::EventSource;
@@ -35,14 +35,6 @@ async fn create_test_event_with_timestamp(
 #[sinex_test]
 async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service data flow integration");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    sqlx::query("TRUNCATE core.events, raw.source_material_registry, raw.temporal_ledger CASCADE")
-        .execute(&ctx.pool)
-        .await?;
 
     // 1. Create events through TestContext (simulating ingest service)
     let fs_event = ctx
@@ -124,10 +116,6 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     let recent_events = ctx.pool.events().get_recent(10).await?;
     assert!(recent_events.len() >= 3, "Should find all recent events");
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
-
     tracing::info!("Cross-service integration test completed successfully");
     Ok(())
 }
@@ -135,15 +123,8 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
 /// Test service initialization and basic functionality
 #[sinex_test]
 async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    sqlx::query("TRUNCATE core.events, raw.source_material_registry, raw.temporal_ledger CASCADE")
-        .execute(&ctx.pool)
-        .await?;
     let total = ctx.pool.events().count_all().await?;
-    assert_eq!(total, 0, "Database should be empty after truncation");
+    assert_eq!(total, 0, "Database should be empty at test start");
     tracing::info!("Testing service initialization");
 
     // Test Analytics Service initialization
@@ -178,9 +159,6 @@ async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
     let updated_counts = service.get_event_count_by_source(None, None).await?;
     assert_eq!(updated_counts.get("test-source"), Some(&1));
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -230,10 +208,6 @@ async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
 /// Test service performance under load
 #[sinex_test]
 async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()> {
-    ctx.force_cleanup().await?;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     tracing::info!("Testing service performance under load");
 
     let start_time = std::time::Instant::now();
@@ -364,9 +338,6 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
         "Queries should complete quickly"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -374,10 +345,6 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
 #[sinex_test]
 async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service lifecycle management");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Create test data
     for i in 0..5 {
@@ -455,9 +422,6 @@ async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
         "Concurrent service instances should return consistent results"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -465,12 +429,10 @@ async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing time-based service integration");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
-    let now = Utc::now();
+    // Use a fixed, hour-aligned timestamp so TimescaleDB bucketing is deterministic and this
+    // test can't flake on wall-clock timing or boundary conditions.
+    let now = Utc.with_ymd_and_hms(2025, 1, 2, 12, 0, 0).unwrap();
 
     // Create events with specific timestamps using modern pattern
     let _recent_event = create_test_event_with_timestamp(
@@ -492,12 +454,10 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     .await?;
 
     // Test Analytics with time filtering
-    let analytics = AnalyticsService::new(ctx.pool.clone());
+    let analytics = Arc::new(AnalyticsService::new(ctx.pool.clone()));
 
     let one_hour_ago = now - Duration::hours(1);
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 8)
-        .await
-        .ok();
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 2, 20).await?;
 
     let recent_counts = analytics
         .get_event_count_by_source(Some(one_hour_ago), Some(now))
@@ -515,39 +475,33 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
         "Should find both events without time filter"
     );
 
-    // Test time series analysis
+    // Test time series analysis (should include only the recent event)
     let three_hours_ago = now - Duration::hours(3);
-    let mut time_series = analytics
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let analytics = analytics.clone();
+            async move {
+                let time_series = analytics
+                    .get_events_over_time(three_hours_ago, now, 60)
+                    .await?;
+                let total_in_series: i64 = time_series.iter().map(|(_, count)| *count).sum();
+                Ok(!time_series.is_empty() && total_in_series == 1)
+            }
+        },
+        20,
+    )
+    .await?;
+
+    let time_series = analytics
         .get_events_over_time(three_hours_ago, now, 60)
         .await?;
-    if time_series.is_empty() {
-        tracing::warn!("Time series empty, backfilling a recent event and retrying");
-        create_test_event_with_timestamp(
-            &ctx,
-            "time-test",
-            "recent.event",
-            json!({"description": "Recent backfill"}),
-            now - Duration::minutes(10),
-        )
-        .await?;
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 8)
-            .await
-            .ok();
-        time_series = analytics
-            .get_events_over_time(three_hours_ago, now, 60)
-            .await?;
-    }
-
     assert!(!time_series.is_empty(), "Should have time series data");
     let total_in_series: i64 = time_series.iter().map(|(_, count)| count).sum();
     assert_eq!(
         total_in_series, 1,
-        "Should find recent event in time series"
+        "Should find only recent event in time series range"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 

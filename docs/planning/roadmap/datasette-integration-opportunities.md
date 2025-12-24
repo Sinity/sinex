@@ -221,8 +221,7 @@
   This creates a "personal data OS" where Sinex is the kernel (capturing events), Datasette is the shell (exploring data), and Dogsheep
   provides backward compatibility with external services.
 
-> do write down into docs/roadmap/datasette-integration-opportunities.md
+> do write down into docs/planning/roadmap/datasette-integration-opportunities.md
   ⎿  Interrupted by user
-
 
 

@@ -1,6 +1,6 @@
 //! End-to-end JetStream integration test
 //!
-//! This test demonstrates the complete JetStream event flow as specified in docs/way.md:
+//! This test demonstrates the complete JetStream event flow:
 //! 1. Satellite publishes provisional event to JetStream (events.raw)
 //! 2. ingestd consumes event, persists to database
 //! 3. ingestd publishes confirmation (events.confirmations)

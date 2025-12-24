@@ -1,7 +1,7 @@
 # TIM-SemanticDesktopStream: Synthesizing Context for Advanced Agency
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical (`docs/way.md`). Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
 
 
 *   **Purpose:** Details the architecture of the Semantic Desktop Stream, a synthesized, real-time model of the user's current desktop context and available actions, designed to enable advanced AI agency.
@@ -66,4 +66,3 @@ This stream is the input for LLM agents performing:
         *   Clearly auditable (logged as `sinex.agent.action_executed_on_desktop` events with full details).
         *   Sandboxed if possible to limit scope of action.
         *   Have undo/revert mechanisms where feasible.
-
