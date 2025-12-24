@@ -109,9 +109,8 @@ overall_best = min(rows, key=median_ms)
 overall_worst = max(rows, key=median_ms)
 
 def fmt_fields(r: dict[str, str]) -> str:
-    parts = [f"threads={r.get('threads', '-')}", f"pool={r.get('pool_size', '-')}" if "pool_size" in r else f"pool={r.get('pool_size', r.get('pool', r.get('pool_size', '-')))}"]
-    if "heavy_cap" in r:
-        parts.append(f"heavy_cap={r.get('heavy_cap', '-')}")
+    pool = r.get("pool_size") or r.get("pool") or "-"
+    parts = [f"threads={r.get('threads', '-')}", f"pool={pool}"]
     if "clean_after_use" in r:
         parts.append(f"cau={r.get('clean_after_use', '-')}")
     if "eager_provision" in r:

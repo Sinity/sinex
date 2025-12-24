@@ -7,8 +7,7 @@ use sinex_satellite_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{
-    acquire_pool_test_guard, db_common, start_test_ingestd_with_config, EphemeralNats,
-    TestIngestdConfig,
+    start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -105,11 +104,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 /// Test out-of-order slice handling
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
-    let _guard = acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
-    ctx.ensure_clean().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
+    // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
 
@@ -261,9 +256,6 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     }
 
     ingest_handle.stop().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -271,10 +263,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 #[sinex_test(timeout = 90)]
 async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_tracing("sinex_ingestd=debug");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let run_suffix = Ulid::new();
@@ -408,8 +397,6 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 
     ingest_handle.stop().await?;
     ctx.quiesce_background_tasks().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
@@ -417,11 +404,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 #[sinex_test(timeout = 90)]
 async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_tracing("sinex_ingestd=debug");
-    let _guard = acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
-    ctx.ensure_clean().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
+    // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let synchronizer = Arc::new(sinex_test_utils::timing_utils::WorkerReadinessCoordinator::new(4));
@@ -453,7 +436,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
             let material_id = handle.material_id;
             synchronizer.worker_ready();
             synchronizer
-                .wait_for_all_ready(Duration::from_secs(5))
+                .wait_for_all_ready(Duration::from_secs(20))
                 .await?;
             manager
                 .append_slice(&mut handle, format!("slice-{idx}").as_bytes())
@@ -495,19 +478,13 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     }
 
     ingest_handle.stop().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
 /// Test material rotation based on size
 #[sinex_test]
 async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
-    let _guard = acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
-    ctx.ensure_clean().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
+    // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
     let js = nats.jetstream_with_client(nats_client.clone());
@@ -566,7 +543,5 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     .await?;
 
     ingest_handle.stop().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }

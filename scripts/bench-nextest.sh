@@ -56,10 +56,6 @@ Bench modes:
   BENCH_MODE=sweeps           # sweep threads, then sweep pool sizes
   BENCH_MODE=matrix           # full cross-product THREADS_LIST × POOL_SIZES
   BENCH_MODE=refine           # sweeps, pick best candidates, then small matrix
-    # Advanced: tweak selection size for refine
-    # REFINE_TOP_THREADS=3
-    # REFINE_TOP_POOLS=3
-    # REFINE_SWEEP_RUNS=1      # repetitions for sweeps only (final refine matrix uses RUNS)
 
 Key knobs:
   THREADS_LIST="8 16 24"      # if empty, defaults to half+full nproc
@@ -111,8 +107,6 @@ BENCH_KEEP_SINEX_PROPTEST_CASES="${BENCH_KEEP_SINEX_PROPTEST_CASES:-0}"
 
 EAGER_PROVISION="${EAGER_PROVISION:-0}"
 EAGER_PROVISION_LIST="${EAGER_PROVISION_LIST:-}"
-# Legacy single-value knob. Prefer CLEAN_AFTER_USE_LIST (below) for comparing modes in one run.
-CLEAN_AFTER_USE="${CLEAN_AFTER_USE:-}"
 CLEAN_AFTER_USE_LIST="${CLEAN_AFTER_USE_LIST:-}"
 
 MESSAGE_FORMAT="${MESSAGE_FORMAT:-libtest-json-plus}"
@@ -204,11 +198,6 @@ resolve_pool_sizes_list() {
 resolve_clean_after_use_list() {
   if [[ -n "$CLEAN_AFTER_USE_LIST" ]]; then
     echo "$CLEAN_AFTER_USE_LIST"
-    return
-  fi
-
-  if [[ -n "$CLEAN_AFTER_USE" ]]; then
-    echo "$CLEAN_AFTER_USE"
     return
   fi
 
@@ -638,9 +627,9 @@ PY
 
 refine() {
   local repo="$1" out="$2"
-  local top_threads="${REFINE_TOP_THREADS:-3}"
-  local top_pools="${REFINE_TOP_POOLS:-3}"
-  local sweep_runs="${REFINE_SWEEP_RUNS:-1}"
+  local top_threads=3
+  local top_pools=3
+  local sweep_runs=1
 
   RUNS_OVERRIDE="$sweep_runs" sweep_threads "$repo" "$out"
   RUNS_OVERRIDE="$sweep_runs" sweep_pool_sizes "$repo" "$out"

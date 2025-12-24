@@ -68,9 +68,55 @@ impl ReplayControlClient {
         Ok(response)
     }
 
+    #[cfg(test)]
+    async fn send_with_timeout(
+        &self,
+        request: ReplayControlRequest,
+        timeout: Duration,
+    ) -> Result<ReplayControlResponse> {
+        let payload = serde_json::to_vec(&request)?;
+        let nats_request = async_nats::Request::new()
+            .timeout(Some(timeout))
+            .payload(payload.into());
+        let message = self
+            .client
+            .send_request(self.subject.clone(), nats_request)
+            .await
+            .wrap_err("Replay control request timed out")?;
+
+        let response: ReplayControlResponse =
+            serde_json::from_slice(&message.payload).wrap_err("Invalid replay control response")?;
+
+        if response.status == "error" {
+            return Err(eyre!(
+                "{}",
+                response
+                    .message
+                    .unwrap_or_else(|| "Replay control request failed".to_string())
+            ));
+        }
+
+        Ok(response)
+    }
+
     pub async fn plan(&self, actor: String, scope: ReplayScope) -> Result<ReplayOperation> {
         let response = self
             .send(ReplayControlRequest::Plan { actor, scope })
+            .await?;
+        response
+            .operation
+            .ok_or_else(|| eyre!("Replay control response missing operation"))
+    }
+
+    #[cfg(test)]
+    pub async fn plan_with_timeout(
+        &self,
+        actor: String,
+        scope: ReplayScope,
+        timeout: Duration,
+    ) -> Result<ReplayOperation> {
+        let response = self
+            .send_with_timeout(ReplayControlRequest::Plan { actor, scope }, timeout)
             .await?;
         response
             .operation
@@ -613,25 +659,18 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let scope = sample_scope();
-        // The underlying request timeout can be ~10s; keep the test fast and accept either:
-        // - a quick client error (preferred), or
-        // - a short, external timeout (still indicates the broker disappeared).
-        match tokio::time::timeout(Duration::from_secs(1), client.plan("tester".into(), scope))
+        let err = client
+            .plan_with_timeout("tester".into(), scope, Duration::from_secs(1))
             .await
-        {
-            Ok(Ok(_)) => return Err(eyre!("plan unexpectedly succeeded after broker drop")),
-            Ok(Err(err)) => {
-                let message = err.to_string();
-                assert!(
-                    message.contains("request") || message.contains("connection"),
-                    "unexpected error: {message}"
-                );
-            }
-            Err(_) => {
-                // Good enough: the request didn't succeed, and we didn't wait for the full
-                // internal request timeout.
-            }
-        }
+            .expect_err("plan should fail after broker drop");
+        let message = err.to_string();
+        assert!(
+            message.contains("request")
+                || message.contains("connection")
+                || message.contains("timed out")
+                || message.contains("no responders"),
+            "unexpected error: {message}"
+        );
         Ok(())
     }
 
