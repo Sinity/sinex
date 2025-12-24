@@ -541,9 +541,15 @@ impl MaterialAssembler {
             .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
-        let temp_file = File::create(&temp_path)
+        // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
+        // "first" on different consumers). Never truncate an existing temp file here, otherwise we
+        // can wipe already-written slice bytes while keeping the in-memory counters.
+        let temp_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
 
         Ok(AssemblerState {
             material_id,
