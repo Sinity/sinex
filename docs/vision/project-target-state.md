@@ -1,8 +1,8 @@
-> **Status:** Target architecture specification (aligned with `docs/way.md`)
+> **Status:** Target architecture specification (aligned with JetStream-first ingestion)
 > **Last Updated:** 2025-11-13
-> This document describes the end-state architecture after the JetStream migration (way.md Phases 1–5) completes.
+> This document describes the end-state architecture after the JetStream migration (phases 1–5) completes.
 > **Purpose:** System-level target state reference (use it to evaluate future proposals; implementation details live in component docs).
-> **Historical context:** Older sections mention sensd/gRPC pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/way.md` for the live JetStream implementation.
+> **Historical context:** Older sections mention sensd/gRPC pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/current/architecture/Core_Architecture.md` for the live JetStream implementation.
 
 Invariants Quick Reference (one-page)
 

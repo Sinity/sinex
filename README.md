@@ -129,7 +129,7 @@ All satellites support two operational modes:
 - **Development Guide**: See [CLAUDE.md](CLAUDE.md) for development workflows and patterns
 - **Architecture Deep-Dive**: See [docs/current/architecture/](docs/current/architecture/) for domain-specific details
 - **NixOS Module**: See [nixos/modules/](nixos/modules/) for deployment configuration
-- **Roadmap**: See [docs/roadmap/](docs/roadmap/) for future features and architectural directions
+- **Roadmap**: See [docs/planning/roadmap/](docs/planning/roadmap/) for future features and architectural directions
 
 ### Key Architectural Decisions
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers for efficient indexing
@@ -281,7 +281,7 @@ Additional notes:
 ### Core
 - **Docs Index**: [`docs/README.md`](docs/README.md) — Start here
 - **Architecture**: [`docs/current/architecture/`](docs/current/architecture/)
-- **Roadmap**: [`docs/roadmap/`](docs/roadmap/)
+- **Roadmap**: [`docs/planning/roadmap/`](docs/planning/roadmap/)
 - **Integrity & Security**: [`docs/current/architecture/SystemOperations_And_Integrity_Architecture.md`](docs/current/architecture/SystemOperations_And_Integrity_Architecture.md), [`docs/current/architecture/security-architecture.md`](docs/current/architecture/security-architecture.md)
 
 ### Key Components

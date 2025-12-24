@@ -34,17 +34,17 @@ Key architectural decisions and implementation details are documented at their i
   - Monotonic generation for high concurrency
 
 ### Event Processing
-- **Ingestion & JetStream Playbook**: [`docs/way.md`](../docs/way.md)
-  - Target architecture for satellites → JetStream → ingestd
-  - Stream naming conventions, Stage-as-You-Go responsibilities
+- **Ingestion & JetStream Overview**: [`docs/current/architecture/Core_Architecture.md`](../docs/current/architecture/Core_Architecture.md)
+  - Provenance and Stage-as-you-go responsibilities: [`docs/current/architecture/provenance.md`](../docs/current/architecture/provenance.md)
+  - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
 - **Satellite SDK Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](../crate/lib/sinex-satellite-sdk/docs/overview.md)
   - Unified processor interface and checkpoint semantics
   - Replay patterns and lifecycle hooks
-- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/lib/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)
+- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs#L300)
   - Snapshot, historical, and continuous modes
 
 ### Satellite Implementations  
-- **Filesystem Monitoring**: [`sinex-fs-watcher/src/unified_processor.rs:1-62`](../crate/sinex-fs-watcher/src/unified_processor.rs#L1-L62)
+- **Filesystem Monitoring**: [`sinex-fs-watcher/src/unified_processor.rs:1-62`](../crate/satellites/sinex-fs-watcher/src/unified_processor.rs#L1-L62)
   - inotify (Linux) implementation details
   - FSEvents (macOS) configuration
   - System limits and overflow handling
@@ -207,21 +207,18 @@ Switch permanently only after merging the example into your host configuration.
 Sinex uses a satellite architecture:
 
 ```
-External Data → Satellites → ingestd (gRPC) → PostgreSQL → JetStream → Automata → Gateway/CLI
-               (fs/terminal/desktop/system)   (archiver)   (events)     (fanout)
+External Data → Satellites → NATS JetStream → sinex-ingestd → PostgreSQL (`core.events`)
+                                         ↓
+                           confirmations/DLQ → Automata → Gateway/CLI
 ```
 
 Current implementation:
-- Satellites submit events/material via gRPC to ingestd (Unix socket)
-- ingestd validates and persists to PostgreSQL (TimescaleDB)
-- ingestd fans out persisted events via NATS JetStream for downstream automata
-
-Planned end‑state (see `docs/plan_v3.txt`):
-- Satellites publish directly to NATS JetStream (`events.raw`, `source_material.slices`)
-- ingestd consumes from JetStream and acts as a pure archiver
+- Satellites publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
+- ingestd consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
+- Automata consume confirmations via durable JetStream consumers; Gateway/CLI query PostgreSQL via JSON-RPC or direct DB mode.
 
 **Core Components:**
-- **ingestd**: Central gRPC hub for event ingestion (current); JetStream archiver (planned)
+- **ingestd**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
 - **Gateway**: HTTP/JSON-RPC API for CLI and web access
 - **Satellites**: Independent services for data capture and processing
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
@@ -534,7 +531,7 @@ nats --server nats://127.0.0.1:4222 consumer next <stream> <consumer>
 nats --server nats://127.0.0.1:4222 stream rm <stream> --force
 ```
 
-Stream names depend on the deployment. Consult `docs/way.md` or the satellite configuration when deciding which streams to inspect or delete.
+Stream names depend on the deployment. Consult `modules/nats.nix` or the satellite configuration when deciding which streams to inspect or delete.
 
 ### Data Management
 

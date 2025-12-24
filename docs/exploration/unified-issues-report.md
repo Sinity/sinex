@@ -201,7 +201,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
 
 49. **Browser activity capture is missing**
     - **Files:** new browser extension + gateway/native messaging bridge, ingest pipeline.
-    - **Steps:** Implement the browser extension event source per `docs/roadmap/features/browser-extension.md`: capture URLs/titles/dom summaries with explicit opt-in; publish via native messaging → JetStream. Update native messaging auth to cover this path.
+    - **Steps:** Implement the browser extension event source per `docs/planning/roadmap/features/browser-extension.md`: capture URLs/titles/dom summaries with explicit opt-in; publish via native messaging → JetStream. Update native messaging auth to cover this path.
     - **Tests:** End-to-end test with a fake extension manifest/payload to ensure events flow to JetStream and are validated; privacy redaction tests for sensitive fields.
 
 50. **JetStream harness load/regression guard**
@@ -329,7 +329,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Status:** README now includes a watcher matrix (subsystems, captured signals, config knobs, shutdown notes). Remove TODO once runtime docs cover failure semantics too.
 
 32. **Upgrade plan for gateway/test infra**
-    - **Files:** `docs/testing-priorities-and-roadmap.md`.
+    - **Files:** `docs/planning/roadmap/testing-priorities-and-roadmap.md`.
     - **Steps:** fold the new gateway/system tasks into that roadmap so engineers know the order of operations; ensures the plan stays in sync with this TODO file.
     - **Tests:** manual verification.
 
@@ -425,7 +425,7 @@ This document consolidates the project's entire backlog, technical debt, and exp
     - **Tests:** Handler unit tests asserting structured errors on bad types; existing handler tests remain green.
 
 74. **Docs structure: clarify current vs planning vs archived**
-    - **Files:** `docs/` tree (`README.md`, `way.md`, `way_2.md`, `JETSTREAM_MIGRATION_STATUS.md`, `IMPLEMENTATION_PROGRESS.md`, testing docs, misc analyses).
+    - **Files:** `docs/` tree (`README.md`, JetStream migration status/progress docs, testing docs, misc analyses).
     - **Steps:** Restructure docs to clearly separate current state, planning/roadmap, vision, and archived history; add a migration guide in `docs/archived/README.md`; consolidate duplicate testing docs; remove temporary files (e.g., `tmp_seaquery_research.md`); update cross-references and the main docs README.
     - **Tests:** Manual verification: all moved docs have updated links; status/confusion between current and future docs resolved; no stray temp files remain.
 
@@ -587,7 +587,7 @@ Keeping those details separate prevents the unified issues backlog from mixing n
 
 ## 2. Documentation Alignment (JetStream-only World)
 
-**Decision:** All current docs must reflect the JetStream-only ingestion described in `docs/way.md`. Transactional outbox references move to historical sections.
+**Decision:** All current docs must reflect the JetStream-only ingestion described in the canonical architecture docs under `docs/current/architecture/`. Transactional outbox references move to historical sections.
 
 ### Tasks
 
@@ -595,7 +595,7 @@ Keeping those details separate prevents the unified issues backlog from mixing n
 - [x] Add short banners to historical docs (e.g., `/docs/historical/**`) to clarify their status.
 - [x] Update `README.md` and satellite guides to mention JetStream confirmations, DLQ subjects, and the confirmation-aware automaton flow.
 
-**Exit criteria:** No current doc suggests that the outbox or sensd are active components; contributors find a single, coherent story that matches `docs/way.md`.
+**Exit criteria:** No current doc suggests that the outbox or sensd are active components; contributors find a single, coherent story that matches the JetStream-first system implementation.
 
 ---
 
@@ -676,16 +676,16 @@ Keeping those details separate prevents the unified issues backlog from mixing n
 
 ## 8. Documentation Consistency Fixes
 
-**Decision:** Resolve the issues listed in `docs/ANALYSIS_INDEX.md` (sensd tense, broken links, missing status markers).
+**Decision:** Resolve documentation consistency issues (sensd tense, broken links, missing status markers) across canonical docs.
 
 ### Tasks
 
 - [x] Fix tense/temporal markers in `project-target-state.md`.
 - [x] Repair or remove references to deleted files (`docs/plan_v3.txt`, `docs/TARGET_final.md`, etc.).
-- [x] Add current-phase indicators to `way.md` or replace with an explicit “Completed” note.
+- [x] Add current-phase indicators to the JetStream migration roadmap or replace it with an explicit “Completed” note.
 - [x] Add “Last Verified” stamps to canonical docs (only after we have automated verification baked into the workflow). (Added to `docs/current/README.md`, architecture set, provenance, and security posture.)
 
-**Exit criteria:** `ANALYSIS_INDEX.md` items are checked off and the file reflects the updated status.
+**Exit criteria:** Documentation consistency tasks are checked off and canonical docs remain link-clean.
 
 ---
 

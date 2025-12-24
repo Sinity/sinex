@@ -1,7 +1,7 @@
 # Testing Priorities and Implementation Roadmap
 
 **Document Date:** 2025-10-25  
-**Status:** Action Plan for JetStream Migration (way.md Phase 1-5)  
+**Status:** Action Plan for JetStream Migration (phases 1–5)  
 **Total Estimated Work:** 8-12 weeks, ~8,000-11,000 LOC
 
 ---
@@ -510,8 +510,5 @@ Total: ~8,000-11,000 LOC, 12 weeks, 1 FTE
 
 ## References
 
-- **way.md**: JetStream migration roadmap
-- **docs/testing-gap-analysis.md**: Detailed gap analysis
 - **crate/lib/sinex-test-utils**: Existing test infrastructure
-- **Acceptance Criteria**: See way.md section 5
-
+- **Acceptance Criteria**: See “Acceptance Criteria Per Phase” above

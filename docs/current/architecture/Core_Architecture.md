@@ -27,7 +27,7 @@ Streaming & Ingestion
 - Messaging: NATS JetStream (subjects, durable consumers, explicit acks)
 - Backpressure: bounded batches, ack timeouts, lag monitoring
 - Ingestion: validation, persistence, idempotency, single writer
-- See also: `docs/way.md` for the active JetStream ingestion playbook
+- See also: `docs/current/architecture/provenance.md` (Stage-as-you-go + provenance rules) and `docs/vision/streaming-architecture.md` (backpressure guidance)
 
 Security & Operations
 - Security model, threat mitigation: `docs/current/architecture/security-architecture.md`

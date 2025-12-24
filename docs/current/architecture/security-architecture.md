@@ -1,14 +1,14 @@
 Status: canonical  
 Last Verified: 2025-12-02 (manual review)
-> **Purpose:** Canonical threat model + control-plane reference; pair with `docs/security.md` for current posture updates.
+> **Purpose:** Canonical threat model + control-plane reference; pair with `docs/current/security.md` for current posture updates.
 # Security Architecture
 
 ## Overview
 
 Sinex implements defense-in-depth security with multiple layers of protection for data at rest, in transit, and during processing. While some security features are planned but not implemented, the architecture provides a foundation for comprehensive data protection.
 
-Coordinate changes here with `docs/security.md` (live posture) and
-`docs/way.md` (JetStream pipeline expectations).
+Coordinate changes here with `docs/current/security.md` (live posture) and
+`docs/current/architecture/Core_Architecture.md` (JetStream pipeline expectations).
 
 ## Current Security Implementation
 
@@ -46,7 +46,7 @@ pgsodium would provide field-level encryption for:
 - Knowledge management content
 - Configuration secrets
 
-See [Database Encryption Roadmap](/docs/roadmap/features/database-encryption-pgsodium.md) for implementation details.
+See [Database Encryption Roadmap](../../planning/roadmap/features/database-encryption-pgsodium.md) for implementation details.
 
 ### Secrets Management (agenix)
 ⚠️ **Partial Implementation**
@@ -186,7 +186,7 @@ Threat modeling is documented internally and will be consolidated into this docu
 ## References
 
 - ADR‑006: NixOS Secrets Management Tool (historical; agenix)
-- [Database Encryption with pgsodium](../roadmap/features/database-encryption-pgsodium.md)
+- [Database Encryption with pgsodium](../../planning/roadmap/features/database-encryption-pgsodium.md)
   
 Note: Threat modeling is tracked in internal docs and tickets; consolidate into this document in future iterations.
 - Original Vision Document security requirements
