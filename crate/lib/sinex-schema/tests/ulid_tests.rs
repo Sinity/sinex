@@ -26,7 +26,7 @@ fn should_run_ulid_reference_tests() -> bool {
     true
 }
 
-fn spin_for(duration: Duration) {
+fn _spin_for(duration: Duration) {
     if duration.is_zero() {
         return;
     }

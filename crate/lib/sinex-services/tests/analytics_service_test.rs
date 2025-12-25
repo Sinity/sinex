@@ -280,7 +280,7 @@ async fn ensure_expected_source_counts(
             .await
             .ok();
         seed_analytics_dataset(ctx, reference_time).await?;
-        counts = fetch_source_counts(ctx).await?;
+        let _ = fetch_source_counts(ctx).await?;
     }
 
     Ok(())

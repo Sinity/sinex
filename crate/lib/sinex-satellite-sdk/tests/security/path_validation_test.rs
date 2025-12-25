@@ -163,7 +163,7 @@ async fn blob_manager_rejects_percent_encoded_traversal(
         large_files: None,
     };
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
+    let _blob_manager = BlobManager::new(annex_config, ctx.pool().clone(), Some(event_tx))?;
 
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
     let verification = VerifiedPath::parse(encoded_path.as_str());

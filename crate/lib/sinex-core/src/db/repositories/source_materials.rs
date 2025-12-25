@@ -691,11 +691,17 @@ impl<'a> SourceMaterialRepository<'a> {
             )
             ON CONFLICT (source_identifier) DO UPDATE
             SET
-                status = EXCLUDED.status,
+                status = CASE
+                    WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.status
+                    ELSE EXCLUDED.status
+                END,
                 timing_info_type = EXCLUDED.timing_info_type,
                 metadata = raw.source_material_registry.metadata || EXCLUDED.metadata,
                 start_time = COALESCE(raw.source_material_registry.start_time, EXCLUDED.start_time, NOW()),
-                end_time = NULL,
+                end_time = CASE
+                    WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.end_time
+                    ELSE NULL
+                END,
                 staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
                 staged_on_host = COALESCE(EXCLUDED.staged_on_host, raw.source_material_registry.staged_on_host),
                 optional_blob_id = raw.source_material_registry.optional_blob_id
@@ -803,11 +809,17 @@ impl<'a> SourceMaterialRepository<'a> {
                 let update_sql = r#"
                     UPDATE raw.source_material_registry
                     SET
-                        status = $2,
+                        status = CASE
+                            WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.status
+                            ELSE $2
+                        END,
                         timing_info_type = $3,
                         metadata = raw.source_material_registry.metadata || $4,
                         start_time = COALESCE(raw.source_material_registry.start_time, $5, NOW()),
-                        end_time = NULL,
+                        end_time = CASE
+                            WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.end_time
+                            ELSE NULL
+                        END,
                         staged_by = COALESCE($6, raw.source_material_registry.staged_by),
                         staged_on_host = COALESCE($7, raw.source_material_registry.staged_on_host),
                         optional_blob_id = raw.source_material_registry.optional_blob_id

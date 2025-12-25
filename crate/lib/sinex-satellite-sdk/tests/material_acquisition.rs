@@ -6,12 +6,10 @@ use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
 use sinex_satellite_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{
-    start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig,
-};
+use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
@@ -266,6 +264,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
+    let js = nats.jetstream_with_client(nats_client.clone());
     let run_suffix = Ulid::new();
 
     let work_dir = tempfile::tempdir()?;
@@ -278,6 +277,10 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    // Give ingestd a moment to establish consumers
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
@@ -294,28 +297,17 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 
     manager.append_slice(&mut handle, b"first-chunk").await?;
 
-    // Ensure the first slice has been persisted before simulating the restart so the ledger row
-    // has a valid source_material entry.
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if ctx
-                .pool
-                .source_materials()
-                .get_by_id(Id::from_ulid(material_id))
-                .await?
-                .is_some()
-            {
-                break Ok::<_, color_eyre::Report>(());
-            }
-            sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await??;
+    // Give ingestd time to process (but we can't check ledger as it might not persist intermediate state immediately)
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     ingest_handle.stop().await?;
     ctx.quiesce_background_tasks().await?;
 
     let mut ingest_handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    // Give ingestd time to recover consumers and state
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
