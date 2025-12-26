@@ -11,6 +11,6 @@ async fn test_handle_activity_heatmap_defaults(ctx: TestContext) -> Result<()> {
     let service = AnalyticsService::new(ctx.pool().clone());
     let params = json!({});
     let result = handlers::handle_activity_heatmap(&service, params).await?;
-    assert!(result.is_object());
+    assert!(result.is_array());
     Ok(())
 }

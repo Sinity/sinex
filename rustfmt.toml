@@ -1,4 +1,3 @@
-ignore = [
-    "crate/lib/sinex-core/tests/property/event_model_fuzzing_test.rs",
-    "crate/lib/sinex-core/tests/property/ulid_property_test.rs",
-]
+# NOTE: The 'ignore' field is nightly-only and causes warnings on stable.
+# Files with intentionally unconventional formatting should use #[rustfmt::skip]
+# attributes instead.
