@@ -89,3 +89,4 @@ bench-results.txt
 
 # config
 .serena
+devenv.lock
