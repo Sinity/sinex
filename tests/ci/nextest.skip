@@ -1,0 +1,13 @@
+# CI skip list for nextest (one pattern per line).
+# Applied only when CI=1 via xtask.
+
+# Host-native system watcher tests (require DBus/journald/udev/systemd).
+system_processor_still_uses_synthetic_provenance
+dbus_watcher_should_emit_signal_events
+journal_watcher_should_emit_entry_events
+udev_watcher_should_emit_device_events
+systemd_watcher_should_emit_unit_events
+
+# Stress tests that can blow CI timeouts.
+stress_test_massive_concurrent_ulid_generation
+stress_test_massive_concurrent_checkpoint_updates

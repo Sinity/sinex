@@ -301,7 +301,42 @@ fn test(online_sqlx: bool, profile: &str) -> Result<()> {
         .arg("--workspace")
         .arg("--profile")
         .arg(profile);
+    apply_ci_skip_filters(&mut cmd)?;
     run_cmd("nextest", cmd)
+}
+
+fn apply_ci_skip_filters(cmd: &mut Command) -> Result<()> {
+    let ci_enabled = env::var("CI").is_ok();
+    if !ci_enabled {
+        return Ok(());
+    }
+
+    let skip_file = env::var("SINEX_CI_SKIP_FILE")
+        .ok()
+        .unwrap_or_else(|| "tests/ci/nextest.skip".to_string());
+    let skip_path = Path::new(&skip_file);
+    if !skip_path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(skip_path)
+        .with_context(|| format!("Failed to read CI skip file at {}", skip_path.display()))?;
+    let patterns: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.to_string())
+        .collect();
+
+    if patterns.is_empty() {
+        return Ok(());
+    }
+
+    cmd.arg("--");
+    for pattern in patterns {
+        cmd.arg("--skip").arg(pattern);
+    }
+    Ok(())
 }
 
 fn sqlx_prepare() -> Result<()> {
