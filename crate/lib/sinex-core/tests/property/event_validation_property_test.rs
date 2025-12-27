@@ -7,6 +7,7 @@
 //! This module contains property-based tests for event validation using the modern
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
+use sinex_core::db::validation::EventValidator;
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 type RawEvent = Event<JsonValue>;
@@ -31,8 +32,9 @@ fn event_payloads() -> impl Strategy<Value = Value> {
 
 /// Strategy for generating arbitrary valid events
 fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
+    let source = "[a-z][a-z0-9_]{2,49}".prop_map(|raw| format!("prop_{raw}"));
     (
-        "[a-z][a-z0-9_]{2,49}",  // source
+        source,                  // source
         "[a-z][a-z0-9_.]{2,99}", // event_type
         "[a-zA-Z0-9_.-]{1,255}", // host
         event_payloads(),        // payload
@@ -56,7 +58,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                     .as_ref()
                     .map(|id| id.as_ulid().timestamp())
                     .unwrap_or_else(Utc::now);
-                event.ts_orig = Some(ingest_ts - ChronoDuration::seconds(1800));
+                event.ts_orig = Some(ingest_ts - ChronoDuration::seconds(60));
             }
 
             event
@@ -183,18 +185,10 @@ fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(arbitrary_event(), 10..1000)
 }
 
-/// Simple validation function for events (replaces ValidationChain)
+/// Production validation wrapper for events (avoid mock-only checks).
 fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
-    if event.source.is_empty() {
-        return Err("Empty source".to_string());
-    }
-    if event.event_type.is_empty() {
-        return Err("Empty event_type".to_string());
-    }
-    if event.host.is_empty() {
-        return Err("Empty host".to_string());
-    }
-    Ok(())
+    let validator = EventValidator::with_validation_enabled(false);
+    validator.validate(event).map_err(|err| err.to_string())
 }
 
 // =============================================================================

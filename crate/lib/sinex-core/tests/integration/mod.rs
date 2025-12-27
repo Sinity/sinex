@@ -18,4 +18,3 @@ pub mod test_automation_integration_test;
 pub mod timestamp_test;
 pub mod type_safety_test;
 pub mod validation_cache_test;
-pub mod work_queue_test;

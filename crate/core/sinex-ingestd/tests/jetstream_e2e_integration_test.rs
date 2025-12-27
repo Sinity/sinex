@@ -25,7 +25,6 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::info;
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     info!("🚀 Starting E2E JetStream test");
@@ -187,7 +186,6 @@ async fn test_jetstream_e2e_event_flow() -> color_eyre::Result<()> {
     Ok(())
 }
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_jetstream_idempotency() -> color_eyre::Result<()> {
     info!("🚀 Starting JetStream idempotency test");

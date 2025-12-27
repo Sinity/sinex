@@ -85,3 +85,17 @@ aliases (e.g., `just test`, `just test-fast`, `just test-reliable`).
   `TestContext` & fixture APIs so new contributors have a single obvious path.
 - Monitor flaky suites with the `reliable` profile; promote fixes upstream once
   the repeated retries stop catching regressions.
+
+## Test Suite Streamlining (carry-forward)
+
+- Recompute test counts before any consolidation work; the last audit predates
+  the migration of tests into crate-local suites.
+- Aim for one comprehensive test per feature area and use parameterized tests
+  (or property tests) for variations, rather than duplicating near-identical
+  cases.
+- Focus streamlining on sinex-test-utils helper modules that historically
+  accumulated duplication: `test_context`, `fixtures`, `coverage_assurance`,
+  `timing_utils`, `deployment_scenario_utils`, `satellite_management_utils`,
+  `property_testing`, `error_testing`, `channel_behavior_utils`, and `lib.rs`.
+- Treat streamlining as a performance lever: removing redundant tests reduces
+  database pool pressure and avoids hangs under high parallelism.

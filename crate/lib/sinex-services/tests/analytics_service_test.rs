@@ -280,7 +280,7 @@ async fn ensure_expected_source_counts(
             .await
             .ok();
         seed_analytics_dataset(ctx, reference_time).await?;
-        counts = fetch_source_counts(ctx).await?;
+        let _ = fetch_source_counts(ctx).await?;
     }
 
     Ok(())
@@ -695,16 +695,6 @@ async fn test_get_event_count_by_source_with_time_filter(
 async fn analytics_queries_block_each_other_with_single_connection(
     ctx: TestContext,
 ) -> TestResult<()> {
-    if std::env::var("SINEX_ANALYTICS_SINGLE_CONNECTION_TESTS")
-        .map(|v| v != "1")
-        .unwrap_or(true)
-    {
-        tracing::warn!(
-            "Skipping single-connection contention test; set SINEX_ANALYTICS_SINGLE_CONNECTION_TESTS=1 to enable."
-        );
-        return Ok(());
-    }
-
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(ctx.database_url())

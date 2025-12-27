@@ -146,8 +146,7 @@ pub async fn start_test_ingestd_with_config(
                 ));
             }
 
-            let events_stream = match jetstream.get_stream(&ingest_config.nats_stream_name).await
-            {
+            let events_stream = match jetstream.get_stream(&ingest_config.nats_stream_name).await {
                 Ok(stream) => stream,
                 Err(_) => {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

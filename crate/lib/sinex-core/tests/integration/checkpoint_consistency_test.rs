@@ -613,7 +613,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     for name in &processor_names {
         let mut attempts = 0;
-        let mut issues = Vec::new();
+        let mut issues;
         loop {
             attempts += 1;
             issues = analyze_checkpoint(

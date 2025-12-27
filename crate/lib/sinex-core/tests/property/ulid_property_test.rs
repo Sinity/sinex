@@ -556,7 +556,6 @@ mod stress_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[sinex_test]
-    #[ignore] // This is a long-running stress test
     fn stress_test_massive_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
         const NUM_THREADS: usize = 20;
         const ULIDS_PER_THREAD: usize = 1000;
