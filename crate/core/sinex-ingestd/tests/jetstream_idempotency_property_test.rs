@@ -8,7 +8,6 @@ use sinex_test_utils::{prelude::*, EphemeralNats, EventOverrides, TestSatelliteP
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_duplicate_event_rejection_smoke() -> color_eyre::Result<()> {
     run_duplicate_event_rejection(3).await
@@ -103,7 +102,6 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     Ok(())
 }
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;

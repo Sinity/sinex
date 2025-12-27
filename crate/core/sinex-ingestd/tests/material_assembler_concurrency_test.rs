@@ -55,9 +55,6 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let ctx = ctx.with_nats().await?;
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
-    let full_run = std::env::var("SINEX_MATERIAL_ASSEMBLER_FULL")
-        .map(|v| v == "1")
-        .unwrap_or(false);
     let (handle, js, _annex_guard, _state_guard) =
         start_assembler(&ctx, &nats, nats_client.clone()).await?;
     let env = ctx.env();
@@ -109,19 +106,14 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Give the assembler a moment to bootstrap consumers on the prefixed streams.
     tokio::time::sleep(Duration::from_millis(250)).await;
 
-    if !full_run {
-        if let Ok(info) = js.get_stream(&begin_stream).await?.info().await {
-            assert_eq!(info.state.consumer_count, 1);
-        }
-        if let Ok(info) = js.get_stream(&slices_stream).await?.info().await {
-            assert_eq!(info.state.consumer_count, 1);
-        }
-        if let Ok(info) = js.get_stream(&end_stream).await?.info().await {
-            assert_eq!(info.state.consumer_count, 1);
-        }
-
-        handle.abort();
-        return Ok(());
+    if let Ok(info) = js.get_stream(&begin_stream).await?.info().await {
+        assert_eq!(info.state.consumer_count, 1);
+    }
+    if let Ok(info) = js.get_stream(&slices_stream).await?.info().await {
+        assert_eq!(info.state.consumer_count, 1);
+    }
+    if let Ok(info) = js.get_stream(&end_stream).await?.info().await {
+        assert_eq!(info.state.consumer_count, 1);
     }
 
     // Fire off begin messages for each material.
