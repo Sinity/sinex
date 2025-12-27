@@ -1,15 +1,14 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_core::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::domain::{HostName, SanitizedPath};
+use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::types::Id;
 use sinex_core::{Event, Provenance};
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn events_repository_inserts_dynamic_events(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn events_repository_inserts_typed_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let material_record = ctx
         .pool
         .source_materials()
@@ -21,20 +20,18 @@ async fn events_repository_inserts_dynamic_events(
         .await?;
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
-    let event = Event::dynamic(
-        EventSource::new("test.source"),
-        EventType::new("test.event"),
-        json!({"test": "data"}),
-    )
-    .with_provenance(Provenance::from_material(material_id, 0, None, None))
-    .build()
-    .with_host(HostName::new("test-host"));
-
+    let mut payload = FileCreatedPayload::test_default(SanitizedPath::from_str_validated(
+        "/tmp/repo-insert.txt",
+    )?);
+    payload.size = 512;
+    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None));
+    let expected_host = event.host.clone();
     let inserted = ctx.pool.events().insert(event).await?;
-    assert_eq!(inserted.source.as_str(), "test.source");
-    assert_eq!(inserted.event_type.as_str(), "test.event");
-    assert_eq!(inserted.host.as_str(), "test-host");
-    assert_eq!(inserted.payload["test"], "data");
+    assert_eq!(inserted.source.as_str(), "fs-watcher");
+    assert_eq!(inserted.event_type.as_str(), "file.created");
+    assert_eq!(inserted.host, expected_host);
+    assert_eq!(inserted.payload["path"], json!("/tmp/repo-insert.txt"));
+    assert_eq!(inserted.payload["size"], json!(512));
     assert!(inserted.id.is_some());
     Ok(())
 }
@@ -52,26 +49,18 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> color_eyre:
         .await?;
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
-    let source_event = Event::dynamic(
-        EventSource::new("test.source"),
-        EventType::new("source.event"),
-        json!({"original": true}),
-    )
-    .with_provenance(Provenance::from_material(material_id, 0, None, None))
-    .build()
-    .with_host(HostName::new("test-host"));
+    let source_payload = KittyCommandExecutedPayload::test_default("echo provenance");
+    let source_event =
+        Event::new(source_payload, Provenance::from_material(material_id, 0, None, None));
 
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
-    let derived_event = Event::dynamic(
-        EventSource::new("test.processor"),
-        EventType::new("derived.event"),
-        json!({"derived": true}),
-    )
-    .with_provenance(Provenance::from_synthesis(vec![source_id.clone()]).unwrap())
-    .build()
-    .with_host(HostName::new("test-host"));
+    let derived_payload =
+        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/tmp/derived.txt")?);
+    let derived_event = Event::builder(derived_payload)
+        .from_parents(vec![source_id.clone()])
+        .build();
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
     match inserted.provenance {
@@ -101,14 +90,11 @@ async fn cleanup_test_events_does_not_match_production_names(
         .await?;
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
-    let event = Event::dynamic(
-        EventSource::new("deployment"),
-        EventType::new("release.completed"),
-        json!({"severity": "info"}),
-    )
-    .with_provenance(Provenance::from_material(material_id, 0, None, None))
-    .build()
-    .with_host(HostName::new("latest-prod-node"));
+    let payload =
+        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/tmp/release.txt")?);
+    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None))
+        .to_json_event()?
+        .with_host(HostName::new("latest-prod-node"));
 
     let inserted = ctx.pool.events().insert(event).await?;
     let deleted = ctx

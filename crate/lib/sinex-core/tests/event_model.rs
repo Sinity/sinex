@@ -1,11 +1,15 @@
 use serde_json::{json, Value as JsonValue};
 use sinex_core::db::models::event::{Event, EventId, SourceMaterial};
+use sinex_core::types::domain::SanitizedPath;
+use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::Id;
 use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn material_event_builder_sets_fields() -> color_eyre::eyre::Result<()> {
-    let event = Event::dynamic("fs-watcher", "file.created", json!({"path": "/test.txt"}))
+    let payload =
+        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/test.txt")?);
+    let event = Event::builder(payload)
         .from_material(Id::<SourceMaterial>::new(), 42)
         .build();
 
@@ -21,16 +25,13 @@ fn material_event_builder_sets_fields() -> color_eyre::eyre::Result<()> {
 #[sinex_test]
 fn synthesis_event_builder_tracks_parents() -> color_eyre::eyre::Result<()> {
     let parent_ids = vec![EventId::new(), EventId::new()];
-    let event = Event::dynamic(
-        "processor",
-        "analysis.completed",
-        json!({"result": "success"}),
-    )
-    .from_parents(parent_ids.clone())
-    .build();
+    let payload = KittyCommandExecutedPayload::test_default("analysis pipeline");
+    let event = Event::builder(payload)
+        .from_parents(parent_ids.clone())
+        .build();
 
-    assert_eq!(event.source.as_str(), "processor");
-    assert_eq!(event.event_type.as_str(), "analysis.completed");
+    assert_eq!(event.source.as_str(), "shell.kitty");
+    assert_eq!(event.event_type.as_str(), "command.executed");
     assert!(!event.is_first_order_event());
     assert!(event.is_synthesized_event());
     assert_eq!(event.anchor_byte(), None);
