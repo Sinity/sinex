@@ -30,10 +30,10 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
     sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
     sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
-    if !cascade_prereqs_available(&pool).await? {
-        tracing::warn!("Skipping cascade analyzer test: core.prepare_cascade_session missing");
-        return Ok(());
-    }
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
     let analyzer = StreamingCascadeAnalyzer::with_config(
         pool.clone(),
         CascadeAnalyzerConfig {
@@ -111,10 +111,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
     sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
     sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
-    if !cascade_prereqs_available(&pool).await? {
-        tracing::warn!("Skipping cascade analyzer test: core.prepare_cascade_session missing");
-        return Ok(());
-    }
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
     let analyzer = StreamingCascadeAnalyzer::new(pool.clone());
 
     let parent = CoreUlid::new();
