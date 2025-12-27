@@ -155,6 +155,21 @@ Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
   `cargo xtask check` and `cargo nextest run --workspace` pass after
   moving or adding tests).
 
+## Coverage Backlog (carry-forward)
+
+- Add explicit confirmation payload format + Nats-Msg-Id dedup tests (current
+  coverage validates confirmation receipt but not message headers or dedup).
+- Add sinex-satellite-sdk confirmation consumer integration tests.
+- Add a full automaton integration test in sinex-satellite-sdk.
+- Add DLQ consumer/replay tests and retention policy coverage (current tests
+  only verify routing of invalid payloads into the DLQ).
+- Add ingestd property tests for idempotency, batch ordering, and monotonic
+  offsets (ingestd tests do not currently use proptest).
+- Add restart resilience coverage for outbox/confirmation stream durability
+  across ingestd restarts.
+- Add explicit sinex-schema migration tests.
+- Add a JetStream-focused chaos test in sinex-core adversarial coverage.
+
 ## If You Only Read One Section
 
 1. Put new tests in the crate that owns the behaviour.

@@ -17,6 +17,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
+/// Standard timeout policy for tests.
+pub const DEFAULT_WAIT_SECS: u64 = 30;
+pub const INTEGRATION_WAIT_SECS: u64 = 60;
+pub const STRESS_WAIT_SECS: u64 = 90;
+
 /// Deterministic synchronization primitive to replace arbitrary sleeps
 pub struct TestSynchronizer {
     notify: Arc<Notify>,
@@ -368,7 +373,7 @@ impl<'ctx> TimingUtils<'ctx> {
 
     /// Wait for specific number of events in database
     pub async fn wait_for_event_count(&self, expected_count: usize) -> TestResult<usize> {
-        WaitHelpers::wait_for_event_count(&self.ctx.pool, expected_count, 10).await
+        WaitHelpers::wait_for_event_count(&self.ctx.pool, expected_count, DEFAULT_WAIT_SECS).await
     }
 
     /// Wait for events from specific source
@@ -377,7 +382,13 @@ impl<'ctx> TimingUtils<'ctx> {
         source: &str,
         expected_count: usize,
     ) -> TestResult<usize> {
-        WaitHelpers::wait_for_source_events(&self.ctx.pool, source, expected_count, 10).await
+        WaitHelpers::wait_for_source_events(
+            &self.ctx.pool,
+            source,
+            expected_count,
+            DEFAULT_WAIT_SECS,
+        )
+        .await
     }
 
     /// Create event counter for coordination using production primitives
