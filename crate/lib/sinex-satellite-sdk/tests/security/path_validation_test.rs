@@ -95,11 +95,6 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> color_eyre:
 
 #[sinex_test]
 async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    if !git_annex_available().await {
-        eprintln!("Skipping test: git-annex not available");
-        return Ok(());
-    }
-
     // Create temporary directory and files for testing
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("test-annex");
@@ -176,15 +171,6 @@ async fn blob_manager_rejects_percent_encoded_traversal(
     );
 
     Ok(())
-}
-
-async fn git_annex_available() -> bool {
-    Command::new("git")
-        .args(["annex", "version"])
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
 }
 
 async fn init_annex_repo(path: &Path) -> color_eyre::eyre::Result<()> {

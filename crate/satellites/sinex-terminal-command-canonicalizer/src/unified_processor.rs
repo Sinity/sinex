@@ -52,6 +52,82 @@ impl JsonExtractor for Value {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core::db::models::{Event, SourceMaterial};
+    use sinex_core::types::Id;
+    use sinex_test_utils::{sinex_test, TestResult};
+
+    #[sinex_test]
+    fn json_extractor_reads_fields() -> TestResult<()> {
+        let now = Utc::now();
+        let payload = serde_json::json!({
+            "command": "ls",
+            "exit_code": 0,
+            "duration_ms": 42,
+            "end_time": now.to_rfc3339(),
+        });
+
+        assert_eq!(payload.get_string("command"), Some("ls".to_string()));
+        assert_eq!(payload.get_i32("exit_code"), Some(0));
+        assert_eq!(payload.get_i64("duration_ms"), Some(42));
+
+        let parsed = payload
+            .get_datetime("end_time")
+            .expect("datetime should parse");
+        assert_eq!(parsed.timestamp(), now.timestamp());
+        Ok(())
+    }
+
+    fn test_event(source: &str, payload: serde_json::Value) -> Event<JsonValue> {
+        let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
+        Event::dynamic(source, "command.executed", payload)
+            .from_material(material_id, 0)
+            .build()
+    }
+
+    #[sinex_test]
+    fn extract_command_data_rejects_unknown_source() -> TestResult<()> {
+        let event = test_event("unknown.source", serde_json::json!({ "command": "ls" }));
+        let processor = TerminalCommandCanonicalizer::new();
+        assert!(processor.extract_command_data(&event).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn extract_command_data_rejects_empty_command() -> TestResult<()> {
+        let event = test_event("shell.kitty", serde_json::json!({ "command": "   " }));
+        let processor = TerminalCommandCanonicalizer::new();
+        assert!(processor.extract_command_data(&event).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn extract_command_data_extracts_fields() -> TestResult<()> {
+        let payload = serde_json::json!({
+            "command": "ls -la",
+            "working_directory": "/tmp",
+            "exit_code": 0,
+            "duration_ms": 120,
+            "user": "tester",
+        });
+        let event = test_event("shell.kitty", payload);
+        let processor = TerminalCommandCanonicalizer::new();
+        let data = processor
+            .extract_command_data(&event)
+            .expect("command data should be parsed");
+
+        assert_eq!(data.command, "ls -la");
+        assert_eq!(data.working_directory.as_deref(), Some("/tmp"));
+        assert_eq!(data.exit_code, Some(0));
+        assert_eq!(data.duration_ms, Some(120));
+        assert_eq!(data.user.as_deref(), Some("tester"));
+        assert_eq!(data.source_events.len(), 1);
+        Ok(())
+    }
+}
+
 /// Command data extracted from terminal events
 #[derive(Debug, Clone)]
 struct CommandData {

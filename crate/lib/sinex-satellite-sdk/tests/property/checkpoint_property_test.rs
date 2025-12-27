@@ -374,7 +374,6 @@ mod stress_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[sinex_test]
-    #[ignore] // This is a long-running stress test
     async fn stress_test_massive_concurrent_checkpoint_updates(ctx: TestContext) -> Result<()> {
         const NUM_THREADS: usize = 10;
         const UPDATES_PER_THREAD: usize = 100;
