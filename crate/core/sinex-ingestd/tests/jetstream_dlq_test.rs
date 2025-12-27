@@ -12,7 +12,6 @@ use sinex_test_utils::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -88,7 +87,6 @@ async fn test_invalid_event_routed_to_dlq() -> color_eyre::Result<()> {
     Ok(())
 }
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;
@@ -152,7 +150,6 @@ async fn test_malformed_json_routed_to_dlq() -> color_eyre::Result<()> {
     Ok(())
 }
 
-#[ignore = "requires full ingestd pipeline"]
 #[sinex_test]
 async fn test_missing_required_fields_routed_to_dlq() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?.with_nats().await?;

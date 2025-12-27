@@ -18,7 +18,6 @@ use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::future::Future;
 use std::sync::Mutex;
-use which::which;
 
 static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
     Mutex::new(
@@ -150,11 +149,6 @@ async fn queue_event_insertion_preserves_order(
 
 #[sinex_test]
 fn jetstream_delivery_preserves_sequence() -> color_eyre::eyre::Result<()> {
-    if which("nats-server").is_err() {
-        eprintln!("skipping jetstream_delivery_preserves_sequence (nats-server not available)");
-        return Ok(());
-    }
-
     run_async(async move {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;

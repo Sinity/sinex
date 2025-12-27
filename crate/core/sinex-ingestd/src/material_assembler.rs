@@ -354,6 +354,60 @@ impl MaterialAssembler {
             };
 
             let temp_path = path.join(TEMP_FILE_NAME);
+
+            // Ensure consistency: if file is larger than state claims (torn write), truncate it.
+            if temp_path.exists() {
+                let metadata = fs::metadata(&temp_path).await.map_err(|e| {
+                    SinexError::io(format!(
+                        "Failed to stat temp file {}: {}",
+                        temp_path.display(),
+                        e
+                    ))
+                })?;
+
+                if metadata.len() as i64 > persisted.expected_offset {
+                    warn!(
+                        material_id = %material_id,
+                        disk_len = metadata.len(),
+                        expected_len = persisted.expected_offset,
+                        "Detected torn write or uncommitted data on restart; repairing file"
+                    );
+
+                    let content = fs::read(&temp_path).await.map_err(|e| {
+                        SinexError::io(format!(
+                            "Failed to read temp file for repair {}: {}",
+                            temp_path.display(),
+                            e
+                        ))
+                    })?;
+
+                    if content.len() as i64 >= persisted.expected_offset {
+                        let valid_content = &content[..persisted.expected_offset as usize];
+                        let mut file = File::create(&temp_path).await.map_err(|e| {
+                            SinexError::io(format!(
+                                "Failed to recreate temp file during repair {}: {}",
+                                temp_path.display(),
+                                e
+                            ))
+                        })?;
+                        file.write_all(valid_content).await.map_err(|e| {
+                            SinexError::io(format!(
+                                "Failed to write repaired content {}: {}",
+                                temp_path.display(),
+                                e
+                            ))
+                        })?;
+                        file.sync_all().await.map_err(|e| {
+                            SinexError::io(format!(
+                                "Failed to sync repaired file {}: {}",
+                                temp_path.display(),
+                                e
+                            ))
+                        })?;
+                    }
+                }
+            }
+
             let temp_file = File::options()
                 .create(true)
                 .append(true)
@@ -588,44 +642,21 @@ impl MaterialAssembler {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
-        if let Some(existing_handle) = self.get_state_handle(&material_id).await {
-            {
-                let mut existing = existing_handle.lock().await;
-                // We may have created a placeholder state from slices arriving first; enrich it.
-                existing.material_kind = begin.material_kind.clone();
-                existing.source_identifier = begin.source_identifier.clone();
-                existing.metadata = begin.metadata.clone();
-                existing.started_at = started_at;
-                self.persist_state(&existing).await?;
-            }
-
-            self.register_material_record(
-                material_id,
-                &begin.material_kind,
-                &begin.source_identifier,
-                begin.metadata.clone(),
-                started_at,
-            )
-            .await?;
-
-            debug!(
-                material_id = %material_id,
-                "Begin message updated existing assembler state"
-            );
-            return Ok(());
-        }
-
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
             .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
-        let temp_file = File::create(&temp_path)
+        // Use append to avoid truncating if a race occurred with slices
+        let temp_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create temp file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
 
-        let state = AssemblerState {
+        let candidate_state = AssemblerState {
             material_id,
             temp_path,
             temp_file: Some(temp_file),
@@ -634,20 +665,33 @@ impl MaterialAssembler {
             buffered_slices: BTreeMap::new(),
             state_dir,
             started_at,
-            material_kind: begin.material_kind,
-            source_identifier: begin.source_identifier,
-            metadata: begin.metadata,
+            material_kind: begin.material_kind.clone(),
+            source_identifier: begin.source_identifier.clone(),
+            metadata: begin.metadata.clone(),
             hasher: Hasher::new(),
             pending_end: None,
             finalizing: false,
         };
 
-        let register_metadata = state.metadata.clone();
-        let register_kind = state.material_kind.clone();
-        let register_identifier = state.source_identifier.clone();
+        let state_handle = self.insert_state_handle(material_id, candidate_state).await;
 
-        self.persist_state(&state).await?;
-        self.insert_state_handle(material_id, state).await;
+        let (register_kind, register_identifier, register_metadata) = {
+            let mut state = state_handle.lock().await;
+            // Always update with the authoritative info from Begin
+            state.material_kind = begin.material_kind;
+            state.source_identifier = begin.source_identifier;
+            state.metadata = begin.metadata;
+            state.started_at = started_at;
+
+            self.persist_state(&state).await?;
+
+            (
+                state.material_kind.clone(),
+                state.source_identifier.clone(),
+                state.metadata.clone(),
+            )
+        };
+
         self.register_material_record(
             material_id,
             &register_kind,
@@ -656,7 +700,8 @@ impl MaterialAssembler {
             started_at,
         )
         .await?;
-        info!(material_id = %material_id, "Initialized material assembler state");
+
+        info!(material_id = %material_id, "Processed begin message");
 
         Ok(())
     }
@@ -1382,6 +1427,16 @@ impl MaterialAssembler {
                 return Err(e);
             }
         };
+
+        // Ensure the record is registered before finalization (handles out-of-order Begin/End)
+        self.register_material_record(
+            material_id,
+            &final_state.material_kind,
+            &final_state.source_identifier,
+            final_state.metadata.clone(),
+            final_state.started_at,
+        )
+        .await?;
 
         let blob_id = match self
             .upsert_blob(&final_state, &annex_key, &end.content_hash)

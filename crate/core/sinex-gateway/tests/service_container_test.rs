@@ -10,23 +10,9 @@ use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-fn should_run_gateway_integration() -> bool {
-    if env::var("SINEX_TEST_GATEWAY_LIVE").ok().as_deref() != Some("1") {
-        eprintln!(
-            "⚠️  Skipping ServiceContainer integration test (set SINEX_TEST_GATEWAY_LIVE=1 to run)"
-        );
-        return false;
-    }
-    true
-}
-
 /// Test successful initialization with valid database URL
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_initialization_success() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     // Use the development database URL from nix environment
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -60,12 +46,8 @@ async fn test_service_container_initialization_success() -> TestResult<()> {
 }
 
 /// Test initialization with DATABASE_URL from environment
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_env_database_url() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     // Set DATABASE_URL in environment
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -109,9 +91,6 @@ async fn test_service_container_env_database_url() -> TestResult<()> {
 /// Test initialization fails gracefully with invalid database URL
 #[sinex_test]
 async fn test_service_container_invalid_database_url() -> color_eyre::eyre::Result<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     // Use an invalid database URL
     let invalid_url = "postgresql://invalid:invalid@nonexistent:5432/invalid".to_string();
 
@@ -176,12 +155,8 @@ async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()
 }
 
 /// Test service container cloning
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_clone() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -217,12 +192,8 @@ async fn test_service_container_clone() -> TestResult<()> {
 }
 
 /// Test annex path configuration
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_annex_path_config() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -254,12 +225,8 @@ async fn test_service_container_annex_path_config() -> TestResult<()> {
 }
 
 /// Test concurrent service container initialization
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_concurrent_initialization() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -288,12 +255,8 @@ async fn test_service_container_concurrent_initialization() -> TestResult<()> {
 }
 
 /// Test service Arc reference counting
-#[ignore = "requires configured DATABASE_URL and SINEX_INGEST_SOCKET"]
 #[sinex_test]
 async fn test_service_container_arc_references() -> TestResult<()> {
-    if !should_run_gateway_integration() {
-        return Ok(());
-    }
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 

@@ -8,18 +8,8 @@ use camino::Utf8PathBuf;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_test_utils::prelude::*;
 use tempfile::TempDir;
-use tokio::process::Command;
 
 const TEST_BYTES: &[u8] = b"sinex-blob-manager-integration";
-
-async fn git_annex_available() -> bool {
-    Command::new("git-annex")
-        .arg("version")
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
 
 async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobManager, TempDir)> {
     let temp_dir = TempDir::new()?;
@@ -39,11 +29,6 @@ async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobMana
 
 #[sinex_test]
 async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Result<()> {
-    if !git_annex_available().await {
-        eprintln!("Skipping blob manager tests: git-annex unavailable");
-        return Ok(());
-    }
-
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
 
     let first = manager
@@ -67,11 +52,6 @@ async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Resu
 
 #[sinex_test]
 async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Result<()> {
-    if !git_annex_available().await {
-        eprintln!("Skipping blob manager tests: git-annex unavailable");
-        return Ok(());
-    }
-
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
     let blob = manager
         .ingest_from_bytes(TEST_BYTES, "roundtrip.txt", "text/plain")
@@ -89,11 +69,6 @@ async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Resul
 
 #[sinex_test]
 async fn blob_manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_eyre::Result<()> {
-    if !git_annex_available().await {
-        eprintln!("Skipping blob manager tests: git-annex unavailable");
-        return Ok(());
-    }
-
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
     let blob = manager
         .ingest_from_bytes(

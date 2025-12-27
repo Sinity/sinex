@@ -23,11 +23,75 @@ const DEFAULT_CREATOR_CLI: &str = "sinex-cli";
 const DEFAULT_ANALYTICS_DAYS_BACK: i64 = 7;
 const DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 60;
 const DEFAULT_HEATMAP_LIMIT: i64 = 100;
+const MAX_HEATMAP_BUCKET_SIZE_MINUTES: i64 = 1440;
 
 // Default values for content/blob handling
 const DEFAULT_BLOB_FILENAME: &str = "content.txt";
 const DEFAULT_BLOB_CONTENT_TYPE: &str = "text/plain";
 const DEFAULT_BLOB_SIZE_BYTES: usize = 5 * 1024 * 1024; // 5MB
+
+fn validate_bucket_size_minutes(size: i64) -> Result<i32> {
+    if size <= 0 {
+        return Err(eyre!("bucket_size_minutes must be positive"));
+    }
+    if size > MAX_HEATMAP_BUCKET_SIZE_MINUTES {
+        return Err(eyre!(
+            "bucket_size_minutes cannot exceed 1440 (24 hours)"
+        ));
+    }
+    Ok(size as i32)
+}
+
+fn decode_note_content(base64_content: &str) -> Result<String> {
+    let decoded_bytes = BASE64_STANDARD
+        .decode(base64_content)
+        .wrap_err("Invalid base64 content")?;
+
+    String::from_utf8(decoded_bytes).wrap_err("Decoded note content is not valid UTF-8")
+}
+
+fn validate_entity_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(eyre!("Entity name cannot be empty"));
+    }
+    if name.len() > 255 {
+        return Err(eyre!("Entity name cannot exceed 255 characters"));
+    }
+    if name.contains(';') || name.contains("--") || name.contains("/*") {
+        return Err(eyre!("Entity name contains invalid characters"));
+    }
+    Ok(())
+}
+
+fn validate_entity_link_ids(from: &Id<Entity>, to: &Id<Entity>) -> Result<()> {
+    if from == to {
+        return Err(eyre!("Cannot link entity to itself"));
+    }
+    Ok(())
+}
+
+fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
+    let max_encoded = max_base64_length(limit);
+    if content_b64.len() > max_encoded {
+        return Err(eyre!(
+            "Blob content exceeds maximum allowed size of {} bytes",
+            limit
+        ));
+    }
+
+    let content = BASE64_STANDARD
+        .decode(content_b64)
+        .wrap_err("Invalid base64 content")?;
+
+    if content.len() > limit {
+        return Err(eyre!(
+            "Blob content exceeds maximum allowed size of {} bytes",
+            limit
+        ));
+    }
+
+    Ok(content)
+}
 
 // Analytics handlers
 
@@ -52,10 +116,11 @@ pub async fn handle_event_count_by_source(
 }
 
 pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) -> Result<Value> {
-    let bucket_size_minutes = params
+    let bucket_size_minutes_raw = params
         .get("bucket_size_minutes")
         .and_then(|v| v.as_i64())
-        .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES) as i32;
+        .unwrap_or(DEFAULT_HEATMAP_BUCKET_SIZE_MINUTES);
+    let bucket_size_minutes = validate_bucket_size_minutes(bucket_size_minutes_raw)?;
 
     let limit = params
         .get("limit")
@@ -81,12 +146,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .and_then(|v| v.as_str())
         .wrap_err("Missing content")?;
 
-    let decoded_bytes = BASE64_STANDARD
-        .decode(content_b64)
-        .wrap_err("Invalid base64 content")?;
-
-    let content =
-        String::from_utf8(decoded_bytes).wrap_err("Decoded note content is not valid UTF-8")?;
+    let content = decode_note_content(content_b64)?;
 
     let tags = params
         .get("tags")
@@ -121,13 +181,21 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| {
-                    let name = v.get("name")?.as_str()?;
-                    let entity_type = v.get("type")?.as_str()?;
-                    Some((name.to_string(), entity_type.to_string()))
+                .map(|v| {
+                    let name = v
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .wrap_err("Missing entity name")?;
+                    validate_entity_name(name)?;
+                    let entity_type = v
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .wrap_err("Missing entity type")?;
+                    Ok((name.to_string(), entity_type.to_string()))
                 })
-                .collect()
+                .collect::<Result<Vec<_>>>()
         })
+        .transpose()?
         .unwrap_or_default();
 
     let created_by = params
@@ -155,6 +223,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .and_then(|s| s.parse::<Ulid>().ok())
         .map(Id::<Entity>::from_ulid)
         .wrap_err("Invalid or missing to_entity_id")?;
+    validate_entity_link_ids(&from_entity_id, &to_entity_id)?;
 
     let relationship_type = params
         .get("relationship_type")
@@ -199,24 +268,7 @@ pub async fn handle_store_blob(service: &ContentService, params: Value) -> Resul
         .wrap_err("Missing content")?;
 
     let limit = blob_size_limit_bytes();
-    let max_encoded = max_base64_length(limit);
-    if content_b64.len() > max_encoded {
-        return Err(eyre!(
-            "Blob content exceeds maximum allowed size of {} bytes",
-            limit
-        ));
-    }
-
-    let content = BASE64_STANDARD
-        .decode(content_b64)
-        .wrap_err("Invalid base64 content")?;
-
-    if content.len() > limit {
-        return Err(eyre!(
-            "Blob content exceeds maximum allowed size of {} bytes",
-            limit
-        ));
-    }
+    let content = decode_blob_content(content_b64, limit)?;
 
     let filename = params
         .get("filename")
@@ -440,4 +492,49 @@ fn blob_size_limit_bytes() -> usize {
 fn max_base64_length(limit_bytes: usize) -> usize {
     // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
     ((limit_bytes + 2) / 3) * 4
+}
+
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+
+    pub fn validate_bucket_size_minutes(size: i64) -> Result<i32> {
+        super::validate_bucket_size_minutes(size)
+    }
+
+    pub fn decode_note_content(base64_content: &str) -> Result<String> {
+        super::decode_note_content(base64_content)
+    }
+
+    pub fn validate_entity_name(name: &str) -> Result<()> {
+        super::validate_entity_name(name)
+    }
+
+    pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
+        let from = from_id
+            .parse::<Ulid>()
+            .map(Id::<Entity>::from_ulid)
+            .wrap_err("Invalid or missing from_entity_id")?;
+        let to = to_id
+            .parse::<Ulid>()
+            .map(Id::<Entity>::from_ulid)
+            .wrap_err("Invalid or missing to_entity_id")?;
+        super::validate_entity_link_ids(&from, &to)
+    }
+
+    pub fn parse_replay_state(value: &str) -> Result<ReplayState> {
+        super::parse_replay_state(value)
+    }
+
+    pub fn blob_size_limit_bytes() -> usize {
+        super::blob_size_limit_bytes()
+    }
+
+    pub fn max_base64_length(limit_bytes: usize) -> usize {
+        super::max_base64_length(limit_bytes)
+    }
+
+    pub fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
+        super::decode_blob_content(content_b64, limit)
+    }
 }

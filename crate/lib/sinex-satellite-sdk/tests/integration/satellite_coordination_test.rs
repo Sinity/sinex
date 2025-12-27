@@ -16,6 +16,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::time::{timeout, Duration};
 
+const COORDINATION_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[sinex_test]
 async fn test_satellite_coordination_initialization() -> TestResult<()> {
     let ctx = TestContext::new().await?;
@@ -56,7 +58,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
     
     // Run coordination loop briefly
     let coordination_handle = tokio::spawn(async move {
-        let result = timeout(Duration::from_millis(500), coordination.run_coordination_loop(|| {
+        let result = timeout(COORDINATION_TIMEOUT, coordination.run_coordination_loop(|| {
             let flag = leadership_flag.clone();
             async move {
                 flag.store(true, Ordering::SeqCst);
@@ -111,7 +113,7 @@ async fn test_multi_instance_leadership_election() -> TestResult<()> {
     // Start all instances concurrently
     let count1 = processing_count.clone();
     let handle1 = tokio::spawn(async move {
-        timeout(Duration::from_millis(300), coord1.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, coord1.run_coordination_loop(|| {
             let count = count1.clone();
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
@@ -123,7 +125,7 @@ async fn test_multi_instance_leadership_election() -> TestResult<()> {
     
     let count2 = processing_count.clone();
     let handle2 = tokio::spawn(async move {
-        timeout(Duration::from_millis(300), coord2.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, coord2.run_coordination_loop(|| {
             let count = count2.clone();
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
@@ -135,7 +137,7 @@ async fn test_multi_instance_leadership_election() -> TestResult<()> {
     
     let count3 = processing_count.clone();
     let handle3 = tokio::spawn(async move {
-        timeout(Duration::from_millis(300), coord3.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, coord3.run_coordination_loop(|| {
             let count = count3.clone();
             async move {
                 count.fetch_add(1, Ordering::SeqCst);
@@ -183,7 +185,7 @@ async fn test_version_based_handoff() -> TestResult<()> {
     // Start old version
     let old_flag = old_processing.clone();
     let old_handle = tokio::spawn(async move {
-        timeout(Duration::from_millis(400), old_coordination.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, old_coordination.run_coordination_loop(|| {
             let flag = old_flag.clone();
             async move {
                 flag.store(true, Ordering::SeqCst);
@@ -207,7 +209,7 @@ async fn test_version_based_handoff() -> TestResult<()> {
     
     let new_flag = new_processing.clone();
     let new_handle = tokio::spawn(async move {
-        timeout(Duration::from_millis(300), new_coordination.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, new_coordination.run_coordination_loop(|| {
             let flag = new_flag.clone();
             async move {
                 flag.store(true, Ordering::SeqCst);
@@ -257,7 +259,7 @@ async fn test_leader_failure_detection() -> TestResult<()> {
     // Start leader (will run briefly then "fail")
     let leader_flag = leader_processing.clone();
     let leader_handle = tokio::spawn(async move {
-        timeout(Duration::from_millis(200), leader_coord.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, leader_coord.run_coordination_loop(|| {
             let flag = leader_flag.clone();
             async move {
                 flag.store(true, Ordering::SeqCst);
@@ -273,7 +275,7 @@ async fn test_leader_failure_detection() -> TestResult<()> {
         // Wait for leader to fail, then take over
         tokio::time::sleep(Duration::from_millis(250)).await;
         
-        timeout(Duration::from_millis(300), standby_coord.run_coordination_loop(|| {
+        timeout(COORDINATION_TIMEOUT, standby_coord.run_coordination_loop(|| {
             let flag = standby_flag.clone();
             async move {
                 flag.store(true, Ordering::SeqCst);
@@ -314,7 +316,7 @@ async fn test_coordination_with_preflight_checks() -> TestResult<()> {
     let processing_occurred = Arc::new(AtomicBool::new(false));
     let flag = processing_occurred.clone();
     
-    let result = timeout(Duration::from_millis(300), coordination.run_coordination_loop(|| {
+    let result = timeout(COORDINATION_TIMEOUT, coordination.run_coordination_loop(|| {
         let flag = flag.clone();
         async move {
             flag.store(true, Ordering::SeqCst);

@@ -8,8 +8,9 @@
 //! - Performance characteristics
 
 use sinex_core::db::models::{Event, JsonValue};
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Id, SourceMaterial, Ulid};
+use sinex_core::types::domain::{EventSource, EventType, SanitizedPath};
+use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
+use sinex_core::{Id, Provenance, SourceMaterial, Ulid};
 use sinex_test_utils::{acquire_pool_test_guard, prelude::*};
 
 // Additional specific imports
@@ -23,62 +24,85 @@ use tokio::time::{sleep, Duration};
 
 #[sinex_test]
 async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Test basic event creation using modern patterns
-    let inserted = ctx
-        .create_test_event(
-            "fs-watcher",
-            "file.created",
-            json!({
-                "path": "/tmp/test.txt",
-                "size": 1024,
-                "permissions": "0o644"
-            }),
-        )
+    // Test basic repository insertion using typed payloads.
+    let material_id = ctx
+        .create_source_material(Some("db-test-material"))
         .await?;
+
+    let mut payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/tmp/test.txt")?,
+    );
+    payload.size = 1024;
+    payload.permissions = Some(0o644);
+
+    let event = Event::new(
+        payload,
+        Provenance::from_material(material_id, 0, None, None),
+    );
+
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.expect("inserted event should have id");
 
     // Verify event structure
     assert_eq!(inserted.source.as_str(), "fs-watcher");
     assert_eq!(inserted.event_type.as_str(), "file.created");
     assert_eq!(inserted.payload["path"], json!("/tmp/test.txt"));
     assert_eq!(inserted.payload["size"], json!(1024));
-    assert!(inserted.id.is_some());
-
-    // Note: Database insertion test skipped due to operator resolution issue
-    // This would be: let inserted_event = ctx.pool.events().insert(event).await?;
-    // The error "operator is not unique: ulid = uuid" suggests a PostgreSQL
-    // operator resolution issue that needs to be addressed in the database layer
+    let retrieved = ctx.pool.events().get_by_id(event_id.clone()).await?;
+    let retrieved = retrieved.expect("event should be retrievable by id");
+    assert_eq!(retrieved.id.expect("retrieved event should have id"), event_id);
+    assert_eq!(retrieved.payload["path"], json!("/tmp/test.txt"));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_event_queries() -> color_eyre::eyre::Result<()> {
-    // Test query pattern setup - demonstrates modern repository pattern
-    // Note: Actual database queries skipped due to operator resolution issue
+async fn test_event_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    // Test query pattern using production repository queries.
+    let material_id = ctx
+        .create_source_material(Some("db-query-material"))
+        .await?;
 
-    // Demonstrate event creation patterns for different sources
-    let fs_event = Event::<JsonValue>::test_event(
-        EventSource::from("fs-watcher"),
-        EventType::from("file.created"),
-        json!({"path": "/tmp/1.txt"}),
+    let fs_payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/tmp/1.txt")?,
+    );
+    let fs_event = Event::new(
+        fs_payload,
+        Provenance::from_material(material_id, 0, None, None),
     );
 
-    let terminal_event = Event::<JsonValue>::test_event(
-        EventSource::from("terminal"),
-        EventType::from("command.executed"),
-        json!({"cmd": "ls"}),
+    let terminal_payload = KittyCommandExecutedPayload::test_default("ls");
+    let terminal_event = Event::new(
+        terminal_payload,
+        Provenance::from_material(material_id, 0, None, None),
     );
 
-    // Verify event properties
-    assert_eq!(fs_event.source.as_str(), "fs-watcher");
-    assert_eq!(fs_event.event_type.as_str(), "file.created");
+    let inserted_fs = ctx.pool.events().insert(fs_event).await?;
+    let inserted_terminal = ctx.pool.events().insert(terminal_event).await?;
+    let fs_id = inserted_fs.id.expect("fs event should have id");
+    let terminal_id = inserted_terminal.id.expect("terminal event should have id");
 
-    assert_eq!(terminal_event.source.as_str(), "terminal");
-    assert_eq!(terminal_event.event_type.as_str(), "command.executed");
+    let fs_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("fs-watcher"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
+        .await?;
+    assert!(fs_events.iter().any(|event| event.id == Some(fs_id)));
 
-    // Repository pattern would be:
-    // let fs_events = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), sinex_core::types::Pagination::new(Some(10), None)).await?;
-    // let command_events = ctx.pool.events().get_by_event_type(&EventType::from("command.executed"), sinex_core::types::Pagination::new(Some(10), None)).await?;
+    let command_events = ctx
+        .pool
+        .events()
+        .get_by_event_type(
+            &EventType::from("command.executed"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
+        .await?;
+    assert!(command_events
+        .iter()
+        .any(|event| event.id == Some(terminal_id)));
 
     Ok(())
 }

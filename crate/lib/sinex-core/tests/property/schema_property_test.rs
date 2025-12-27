@@ -13,7 +13,7 @@ use sinex_core::{
         repositories::schema_management::NewEventSchema,
         validation::{EventValidator, SchemaValidationOutcome},
     },
-    types::validation::validate_json,
+    types::validation::{validate_json, ValidationError},
     DbPoolExt,
 };
 use sinex_test_utils::prelude::*;
@@ -395,8 +395,6 @@ fn test_json_validation_edge_cases() -> TestResult {
 // Integration Tests
 // =============================================================================
 
-// TODO: Fix compilation errors - commented out for compilation
-/*
 #[sinex_test]
 async fn test_json_validation_database_integration(
     ctx: TestContext,
@@ -424,8 +422,8 @@ async fn test_json_validation_database_integration(
             panic!("Unexpected validation error: {}", e);
         }
     }
+    Ok(())
 }
-*/
 
 // =============================================================================
 // Performance Properties

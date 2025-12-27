@@ -206,13 +206,6 @@ async fn test_all_features_combined(
     Ok(())
 }
 
-#[cfg(not(feature = "slow-tests"))]
-#[sinex_test]
-fn test_all_features_combined_skipped() -> TestResult<()> {
-    eprintln!("test_all_features_combined skipped; enable --features slow-tests to run");
-    Ok(())
-}
-
 // Example 6: Property testing still works with sinex_test
 #[sinex_test]
 async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {

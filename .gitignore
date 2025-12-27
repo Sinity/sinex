@@ -86,3 +86,7 @@ postgres_data/
 # Bench results (local artifacts)
 test-results/bench-*/
 bench-results.txt
+
+# config
+.serena
+devenv.lock

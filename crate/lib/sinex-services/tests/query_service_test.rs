@@ -11,20 +11,21 @@ use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 
 async fn truncate_query_tables(ctx: &TestContext) -> color_eyre::Result<()> {
-    let result = sqlx::query(
+    sqlx::query(
         "TRUNCATE TABLE core.events, raw.source_material_registry, raw.temporal_ledger CASCADE",
     )
     .execute(&ctx.pool)
-    .await;
-    if let Err(err) = result {
+    .await
+    .map_err(|err| {
         if let sqlx::Error::Database(db_err) = &err {
             if db_err.code().as_deref() == Some("42P01") {
-                tracing::warn!(error = %db_err, "Skipping truncate because tables are missing");
-                return Ok(());
+                return color_eyre::eyre::eyre!(
+                    "Query service tests require migrated tables; run migrations before tests: {db_err}"
+                );
             }
         }
-        return Err(err.into());
-    }
+        err.into()
+    })?;
     Ok(())
 }
 

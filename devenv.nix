@@ -82,6 +82,7 @@ in
       in
       if rootEnv != "" then rootEnv else toString ./.
     );
+    warnOnNewVersion = false;
   };
 
   cachix = {

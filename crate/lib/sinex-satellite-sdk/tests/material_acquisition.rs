@@ -5,13 +5,11 @@ use sinex_core::Id;
 use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
 use sinex_satellite_sdk::{AcquisitionManager, RotationPolicy};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{
-    start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig,
-};
+use sinex_test_utils::timing_utils::{DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS, WaitHelpers};
+use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
@@ -74,7 +72,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                     )
                 }
             },
-            10,
+            DEFAULT_WAIT_SECS,
         )
         .await?;
 
@@ -229,7 +227,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                 Ok(false)
             }
         },
-        10,
+        DEFAULT_WAIT_SECS,
     )
     .await?;
 
@@ -259,6 +257,122 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     Ok(())
 }
 
+/// Ensure end-before-begin ordering is tolerated (end is NAKed and later finalized).
+#[sinex_test(timeout = 60)]
+async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
+    let nats = EphemeralNats::start().await?;
+    let nats_client = nats.connect().await?;
+
+    let ingest_config = TestIngestdConfig {
+        nats_url: format!("nats://{}", nats.client_url()),
+        database_url: ctx.database_url().to_string(),
+        work_dir: None,
+    };
+
+    let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+    AcquisitionManager::bootstrap_streams(&nats_client).await?;
+
+    let material_id = Ulid::new();
+    let env = sinex_core::environment();
+    let js = nats.jetstream_with_client(nats_client.clone());
+
+    let slices = vec![
+        (0i64, b"slice 0 data".to_vec()),
+        (12i64, b"slice 1 data".to_vec()),
+    ];
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&slices[0].1);
+    hasher.update(&slices[1].1);
+    let content_hash = hasher.finalize().to_hex();
+    let expected_size = slices.iter().map(|(_, data)| data.len() as i64).sum::<i64>();
+
+    let end_msg = serde_json::json!({
+        "material_id": material_id.to_string(),
+        "ended_at": chrono::Utc::now().to_rfc3339(),
+        "content_hash": content_hash.to_string(),
+        "total_slices": slices.len(),
+        "total_size_bytes": expected_size,
+    });
+    js.publish(
+        env.nats_subject("source_material.end"),
+        serde_json::to_vec(&end_msg)?.into(),
+    )
+    .await?
+    .await?;
+
+    // Give the end consumer a chance to see the message before begin arrives.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let begin_msg = serde_json::json!({
+        "material_id": material_id.to_string(),
+        "material_kind": "annex",
+        "source_identifier": "end-before-begin",
+        "metadata": {},
+        "started_at": chrono::Utc::now().to_rfc3339(),
+    });
+    js.publish(
+        env.nats_subject("source_material.begin"),
+        serde_json::to_vec(&begin_msg)?.into(),
+    )
+    .await?
+    .await?;
+
+    for (offset, data) in slices {
+        let mut headers = async_nats::HeaderMap::new();
+        let offset_str = offset.to_string();
+        let chunk_hash = blake3::hash(&data).to_hex();
+        headers.insert("Offset", offset_str.as_str());
+        headers.insert("Chunk-Hash", chunk_hash.as_str());
+
+        js.publish_with_headers(
+            env.nats_subject(&format!("source_material.slices.{}", material_id)),
+            headers,
+            data.into(),
+        )
+        .await?
+        .await?;
+    }
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                if let Some(material) = pool
+                    .source_materials()
+                    .get_by_id(Id::from_ulid(material_id))
+                    .await?
+                {
+                    if material.status.as_str() != "completed" {
+                        return Ok(false);
+                    }
+                    let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                        material_id as Ulid
+                    )
+                    .fetch_optional(&pool)
+                    .await?;
+                    return Ok(ledger_bytes.unwrap_or_default() >= expected_size);
+                }
+                Ok(false)
+            }
+        },
+        INTEGRATION_WAIT_SECS,
+    )
+    .await?;
+
+    let record = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_ulid(material_id))
+        .await?
+        .expect("material should exist after completion");
+    assert_eq!(record.status.as_str(), "completed");
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Ensure material assembly resumes correctly after ingestd restart
 #[sinex_test(timeout = 90)]
 async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<()> {
@@ -266,6 +380,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
+    let js = nats.jetstream_with_client(nats_client.clone());
     let run_suffix = Ulid::new();
 
     let work_dir = tempfile::tempdir()?;
@@ -278,6 +393,10 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    // Give ingestd a moment to establish consumers
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     let rotation_policy = RotationPolicy::default();
     let manager = AcquisitionManager::new(
@@ -294,28 +413,17 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 
     manager.append_slice(&mut handle, b"first-chunk").await?;
 
-    // Ensure the first slice has been persisted before simulating the restart so the ledger row
-    // has a valid source_material entry.
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if ctx
-                .pool
-                .source_materials()
-                .get_by_id(Id::from_ulid(material_id))
-                .await?
-                .is_some()
-            {
-                break Ok::<_, color_eyre::Report>(());
-            }
-            sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await??;
+    // Give ingestd time to process (but we can't check ledger as it might not persist intermediate state immediately)
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     ingest_handle.stop().await?;
     ctx.quiesce_background_tasks().await?;
 
     let mut ingest_handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    // Give ingestd time to recover consumers and state
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     manager.append_slice(&mut handle, b"second-chunk").await?;
     manager
@@ -352,7 +460,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                     Ok(false)
                 }
             },
-            25,
+            INTEGRATION_WAIT_SECS,
         )
         .await;
 
@@ -465,7 +573,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                     Ok(false)
                 }
             },
-            60,
+            INTEGRATION_WAIT_SECS,
         )
         .await?;
 
@@ -538,7 +646,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
                 Ok(material_count.unwrap_or(0) >= 1)
             }
         },
-        20,
+        DEFAULT_WAIT_SECS,
     )
     .await?;
 

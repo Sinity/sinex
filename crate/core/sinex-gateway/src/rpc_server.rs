@@ -58,6 +58,19 @@ struct JsonRpcRequest {
     id: Option<Value>,
 }
 
+fn validate_jsonrpc_request(request: &JsonRpcRequest) -> color_eyre::eyre::Result<()> {
+    if request.jsonrpc != "2.0" {
+        return Err(eyre!("jsonrpc must be '2.0'"));
+    }
+    if request.method.trim().is_empty() {
+        return Err(eyre!("method must be a non-empty string"));
+    }
+    match request.params {
+        Value::Object(_) | Value::Array(_) | Value::Null => Ok(()),
+        _ => Err(eyre!("params must be an object, array, or null")),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct JsonRpcResponse {
     jsonrpc: String,
@@ -379,6 +392,11 @@ async fn handle_rpc(
 ) -> impl IntoResponse {
     if let Err(err) = state.auth.verify(&headers) {
         return err.into_response();
+    }
+
+    if let Err(err) = validate_jsonrpc_request(&request) {
+        let response = JsonRpcResponse::error(request.id, -32600, err.to_string());
+        return (StatusCode::BAD_REQUEST, Json(response));
     }
 
     debug!(
@@ -902,6 +920,63 @@ mod tests {
         headers.insert("x-sinex-rpc-token", HeaderValue::from_static("secret"));
         assert!(auth.verify(&headers).is_ok());
         Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub mod test_support {
+    use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum GatewayAuthModeSnapshot {
+        Disabled,
+        StaticToken,
+    }
+
+    pub fn gateway_auth_mode_from_env() -> color_eyre::eyre::Result<GatewayAuthModeSnapshot> {
+        let auth = GatewayAuth::from_env()?;
+        Ok(match auth.mode {
+            GatewayAuthMode::Disabled => GatewayAuthModeSnapshot::Disabled,
+            GatewayAuthMode::StaticToken(_) => GatewayAuthModeSnapshot::StaticToken,
+        })
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct RpcServerLimitsSnapshot {
+        pub concurrency_limit: usize,
+        pub request_timeout_secs: u64,
+        pub max_body_bytes: usize,
+    }
+
+    pub fn extract_token(headers: &HeaderMap) -> Option<String> {
+        super::extract_token(headers)
+    }
+
+    pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+        super::constant_time_eq(a, b)
+    }
+
+    pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+        super::read_token_from_env()
+    }
+
+    pub fn insecure_auth_allowed() -> bool {
+        super::insecure_auth_allowed()
+    }
+
+    pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
+        let limits = RpcServerLimits::from_env();
+        RpcServerLimitsSnapshot {
+            concurrency_limit: limits.concurrency_limit,
+            request_timeout_secs: limits.request_timeout.as_secs(),
+            max_body_bytes: limits.max_body_bytes,
+        }
+    }
+
+    pub fn validate_jsonrpc_value(value: &Value) -> color_eyre::eyre::Result<()> {
+        let request: JsonRpcRequest = serde_json::from_value(value.clone())
+            .wrap_err("Invalid JSON-RPC request payload")?;
+        super::validate_jsonrpc_request(&request)
     }
 }
 
