@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use clap::Args;
+use console::style;
+use inquire::{MultiSelect, Select, Text};
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
@@ -34,8 +36,14 @@ EXAMPLES:
 
     # Output as YAML
     sinexctl query -s 1h -f yaml
+
+    # Launch interactive query builder
+    sinexctl query -i
 ")]
 pub struct QueryCommand {
+    /// Launch interactive query builder
+    #[arg(short = 'i', long)]
+    interactive: bool,
     /// Free-text search (searches all fields)
     #[arg(short = 'q', long)]
     query: Option<String>,
@@ -71,6 +79,11 @@ pub struct QueryCommand {
 
 impl QueryCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+        // Launch interactive mode if requested
+        if self.interactive {
+            return interactive_query(client, self.format).await;
+        }
+
         let query = SearchQuery {
             text: self.query.clone(),
             sources: self.source.clone(),
@@ -81,27 +94,192 @@ impl QueryCommand {
             offset: self.offset,
         };
 
-        let results = client.search_events(query).await?;
+        execute_query(client, query, self.format).await
+    }
+}
 
-        match self.format {
-            OutputFormat::Table => {
-                if results.is_empty() {
-                    println!("No events found.");
-                } else {
-                    println!("{}", format_table_results(&results));
-                }
-            }
-            OutputFormat::Json => {
-                for result in &results {
-                    println!("{}", format_json(result)?);
-                }
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&results)?);
+/// Execute a query and display results
+async fn execute_query(
+    client: &GatewayClient,
+    query: SearchQuery,
+    format: OutputFormat,
+) -> Result<()> {
+    let results = client.search_events(query).await?;
+
+    match format {
+        OutputFormat::Table => {
+            if results.is_empty() {
+                println!("No events found.");
+            } else {
+                println!("{}", format_table_results(&results));
             }
         }
+        OutputFormat::Json => {
+            for result in &results {
+                println!("{}", format_json(result)?);
+            }
+        }
+        OutputFormat::Yaml => {
+            println!("{}", format_yaml(&results)?);
+        }
+    }
 
-        Ok(())
+    Ok(())
+}
+
+/// Interactive query builder
+async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Result<()> {
+    println!("{}", style("Interactive Query Builder").bold().cyan());
+    println!("{}", style("─".repeat(50)).dim());
+    println!();
+
+    // Time range selection
+    let time_options = vec![
+        "Last 15 minutes",
+        "Last hour",
+        "Last 6 hours",
+        "Last 24 hours",
+        "Last 7 days",
+        "Last 30 days",
+        "Custom range...",
+    ];
+    let time_choice = Select::new("Time range:", time_options.clone())
+        .with_starting_cursor(1) // Default to "Last hour"
+        .prompt()?;
+
+    let (since, until) = match time_choice {
+        "Custom range..." => {
+            let since_str = Text::new("Since (e.g., 1h, 2d, 2025-01-15):")
+                .with_help_message("Relative: 1h, 2d, 1w | Absolute: 2025-01-15")
+                .prompt()?;
+            let until_str = Text::new("Until (press Enter for now):")
+                .with_help_message("Leave empty for current time")
+                .prompt_skippable()?
+                .filter(|s| !s.is_empty());
+
+            let since_time = parse_time(&since_str)?;
+            let until_time = until_str.map(|s| parse_time(&s)).transpose()?;
+            (since_time, until_time)
+        }
+        _ => {
+            let since_time = parse_preset_time(time_choice);
+            (since_time, None)
+        }
+    };
+
+    // Fetch available sources from nodes if possible
+    let default_sources = vec![
+        "terminal".to_string(),
+        "filesystem".to_string(),
+        "desktop".to_string(),
+        "system".to_string(),
+        "health".to_string(),
+    ];
+
+    let sources = match client.list_nodes(None).await {
+        Ok(nodes) => {
+            if nodes.is_empty() {
+                default_sources
+            } else {
+                nodes.iter().map(|n| n.name.clone()).collect()
+            }
+        }
+        Err(_) => default_sources,
+    };
+
+    let selected_sources = MultiSelect::new("Sources (Space to select, Enter to confirm):", sources)
+        .with_help_message("Leave empty to search all sources")
+        .prompt_skippable()?
+        .unwrap_or_default();
+
+    // Event types
+    let event_types = vec![
+        "command".to_string(),
+        "file_write".to_string(),
+        "file_read".to_string(),
+        "file_delete".to_string(),
+        "process_start".to_string(),
+        "process_exit".to_string(),
+        "window_focus".to_string(),
+        "clipboard".to_string(),
+        "system_event".to_string(),
+        "health_check".to_string(),
+    ];
+
+    let selected_types =
+        MultiSelect::new("Event types (Space to select, Enter to confirm):", event_types)
+            .with_help_message("Leave empty to search all event types")
+            .prompt_skippable()?
+            .unwrap_or_default();
+
+    // Full-text search
+    let text = Text::new("Full-text search (optional):")
+        .with_help_message("Search across all event fields")
+        .prompt_skippable()?
+        .filter(|s| !s.is_empty());
+
+    // Limit
+    let limit_str = Text::new("Maximum results:")
+        .with_default("100")
+        .prompt()?;
+    let limit: i32 = limit_str.parse().unwrap_or(100);
+
+    // Build query
+    let query = SearchQuery {
+        text: text.clone(),
+        sources: selected_sources.clone(),
+        event_types: selected_types.clone(),
+        start_time: Some(since),
+        end_time: until,
+        limit,
+        offset: 0,
+    };
+
+    // Show equivalent CLI command
+    println!();
+    println!("{}", style("Equivalent CLI command:").dim());
+    print!("  sinexctl query");
+    if let Some(ref t) = text {
+        print!(" -q '{}'", t);
+    }
+    for src in &selected_sources {
+        print!(" --source {}", src);
+    }
+    for et in &selected_types {
+        print!(" --event-type {}", et);
+    }
+    // Convert time to CLI arg format
+    let since_arg = match time_choice {
+        "Last 15 minutes" => "15m".to_string(),
+        "Last hour" => "1h".to_string(),
+        "Last 6 hours" => "6h".to_string(),
+        "Last 24 hours" => "24h".to_string(),
+        "Last 7 days" => "7d".to_string(),
+        "Last 30 days" => "30d".to_string(),
+        _ => since.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    };
+    print!(" -s {}", since_arg);
+    if limit != 100 {
+        print!(" -n {}", limit);
+    }
+    println!();
+    println!();
+
+    // Execute query
+    execute_query(client, query, format).await
+}
+
+/// Parse preset time ranges
+fn parse_preset_time(preset: &str) -> DateTime<Utc> {
+    let now = Utc::now();
+    match preset {
+        "Last 15 minutes" => now - Duration::minutes(15),
+        "Last hour" => now - Duration::hours(1),
+        "Last 6 hours" => now - Duration::hours(6),
+        "Last 24 hours" => now - Duration::hours(24),
+        "Last 7 days" => now - Duration::days(7),
+        "Last 30 days" => now - Duration::days(30),
+        _ => now - Duration::hours(1), // Default fallback
     }
 }
 
