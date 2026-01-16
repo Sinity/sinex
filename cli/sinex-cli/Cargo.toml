@@ -63,3 +63,8 @@ crossterm = "0.29"
 [dev-dependencies]
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 wiremock = "0.6"
+proptest = { workspace = true }
+insta = { workspace = true }
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

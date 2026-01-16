@@ -390,6 +390,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_parse_relative_time() {
@@ -423,6 +424,172 @@ mod tests {
         assert_eq!(
             truncate_string("this is a very long string", 10),
             "this is..."
+        );
+    }
+
+    // Property tests for time parsing
+    proptest! {
+        #[test]
+        fn prop_relative_hours_parses(hours in 1i64..1000) {
+            let input = format!("{}h", hours);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::hours(hours)));
+        }
+
+        #[test]
+        fn prop_relative_days_parses(days in 1i64..365) {
+            let input = format!("{}d", days);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::days(days)));
+        }
+
+        #[test]
+        fn prop_relative_minutes_parses(mins in 1i64..10000) {
+            let input = format!("{}m", mins);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::minutes(mins)));
+        }
+
+        #[test]
+        fn prop_relative_seconds_parses(secs in 1i64..100000) {
+            let input = format!("{}s", secs);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::seconds(secs)));
+        }
+
+        #[test]
+        fn prop_relative_weeks_parses(weeks in 1i64..52) {
+            let input = format!("{}w", weeks);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::weeks(weeks)));
+        }
+
+        #[test]
+        fn prop_truncate_preserves_short_strings(s in ".{0,10}") {
+            let result = truncate_string(&s, 10);
+            if s.chars().count() <= 10 {
+                prop_assert_eq!(result, s);
+            }
+        }
+
+        #[test]
+        fn prop_truncate_adds_ellipsis_to_long_strings(s in ".{15,100}") {
+            let result = truncate_string(&s, 10);
+            prop_assert!(result.ends_with("..."));
+            prop_assert!(result.chars().count() <= 10);
+        }
+
+        #[test]
+        fn prop_truncate_never_exceeds_max_len(s in ".*", max_len in 5usize..100) {
+            let result = truncate_string(&s, max_len);
+            prop_assert!(result.chars().count() <= max_len);
+        }
+
+        #[test]
+        fn prop_relative_time_with_long_form_hour(hours in 1i64..100) {
+            let input = format!("{}hour", hours);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::hours(hours)));
+
+            let input_plural = format!("{}hours", hours);
+            let result_plural = parse_relative_time(&input_plural);
+            prop_assert_eq!(result_plural, Some(Duration::hours(hours)));
+        }
+
+        #[test]
+        fn prop_relative_time_with_long_form_day(days in 1i64..100) {
+            let input = format!("{}day", days);
+            let result = parse_relative_time(&input);
+            prop_assert_eq!(result, Some(Duration::days(days)));
+
+            let input_plural = format!("{}days", days);
+            let result_plural = parse_relative_time(&input_plural);
+            prop_assert_eq!(result_plural, Some(Duration::days(days)));
+        }
+
+        #[test]
+        fn prop_parse_time_relative_produces_past_datetime(hours in 1i64..100) {
+            let input = format!("{}h", hours);
+            let now = Utc::now();
+            let result = parse_time(&input).unwrap();
+            // Result should be in the past
+            prop_assert!(result < now);
+            // And approximately hours ago (within 1 second tolerance)
+            let expected = now - Duration::hours(hours);
+            let diff = (result - expected).num_seconds().abs();
+            prop_assert!(diff < 2, "Time difference too large: {} seconds", diff);
+        }
+
+        #[test]
+        fn prop_valid_rfc3339_parses(
+            year in 2020i32..2030,
+            month in 1u32..=12,
+            day in 1u32..=28,  // Safe for all months
+            hour in 0u32..24,
+            minute in 0u32..60,
+            second in 0u32..60
+        ) {
+            let input = format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                year, month, day, hour, minute, second
+            );
+            let result = parse_time(&input);
+            prop_assert!(result.is_ok(), "Failed to parse: {}", input);
+        }
+
+        #[test]
+        fn prop_valid_date_only_parses(
+            year in 2020i32..2030,
+            month in 1u32..=12,
+            day in 1u32..=28  // Safe for all months
+        ) {
+            let input = format!("{:04}-{:02}-{:02}", year, month, day);
+            let result = parse_time(&input);
+            prop_assert!(result.is_ok(), "Failed to parse: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_invalid_time_formats() {
+        // Invalid formats should fail
+        assert!(parse_time("not-a-date").is_err());
+        assert!(parse_time("2025/01/15").is_err()); // Wrong separator
+        assert!(parse_time("15-01-2025").is_err()); // Wrong order
+        assert!(parse_time("").is_err()); // Empty
+
+        // But these should work
+        assert!(parse_time("1h").is_ok());
+        assert!(parse_time("2d").is_ok());
+        assert!(parse_time("2025-01-15").is_ok());
+        assert!(parse_time("2025-01-15T10:00:00Z").is_ok());
+    }
+
+    #[test]
+    fn test_preset_time_ranges() {
+        let now = Utc::now();
+
+        // Each preset should return a time in the past
+        let presets = [
+            "Last 15 minutes",
+            "Last hour",
+            "Last 6 hours",
+            "Last 24 hours",
+            "Last 7 days",
+            "Last 30 days",
+        ];
+
+        for preset in presets {
+            let result = parse_preset_time(preset);
+            assert!(result < now, "Preset '{}' should return past time", preset);
+        }
+
+        // Verify approximate durations
+        let hour_ago = parse_preset_time("Last hour");
+        let diff = (now - hour_ago).num_minutes();
+        assert!(
+            (58..=62).contains(&diff),
+            "Last hour should be ~60 mins ago, got {}",
+            diff
         );
     }
 }
