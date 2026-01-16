@@ -50,6 +50,10 @@ tracing = { workspace = true }
 # Interactive prompts
 inquire = "0.7"
 
+# Syntax highlighting
+syntect = "5.2"
+atty = "0.2"
+
 [dev-dependencies]
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 wiremock = "0.6"
