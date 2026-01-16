@@ -1,7 +1,7 @@
 use clap::Subcommand;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_table_dlq, format_yaml};
+use crate::fmt::{format_json, format_table_dlq, format_yaml, Spinner};
 use crate::model::OutputFormat;
 use crate::Result;
 
@@ -132,17 +132,34 @@ impl DlqCommands {
                         "Must specify either --event-id or --all"
                     ));
                 }
-                client.dlq_requeue(event_id.clone(), *all).await?;
-                if *all {
-                    println!("All messages requeued successfully");
-                } else if let Some(id) = event_id {
-                    println!("Event {} requeued successfully", id);
+
+                let msg = if *all {
+                    "Requeuing all messages...".to_string()
+                } else {
+                    format!("Requeuing event {}...", event_id.as_ref().unwrap())
+                };
+                let spinner = Spinner::new(&msg);
+
+                match client.dlq_requeue(event_id.clone(), *all).await {
+                    Ok(()) => {
+                        if *all {
+                            spinner.finish_with_message("All messages requeued");
+                        } else if let Some(id) = event_id {
+                            spinner.finish_with_message(&format!("Event {} requeued", id));
+                        }
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message("Failed to requeue");
+                        return Err(e);
+                    }
                 }
             }
             Self::Purge { confirm } => {
                 // First, check how many messages would be deleted
+                let spinner = Spinner::new("Checking DLQ...");
                 let queues = client.dlq_list().await?;
                 let message_count: u64 = queues.iter().map(|q| q.message_count).sum();
+                spinner.finish_and_clear();
 
                 if message_count == 0 {
                     println!("DLQ is already empty");
@@ -172,8 +189,19 @@ impl DlqCommands {
                 }
 
                 // Proceed with purge
-                client.dlq_purge(true).await?;
-                println!("Purged {} messages from DLQ", message_count);
+                let spinner = Spinner::new(&format!("Purging {} messages...", message_count));
+                match client.dlq_purge(true).await {
+                    Ok(()) => {
+                        spinner.finish_with_message(&format!(
+                            "Purged {} messages from DLQ",
+                            message_count
+                        ));
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message("Failed to purge DLQ");
+                        return Err(e);
+                    }
+                }
             }
         }
         Ok(())

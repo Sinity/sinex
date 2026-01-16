@@ -2,7 +2,7 @@ use clap::Subcommand;
 use serde_json::Value;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, Spinner};
 use crate::model::OutputFormat;
 use crate::util::json::get_str;
 use crate::Result;
@@ -104,9 +104,21 @@ impl OpsCommands {
                     .map(|s| serde_json::from_str(s))
                     .transpose()?;
 
-                let operation_id = client
+                let spinner =
+                    Spinner::new(&format!("Starting {} operation...", operation_type));
+                let operation_id = match client
                     .ops_start(operation_type, operator, scope_json)
-                    .await?;
+                    .await
+                {
+                    Ok(id) => {
+                        spinner.finish_and_clear();
+                        id
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message("Failed to start operation");
+                        return Err(e);
+                    }
+                };
 
                 match format {
                     OutputFormat::Table => {
@@ -206,10 +218,22 @@ impl OpsCommands {
                 operation_id,
                 reason,
             } => {
-                client.ops_cancel(operation_id, reason.clone()).await?;
-                println!("Operation {} cancelled successfully", operation_id);
-                if let Some(r) = reason {
-                    println!("Reason: {}", r);
+                let spinner = Spinner::new(&format!("Cancelling operation {}...", operation_id));
+                match client.ops_cancel(operation_id, reason.clone()).await {
+                    Ok(()) => {
+                        spinner
+                            .finish_with_message(&format!("Operation {} cancelled", operation_id));
+                        if let Some(r) = reason {
+                            println!("Reason: {}", r);
+                        }
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message(&format!(
+                            "Failed to cancel operation {}",
+                            operation_id
+                        ));
+                        return Err(e);
+                    }
                 }
             }
         }

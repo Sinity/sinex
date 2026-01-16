@@ -1,7 +1,7 @@
 use clap::Subcommand;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_table_nodes, format_yaml};
+use crate::fmt::{format_json, format_table_nodes, format_yaml, Spinner};
 use crate::model::{NodeRole, OutputFormat};
 use crate::Result;
 
@@ -117,16 +117,46 @@ impl NodeCommands {
                 }
             }
             Self::Drain { node } => {
-                client.drain_node(node).await?;
-                println!("Node {} drained successfully", node);
+                let spinner = Spinner::new(&format!("Draining node {}...", node));
+                match client.drain_node(node).await {
+                    Ok(()) => {
+                        spinner.finish_with_message(&format!("Node {} drained", node));
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message(&format!("Failed to drain {}", node));
+                        return Err(e);
+                    }
+                }
             }
             Self::Resume { node } => {
-                client.resume_node(node).await?;
-                println!("Node {} resumed successfully", node);
+                let spinner = Spinner::new(&format!("Resuming node {}...", node));
+                match client.resume_node(node).await {
+                    Ok(()) => {
+                        spinner.finish_with_message(&format!("Node {} resumed", node));
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message(&format!("Failed to resume {}", node));
+                        return Err(e);
+                    }
+                }
             }
             Self::SetHorizon { node, horizon } => {
-                client.set_node_horizon(node, horizon).await?;
-                println!("Node {} horizon set to {}", node, horizon);
+                let spinner = Spinner::new(&format!("Setting horizon for {}...", node));
+                match client.set_node_horizon(node, horizon).await {
+                    Ok(()) => {
+                        spinner.finish_with_message(&format!(
+                            "Node {} horizon set to {}",
+                            node, horizon
+                        ));
+                    }
+                    Err(e) => {
+                        spinner.abandon_with_message(&format!(
+                            "Failed to set horizon for {}",
+                            node
+                        ));
+                        return Err(e);
+                    }
+                }
             }
         }
         Ok(())
