@@ -9,6 +9,32 @@ use crate::Result;
 
 /// Query/search events
 #[derive(Debug, Args)]
+#[command(after_help = "\
+EXAMPLES:
+    # Search all events from last hour
+    sinexctl query -s 1h
+
+    # Full-text search for 'error'
+    sinexctl query -q error -s 24h
+
+    # Filter by source and event type
+    sinexctl query --source terminal --event-type command -s 2d
+
+    # Search within a date range
+    sinexctl query -s 2025-01-10 -u 2025-01-15
+
+    # Multiple sources (OR filter)
+    sinexctl query --source terminal --source filesystem -s 1d
+
+    # Pagination with limit and offset
+    sinexctl query -s 7d -n 50 --offset 100
+
+    # Output as JSON for piping
+    sinexctl query -s 1h -f json | jq '.event_type'
+
+    # Output as YAML
+    sinexctl query -s 1h -f yaml
+")]
 pub struct QueryCommand {
     /// Free-text search (searches all fields)
     #[arg(short = 'q', long)]

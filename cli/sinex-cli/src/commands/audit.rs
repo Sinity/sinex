@@ -9,6 +9,17 @@ use crate::Result;
 
 /// Get audit trail for an operation
 #[derive(Debug, Args)]
+#[command(after_help = "\
+EXAMPLES:
+    # View audit trail for an operation
+    sinexctl audit 01HQ2KM...
+
+    # Output as JSON for processing
+    sinexctl audit 01HQ2KM... -f json
+
+    # Output as YAML
+    sinexctl audit 01HQ2KM... -f yaml
+")]
 pub struct AuditCommand {
     /// Operation ID
     operation_id: String,

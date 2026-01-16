@@ -7,6 +7,23 @@ use crate::Result;
 
 /// Dead letter queue operations
 #[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # List all DLQ entries
+    sinexctl dlq list
+
+    # Peek at messages in a specific queue
+    sinexctl dlq peek events.failed -n 5
+
+    # Requeue a specific message for retry
+    sinexctl dlq requeue --event-id 01HQ2KM...
+
+    # Requeue all failed messages
+    sinexctl dlq requeue --all
+
+    # Purge all messages (requires confirmation)
+    sinexctl dlq purge --confirm
+")]
 pub enum DlqCommands {
     /// List dead letter queues
     #[command(alias = "ls")]

@@ -7,6 +7,26 @@ use crate::Result;
 
 /// Node operations
 #[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # List all registered nodes
+    sinexctl node list
+
+    # List only satellite nodes
+    sinexctl node list --role satellite
+
+    # Check status of a specific node
+    sinexctl node status terminal-node
+
+    # Drain a node for maintenance
+    sinexctl node drain terminal-node
+
+    # Resume a drained node
+    sinexctl node resume terminal-node
+
+    # Set horizon to replay last 24 hours
+    sinexctl node set-horizon terminal-node 24h
+")]
 pub enum NodeCommands {
     /// List all nodes
     List {

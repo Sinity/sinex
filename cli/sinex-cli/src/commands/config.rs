@@ -8,6 +8,26 @@ use crate::model::OutputFormat;
 
 /// Config subcommands
 #[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # Initialize config with guided setup
+    sinexctl config init
+
+    # Force overwrite existing config
+    sinexctl config init --force
+
+    # Show current configuration
+    sinexctl config show
+
+    # Show config as JSON
+    sinexctl config show -f json
+
+    # Show config file path
+    sinexctl config path
+
+    # Edit config in $EDITOR
+    sinexctl config edit
+")]
 pub enum ConfigCommands {
     /// Initialize config file with guided setup
     Init {

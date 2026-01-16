@@ -9,6 +9,29 @@ use crate::Result;
 
 /// Replay operations
 #[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # Create a replay plan for a query
+    sinexctl replay plan --query 'source:terminal since:1h'
+
+    # Submit a replay plan for execution
+    sinexctl replay submit 01HQ2KM...
+
+    # Watch replay progress in real-time
+    sinexctl replay watch 01HQ2KM...
+
+    # Watch with custom poll interval
+    sinexctl replay watch 01HQ2KM... --interval 5
+
+    # Stream progress as JSON (for integration)
+    sinexctl replay watch 01HQ2KM... -f json
+
+    # List all replay operations
+    sinexctl replay list
+
+    # List in JSON format
+    sinexctl replay list -f json
+")]
 pub enum ReplayCommands {
     /// Create a replay plan
     Plan {

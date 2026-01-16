@@ -9,6 +9,26 @@ use crate::Result;
 
 /// Operations log commands
 #[derive(Debug, Subcommand)]
+#[command(after_help = "\
+EXAMPLES:
+    # List recent operations
+    sinexctl ops list
+
+    # List only replay operations
+    sinexctl ops list -t replay
+
+    # List failed operations
+    sinexctl ops list -s failed
+
+    # Get operation details
+    sinexctl ops get 01HQ2KM...
+
+    # Start a new maintenance operation
+    sinexctl ops start -t maintenance -o admin@example.com
+
+    # Cancel an operation
+    sinexctl ops cancel 01HQ2KM... -r 'No longer needed'
+")]
 pub enum OpsCommands {
     /// Start a new operation
     Start {

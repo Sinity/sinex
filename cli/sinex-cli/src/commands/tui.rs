@@ -24,6 +24,28 @@ use crate::model::search::{SearchQuery, SearchResult};
 
 /// Launch interactive TUI dashboard
 #[derive(Debug, Args)]
+#[command(after_help = "\
+EXAMPLES:
+    # Launch dashboard
+    sinexctl tui
+
+    # Start on specific tab
+    sinexctl tui --tab nodes
+    sinexctl tui --tab events
+
+    # Custom refresh interval
+    sinexctl tui --refresh 10
+
+    # Disable auto-refresh
+    sinexctl tui --refresh 0
+
+KEYBOARD SHORTCUTS:
+    Tab/←/→    Switch between tabs
+    q/Esc      Quit
+    r          Refresh data now
+    j/↓        Next item
+    k/↑        Previous item
+")]
 pub struct TuiCommand {
     /// Starting tab (dashboard, replay, events, dlq)
     #[arg(long, default_value = "dashboard")]
