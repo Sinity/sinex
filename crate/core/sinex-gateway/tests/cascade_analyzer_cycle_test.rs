@@ -25,10 +25,7 @@ async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
 
 #[sinex_test]
 async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Result<()> {
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
     color_eyre::eyre::ensure!(
         cascade_prereqs_available(&pool).await?,
@@ -98,18 +95,12 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
             .any(|cycle| cycle.cycle.len() >= cycle_len),
         "expected to detect the long cycle"
     );
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
 async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool.clone();
     color_eyre::eyre::ensure!(
         cascade_prereqs_available(&pool).await?,
@@ -190,8 +181,5 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "unexpected integrity violations: {:?}",
         analysis.integrity_violations
     );
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }

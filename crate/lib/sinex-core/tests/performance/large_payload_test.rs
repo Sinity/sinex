@@ -8,7 +8,6 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use sinex_test_utils::TestResult;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
@@ -29,7 +28,7 @@ async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()
 }
 
 #[sinex_bench]
-async fn jetstream_large_payload_roundtrip() -> color_eyre::eyre::Result<()> {
+async fn jetstream_large_payload_roundtrip() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -93,13 +92,15 @@ async fn jetstream_large_payload_roundtrip() -> color_eyre::eyre::Result<()> {
 
     message.ack().await?;
     let stream_handle = js.get_stream(&stream).await?;
-    stream_handle.delete_consumer("large-payload-consumer").await?;
+    stream_handle
+        .delete_consumer("large-payload-consumer")
+        .await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }
 
 #[sinex_bench]
-async fn jetstream_large_batch_drain() -> color_eyre::eyre::Result<()> {
+async fn jetstream_large_batch_drain() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -159,7 +160,9 @@ async fn jetstream_large_batch_drain() -> color_eyre::eyre::Result<()> {
     color_eyre::eyre::ensure!(total == 20, "expected to drain 20 large messages");
 
     let stream_handle = js.get_stream(&stream).await?;
-    stream_handle.delete_consumer("large-batch-consumer").await?;
+    stream_handle
+        .delete_consumer("large-batch-consumer")
+        .await?;
     js.delete_stream(&stream).await?;
     Ok(())
 }

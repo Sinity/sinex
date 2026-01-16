@@ -2,12 +2,19 @@
 
 //! Analytics service entry points for dashboards and reporting.
 
-use crate::error::Result as ServiceResult;
+use crate::error::{Result as ServiceResult, SinexError};
 use once_cell::sync::OnceCell;
-use sinex_core::db::{repositories::DbPoolExt, DbPool};
+use serde::Serialize;
+use sinex_core::db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
+use sinex_core::db::repositories::common::db_error;
+use sinex_core::db::DbPool;
+use sinex_core::repositories::common::TimeBucketResult;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time::timeout;
 
 /// Unix epoch start time cached at runtime
 static EPOCH_START: OnceCell<DateTime<Utc>> = OnceCell::new();
@@ -25,26 +32,33 @@ pub struct AnalyticsService {
     pool: DbPool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceStatistics {
+    pub source: String,
+    pub event_count: i64,
+    pub event_type_count: i64,
+    pub host_count: i64,
+    pub first_event: Option<DateTime<Utc>>,
+    pub last_event: Option<DateTime<Utc>>,
+    pub avg_ingest_delay: Option<f64>,
+}
+
+const ANALYTICS_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_millis(40);
+
 impl AnalyticsService {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
-    /// Common helper for time range filtering logic
-    fn apply_time_range_filter<T, F>(
-        data: Vec<T>,
-        end_time: Option<DateTime<Utc>>,
-        get_timestamp: F,
-    ) -> Vec<T>
-    where
-        F: Fn(&T) -> Option<DateTime<Utc>>,
-    {
-        if let Some(end) = end_time {
-            data.into_iter()
-                .filter(|item| get_timestamp(item).map(|ts| ts <= end).unwrap_or(false))
-                .collect()
-        } else {
-            data
+    async fn acquire_connection(&self) -> ServiceResult<PoolConnection<Postgres>> {
+        match timeout(ANALYTICS_POOL_ACQUIRE_TIMEOUT, self.pool.acquire()).await {
+            Ok(Ok(conn)) => Ok(conn),
+            Ok(Err(e)) => Err(SinexError::database(
+                "Failed to acquire analytics database connection",
+            )
+            .with_source(e.to_string())),
+            Err(_) => Err(SinexError::timeout("Analytics database pool exhausted")
+                .with_duration(ANALYTICS_POOL_ACQUIRE_TIMEOUT)),
         }
     }
 
@@ -54,18 +68,74 @@ impl AnalyticsService {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
+        let mut conn = self.acquire_connection().await?;
         let start = start_time.unwrap_or_else(epoch_start);
-        let rows = self.pool.events().get_source_activity(start, None).await?;
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                source,
+                COUNT(*) as "event_count!"
+            FROM core.events
+            WHERE ts_orig >= $1
+              AND ($2::timestamptz IS NULL OR ts_orig <= $2)
+            GROUP BY source
+            ORDER BY COUNT(*) DESC
+            LIMIT $3
+            "#,
+            start,
+            end_time,
+            100_i64
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| db_error(e, "get source activity"))?;
 
-        // Apply client-side end time filtering
-        let filtered_rows = Self::apply_time_range_filter(rows, end_time, |row| row.last_event);
-
-        let result = filtered_rows
+        let result = rows
             .into_iter()
             .map(|row| (row.source, row.event_count))
             .collect();
 
         Ok(result)
+    }
+
+    /// Get detailed statistics for each source.
+    pub async fn get_source_statistics(&self, limit: i64) -> ServiceResult<Vec<SourceStatistics>> {
+        let mut conn = self.acquire_connection().await?;
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                source,
+                COUNT(*) as "event_count!",
+                COUNT(DISTINCT event_type) as "event_type_count!",
+                COUNT(DISTINCT host) as "host_count!",
+                MIN(ts_ingest) as "first_event?",
+                MAX(ts_ingest) as "last_event?",
+                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) as "avg_ingest_delay?"
+            FROM core.events
+            GROUP BY source
+            ORDER BY COUNT(*) DESC
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| db_error(e, "get source statistics"))?;
+
+        let stats = rows
+            .into_iter()
+            .map(|row| SourceStatistics {
+                source: row.source,
+                event_count: row.event_count,
+                event_type_count: row.event_type_count,
+                host_count: row.host_count,
+                first_event: row.first_event,
+                last_event: row.last_event,
+                avg_ingest_delay: row.avg_ingest_delay,
+            })
+            .collect();
+
+        Ok(stats)
     }
 
     /// Get event count by event type for a time range
@@ -74,20 +144,52 @@ impl AnalyticsService {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let rows = match (start_time, end_time) {
+        let mut conn = self.acquire_connection().await?;
+        let result = match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                self.pool
-                    .events()
-                    .count_by_type_in_range(start, end)
-                    .await?
-            }
-            _ => self.pool.events().count_by_type_all_time(None).await?,
-        };
+                let rows = sqlx::query!(
+                    r#"
+                    SELECT
+                        event_type,
+                        COUNT(*) as "count!"
+                    FROM core.events
+                    WHERE ts_orig >= $1 AND ts_orig < $2
+                    GROUP BY event_type
+                    ORDER BY COUNT(*) DESC
+                    "#,
+                    start,
+                    end
+                )
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| db_error(e, "count by type in range"))?;
 
-        let result = rows
-            .into_iter()
-            .map(|row| (row.event_type, row.count))
-            .collect();
+                rows.into_iter()
+                    .map(|row| (row.event_type, row.count))
+                    .collect()
+            }
+            _ => {
+                let rows = sqlx::query!(
+                    r#"
+                    SELECT
+                        event_type,
+                        COUNT(*) as "count!"
+                    FROM core.events
+                    GROUP BY event_type
+                    ORDER BY COUNT(*) DESC
+                    LIMIT $1
+                    "#,
+                    100_i64
+                )
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| db_error(e, "count by type all time"))?;
+
+                rows.into_iter()
+                    .map(|row| (row.event_type, row.count))
+                    .collect()
+            }
+        };
 
         Ok(result)
     }
@@ -99,13 +201,29 @@ impl AnalyticsService {
         end_time: DateTime<Utc>,
         interval_minutes: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+        let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(interval_minutes);
 
-        let rows = self
-            .pool
-            .events()
-            .get_events_over_time(start_time, end_time, interval, None)
-            .await?;
+        let rows = sqlx::query_as!(
+            TimeBucketResult,
+            r#"
+            SELECT
+                time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) as "bucket!",
+                COUNT(*) as "count!"
+            FROM core.events
+            WHERE COALESCE(ts_orig, ts_ingest) >= $2 AND COALESCE(ts_orig, ts_ingest) <= $3
+            GROUP BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest))
+            ORDER BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) ASC
+            LIMIT $4
+            "#,
+            interval,
+            start_time,
+            end_time,
+            1000_i64
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| db_error(e, "get events over time"))?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
@@ -117,22 +235,62 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
-        let commands = match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                self.pool
-                    .events()
-                    .top_commands(start, end, limit as i64)
-                    .await?
-            }
-            _ => {
-                self.pool
-                    .events()
-                    .top_commands_all_time(limit as i64)
-                    .await?
-            }
+        let mut conn = self.acquire_connection().await?;
+        let rows = match (start_time, end_time) {
+            (Some(start), Some(end)) => sqlx::query(
+                r#"
+                SELECT
+                    payload->>'command' as command,
+                    COUNT(*) as count
+                FROM core.events
+                WHERE event_type IN ('command.executed','terminal.command','command.imported')
+                  AND ts_orig >= $1
+                  AND ts_orig < $2
+                  AND payload->>'command' IS NOT NULL
+                GROUP BY payload->>'command'
+                ORDER BY count DESC
+                LIMIT $3
+                "#,
+            )
+            .bind(start)
+            .bind(end)
+            .bind(limit as i64)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "top commands"))?,
+            _ => sqlx::query(
+                r#"
+                SELECT
+                    payload->>'command' as command,
+                    COUNT(*) as count
+                FROM core.events
+                WHERE event_type IN ('command.executed','terminal.command','command.imported')
+                  AND payload->>'command' IS NOT NULL
+                GROUP BY payload->>'command'
+                ORDER BY count DESC
+                LIMIT $1
+                "#,
+            )
+            .bind(limit as i64)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "top commands all time"))?,
         };
 
-        let result = commands.into_iter().map(|c| (c.command, c.count)).collect();
+        let result = rows
+            .into_iter()
+            .map(|row| {
+                let command = row
+                    .try_get::<Option<String>, _>("command")
+                    .unwrap_or(None)
+                    .unwrap_or_default();
+                let count = row
+                    .try_get::<Option<i64>, _>("count")
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
+                (command, count)
+            })
+            .collect();
 
         Ok(result)
     }
@@ -143,15 +301,43 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+        let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
 
-        let rows = self
-            .pool
-            .events()
-            .get_activity_heatmap(interval, limit as i64)
-            .await?;
+        let rows = sqlx::query_as!(
+            TimeBucketResult,
+            r#"
+            SELECT
+                time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) as "bucket!",
+                COUNT(*) as "count!"
+            FROM core.events
+            GROUP BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest))
+            ORDER BY COUNT(*) DESC
+            LIMIT $2
+            "#,
+            interval,
+            limit as i64
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| db_error(e, "get activity heatmap"))?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+    }
+
+    /// List replay operations for automation reporting.
+    pub async fn list_replay_operations(
+        &self,
+        state: Option<ReplayState>,
+    ) -> ServiceResult<Vec<ReplayOperation>> {
+        let mut conn = self.acquire_connection().await?;
+        let replay = ReplayStateMachine::new(self.pool.clone());
+        replay
+            .list_operations_with_executor(&mut *conn, state)
+            .await
+            .map_err(|e| {
+                SinexError::database("Failed to list replay operations").with_source(e.to_string())
+            })
     }
 }
 

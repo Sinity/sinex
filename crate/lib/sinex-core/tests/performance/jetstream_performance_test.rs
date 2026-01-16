@@ -14,7 +14,7 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
@@ -94,7 +94,7 @@ async fn create_pull_consumer(
 }
 
 #[sinex_bench]
-async fn jetstream_publish_throughput() -> color_eyre::eyre::Result<()> {
+async fn jetstream_publish_throughput() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -126,8 +126,7 @@ async fn jetstream_publish_throughput() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_concurrent_consumer_distribution(
-) -> color_eyre::eyre::Result<()> {
+async fn jetstream_concurrent_consumer_distribution() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -246,7 +245,7 @@ async fn jetstream_concurrent_consumer_distribution(
 }
 
 #[sinex_bench]
-async fn jetstream_redelivery_on_expired_ack() -> color_eyre::eyre::Result<()> {
+async fn jetstream_redelivery_on_expired_ack() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -321,8 +320,7 @@ async fn jetstream_redelivery_on_expired_ack() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_sustained_publish_throughput(
-) -> color_eyre::eyre::Result<()> {
+async fn jetstream_sustained_publish_throughput() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
@@ -397,7 +395,7 @@ async fn jetstream_sustained_publish_throughput(
 }
 
 #[sinex_bench]
-async fn jetstream_consumer_latency() -> color_eyre::eyre::Result<()> {
+async fn jetstream_consumer_latency() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -452,11 +450,8 @@ async fn jetstream_consumer_latency() -> color_eyre::eyre::Result<()> {
     }
 
     latency_samples.sort();
-    let avg_latency = latency_samples
-        .iter()
-        .copied()
-        .sum::<StdDuration>()
-        / (latency_samples.len() as u32);
+    let avg_latency =
+        latency_samples.iter().copied().sum::<StdDuration>() / (latency_samples.len() as u32);
     let p95_latency = latency_samples
         .get((latency_samples.len() as f64 * 0.95) as usize)
         .copied()

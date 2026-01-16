@@ -3,24 +3,24 @@
 //! This module provides the standardized CLI interface for all satellite binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use serde::{Deserialize, Serialize};
 use sinex_core::{db::SqlxPgPool, SanitizedPath};
-use sinex_satellite_sdk::event_processor::EventTransport;
-use sinex_satellite_sdk::{
+use sinex_node_sdk::event_processor::EventTransport;
+use sinex_node_sdk::{
     config::ReplayConfig,
     stream_processor::{Checkpoint, ScanReport, TimeHorizon},
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
-use sinex_satellite_sdk::stream_processor::StreamProcessorRunner;
+use sinex_node_sdk::stream_processor::StreamProcessorRunner;
 
-#[allow(dead_code)]
 pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
     matches!(
         command,
@@ -38,9 +38,9 @@ pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
     version
 )]
 pub struct ProcessorCli {
-    /// NATS server URL for event ingestion
-    #[arg(long, env = "NATS_URL", default_value = "nats://localhost:4222")]
-    pub nats_url: String,
+    /// NATS connection configuration
+    #[command(flatten)]
+    pub nats: NatsArgs,
 
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
@@ -64,6 +64,77 @@ pub struct ProcessorCli {
 
     #[command(subcommand)]
     pub command: ProcessorCommand,
+}
+
+/// CLI arguments for configuring NATS connection options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct NatsArgs {
+    /// NATS server URL (nats:// or tls://)
+    #[arg(long, env = "SINEX_NATS_URL", default_value = "nats://localhost:4222")]
+    pub url: String,
+
+    /// Optional logical connection name
+    #[arg(long, env = "SINEX_NATS_NAME")]
+    pub name: Option<String>,
+
+    /// Require TLS for the connection
+    #[arg(long, env = "SINEX_NATS_REQUIRE_TLS", default_value_t = false)]
+    pub require_tls: bool,
+
+    /// Root CA certificate path (PEM)
+    #[arg(long, env = "SINEX_NATS_CA_CERT")]
+    pub ca_cert: Option<PathBuf>,
+
+    /// Client certificate path (PEM)
+    #[arg(long, env = "SINEX_NATS_CLIENT_CERT")]
+    pub client_cert: Option<PathBuf>,
+
+    /// Client key path (PEM)
+    #[arg(long, env = "SINEX_NATS_CLIENT_KEY")]
+    pub client_key: Option<PathBuf>,
+
+    /// Credentials file path (JWT + Key)
+    #[arg(long, env = "SINEX_NATS_CREDS")]
+    pub creds_file: Option<PathBuf>,
+
+    /// NKey seed file path
+    #[arg(long, env = "SINEX_NATS_NKEY_SEED")]
+    pub nkey_file: Option<PathBuf>,
+
+    /// Auth token
+    #[arg(long, env = "SINEX_NATS_TOKEN")]
+    pub token: Option<String>,
+}
+
+impl NatsArgs {
+    fn to_config(&self) -> sinex_core::nats::NatsConnectionConfig {
+        let mut config = sinex_core::nats::NatsConnectionConfig::from_env();
+
+        config.url = self.url.clone();
+        config.name = self.name.clone();
+        config.require_tls = self.require_tls;
+
+        if let Some(path) = &self.ca_cert {
+            config.ca_cert = Some(path.clone());
+        }
+        if let Some(path) = &self.client_cert {
+            config.client_cert = Some(path.clone());
+        }
+        if let Some(path) = &self.client_key {
+            config.client_key = Some(path.clone());
+        }
+        if let Some(path) = &self.creds_file {
+            config.creds_file = Some(path.clone());
+        }
+        if let Some(path) = &self.nkey_file {
+            config.nkey_file = Some(path.clone());
+        }
+        if let Some(token) = &self.token {
+            config.token = Some(token.clone());
+        }
+
+        config
+    }
 }
 
 /// Available subcommands for stream processors
@@ -176,10 +247,10 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
 
     #[sinex_test]
-    fn scan_mode_emits_heartbeats() -> color_eyre::eyre::Result<()> {
+    fn scan_mode_emits_heartbeats() -> TestResult<()> {
         let command = ProcessorCommand::Scan {
             from: "none".to_string(),
             until: "snapshot".to_string(),
@@ -197,7 +268,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn explore_mode_emits_heartbeats() -> color_eyre::eyre::Result<()> {
+    fn explore_mode_emits_heartbeats() -> TestResult<()> {
         let command = ProcessorCommand::Explore {
             source_state: true,
             ingestion_history: false,
@@ -412,84 +483,18 @@ pub enum ExportFormat {
     Raw,
 }
 
-/// Macro to generate default ExplorationProvider implementation for automata
-///
-/// This reduces code duplication across automaton processors by providing
-/// a standard stub implementation with only the description customizable.
-///
-/// # Usage
-///
-/// ```rust
-/// use sinex_satellite_sdk::default_exploration_provider;
-///
-/// struct MyProcessor;
-///
-/// default_exploration_provider!(MyProcessor, "My processor description");
-/// ```
-#[macro_export]
-macro_rules! default_exploration_provider {
-    ($processor_type:ty, $description:expr) => {
-        impl $crate::cli::ExplorationProvider for $processor_type {
-            fn get_source_state(&self) -> color_eyre::eyre::Result<$crate::cli::SourceState> {
-                use std::collections::HashMap;
-
-                Ok($crate::cli::SourceState {
-                    description: $description.to_string(),
-                    last_updated: chrono::Utc::now(),
-                    total_items: Some(0),
-                    metadata: HashMap::new(),
-                    healthy: true,
-                    recent_activity: Vec::new(),
-                })
-            }
-
-            fn get_ingestion_history(
-                &self,
-                _limit: u64,
-            ) -> color_eyre::eyre::Result<Vec<$crate::cli::IngestionHistoryEntry>> {
-                Ok(Vec::new())
-            }
-
-            fn get_coverage_analysis(
-                &self,
-                _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-            ) -> color_eyre::eyre::Result<$crate::cli::CoverageAnalysis> {
-                let now = chrono::Utc::now();
-                Ok($crate::cli::CoverageAnalysis {
-                    time_range: (now - chrono::Duration::days(1), now),
-                    source_total: 0,
-                    sinex_total: 0,
-                    coverage_percentage: 0.0,
-                    missing_count: 0,
-                    missing_samples: Vec::new(),
-                    duplicate_count: 0,
-                    recommendations: Vec::new(),
-                })
-            }
-
-            fn export_data(
-                &self,
-                _path: &sinex_core::SanitizedPath,
-                _format: $crate::cli::ExportFormat,
-            ) -> color_eyre::eyre::Result<()> {
-                Ok(())
-            }
-        }
-    };
-}
-
 /// Generic CLI runner for stream processor satellites
 ///
-/// This provides a standardized way to run any StatefulStreamProcessor with
+/// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.
 pub struct ProcessorCliRunner<
-    T: sinex_satellite_sdk::stream_processor::StatefulStreamProcessor + ExplorationProvider + 'static,
+    T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static,
 > {
     processor: Option<T>,
 }
 
 impl<
-        T: sinex_satellite_sdk::stream_processor::StatefulStreamProcessor
+        T: sinex_node_sdk::stream_processor::Node
             + ExplorationProvider
             + 'static,
     > ProcessorCliRunner<T>
@@ -503,7 +508,7 @@ impl<
 
     /// Run the CLI with parsed arguments
     pub async fn run(&mut self, args: ProcessorCli) -> color_eyre::eyre::Result<()> {
-        use sinex_satellite_sdk::stream_processor::{ScanArgs, StreamProcessorRunner};
+        use sinex_node_sdk::stream_processor::{ScanArgs, StreamProcessorRunner};
 
         // Initialize logging based on verbosity
         let log_level = match args.verbose {
@@ -512,9 +517,13 @@ impl<
             _ => "trace",
         };
 
-        tracing_subscriber::fmt()
+        if tracing_subscriber::fmt()
             .with_env_filter(format!("sinex={}", log_level))
-            .init();
+            .try_init()
+            .is_err()
+        {
+            tracing::debug!("Tracing already initialized, skipping reconfiguration");
+        }
 
         // Parse processor configuration
         let mut processor_config: HashMap<String, serde_json::Value> =
@@ -525,6 +534,14 @@ impl<
                 HashMap::new()
             };
 
+        if let ProcessorCommand::Service { consumer_group, .. } = &args.command {
+            if let Some(group) = consumer_group {
+                processor_config
+                    .entry("consumer_group".to_string())
+                    .or_insert_with(|| serde_json::json!(group));
+            }
+        }
+
         let replay_config = Self::extract_replay_config(&mut processor_config)?;
 
         // Take ownership of the processor
@@ -534,10 +551,7 @@ impl<
             .ok_or_else(|| eyre::eyre!("Processor already consumed"))?;
 
         match args.command {
-            ProcessorCommand::Service {
-                dry_run,
-                consumer_group: _,
-            } => {
+            ProcessorCommand::Service { dry_run, .. } => {
                 info!("Starting processor service mode");
 
                 // Create stream processor runner
@@ -548,8 +562,24 @@ impl<
                 let work_dir = Self::resolve_work_dir(&args);
 
                 // Create database pool
-                let db_pool = Self::connect_primary_db(&args).await?;
-                let transport = Self::connect_nats_transport(&args.nats_url).await?;
+                let db_pool = if dry_run {
+                    None
+                } else {
+                    match Self::connect_primary_db(&args).await {
+                        Ok(pool) => Some(pool),
+                        Err(err) => {
+                            // Check if we allow running without DB (Edge Mode)
+                            let edge_mode = std::env::var("SINEX_EDGE_MODE").is_ok();
+                            if edge_mode && args.database_url.is_none() {
+                                warn!("Running in Edge Mode without database connection");
+                                None
+                            } else {
+                                return Err(err);
+                            }
+                        }
+                    }
+                };
+                let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
 
                 // Initialize runner with transport
                 runner
@@ -581,7 +611,7 @@ impl<
                 if dry_run || coordination_disabled {
                     runner.run_service().await?;
                 } else {
-                    use sinex_satellite_sdk::coordination::SatelliteCoordination;
+                    use sinex_node_sdk::coordination::NodeCoordination;
 
                     use std::sync::Arc;
                     use tokio::sync::Mutex;
@@ -595,13 +625,14 @@ impl<
                     let instance_id = Uuid::new_v4().to_string();
 
                     let coordination =
-                        SatelliteCoordination::from_runtime(&runtime_snapshot, instance_id);
+                        NodeCoordination::from_runtime(&runtime_snapshot, instance_id);
 
                     // Wrap runner in Arc<Mutex<>> for sharing
                     let runner = Arc::new(Mutex::new(runner));
 
                     // Run with coordination (hot standby pattern)
-                    coordination?
+                    coordination
+                        .await?
                         .run_coordination_loop(move || {
                             let runner = runner.clone();
                             async move {
@@ -620,9 +651,9 @@ impl<
             }
 
             ProcessorCommand::Scan {
-                from,
-                until,
-                targets,
+                ref from,
+                ref until,
+                ref targets,
                 dry_run,
                 interactive,
                 max_events,
@@ -631,9 +662,9 @@ impl<
             } => {
                 info!("Running scan operation");
 
-                let checkpoint = parse_checkpoint(&from).context("Failed to parse checkpoint")?;
+                let checkpoint = parse_checkpoint(from).context("Failed to parse checkpoint")?;
                 let time_horizon =
-                    parse_time_horizon(&until).context("Failed to parse time horizon")?;
+                    parse_time_horizon(until).context("Failed to parse time horizon")?;
 
                 // Create stream processor runner
                 let mut runner = StreamProcessorRunner::new(processor);
@@ -641,42 +672,19 @@ impl<
                 // Set up minimal dependencies for scan mode
                 let service_name = args
                     .service_name
-                    .unwrap_or_else(|| "sinex-processor".to_string());
-                let work_dir = args
-                    .work_dir
-                    .unwrap_or_else(|| SanitizedPath::new_unchecked("/tmp/sinex/processor"));
+                    .as_deref()
+                    .unwrap_or("sinex-processor")
+                    .to_string();
+                let work_dir = Self::resolve_work_dir(&args);
 
                 // For scan mode, database connection is optional for dry runs
                 let db_pool = if dry_run {
-                    // Create dummy pool for dry runs - the processor should handle this gracefully
-                    match SqlxPgPool::connect("postgresql://localhost/dummy").await {
-                        Ok(pool) => pool,
-                        Err(_) => {
-                            // If no database available, try environment variable
-                            if let Ok(db_url) = std::env::var("DATABASE_URL") {
-                                SqlxPgPool::connect(&db_url)
-                                    .await
-                                    .context("Failed to connect to database")?
-                            } else {
-                                return Err(eyre::eyre!(
-                                    "Database connection required even for dry runs"
-                                ));
-                            }
-                        }
-                    }
-                } else if let Some(db_url) = args.database_url {
-                    SqlxPgPool::connect(&db_url)
-                        .await
-                        .context("Failed to connect to database")?
+                    None
                 } else {
-                    let db_url = std::env::var("DATABASE_URL")
-                        .context("DATABASE_URL environment variable not set")?;
-                    SqlxPgPool::connect(&db_url)
-                        .await
-                        .context("Failed to connect to database using DATABASE_URL")?
+                    Some(Self::connect_primary_db(&args).await?)
                 };
 
-                let transport = Self::connect_nats_transport(&args.nats_url).await?;
+                let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
 
                 // Initialize runner with transport
                 runner
@@ -692,7 +700,7 @@ impl<
 
                 // Create scan args
                 let scan_args = ScanArgs {
-                    targets: targets.into_iter().map(|p| p.to_string()).collect(),
+                    targets: targets.iter().map(|p| p.to_string()).collect(),
                     dry_run,
                     interactive,
                     max_events,
@@ -936,33 +944,43 @@ impl<
     }
 
     fn resolve_work_dir(args: &ProcessorCli) -> SanitizedPath {
-        args.work_dir
-            .clone()
-            .unwrap_or_else(|| SanitizedPath::new_unchecked("/tmp/sinex/processor"))
+        args.work_dir.clone().unwrap_or_else(|| {
+            let env = sinex_core::environment();
+            let namespaced = env.work_directory("/tmp/sinex/processor");
+            let namespaced = namespaced.to_string_lossy();
+            SanitizedPath::from_str(namespaced.as_ref())
+                .unwrap_or_else(|_| SanitizedPath::new_unchecked(namespaced.as_ref()))
+        })
     }
 
     async fn connect_primary_db(args: &ProcessorCli) -> eyre::Result<SqlxPgPool> {
-        if let Some(db_url) = &args.database_url {
-            SqlxPgPool::connect(db_url)
-                .await
-                .context("Failed to connect to database")
+        let base_url = if let Some(db_url) = &args.database_url {
+            db_url.clone()
         } else {
-            let db_url = std::env::var("DATABASE_URL")
-                .context("DATABASE_URL environment variable not set")?;
-            SqlxPgPool::connect(&db_url)
-                .await
-                .context("Failed to connect to database using DATABASE_URL")
-        }
+            std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?
+        };
+        let env = sinex_core::environment();
+        let namespaced_url = env
+            .database_url(&base_url)
+            .unwrap_or_else(|_| base_url.clone());
+        SqlxPgPool::connect(&namespaced_url)
+            .await
+            .context("Failed to connect to database")
     }
 
-    async fn connect_nats_transport(nats_url: &str) -> eyre::Result<EventTransport> {
-        info!(nats_url, "Using NATS for event publishing");
+    async fn connect_nats_transport(
+        config: &sinex_core::nats::NatsConnectionConfig,
+    ) -> eyre::Result<EventTransport> {
+        info!(url = %config.url, "Using NATS for event publishing");
 
-        let nats_client = async_nats::connect(nats_url)
-            .await
-            .context("Failed to connect to NATS")?;
+        // Create NATS publisher
+        let nats_publisher = sinex_node_sdk::NatsPublisher::new(
+            config
+                .connect()
+                .await
+                .context("Failed to connect to NATS")?,
+        );
 
-        let nats_publisher = sinex_satellite_sdk::nats_publisher::NatsPublisher::new(nats_client);
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
     }
 
@@ -993,7 +1011,7 @@ impl<
     ) -> eyre::Result<()> {
         let runtime = runner
             .runtime_state()
-            .ok_or_else(|| eyre::eyre!("Runtime state not initialised before replay"))?;
+            .ok_or_else(|| eyre::eyre!("Runtime state not initialized before replay"))?;
 
         let Some(mode) = Self::derive_replay_mode(&config)? else {
             return Ok(());
@@ -1059,7 +1077,8 @@ impl<
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap());
+            let start =
+                start_time.unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -1086,7 +1105,7 @@ macro_rules! processor_main {
         async fn main() -> color_eyre::eyre::Result<()> {
             color_eyre::install()?;
             use clap::Parser;
-            use sinex_satellite_sdk::heartbeat::HeartbeatEmitter;
+            use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
 
             let args = ProcessorCli::parse();
@@ -1100,14 +1119,17 @@ macro_rules! processor_main {
                     .clone()
                     .unwrap_or_else(|| "sinex-processor".to_string());
 
-                let heartbeat_emitter = HeartbeatEmitter::new(service_name.clone(), 30);
+                let heartbeat_emitter = HeartbeatEmitter::new(
+                    service_name.clone(),
+                    sinex_core::types::Seconds::from_secs(30),
+                );
 
                 // Spawn heartbeat task concurrently
                 tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
                 });
 
-                // SatelliteCoordination integrated below in service mode
+                // NodeCoordination integrated below in service mode
             }
 
             runner.run(args).await
@@ -1119,7 +1141,7 @@ macro_rules! processor_main {
         async fn main() -> color_eyre::eyre::Result<()> {
             color_eyre::install()?;
             use clap::Parser;
-            use sinex_satellite_sdk::heartbeat::HeartbeatEmitter;
+            use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
 
             let args = ProcessorCli::parse();

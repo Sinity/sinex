@@ -8,11 +8,12 @@ structures for direct serialization.
 
 | Method | Description |
 |--------|-------------|
-| `get_event_count_by_source(start?, end?)` | Counts events grouped by `source`. Applies optional time-window filtering (start handled in SQL, end filtered client-side). |
+| `get_event_count_by_source(start?, end?)` | Counts events grouped by `source`. Applies optional time-window filtering in SQL. |
 | `get_event_count_by_type(start?, end?)` | Counts events grouped by `event_type`. Falls back to all-time counts when no range is provided. |
 | `get_events_over_time(start, end, interval_minutes)` | Buckets events into fixed intervals using `get_events_over_time` repository helpers. |
 | `get_top_commands(start?, end?, limit)` | Returns the most frequent terminal commands for the requested window. |
 | `activity_heatmap(bucket_size_minutes, limit)` | Produces high-level activity buckets (e.g., for heatmaps). |
+| `list_replay_operations(state?)` | Lists replay operations for automation reporting (optionally filtered by state). |
 
 All functions return plain maps or `(timestamp, count)` tuples suitable for
 JSON-RPC responses.

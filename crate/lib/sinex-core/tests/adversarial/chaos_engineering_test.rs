@@ -9,7 +9,6 @@
 // - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
 // - **System Resource Chaos**: Memory exhaustion, disk full, network failures
 
-use sinex_test_utils::TestResult;
 use redis::cmd;
 use sinex_test_utils::prelude::*;
 
@@ -93,7 +92,7 @@ impl ChaosRedisProxy {
 
 /// Test multiple agent instances registering simultaneously
 #[sinex_test]
-async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     let processor_name = "chaos-agent";
@@ -214,7 +213,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> col
 
 /// Test agent heartbeat chaos with network failures
 #[sinex_test]
-async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let processor_name = "heartbeat-chaos-agent";
 
@@ -317,7 +316,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> c
 
 /// Test agent lifecycle during concurrent operations
 #[sinex_test]
-async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let base_processor_name = "lifecycle-chaos";
 
@@ -440,7 +439,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
 /// Test file permission revoked while watching
 #[sinex_test]
-async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestResult<()> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
 
@@ -511,7 +510,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> color_
 
 /// Test directory unmounted while watching
 #[sinex_test]
-async fn test_directory_unmounted_while_watching(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult<()> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -598,7 +597,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> color_eyre
 
 /// Test filesystem chaos with concurrent operations
 #[sinex_test]
-async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestResult<()> {
     let temp_dir = resources::temp_dir()?;
     let chaos_dir = temp_dir.path().join("chaos_testing");
     fs::create_dir(&chaos_dir).unwrap();
@@ -720,7 +719,7 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> color_
 
 /// Test shutdown signal during initialization
 #[sinex_test]
-async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let pool_clone = ctx.pool();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
@@ -796,7 +795,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> color_e
 
 /// Test multiple concurrent shutdown signals
 #[sinex_test]
-async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResult<()> {
     let shutdown_count = Arc::new(AtomicU64::new(0));
     let shutdown_handler_count = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -849,7 +848,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> color_ey
 
 /// Test state machine corruption under load
 #[sinex_test]
-async fn test_state_machine_corruption_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let state_transitions = Arc::new(AtomicU64::new(0));
     let invalid_transitions = Arc::new(AtomicU64::new(0));
@@ -943,7 +942,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> color_eyr
 
 /// Test system resilience under database connection failures
 #[sinex_test]
-async fn test_database_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
@@ -1066,7 +1065,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> color_eyre::eyre:
 
 /// Test Redis failure resilience with stream operations
 #[sinex_test]
-async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult<()> {
     use sinex_test_utils::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
 
     let mut mock_redis = MockRedis::new(MockRedisConfig {
@@ -1194,512 +1193,5 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Re
     Ok(())
 }
 
-// NOTE: Network partition test removed - requires real network simulation tools
-// /// Test network partition resilience
-// // #[sinex_test]
-// // async fn test_network_partition_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-//     use sinex_test_utils::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
-//
-//     let mut mock_network = MockNetwork::new(MockNetworkConfig {
-//         packet_loss_rate: 0.1,
-//         latency_ms: 50,
-//         bandwidth_limit_kbps: 1000,
-//         connection_failure_rate: 0.05,
-//         enable_partition_simulation: true,
-//     });
-//
-//     // Configure network partition
-//     mock_network.configure_failure_pattern(FailurePattern::Temporary {
-//         operation: "tcp_connect".to_string(),
-//         failure_rate: 0.5,
-//         duration: Duration::from_secs(3),
-//     });
-//
-//     let connection_attempts = Arc::new(AtomicU64::new(0));
-//     let successful_connections = Arc::new(AtomicU64::new(0));
-//     let partition_detections = Arc::new(AtomicU64::new(0));
-//
-//     let mut handles = vec![];
-//
-//     // Simulate network operations under partition conditions
-//     for node_id in 0..4 {
-//         let attempts = connection_attempts.clone();
-//         let successes = successful_connections.clone();
-//         let partitions = partition_detections.clone();
-//         let network_clone = mock_network.clone();
-//
-//         let handle = tokio::spawn(async move {
-//             for connection_id in 0..25 {
-//                 attempts.fetch_add(1, Ordering::SeqCst);
-//
-//                 let target_address = format!("node-{}.sinex.internal", (node_id + 1) % 4);
-//
-//                 // Simulate connection attempt
-//                 match network_clone.connect(&target_address, 8080).await {
-//                     Ok(_) => {
-//                         successes.fetch_add(1, Ordering::SeqCst);
-//                         println!("Node {} connection {} to {} succeeded", node_id, connection_id, target_address);
-//
-//                         // Simulate data transfer
-//                         let data = format!("heartbeat-{}-{}", node_id, connection_id);
-//                         match network_clone.send_data(&target_address, data.as_bytes()).await {
-//                             Ok(_) => {
-//                                 println!("Node {} data transfer {} succeeded", node_id, connection_id);
-//                             }
-//                             Err(e) => {
-//                                 println!("Node {} data transfer {} failed: {}", node_id, connection_id, e);
-//                             }
-//                         }
-//                     }
-//                     Err(e) => {
-//                         partitions.fetch_add(1, Ordering::SeqCst);
-//                         println!("Node {} connection {} to {} failed: {}", node_id, connection_id, target_address, e);
-//
-//                         // Simulate partition detection and recovery attempts
-//                         for retry in 0..3 {
-//                             tokio::time::sleep(Duration::from_millis(500 * (1 << retry))).await;
-//
-//                             match network_clone.connect(&target_address, 8080).await {
-//                                 Ok(_) => {
-//                                     successes.fetch_add(1, Ordering::SeqCst);
-//                                     println!("Node {} connection {} retry {} to {} succeeded", node_id, connection_id, retry, target_address);
-//                                     break;
-//                                 }
-//                                 Err(e) => {
-//                                     println!("Node {} connection {} retry {} to {} failed: {}", node_id, connection_id, retry, target_address, e);
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//
-//                 tokio::time::sleep(Duration::from_millis(200)).await;
-//             }
-//         });
-//
-//         handles.push(handle);
-//     }
-//
-//     join_all(handles).await;
-//
-//     let total_attempts = connection_attempts.load(Ordering::SeqCst);
-//     let total_successes = successful_connections.load(Ordering::SeqCst);
-//     let total_partitions = partition_detections.load(Ordering::SeqCst);
-//
-//     println!("Network partition resilience test results:");
-//     println!("- Total connection attempts: {}", total_attempts);
-//     println!("- Successful connections: {}", total_successes);
-//     println!("- Partition detections: {}", total_partitions);
-//
-//     // Verify network state
-//     let network_stats = mock_network.get_connection_stats().await;
-//     println!("Final network stats: {:?}", network_stats);
-//
-//     // System should show resilience during network partitions
-//     assert!(total_attempts > 0, "Connection attempts should be made");
-//     assert!(total_partitions > 0, "Network partitions should be detected");
-//     assert!(total_successes > 0, "Some connections should eventually succeed");
-//
-//     Ok(())
-// }
-//
-// // NOTE: Cascading failure test removed - requires real service orchestration
-// // /// Test cascading failure resilience
-// // #[sinex_test]
-// // async fn test_cascading_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-//     use sinex_test_utils::mocks::{FailureInjector, FailurePattern};
-//
-//     let mut failure_injector = FailureInjector::new();
-//
-//     // Configure cascading failure pattern
-//     failure_injector.add_pattern(FailurePattern::Cascade {
-//         trigger_operation: "satellite_health_check".to_string(),
-//         cascade_operations: vec![
-//             "event_ingestion".to_string(),
-//             "stream_processing".to_string(),
-//             "checkpoint_save".to_string(),
-//         ],
-//         cascade_delay: Duration::from_millis(500),
-//     });
-//
-//     let pool = ctx.pool().clone();
-//     let total_operations = Arc::new(AtomicU64::new(0));
-//     let cascade_triggers = Arc::new(AtomicU64::new(0));
-//     let recovery_attempts = Arc::new(AtomicU64::new(0));
-//     let circuit_breaker_activations = Arc::new(AtomicU64::new(0));
-//
-//     let mut handles = vec![];
-//
-//     // Simulate system components under cascading failure
-//     for component_id in 0..3 {
-//         let pool_clone = pool.clone();
-//         let operations = total_operations.clone();
-//         let triggers = cascade_triggers.clone();
-//         let recoveries = recovery_attempts.clone();
-//         let circuit_breakers = circuit_breaker_activations.clone();
-//         let injector = failure_injector.clone();
-//
-//         let handle = tokio::spawn(async move {
-//             let mut circuit_breaker_active = false;
-//             let mut consecutive_failures = 0;
-//
-//             for operation_id in 0..20 {
-//                 operations.fetch_add(1, Ordering::SeqCst);
-//
-//                 // Circuit breaker logic
-//                 if consecutive_failures >= 5 && !circuit_breaker_active {
-//                     circuit_breaker_active = true;
-//                     circuit_breakers.fetch_add(1, Ordering::SeqCst);
-//                     println!("Component {} - Circuit breaker activated", component_id);
-//                     tokio::time::sleep(Duration::from_secs(2)).await;
-//                 }
-//
-//                 // Simulate health check that might trigger cascade
-//                 if operation_id % 8 == 0 {
-//                     match injector.should_fail("satellite_health_check").await {
-//                         Ok(()) => {
-//                             println!("Component {} - Health check passed", component_id);
-//                             consecutive_failures = 0;
-//                             circuit_breaker_active = false;
-//                         }
-//                         Err(_) => {
-//                             triggers.fetch_add(1, Ordering::SeqCst);
-//                             consecutive_failures += 1;
-//                             println!("Component {} - Health check failed, cascading failure triggered", component_id);
-//
-//                             // Simulate cascade effects
-//                             for cascade_op in &["event_ingestion", "stream_processing", "checkpoint_save"] {
-//                                 match injector.should_fail(cascade_op).await {
-//                                     Ok(()) => {
-//                                         println!("Component {} - {} survived cascade", component_id, cascade_op);
-//                                     }
-//                                     Err(_) => {
-//                                         println!("Component {} - {} failed due to cascade", component_id, cascade_op);
-//                                     }
-//                                 }
-//                             }
-//                         }
-//                     }
-//                 }
-//
-//                 // Simulate normal operation if circuit breaker is not active
-//                 if !circuit_breaker_active {
-//                     match injector.should_fail("event_ingestion").await {
-//                         Ok(()) => {
-//                             // Simulate successful event ingestion
-//                             match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
-//                                 &pool_clone,
-//                                 &format!("cascade-component-{}", component_id),
-//                                 &format!("component.operation.{}", operation_id),
-//                                 "test",
-//                                 serde_json::json!({"component": component_id, "operation": operation_id}),
-//                                 None,
-//                                 Some("cascade-test-0.1.0"),
-//                                 None,
-//                             ).await {
-//                                 Ok(_) => {
-//                                     consecutive_failures = 0;
-//                                     println!("Component {} operation {} succeeded", component_id, operation_id);
-//                                 }
-//                                 Err(e) => {
-//                                     consecutive_failures += 1;
-//                                     println!("Component {} operation {} failed: {}", component_id, operation_id, e);
-//                                 }
-//                             }
-//                         }
-//                         Err(_) => {
-//                             consecutive_failures += 1;
-//                             println!("Component {} operation {} failed due to injected failure", component_id, operation_id);
-//                         }
-//                     }
-//                 } else {
-//                     println!("Component {} operation {} skipped due to circuit breaker", component_id, operation_id);
-//                 }
-//
-//                 // Simulate recovery attempts
-//                 if consecutive_failures > 0 && operation_id % 4 == 0 {
-//                     recoveries.fetch_add(1, Ordering::SeqCst);
-//                     println!("Component {} attempting recovery", component_id);
-//                     tokio::time::sleep(Duration::from_millis(200)).await;
-//                 }
-//
-//                 tokio::time::sleep(Duration::from_millis(100)).await;
-//             }
-//         });
-//
-//         handles.push(handle);
-//     }
-//
-//     join_all(handles).await;
-//
-//     let total_ops = total_operations.load(Ordering::SeqCst);
-//     let total_triggers = cascade_triggers.load(Ordering::SeqCst);
-//     let total_recoveries = recovery_attempts.load(Ordering::SeqCst);
-//     let total_circuit_breakers = circuit_breaker_activations.load(Ordering::SeqCst);
-//
-//     println!("Cascading failure resilience test results:");
-//     println!("- Total operations: {}", total_ops);
-//     println!("- Cascade triggers: {}", total_triggers);
-//     println!("- Recovery attempts: {}", total_recoveries);
-//     println!("- Circuit breaker activations: {}", total_circuit_breakers);
-//
-//     // Verify database state after cascading failures
-//     let successful_events = sqlx::query!(
-//         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'cascade-component-%'"
-//     )
-//     .fetch_one(ctx.pool())
-//     .await?;
-//
-//     println!("Events successfully stored: {}", successful_events.count.unwrap_or(0));
-//
-//     // System should show resilience with cascading failures
-//     assert!(total_ops > 0, "Operations should be attempted");
-//     assert!(total_triggers > 0, "Cascading failures should be triggered");
-//     assert!(total_recoveries > 0, "Recovery attempts should be made");
-//
-//     Ok(())
-// }
-//
-// // TODO: Rewrite this test to use real services
-// // /// Test post-chaos recovery and system state consistency
-// // #[sinex_test]
-// // async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-//     use sinex_test_utils::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
-//
-//     let pool = ctx.pool().clone();
-//
-//     // Phase 1: Create chaos with multiple failure modes
-//     println!("Phase 1: Inducing chaos across multiple subsystems");
-//
-//     let mut mock_redis = MockRedis::new(MockRedisConfig {
-//         max_connections: 50,
-//         max_memory_mb: 50,
-//         failure_rate: 0.4,
-//         connection_timeout_ms: 500,
-//         enable_auth: false,
-//         enable_clustering: false,
-//     });
-//
-//     let mut mock_db = MockDatabase::new(MockDatabaseConfig {
-//         max_connections: 20,
-//         query_timeout_ms: 2000,
-//         failure_rate: 0.3,
-//         enable_transactions: true,
-//         enable_prepared_statements: true,
-//     });
-//
-//     let mut mock_fs = MockFilesystem::new(MockFilesystemConfig {
-//         failure_rate: 0.2,
-//         disk_full_threshold: 0.9,
-//         permission_errors: true,
-//         enable_file_locking: true,
-//     });
-//
-//     // Simulate chaotic operations
-//     let chaos_operations = Arc::new(AtomicU64::new(0));
-//     let chaos_failures = Arc::new(AtomicU64::new(0));
-//     let mut chaos_handles = vec![];
-//
-//     for chaos_id in 0..5 {
-//         let operations = chaos_operations.clone();
-//         let failures = chaos_failures.clone();
-//         let redis_clone = chaos_proxy.clone();
-//         let db_clone = mock_db.clone();
-//         let fs_clone = mock_fs.clone();
-//         let pool_clone = pool.clone();
-//
-//         let handle = tokio::spawn(async move {
-//             for op in 0..10 {
-//                 operations.fetch_add(1, Ordering::SeqCst);
-//
-//                 // Chaotic Redis operations
-//                 match redis_clone.xadd(&format!("chaos:stream:{}", chaos_id), "*", &serde_json::json!({"chaos": op})).await {
-//                     Ok(_) => println!("Chaos {} Redis op {} succeeded", chaos_id, op),
-//                     Err(e) => {
-//                         failures.fetch_add(1, Ordering::SeqCst);
-//                         println!("Chaos {} Redis op {} failed: {}", chaos_id, op, e);
-//                     }
-//                 }
-//
-//                 // Chaotic database operations
-//                 match db_clone.execute_query("INSERT INTO test_table VALUES ($1, $2)", &[&chaos_id, &op]).await {
-//                     Ok(_) => println!("Chaos {} DB op {} succeeded", chaos_id, op),
-//                     Err(e) => {
-//                         failures.fetch_add(1, Ordering::SeqCst);
-//                         println!("Chaos {} DB op {} failed: {}", chaos_id, op, e);
-//                     }
-//                 }
-//
-//                 // Chaotic filesystem operations
-//                 let file_path = format!("/tmp/chaos_{}_{}.txt", chaos_id, op);
-//                 match fs_clone.write_file(&file_path, &format!("chaos data {} {}", chaos_id, op)).await {
-//                     Ok(_) => println!("Chaos {} FS op {} succeeded", chaos_id, op),
-//                     Err(e) => {
-//                         failures.fetch_add(1, Ordering::SeqCst);
-//                         println!("Chaos {} FS op {} failed: {}", chaos_id, op, e);
-//                     }
-//                 }
-//
-//                 tokio::time::sleep(Duration::from_millis(100)).await;
-//             }
-//         });
-//
-//         chaos_handles.push(handle);
-//     }
-//
-//     join_all(chaos_handles).await;
-//
-//     let total_chaos_ops = chaos_operations.load(Ordering::SeqCst);
-//     let total_chaos_failures = chaos_failures.load(Ordering::SeqCst);
-//
-//     println!("Chaos phase completed:");
-//     println!("- Total chaos operations: {}", total_chaos_ops);
-//     println!("- Total chaos failures: {}", total_chaos_failures);
-//
-//     // Phase 2: Recovery and consistency checks
-//     println!("\nPhase 2: Recovery and consistency verification");
-//
-//     // Reset failure rates to simulate recovery
-//     mock_redis.set_failure_rate(0.0).await;
-//     mock_db.set_failure_rate(0.0).await;
-//     mock_fs.set_failure_rate(0.0).await;
-//
-//     // Wait for recovery period
-//     tokio::time::sleep(Duration::from_secs(2)).await;
-//
-//     let recovery_operations = Arc::new(AtomicU64::new(0));
-//     let recovery_successes = Arc::new(AtomicU64::new(0));
-//     let consistency_checks = Arc::new(AtomicU64::new(0));
-//     let mut recovery_handles = vec![];
-//
-//     for recovery_id in 0..3 {
-//         let operations = recovery_operations.clone();
-//         let successes = recovery_successes.clone();
-//         let checks = consistency_checks.clone();
-//         let redis_clone = chaos_proxy.clone();
-//         let db_clone = mock_db.clone();
-//         let fs_clone = mock_fs.clone();
-//         let pool_clone = pool.clone();
-//
-//         let handle = tokio::spawn(async move {
-//             for op in 0..15 {
-//                 operations.fetch_add(1, Ordering::SeqCst);
-//
-//                 // Recovery Redis operations
-//                 match redis_clone.xadd(&format!("recovery:stream:{}", recovery_id), "*", &serde_json::json!({"recovery": op})).await {
-//                     Ok(_) => {
-//                         successes.fetch_add(1, Ordering::SeqCst);
-//                         println!("Recovery {} Redis op {} succeeded", recovery_id, op);
-//                     }
-//                     Err(e) => {
-//                         println!("Recovery {} Redis op {} failed: {}", recovery_id, op, e);
-//                     }
-//                 }
-//
-//                 // Recovery database operations
-//                 match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
-//                     &pool_clone,
-//                     &format!("recovery-component-{}", recovery_id),
-//                     &format!("recovery.operation.{}", op),
-//                     "test",
-//                     serde_json::json!({"recovery": recovery_id, "operation": op}),
-//                     None,
-//                     Some("recovery-test-0.1.0"),
-//                     None,
-//                 ).await {
-//                     Ok(_) => {
-//                         successes.fetch_add(1, Ordering::SeqCst);
-//                         println!("Recovery {} DB op {} succeeded", recovery_id, op);
-//                     }
-//                     Err(e) => {
-//                         println!("Recovery {} DB op {} failed: {}", recovery_id, op, e);
-//                     }
-//                 }
-//
-//                 // Consistency checks
-//                 if op % 5 == 0 {
-//                     checks.fetch_add(1, Ordering::SeqCst);
-//
-//                     // Check Redis stream consistency
-//                     match redis_clone.xlen(&format!("recovery:stream:{}", recovery_id)).await {
-//                         Ok(len) => {
-//                             println!("Recovery {} consistency check: Redis stream length = {}", recovery_id, len);
-//                         }
-//                         Err(e) => {
-//                             println!("Recovery {} consistency check failed: {}", recovery_id, e);
-//                         }
-//                     }
-//
-//                     // Check database consistency
-//                     match sqlx::query!(
-//                         "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
-//                         format!("recovery-component-{}", recovery_id)
-//                     ).fetch_one(&pool_clone).await {
-//                         Ok(row) => {
-//                             println!("Recovery {} consistency check: DB events count = {}", recovery_id, row.count.unwrap_or(0));
-//                         }
-//                         Err(e) => {
-//                             println!("Recovery {} DB consistency check failed: {}", recovery_id, e);
-//                         }
-//                     }
-//                 }
-//
-//                 tokio::time::sleep(Duration::from_millis(100)).await;
-//             }
-//         });
-//
-//         recovery_handles.push(handle);
-//     }
-//
-//     join_all(recovery_handles).await;
-//
-//     let total_recovery_ops = recovery_operations.load(Ordering::SeqCst);
-//     let total_recovery_successes = recovery_successes.load(Ordering::SeqCst);
-//     let total_consistency_checks = consistency_checks.load(Ordering::SeqCst);
-//
-//     println!("\nRecovery phase completed:");
-//     println!("- Total recovery operations: {}", total_recovery_ops);
-//     println!("- Successful recovery operations: {}", total_recovery_successes);
-//     println!("- Consistency checks performed: {}", total_consistency_checks);
-//
-//     // Phase 3: Final system state validation
-//     println!("\nPhase 3: Final system state validation");
-//
-//     // Check database state
-//     let total_events = sqlx::query!(
-//         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'recovery-component-%'"
-//     )
-//     .fetch_one(ctx.pool())
-//     .await?;
-//
-//     println!("Total events in database: {}", total_events.count.unwrap_or(0));
-//
-//     // Check Redis state
-//     let redis_stats = mock_redis.get_connection_stats().await;
-//     println!("Redis connection stats: {:?}", redis_stats);
-//
-//     // Check filesystem state
-//     let fs_stats = mock_fs.get_file_stats().await;
-//     println!("Filesystem stats: {:?}", fs_stats);
-//
-//     // Verify system recovered properly
-//     assert!(total_chaos_ops > 0, "Chaos operations should have been attempted");
-//     assert!(total_chaos_failures > 0, "Some chaos operations should have failed");
-//     assert!(total_recovery_ops > 0, "Recovery operations should have been attempted");
-//     assert!(total_recovery_successes > 0, "Some recovery operations should have succeeded");
-//     assert!(total_consistency_checks > 0, "Consistency checks should have been performed");
-//
-//     // Recovery rate should be significantly better than chaos phase
-//     let chaos_success_rate = (total_chaos_ops - total_chaos_failures) as f64 / total_chaos_ops as f64;
-//     let recovery_success_rate = total_recovery_successes as f64 / total_recovery_ops as f64;
-//
-//     println!("Chaos phase success rate: {:.2}%", chaos_success_rate * 100.0);
-//     println!("Recovery phase success rate: {:.2}%", recovery_success_rate * 100.0);
-//
-//     assert!(recovery_success_rate > chaos_success_rate,
-//         "Recovery success rate should be higher than chaos phase");
-//     assert!(recovery_success_rate > 0.7,
-//         "Recovery success rate should be > 70%");
-//
-//     Ok(())
-// }
+// NOTE: Removed commented-out chaos tests that require external network/service
+// simulation tooling. Reintroduce once the harness can spin up the needed mocks.

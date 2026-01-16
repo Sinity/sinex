@@ -134,9 +134,8 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
 }
 
 /// Test timestamp precision handling
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
     let source = format!("precision_test_{}", Ulid::new());
     // Test various precision levels
@@ -208,9 +207,6 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
             level
         );
     }
-
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
 
     Ok(())
 }

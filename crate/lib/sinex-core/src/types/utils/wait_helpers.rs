@@ -5,6 +5,7 @@
 //! use exponential backoff and proper timeout handling.
 
 use crate::error::{Result, SinexError};
+use crate::types::Seconds;
 use bon::Builder;
 use std::future::Future;
 use std::time::{Duration, Instant};
@@ -69,6 +70,19 @@ where
     )))
 }
 
+/// Typed wrapper for `wait_for_condition` using `Seconds`.
+pub async fn wait_for_condition_secs<F, Fut>(
+    condition_fn: F,
+    timeout: Seconds,
+    check_name: &str,
+) -> Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    wait_for_condition(condition_fn, timeout.as_secs(), check_name).await
+}
+
 /// Wait for a service to be ready by checking a health endpoint
 pub async fn wait_for_service_ready<F, Fut>(
     service_name: &str,
@@ -85,6 +99,19 @@ where
         &format!("{service_name} readiness"),
     )
     .await
+}
+
+/// Typed wrapper for `wait_for_service_ready` using `Seconds`.
+pub async fn wait_for_service_ready_secs<F, Fut>(
+    service_name: &str,
+    health_check: F,
+    timeout: Seconds,
+) -> Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    wait_for_service_ready(service_name, health_check, timeout.as_secs()).await
 }
 
 /// Wait for a specific duration with cancellation support
@@ -144,6 +171,15 @@ where
             "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
         )))
     }
+}
+
+/// Typed wrapper for `wait_for_all` using `Seconds`.
+pub async fn wait_for_all_secs<F, Fut>(conditions: Vec<(&str, F)>, timeout: Seconds) -> Result<()>
+where
+    F: Fn() -> Fut + Clone,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    wait_for_all(conditions, timeout.as_secs()).await
 }
 
 /// Retry an operation with exponential backoff (using tokio-retry)
@@ -366,6 +402,19 @@ where
     )))
 }
 
+/// Typed wrapper for `wait_for_condition_adaptive` using `Seconds`.
+pub async fn wait_for_condition_adaptive_secs<F, Fut>(
+    condition_fn: F,
+    timeout: Seconds,
+    check_name: &str,
+) -> Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    wait_for_condition_adaptive(condition_fn, timeout.as_secs(), check_name).await
+}
+
 /// Wait for multiple conditions to be met simultaneously  
 ///
 /// This is useful for coordinating multiple service dependencies or health checks.
@@ -423,4 +472,16 @@ where
             "Conditions not met after {timeout_secs} seconds: {pending_names:?}"
         )))
     }
+}
+
+/// Typed wrapper for `wait_for_multiple_conditions` using `Seconds`.
+pub async fn wait_for_multiple_conditions_secs<F, Fut>(
+    conditions: Vec<(&str, F)>,
+    timeout: Seconds,
+) -> Result<()>
+where
+    F: Fn() -> Fut + Clone,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    wait_for_multiple_conditions(conditions, timeout.as_secs()).await
 }

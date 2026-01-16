@@ -22,7 +22,7 @@ async fn schema_content_hash_has_sufficient_entropy() -> color_eyre::Result<()> 
 }
 
 #[sinex_test]
-async fn register_new_schema_records_metadata(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let new_schema = NewEventSchema {
         source: "test-source".to_string(),
@@ -50,9 +50,7 @@ async fn register_new_schema_records_metadata(ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn registering_duplicate_schema_returns_existing(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn registering_duplicate_schema_returns_existing(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let new_schema = NewEventSchema {
         source: "test-source".to_string(),
@@ -69,7 +67,7 @@ async fn registering_duplicate_schema_returns_existing(
 }
 
 #[sinex_test]
-async fn active_schema_returns_latest_version(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn active_schema_returns_latest_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     repo.register_schema(NewEventSchema {
         source: "test-source".to_string(),
@@ -104,18 +102,14 @@ async fn active_schema_returns_latest_version(ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn list_schemas_for_source_returns_all(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    ctx.force_cleanup().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     for i in 1..=3 {
         repo.register_schema(NewEventSchema {
             source: "multi-source".to_string(),
             event_type: format!("event.type{i}"),
             schema_version: "1.0.0".to_string(),
-            schema_content: json!({ "type": "object", "properties": { "id": { "type": "integer" } } }),
-        })
+            schema_content: json!({ "type": "object", "properties": { "id": { "type": "integer" } } })})
         .await?;
     }
 
@@ -132,9 +126,7 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn deprecating_schema_disables_active_version(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let schema = repo
         .register_schema(NewEventSchema {
@@ -154,7 +146,7 @@ async fn deprecating_schema_disables_active_version(
 }
 
 #[sinex_test]
-async fn schema_statistics_aggregates_counts(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn schema_statistics_aggregates_counts(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let sources = ["source1", "source2"];
     let event_types = ["event.a", "event.b", "event.c"];
@@ -227,8 +219,7 @@ async fn failed_schema_registration_does_not_clear_active(
             source: "conflict-source".to_string(),
             event_type: "conflict.event".to_string(),
             schema_version: "1.0.0".to_string(),
-            schema_content: json!({ "type": "object", "properties": { "legacy": { "type": "string" } }, "required": ["legacy"] }),
-        })
+            schema_content: json!({ "type": "object", "properties": { "legacy": { "type": "string" } }, "required": ["legacy"] })})
         .await?;
 
     let conflict = repo
@@ -236,8 +227,7 @@ async fn failed_schema_registration_does_not_clear_active(
             source: "conflict-source".to_string(),
             event_type: "conflict.event".to_string(),
             schema_version: "1.0.0".to_string(),
-            schema_content: json!({ "type": "object", "properties": { "modern": { "type": "string" } } }),
-        })
+            schema_content: json!({ "type": "object", "properties": { "modern": { "type": "string" } } })})
         .await;
 
     assert!(

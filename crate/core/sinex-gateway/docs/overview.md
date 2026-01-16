@@ -18,7 +18,7 @@ The Sinex Gateway acts as the central API hub for the Sinex event capture system
 
 ## Core Components
 
-- **RPC Server** – JSON-RPC 2.0 API for CLI communication.
+- **RPC Server** – JSON-RPC 2.0 API for CLI communication (TLS-only).
 - **Native Messaging** – Browser extension communication protocol.
 - **Replay State Machine** – Distributed replay operation management.
 - **Cascade Analyzer** – Dependency graph analysis for safe operations.
@@ -30,13 +30,11 @@ Starting the gateway server:
 
 ```rust,no_run
 use sinex_gateway::{rpc_server, ServiceContainer};
-use sinex_core::SanitizedPath;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let services = ServiceContainer::new(Some("postgres://user:pass@localhost/sinex_dev".into())).await?;
-    let socket = SanitizedPath::from_str_validated("/tmp/sinex-host.sock")?;
-    rpc_server::run(socket, None, services).await?;
+    rpc_server::run(None, services).await?;
     Ok(())
 }
 ```

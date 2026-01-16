@@ -9,7 +9,7 @@ Synchronize selected Sinex data and state across personal devices (desktop, lapt
 - Minimal surface for conflict; explicit policies where needed
 
 ## Architecture
-- Core truth remains in Postgres on the primary node; satellites on secondary devices capture locally and sync deltas.
+- Core truth remains in Postgres on the primary node; nodes on secondary devices capture locally and sync deltas.
 - Device identity: stable `device_id` derived from an ed25519 public key; events include `device_id_hash`.
 - Ordering: use ULIDs at ingest; attach HLC/vector clock metadata where needed for cross‑device ordering.
 - For file/state sync:

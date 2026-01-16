@@ -193,6 +193,22 @@ impl Entities {
         ]
     }
 
+    /// Generates raw SQL for trigram indexes (PostgreSQL pg_trgm extension).
+    pub fn create_trigram_indexes_sql() -> Vec<String> {
+        vec![
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_entities_name_trgm ON {}.{} USING GIN (name gin_trgm_ops)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_entities_canonical_name_trgm ON {}.{} USING GIN (canonical_name gin_trgm_ops)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
+    }
+
     /// Creates a trigger to update the updated_at column
     pub fn create_updated_at_trigger_sql() -> String {
         format!(

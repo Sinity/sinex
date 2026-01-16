@@ -1,8 +1,10 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_core::types::Ulid;
-use sinex_test_utils::{sinex_proptest, sinex_test};
+use proptest::test_runner::TestCaseError;
+use serde_json::json;
+use sinex_core::{DbPoolExt, Event, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid};
+use sinex_test_utils::{sinex_prop, sinex_proptest, sinex_test, TestContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -23,7 +25,7 @@ use std::time::Instant;
 sinex_proptest! {
     fn test_ulid_chronological_ordering(
         count in 2usize..=100
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
         for window in ulids.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
@@ -41,7 +43,7 @@ sinex_proptest! {
 
     fn test_ulid_uniqueness_under_rapid_generation(
         count in 2usize..1000
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let base_time = Utc::now();
         let mut ulids = Vec::new();
         for i in 0..count {
@@ -63,7 +65,7 @@ sinex_proptest! {
 
     fn test_ulid_timestamp_extraction(
         timestamp in 1577836800u64..1893456000u64
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
         let ulid = Ulid::from_datetime(dt);
         let extracted_timestamp = ulid.timestamp();
@@ -75,6 +77,37 @@ sinex_proptest! {
             extracted_timestamp.timestamp_millis(),
             time_diff
         );
+        Ok(())
+    }
+
+    fn test_ulid_timestamp_extraction_property(
+        time_offset_hours in -24..24i64,
+        time_offset_minutes in 0..60i64,
+        time_offset_seconds in 0..60i64,
+    ) -> TestResult<()> {
+        let base_time = Utc::now();
+        let target_time = base_time
+            + ChronoDuration::hours(time_offset_hours)
+            + ChronoDuration::minutes(time_offset_minutes)
+            + ChronoDuration::seconds(time_offset_seconds);
+
+        let ulid = Ulid::from_datetime(target_time);
+        let extracted_time = ulid.timestamp();
+
+        let time_diff = extracted_time.signed_duration_since(target_time);
+        prop_assert!(time_diff.num_milliseconds().abs() <= 1);
+
+        let ulid_str = ulid.to_string();
+        let parsed_ulid: Ulid = ulid_str.parse().expect("Should parse ULID string");
+        prop_assert_eq!(ulid, parsed_ulid);
+
+        let parsed_time = parsed_ulid.timestamp();
+        prop_assert_eq!(extracted_time, parsed_time);
+
+        prop_assert_eq!(ulid_str.len(), 26);
+        prop_assert!(ulid_str
+            .chars()
+            .all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)));
         Ok(())
     }
 }
@@ -140,7 +173,7 @@ fn generate_ulids_concurrently(
 sinex_proptest! {
     fn test_concurrent_ulid_uniqueness(
         params in arb_concurrent_params()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let (num_threads, ulids_per_thread, max_yields) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
@@ -155,7 +188,7 @@ sinex_proptest! {
 
     fn test_concurrent_ulid_time_ordering(
         params in arb_concurrent_params()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let (num_threads, ulids_per_thread, max_yields) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
@@ -181,7 +214,7 @@ sinex_proptest! {
 sinex_proptest! {
     fn test_concurrent_ulid_timestamp_correlation(
         params in arb_concurrent_params()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let (num_threads, ulids_per_thread, _) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, 0);
 
@@ -198,7 +231,7 @@ sinex_proptest! {
 
     fn test_concurrent_ulid_thread_distribution(
         params in arb_concurrent_params()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let (num_threads, ulids_per_thread, max_yields) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_yields);
 
@@ -223,7 +256,7 @@ sinex_proptest! {
     fn test_high_contention_ulid_generation(
         burst_size in 4usize..=32,
         num_bursts in 1usize..=3
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let mut all_ulids = Vec::new();
 
         for _burst in 0..num_bursts {
@@ -255,7 +288,7 @@ sinex_proptest! {
     #[cases(8)]
     fn test_ulid_ordering_with_timing_patterns(
         count in 2usize..=100
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
         for window in ulids.windows(2) {
@@ -275,7 +308,7 @@ sinex_proptest! {
 
     fn test_ulid_ordering_property_in_memory(
         ulids in arb_ulid_sequence(2, 20)
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
         prop_assert_eq!(ulids.clone(), sorted_ulids,
@@ -332,169 +365,132 @@ fn arb_ulid_from_time_range(
     })
 }
 
-// Database test temporarily disabled due to direct sqlx usage
-// TODO: Reimplement using repository pattern
+async fn insert_event_with_ulid(
+    ctx: &TestContext,
+    source: &str,
+    event_type: &str,
+    payload: JsonValue,
+    event_id: Ulid,
+    ts: DateTime<Utc>,
+) -> Result<Ulid, TestCaseError> {
+    let material_id = Id::<SourceMaterial>::new();
+    let provenance = Provenance::from_material(material_id, 0, None, None);
+    let mut event = Event::create(source, event_type, payload, provenance).at_time(ts);
+    event.id = Some(Id::from_ulid(event_id));
 
-// Range query test temporarily disabled due to direct sqlx usage
-// TODO: Reimplement using repository pattern
-/* #[sinex_test]
-async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult<()> {
-    sinex_proptest!(|(
-        batch1_size in 2..8usize,
-        batch2_size in 2..8usize,
-        gap_minutes in 1..30i64,
-    )| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        rt.block_on(async {
-            let pool = ctx.pool.clone();
-            let source_name = format!("property.range_test_{}", Ulid::new());
+    ctx.ensure_source_material(material_id, None)
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
 
-            // Create first batch of events with time gap
-            let mut batch1_ulids = Vec::new();
-
-            for i in 0..batch1_size {
-                let event = ctx.create_test_event(
-                    &source_name,
-                    "batch1_event",
-                    json!({"batch": 1, "sequence": i})
-                ).await.expect("Event creation failed");
-
-                batch1_ulids.push(event.id.unwrap());
-
-                // Small delay between events
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            }
-
-            // Create gap between batches
-            tokio::time::sleep(tokio::time::Duration::from_secs(gap_minutes as u64)).await;
-
-            // Get the timestamp of the last batch1 event for cutoff calculation
-            let last_batch1_ulid = batch1_ulids.last().unwrap();
-            let last_ulid: Ulid = (*last_batch1_ulid).into();
-            let cutoff_time = last_ulid.timestamp() + ChronoDuration::milliseconds(500);
-            let cutoff_ulid = Ulid::from_datetime(cutoff_time);
-
-            // Create second batch of events
-            let mut batch2_ulids = Vec::new();
-
-            for i in 0..batch2_size {
-                let event = ctx.create_test_event(
-                    &source_name,
-                    "batch2_event",
-                    json!({"batch": 2, "sequence": i})
-                ).await.expect("Event creation failed");
-
-                batch2_ulids.push(event.id.unwrap());
-
-                // Small delay between events
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            }
-
-            // Property: Range queries should partition events correctly - keeping as raw SQL for ULID comparison
-            let count_before: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM core.events
-                 WHERE source = $1 AND event_id < $2::uuid"
-            )
-            .bind(&source_name)
-            .bind(cutoff_ulid.to_uuid())
-          .fetch_one(&pool)
-            .await
-            .expect("Query failed");
-
-            let count_after: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM core.events
-                 WHERE source = $1 AND event_id >= $2::uuid"
-            )
-            .bind(&source_name)
-            .bind(cutoff_ulid.to_uuid())
-         .fetch_one(&pool)
-            .await
-            .expect("Query failed");
-
-            // Property: All batch1 ULIDs should be before cutoff
-            for ulid_id in &batch1_ulids {
-                let ulid: Ulid = (*ulid_id).into();
-                prop_assert!(ulid < cutoff_ulid,
-                    "Batch1 ULID {} should be before cutoff {}", ulid, cutoff_ulid);
-            }
-
-            // Property: All batch2 ULIDs should be after cutoff
-            for ulid_id in &batch2_ulids {
-                let ulid: Ulid = (*ulid_id).into();
-                prop_assert!(ulid >= cutoff_ulid,
-                    "Batch2 ULID {} should be >= cutoff {}", ulid, cutoff_ulid);
-            }
-
-            // Property: Range query counts should match batch sizes
-            prop_assert_eq!(count_before as usize, batch1_size,
-                "Count before cutoff should match batch1 size");
-            prop_assert_eq!(count_after as usize, batch2_size,
-                "Count after cutoff should match batch2 size");
-
-            // Property: Total should equal sum of parts
-            let total_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM core.events WHERE source = $1"
-            )
-            .bind(&source_name)
-        .fetch_one(&pool)
-            .await
-            .expect("Query failed");
-
-            prop_assert_eq!(count_before + count_after, total_count,
-                "Range query counts should sum to total");
-            prop_assert_eq!(total_count as usize, batch1_size + batch2_size,
-                "Total count should equal sum of batch sizes");
-
-            Ok::<(), proptest::test_runner::TestCaseError>(())
-        })?
-    });
+    let inserted = ctx
+        .pool
+        .events()
+        .insert(event)
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
+    let inserted_id = inserted.id.expect("Inserted event should have an ID");
+    Ok(*inserted_id.as_ulid())
 }
 
-#[sinex_test]
-fn test_ulid_timestamp_extraction_property() {
-        sinex_proptest!(|(
-        time_offset_hours in -24..24i64,
-        time_offset_minutes in 0..60i64,
-        time_offset_seconds in 0..60i64,
-    )| {
-        // Property: ULID timestamp extraction should be consistent and accurate
-        let base_time = Utc::now();
-        let target_time = base_time
-            + ChronoDuration::hours(time_offset_hours)
-            + ChronoDuration::minutes(time_offset_minutes)
-            + ChronoDuration::seconds(time_offset_seconds);
+#[sinex_prop]
+async fn test_ulid_range_query_property(
+    ctx: &TestContext,
+    #[strategy(2usize..8)] batch1_size: usize,
+    #[strategy(2usize..8)] batch2_size: usize,
+    #[strategy(1i64..30)] gap_millis: i64,
+) -> Result<(), TestCaseError> {
+    let source_name = format!(
+        "property_range_test_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
+    let source = EventSource::new(source_name.clone());
+    let mut batch1_ulids = Vec::with_capacity(batch1_size);
+    let mut batch2_ulids = Vec::with_capacity(batch2_size);
 
-        let ulid = Ulid::from_datetime(target_time);
-        let extracted_time = ulid.timestamp();
+    let mut current_time = Utc::now() - ChronoDuration::minutes(5);
+    for i in 0..batch1_size {
+        current_time += ChronoDuration::milliseconds(1);
+        let event_id = Ulid::from_datetime(current_time);
+        let inserted = insert_event_with_ulid(
+            ctx,
+            &source_name,
+            "batch1_event",
+            json!({"batch": 1, "sequence": i}),
+            event_id,
+            current_time,
+        )
+        .await?;
+        prop_assert_eq!(inserted, event_id);
+        batch1_ulids.push(event_id);
+    }
 
-        // Property: Extracted timestamp should match input timestamp (within precision)
-        let time_diff = extracted_time.signed_duration_since(target_time);
-        prop_assert!(time_diff.num_milliseconds().abs() <= 1,
-            "Extracted timestamp should match input within 1ms: input={:?}, extracted={:?}, diff={}ms",
-            target_time, extracted_time, time_diff.num_milliseconds());
+    let cutoff_time = current_time + ChronoDuration::milliseconds(gap_millis);
+    let cutoff_ulid = Ulid::from_datetime(cutoff_time);
 
-        // Property: ULID string representation should be consistent
-        let ulid_str = ulid.to_string();
-        let parsed_ulid = Ulid::from_str(&ulid_str).expect("Should parse ULID string");
-        prop_assert_eq!(ulid, parsed_ulid, "ULID should round-trip through string representation");
+    current_time = cutoff_time;
+    for i in 0..batch2_size {
+        current_time += ChronoDuration::milliseconds(1);
+        let event_id = Ulid::from_datetime(current_time);
+        let inserted = insert_event_with_ulid(
+            ctx,
+            &source_name,
+            "batch2_event",
+            json!({"batch": 2, "sequence": i}),
+            event_id,
+            current_time,
+        )
+        .await?;
+        prop_assert_eq!(inserted, event_id);
+        batch2_ulids.push(event_id);
+    }
 
-        let parsed_time = parsed_ulid.timestamp();
-        prop_assert_eq!(extracted_time, parsed_time,
-            "Timestamp should be consistent after string round-trip");
+    let count_before = ctx
+        .pool
+        .events()
+        .count_by_source_before_id(&source, cutoff_ulid)
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
+    let count_after = ctx
+        .pool
+        .events()
+        .count_by_source_from_id(&source, cutoff_ulid)
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
 
-        // Property: ULID should be valid length and format
-        prop_assert_eq!(ulid_str.len(), 26, "ULID string should be 26 characters");
-        prop_assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)),
-            "ULID should only contain valid Crockford base32 characters");
-    });
-} */
+    for ulid in &batch1_ulids {
+        prop_assert!(
+            *ulid < cutoff_ulid,
+            "Batch1 ULID {ulid} should be before cutoff {cutoff_ulid}"
+        );
+    }
+
+    for ulid in &batch2_ulids {
+        prop_assert!(
+            *ulid >= cutoff_ulid,
+            "Batch2 ULID {ulid} should be >= cutoff {cutoff_ulid}"
+        );
+    }
+
+    prop_assert_eq!(count_before as usize, batch1_size);
+    prop_assert_eq!(count_after as usize, batch2_size);
+
+    let total_count = ctx
+        .pool
+        .events()
+        .count_by_source(&source)
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
+    prop_assert_eq!(count_before + count_after, total_count);
+    prop_assert_eq!(total_count as usize, batch1_size + batch2_size);
+    Ok(())
+}
 
 sinex_proptest! {
     #[cfg_attr(not(feature = "slow-tests"), ignore)]
     fn test_ulid_monotonic_property_with_rapid_generation(
         generation_count in 5..50usize,
         delay_microseconds in 0..1000u64
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let mut ulids = Vec::new();
         let mut timestamps = Vec::new();
 
@@ -543,9 +539,6 @@ sinex_proptest! {
     }
 }
 
-// Foreign key test temporarily disabled due to direct sqlx usage
-// TODO: Reimplement using repository pattern
-
 // =============================================================================
 // Stress Tests
 // =============================================================================
@@ -556,7 +549,7 @@ mod stress_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[sinex_test]
-    fn stress_test_massive_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
+    fn stress_test_massive_concurrent_ulid_generation() -> TestResult<()> {
         const NUM_THREADS: usize = 20;
         const ULIDS_PER_THREAD: usize = 1000;
         const EXPECTED_TOTAL: usize = NUM_THREADS * ULIDS_PER_THREAD;
@@ -611,7 +604,7 @@ mod stress_tests {
     }
 
     #[sinex_test]
-    fn test_ulid_timestamp_precision_under_contention() -> color_eyre::eyre::Result<()> {
+    fn test_ulid_timestamp_precision_under_contention() -> TestResult<()> {
         const NUM_SAMPLES: usize = 100;
 
         // Generate pairs of ULIDs with minimal delay
@@ -658,7 +651,7 @@ mod unit_tests {
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_ulid_sequence_generator() -> color_eyre::eyre::Result<()> {
+    fn test_ulid_sequence_generator() -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let sequence = arb_ulid_sequence(3, 5)
             .new_tree(&mut runner)
@@ -675,7 +668,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_time_range_ulid_generator() -> color_eyre::eyre::Result<()> {
+    fn test_time_range_ulid_generator() -> TestResult<()> {
         let start = Utc::now() - ChronoDuration::hours(1);
         let end = Utc::now();
 
@@ -691,7 +684,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_concurrent_params_generator() -> color_eyre::eyre::Result<()> {
+    fn test_concurrent_params_generator() -> TestResult<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (num_threads, ulids_per_thread, max_delay_ms) = arb_concurrent_params()
             .new_tree(&mut runner)

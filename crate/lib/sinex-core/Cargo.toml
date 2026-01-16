@@ -40,8 +40,11 @@ futures = "0.3"
 num-traits = "0.2"
 ahash = { workspace = true }
 
-# Migration system  
-sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
+# NATS
+async-nats = { workspace = true }
+
+# Migration system
+sea-orm-migration = { version = "1.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 
 # Type dependencies (from sinex-core)
 ulid = { workspace = true }
@@ -69,8 +72,7 @@ sha2 = { workspace = true, optional = true }
 parking_lot = "0.12"
 
 [features]
-default = ["migration", "macros", "sqlx"]
-migration = ["dep:sea-orm-migration"]
+default = ["macros", "sqlx"]
 macros = ["dep:sinex-macros"]
 sqlx = []
 arbitrary = ["dep:proptest"]
@@ -90,8 +92,9 @@ tokio-test = "0.4"
 rstest = { workspace = true }
 tempfile = { workspace = true }
 sinex-test-utils = { path = "../sinex-test-utils" }
-sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["preflight"] }
 proptest = { workspace = true }
-async-nats = { workspace = true }
+nkeys = "0.3"
+
 async-std = { version = "1.12", features = ["attributes"] }
 pretty_assertions = "1.4"

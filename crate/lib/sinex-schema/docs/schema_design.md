@@ -411,13 +411,9 @@ The migration history shows preparation for TimescaleDB compression:
    ```
 
 3. **Event Processing**
-   ```sql
-   core.processor_checkpoints -- Processing state for exactly-once delivery
-   ├── automaton_name
-   ├── last_processed_id
-   ├── processed_count
-   └── checkpoint_data         -- Serialized state
-   ```
+   Checkpoint state is stored in NATS KV (`KV_sinex_checkpoints`) rather than Postgres.
+   Keys are derived from processor + consumer group + consumer name, and values
+   serialize the unified checkpoint payload.
 
 4. **Event Synthesis (Derived Events)**
    ```sql
@@ -636,10 +632,16 @@ pub struct PoolConfig {
 #### Retry Logic for Deadlock Handling
 ```rust
 let retry_config = RetryConfig::default();
-let result = with_retry_transaction(pool, retry_config, |tx| async move {
+let result = with_retry_transaction_idempotent(
+    pool,
+    retry_config,
+    IdempotentTransaction::new(),
+    |tx| async move {
     // Operations that might encounter deadlocks in high-concurrency scenarios
     // Automatic retry with exponential backoff
-}).await?;
+    },
+)
+.await?;
 ```
 
 #### Integrity Verification Queries

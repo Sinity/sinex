@@ -11,9 +11,9 @@ use async_nats::jetstream::{
 use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
-use sinex_satellite_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, EphemeralNats};
 use sinex_core::types::ulid::Ulid;
+use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
 
 async fn provision_stream(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
@@ -72,9 +72,10 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let pool = ctx.pool().clone();
+    let ctx = ctx.with_nats().await?;
+    let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
-        pool.clone(),
+        kv,
         "jetstream-checkpoint".to_string(),
         "jetstream-consumer-group".to_string(),
         "jetstream-instance".to_string(),
@@ -173,9 +174,10 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let pool = ctx.pool().clone();
+    let ctx = ctx.with_nats().await?;
+    let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
-        pool.clone(),
+        kv.clone(),
         "jetstream-checkpoint-recovery".to_string(),
         "jetstream-consumer-group-recovery".to_string(),
         "jetstream-instance-recovery".to_string(),
@@ -225,7 +227,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
     }
 
     let mut manager = CheckpointManager::new(
-        pool,
+        kv,
         "jetstream-checkpoint-recovery".to_string(),
         "jetstream-consumer-group-recovery".to_string(),
         "jetstream-instance-recovery-2".to_string(),

@@ -1,9 +1,9 @@
 # Ingestion & Provenance Patterns
 > Last Verified: 2025-12-02 (manual review)
-> **Purpose:** Working guide for provenance rules, satellite/ingestor boundaries, and Stage-as-You-Go patterns.
+> **Purpose:** Working guide for provenance rules, node/ingestor boundaries, and Stage-as-You-Go patterns.
 
 This note distils the actionable architecture guidance from the historical
-Sinex essays into a concise reference for engineers working on satellites,
+Sinex essays into a concise reference for engineers working on nodes,
 ingestors, and automata. For operational notes and deployment expectations,
 cross-reference `docs/current/architecture/Core_Architecture.md` and `nixos/README.md`.
 
@@ -52,14 +52,14 @@ Ingestors must document how they derive `ts_orig` (the "happened at" time):
 
 Whenever Sinex emits `command.*` events, the same provenance guarantees apply:
 
-- Actuator satellites subscribe to the command namespace and publish their own
+- Actuator nodes subscribe to the command namespace and publish their own
   observational events (e.g. `desktop.workspace.switched`) to record outcomes.
 - Commands are treated as first-class events with typed payloads; the absence
   of a separate "intent" field keeps observation and instruction symmetric.
 - Always log success/failure via follow-up events so the operations log
   (`core.operations_log`) explains what happened.
 
-## 5. Checklist for New Satellites
+## 5. Checklist for New nodes
 
 - [ ] Sensor boundary defined; reusable code extracted into `sinex-sensor-*` crates.
 - [ ] Stage-as-you-go implementation documented and tested.

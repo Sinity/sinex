@@ -114,13 +114,6 @@ impl Default for CleanupConfig {
                     reason: None,
                 },
                 TableCleanupStrategy {
-                    table_name: "core.processor_checkpoints",
-                    method: CleanupMethod::Truncate,
-                    disable_triggers: false,
-                    protected: false,
-                    reason: None,
-                },
-                TableCleanupStrategy {
                     table_name: "core.operations_log",
                     method: CleanupMethod::Truncate,
                     disable_triggers: false,
@@ -228,7 +221,6 @@ impl CleanupConfig {
             "core.revisions",
             "core.processor_manifests",
             "sinex_schemas.event_payload_schemas",
-            "core.processor_checkpoints",
             "core.operations_log",
             "core.transactional_outbox",
             "core.tags",

@@ -7,7 +7,6 @@
 
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::test_macros::*;
-use sinex_test_utils::TestResult;
 
 // =============================================================================
 // EXAMPLE 1: Simple Event Insertion
@@ -15,7 +14,7 @@ use sinex_test_utils::TestResult;
 
 // BEFORE: Verbose manual implementation (15 lines)
 #[sinex_test]
-async fn test_file_created_event_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_file_created_event_old(ctx: TestContext) -> TestResult<()> {
     let event = EventFactory::new("fs").create_event(
         "file.created",
         json!({"path": "/test/file.txt", "size": 1024}),
@@ -56,7 +55,7 @@ test_event_insertion!(
 
 // BEFORE: Complex concurrent insertion (30+ lines)
 #[sinex_test]
-async fn test_bulk_import_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_bulk_import_old(ctx: TestContext) -> TestResult<()> {
     let event_count = 100;
     let mut handles = vec![];
 
@@ -112,14 +111,17 @@ test_batch_events!(
 
 // BEFORE: Repetitive checkpoint management (25+ lines)
 #[sinex_test]
-async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    use sinex_satellite_sdk::CheckpointManager;
+async fn test_automaton_progress_old(ctx: TestContext) -> TestResult<()> {
+    use sinex_node_sdk::CheckpointManager;
+
+    let ctx = ctx.with_nats().await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool().clone(),
-        "test_automaton",
-        "default_group",
-        "test_consumer",
+        kv,
+        "test_automaton".to_string(),
+        "default_group".to_string(),
+        "test_consumer".to_string(),
     );
 
     // Initial state
@@ -135,7 +137,7 @@ async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Resu
     // Verify
     let loaded = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(loaded.processed_count, 50);
-    assert_eq!(loaded.last_processed_id(), Some("event_50"));
+    assert_eq!(loaded.last_processed_id(), Some("event_50".to_string()));
 
     Ok(())
 }
@@ -154,7 +156,7 @@ test_checkpoint_flow!(
 
 // BEFORE: Manual concurrency management (35+ lines)
 #[sinex_test]
-async fn test_concurrent_queries_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_queries_old(ctx: TestContext) -> TestResult<()> {
     let worker_count = 50;
     let queries_per_worker = 10;
     let pool = Arc::new(ctx.pool().clone());
@@ -225,7 +227,7 @@ test_concurrent_operations!(
 
 // BEFORE: Manual time range setup (20+ lines)
 #[sinex_test]
-async fn test_event_time_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_time_filtering_old(ctx: TestContext) -> TestResult<()> {
     use chrono::{Duration, Utc};
 
     let now = Utc::now();
@@ -267,7 +269,7 @@ test_time_range_query!(
 
 // BEFORE: Complex Redis stream setup (40+ lines)
 #[sinex_test]
-async fn test_redis_event_streaming_old() -> color_eyre::eyre::Result<()> {
+async fn test_redis_event_streaming_old() -> TestResult<()> {
     use redis::{cmd, AsyncCommands};
 
     let redis_client = redis::Client::open("redis://localhost:6379")?;
@@ -347,7 +349,7 @@ test_redis_stream_operations!(
 
 // BEFORE: Verbose schema validation (30+ lines)
 #[sinex_test]
-async fn test_event_schema_enforcement_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_schema_enforcement_old(ctx: TestContext) -> TestResult<()> {
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -417,7 +419,7 @@ test_schema_validation!(
 
 // BEFORE: Manual filtering implementation (25 lines)
 #[sinex_test]
-async fn test_source_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_source_filtering_old(ctx: TestContext) -> TestResult<()> {
     let sources = ["fs", "terminal", "desktop"];
     let events_per_source = 5;
 
@@ -457,7 +459,7 @@ test_event_filter!(
 
 // BEFORE: Repetitive test cases (40+ lines)
 #[sinex_test]
-async fn test_event_type_validation_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_type_validation_old(ctx: TestContext) -> TestResult<()> {
     // Test case 1: Valid event type
     let event1 = EventFactory::new("test").create_event("valid.event.type", json!({}));
     let result1 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event1, None).await;
@@ -505,7 +507,10 @@ parameterized_test!(
 
 // BEFORE: Manual flow orchestration (20+ lines)
 #[sinex_test]
-async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+#[sinex_test]
+async fn test_event_processing_flow_old(ctx: TestContext) -> TestResult<()> {
+    use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+
     // Insert event
     let event = EventFactory::new("workflow").create_event(
         "task.created",
@@ -515,29 +520,33 @@ async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::R
         .await?
         .id;
 
-    // Simulate processor checkpoint
-    let checkpoint_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, processed_count)
-         VALUES ($1, $2, $3, $4)",
-        checkpoint_id.to_uuid(),
-        "task_processor",
-        event_id.to_string(),
-        1i64
-    ).execute(ctx.pool()).await?;
+    // Simulate processor checkpoint via Manager (no direct DB access)
+    let ctx = ctx.with_nats().await?;
+    let kv = ctx.checkpoint_kv().await?;
+    let manager = CheckpointManager::new(
+        kv,
+        "task_processor".to_string(),
+        "default".to_string(),
+        "default".to_string(),
+    );
+
+    let state = CheckpointState {
+        checkpoint: Checkpoint::Stream {
+            message_id: event_id.to_string(),
+            event_id: Some(event_id),
+        },
+        processed_count: 1,
+        last_activity: chrono::Utc::now(),
+        data: None,
+        version: 1,
+    };
+    manager.save_checkpoint(&state).await?;
 
     // Verify flow completion
-    let checkpoint = sqlx::query!(
-        "SELECT * FROM core.processor_checkpoints WHERE id = $1",
-        checkpoint_id.to_uuid()
-    )
-    .fetch_one(ctx.pool())
-    .await?;
+    let checkpoint = manager.get_checkpoint_stats().await?;
 
-    assert_eq!(
-        checkpoint.last_processed_id.as_deref(),
-        Some(&event_id.to_string())
-    );
+    assert_eq!(checkpoint.max_processed, 1);
+    assert!(checkpoint.last_update.is_some());
 
     Ok(())
 }

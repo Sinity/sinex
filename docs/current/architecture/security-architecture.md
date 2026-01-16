@@ -25,8 +25,8 @@ Coordinate changes here with `docs/current/security.md` (live posture) and
 - Systemd units run as the dedicated `sinex` user with local peer auth.
 - All services currently share the same PostgreSQL role; role separation and
   scoped credentials remain outstanding work.
-- Unix socket permissions protect local IPC, but there is no authn/z layer for
-  RPC or JetStream subjects yet.
+- Gateway RPC requires TLS + bearer token auth; JetStream subjects still lack
+  fine-grained authz.
 
 ### Input Validation
 ✅ **Multi-layer validation**:
@@ -61,17 +61,24 @@ Current approach may be sufficient as:
 - API keys injected from system configuration
 
 ### Network Security
-❌ **Not Implemented**:
+⚠️ **Partial Implementation**:
 - Local-first deployment; NATS and services bind to localhost by default. Secure external exposure explicitly if required.
-- No authentication framework
-- No rate limiting
-- Gateway exposed without access control
+- Gateway RPC requires TLS cert/key and bearer token auth; loopback is the default bind.
+- NATS transport encryption is enforced when `SINEX_NATS_REQUIRE_TLS=1` (Phase 1 contract).
+- No centralized auth framework or per-service rate limits yet.
+
+### Transport Security Contract (Phase 0)
+- **TLS everywhere for gateway RPC**: any TCP exposure must be TLS; plaintext is disallowed.
+- **Gateway**: TCP requires TLS cert/key + bearer token auth; mTLS is required for non-local binds (`SINEX_GATEWAY_TLS_CLIENT_CA`).
+- **NATS**: when `SINEX_NATS_REQUIRE_TLS=1`, clients must use `tls://` or `wss://` endpoints; plaintext is rejected at config validation.
+- **Trusted nodes**: identity is established via per-node NATS credentials (JWT/NKEY) and, in later phases, mTLS client certs issued by a local CA (step-ca).
+- **Ad-hoc hardware**: enrollment uses a short-lived bootstrap token to obtain a cert/creds; local gateway access still uses TLS + token auth.
 
 ## Security Model
 
 ### Trust Boundaries
 1. **User ↔ System**: Full trust (single-user system)
-2. **Satellites ↔ ingestd**: Unix socket permissions
+2. **nodes ↔ ingestd**: NATS credentials + TLS when required
 3. **ingestd ↔ Database**: currently a single PostgreSQL role (risk; see
    implementation priorities)
 4. **Automata ↔ NATS JetStream**: Durable consumer isolation
@@ -125,7 +132,7 @@ Current approach may be sufficient as:
 
 ### 📋 Nice to Have
 5. **Implement TLS for IPC**
-   - Between satellites and ingestd
+   - Between nodes and ingestd
    - For NATS connections
    - For PostgreSQL if remote
 
@@ -192,4 +199,4 @@ Note: Threat modeling is tracked in internal docs and tickets; consolidate into 
 - Original Vision Document security requirements
 
 For an up-to-date checklist of implemented controls and open gaps, see [Security & Privacy Posture](../security.md).
-- **Gateway RPC Authentication**: `sinex-gateway` refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) is provided. JSON-RPC clients must send `Authorization: Bearer <token>` (CLI adds this automatically when `--rpc-token`/`SINEX_RPC_TOKEN` is set). `SINEX_GATEWAY_ALLOW_INSECURE=1` remains a test-only escape hatch.
+- **Gateway RPC Authentication**: `sinex-gateway` refuses to start unless `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`) is provided. JSON-RPC clients must send `Authorization: Bearer <token>` (CLI adds this automatically when `--rpc-token`/`SINEX_RPC_TOKEN` is set).

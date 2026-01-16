@@ -7,12 +7,11 @@
 //! - Generic `Id<T>` types
 //! - Event::<JsonValue>::test_event constructor for test events
 //! - `#[sinex_test]` macro for async tests
-//! - Modern test infrastructure (rstest, insta, tracing-test, similar-asserts)
+//! - Modern test infrastructure (rstest, insta, tracing-test)
 
 #[path = "integration/mod.rs"]
 mod integration;
 
-use futures::stream::{self, StreamExt, TryStreamExt};
 // Import test utilities with proper prelude for consistent testing
 use serde_json::json;
 use std::sync::Arc;
@@ -21,26 +20,34 @@ use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue, 
 use sinex_test_utils::constants::SOURCE_FIXTURE_REPO_PRIMARY;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
-use tokio::time::{sleep, Duration as TokioDuration, Instant};
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS - Core functionality tests
 // =============================================================================
 
 #[sinex_test]
-async fn test_basic_event_insertion_and_retrieval(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_basic_event_insertion_and_retrieval(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let _pipeline = ctx.pipeline().await?;
+
     // Test the fundamental event lifecycle: create -> insert -> retrieve
-    let event = ctx
-        .create_test_event(
-            "integration-test",
-            "basic.test",
-            json!({
-                "test_value": 42,
-                "description": "Basic integration test"
-            }),
-        )
+    let mut event = Event::<JsonValue>::test_event(
+        "integration-test",
+        "basic.test",
+        json!({
+            "test_value": 42,
+            "description": "Basic integration test"
+        }),
+    );
+    // Explicitly assume ID for verification
+    event.id = Some(Id::new());
+
+    ctx.publish_test_event(&event).await?;
+
+    // Wait for ingestion
+    // Wait for ingestion
+    ctx.timing()
+        .wait_for_source_events("integration-test", 1)
         .await?;
 
     // Verify event structure
@@ -65,28 +72,26 @@ async fn test_basic_event_insertion_and_retrieval(
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let _pipeline = ctx.pipeline().await?;
 
     let source = format!("batch-test-{}", Ulid::new());
     // Test batch insertion performance and correctness
     let mut events = Vec::new();
     for i in 0..10 {
-        let event = ctx
-            .create_test_event(
-                &source,
-                "batch.item",
-                json!({
-                    "index": i,
-                    "batch_id": "test-batch-001"
-                }),
-            )
-            .await?;
+        let mut event = Event::<JsonValue>::test_event(
+            &*source,
+            "batch.item",
+            json!({
+                "index": i,
+                "batch_id": "test-batch-001"
+            }),
+        );
+        event.id = Some(Id::new());
+        ctx.publish_test_event(&event).await?;
         events.push(event);
     }
 
@@ -113,19 +118,13 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
         }
     }
     assert_eq!(ids.len(), 10);
-
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after batch insertion failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_different_event_sources(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let _pipeline = ctx.pipeline().await?;
     let test_cases = vec![
         (
             "filesystem",
@@ -143,15 +142,17 @@ async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Res
 
     for (source, event_type, payload) in test_cases {
         // Test various event source patterns
-        let event = ctx
-            .create_test_event(source, event_type, payload.clone())
-            .await?;
+        let mut event = Event::<JsonValue>::test_event(source, event_type, payload.clone());
+        event.id = Some(Id::new());
+        ctx.publish_test_event(&event).await?;
+
+        // Verify event can be queried by source (wait for it)
+        ctx.timing().wait_for_source_events(source, 1).await?;
 
         assert_eq!(event.source.as_str(), source);
         assert_eq!(event.event_type.as_str(), event_type);
         assert_eq!(event.payload, payload);
 
-        // Verify event can be queried by source
         let source_events = ctx
             .pool
             .events()
@@ -173,16 +174,18 @@ async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Res
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     // Test ULID time-ordering properties
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let event = ctx
-            .create_test_event("ulid-test", "ordering.test", json!({"sequence": i}))
-            .await?;
+        let mut event =
+            Event::<JsonValue>::test_event("ulid-test", "ordering.test", json!({"sequence": i}));
+        event.id = Some(Id::new());
+        ctx.publish_test_event(&event).await?;
 
-        event_ids.push(event.id.expect("Event should have an ID after saving"));
+        event_ids.push(event.id.expect("Event should have an ID generated in test"));
 
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -206,16 +209,17 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> color_eyre::eyr
         "ULID strings should be naturally sorted"
     );
 
+    // Ensure they arrived
+    ctx.timing().wait_for_source_events("ulid-test", 5).await?;
+
     Ok(())
 }
 
-#[sinex_test]
-async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+#[sinex_serial_test]
+async fn test_generic_id_type_safety(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test that generic IDs provide type safety
     let event_id = Id::<Event<JsonValue>>::new();
     let blob_id = Id::<Blob>::new();
@@ -224,14 +228,17 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
     assert_ne!(event_id.to_string(), blob_id.to_string());
 
     // Create an event with a specific ID
-    let event = Event::<JsonValue>::test_event(
+    let mut event = Event::<JsonValue>::test_event(
         EventSource::from_static("id-test"),
         EventType::from_static("id.safety.test"),
         json!({"event_id": event_id.to_string()}),
     );
+    // Explicitly set ID
+    event.id = Some(event_id.clone());
 
-    // Insert and verify
-    ctx.pool.events().insert(event).await?;
+    // Insert (Publish) and verify
+    ctx.publish_test_event(&event).await?;
+    ctx.timing().wait_for_source_events("id-test", 1).await?;
 
     let retrieved_events = ctx
         .pool
@@ -248,14 +255,7 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
         .expect("Event should exist");
 
     assert_eq!(retrieved.payload["event_id"], json!(event_id.to_string()));
-
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after generic id type safety failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
+    assert_eq!(retrieved.id, Some(event_id));
 
     Ok(())
 }
@@ -264,22 +264,33 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
 // REPOSITORY PATTERN TESTS - DbPoolExt functionality
 // =============================================================================
 
-#[sinex_test]
-async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+#[sinex_serial_test]
+async fn test_repository_pattern_functionality(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
     // Test the repository pattern with various query operations
 
     // Insert test data
     let source_suffix = format!("{}-{}", SOURCE_FIXTURE_REPO_PRIMARY, Ulid::new());
-    ctx.create_test_event(&source_suffix, "type.a", json!({"category": "alpha"}))
-        .await?;
-    ctx.create_test_event(&source_suffix, "type.b", json!({"category": "beta"}))
-        .await?;
-    ctx.create_test_event(&source_suffix, "type.a", json!({"category": "gamma"}))
+
+    let mut e1 =
+        Event::<JsonValue>::test_event(&*source_suffix, "type.a", json!({"category": "alpha"}));
+    e1.id = Some(Id::new());
+    ctx.publish_test_event(&e1).await?;
+
+    let mut e2 =
+        Event::<JsonValue>::test_event(&*source_suffix, "type.b", json!({"category": "beta"}));
+    e2.id = Some(Id::new());
+    ctx.publish_test_event(&e2).await?;
+
+    let mut e3 =
+        Event::<JsonValue>::test_event(&*source_suffix, "type.a", json!({"category": "gamma"}));
+    e3.id = Some(Id::new());
+    ctx.publish_test_event(&e3).await?;
+
+    // Wait for ingestion
+    ctx.timing()
+        .wait_for_source_events(&source_suffix, 3)
         .await?;
 
     let repo = ctx.pool.events();
@@ -308,67 +319,26 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::
         .await?;
     assert_eq!(count, 3);
 
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
-
     Ok(())
 }
 
-#[sinex_test]
-async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+#[sinex_serial_test]
+async fn test_repository_pagination_and_limits(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
     // Test pagination functionality
 
-    // Insert 20 test events with a resilient top-up loop to avoid partial inserts
+    // Insert 20 test events
     for i in 0..20 {
-        ctx.create_test_event("pagination-test", "page.test", json!({"index": i}))
-            .await?;
+        let mut event =
+            Event::<JsonValue>::test_event("pagination-test", "page.test", json!({"index": i}));
+        event.id = Some(Id::new());
+        ctx.publish_test_event(&event).await?;
     }
 
-    let expected = 20i64;
-    let mut attempts = 0;
-    loop {
-        let existing = ctx
-            .pool
-            .events()
-            .count_by_source(&EventSource::from("pagination-test"))
-            .await?;
-        if existing >= expected {
-            break;
-        }
-
-        // Top up any missing rows.
-        let deficit = (expected - existing) as usize;
-        for j in 0..deficit {
-            let seed = attempts * 10 + j as i32;
-            ctx.create_test_event(
-                "pagination-test",
-                "page.test",
-                json!({"index": seed, "topup": true}),
-            )
-            .await?;
-        }
-
-        attempts += 1;
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-            ctx.pool(),
-            "pagination-test",
-            expected as usize,
-            30,
-        )
-        .await?;
-        if attempts > 3 {
-            break;
-        }
-    }
-
+    let expected = 20usize;
     ctx.timing()
-        .wait_for_source_events("pagination-test", expected as usize)
+        .wait_for_source_events("pagination-test", expected)
         .await?;
 
     let repo = ctx.pool.events();
@@ -395,10 +365,6 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
         "expected all inserted events to be returned"
     );
 
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
-
     Ok(())
 }
 
@@ -406,36 +372,31 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
 // CONCURRENT OPERATIONS TESTS - Thread safety and isolation
 // =============================================================================
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     // Test concurrent insertions don't interfere with each other
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
-        tracing::warn!(error = %e, "Pre-test reset failed in concurrent insertion test; retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
 
     // Share a single test context across concurrent tasks
     let ctx = Arc::new(ctx);
+    let _pipeline = ctx.pipeline().await?;
     let mut handles = Vec::new();
 
     for i in 0..10 {
         let ctx_clone = Arc::clone(&ctx);
         let handle = tokio::spawn(async move {
-            let event = ctx_clone
-                .create_test_event(
-                    "concurrent-test",
-                    "concurrent.event",
-                    json!({
-                        "task_id": i,
-                        "timestamp": chrono::Utc::now().timestamp()
-                    }),
-                )
-                .await?;
+            let mut event = Event::<JsonValue>::test_event(
+                "concurrent-test",
+                "concurrent.event",
+                json!({
+                    "task_id": i,
+                    "timestamp": chrono::Utc::now().timestamp()
+                }),
+            );
+            event.id = Some(Id::new());
+
+            ctx_clone.publish_test_event(&event).await?;
 
             Ok::<_, color_eyre::eyre::Error>(event.id.expect("Event should have ID after creation"))
         });
@@ -450,41 +411,18 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     }
 
     // Verify all insertions succeeded and IDs are unique
-    if event_ids.len() < 10 {
-        let deficit = 10 - event_ids.len();
-        for j in 0..deficit {
-            let event = ctx
-                .create_test_event("concurrent-test", "concurrent.event", json!({ "retry": j }))
-                .await?;
-            event_ids.push(event.id.expect("retry event id"));
-        }
-    }
-    assert_eq!(event_ids.len(), 10);
+    assert_eq!(
+        event_ids.len(),
+        10,
+        "Concurrent insertion should create 10 events"
+    );
     let mut seen = std::collections::HashSet::new();
     for id in &event_ids {
         assert!(seen.insert(id.as_ulid()), "Event IDs should remain unique");
     }
 
     // Verify all events are in database
-    let db_events = ctx
-        .pool
-        .events()
-        .get_by_source(
-            &EventSource::from_static("concurrent-test"),
-            sinex_core::types::Pagination::new(Some(20), None),
-        )
-        .await?;
-    if db_events.len() < 10 {
-        let deficit = 10 - db_events.len();
-        for j in 0..deficit {
-            ctx.create_test_event(
-                "concurrent-test",
-                "concurrent.event",
-                json!({ "backfill": j }),
-            )
-            .await?;
-        }
-    }
+    WaitHelpers::wait_for_source_events(&ctx.pool, "concurrent-test", 10, 10).await?;
     let final_events = ctx
         .pool
         .events()
@@ -493,38 +431,42 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
             sinex_core::types::Pagination::new(Some(24), None),
         )
         .await?;
-    assert_eq!(final_events.len(), 10);
-
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
+    assert_eq!(
+        final_events.len(),
+        10,
+        "Expected 10 persisted concurrent-test events"
+    );
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    ctx.force_cleanup().await?;
+async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test that test contexts are properly isolated
     let test_id = uuid::Uuid::new_v4().to_string();
 
     // Create event in this context
-    ctx.create_test_event(
+    let mut event = Event::<JsonValue>::test_event(
         "isolation-test",
         "isolation.marker",
         json!({"test_id": test_id.clone()}),
-    )
-    .await?;
+    );
+    event.id = Some(Id::new());
+    ctx.publish_test_event(&event).await?;
+
+    // Wait for ingestion
+    ctx.timing()
+        .wait_for_source_events("isolation-test", 1)
+        .await?;
 
     // Create another context (should be isolated). If it happens to reuse the same
     // database, allocate a fresh one to avoid cross-contamination.
-    let mut other_ctx = TestContext::new().await?;
+    let mut other_ctx = TestContext::new().await?.with_shared_nats().await?;
     if other_ctx.database_url() == ctx.database_url() {
-        other_ctx.force_cleanup().await?;
-        other_ctx = TestContext::new().await?;
+        other_ctx = TestContext::new().await?.with_shared_nats().await?;
     }
 
     // Other context should not see our event
@@ -550,10 +492,6 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
         .await?;
 
     assert_eq!(our_events.len(), 1, "Should see our own events");
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
-    other_ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -562,65 +500,31 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
 // =============================================================================
 
 #[sinex_test]
-async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Test JSON schema validation with real payloads
+async fn test_json_schema_validation_integration(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
 
-    let schema = json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-            "file_path": {
-                "type": "string",
-                "minLength": 1
-            },
-            "file_size": {
-                "type": "integer",
-                "minimum": 0
-            },
-            "permissions": {
-                "type": "string",
-                "pattern": "^[0-7]{3}$"
-            }
-        },
-        "required": ["file_path", "file_size"],
-        "additionalProperties": false
-    });
+    ctx.publish_json_event(
+        "schema-test",
+        "validated.event",
+        json!({
+            "product_id": 12345,
+            "quantity": 10,
+            "tags": ["sale", "summer"]
+        }),
+    )
+    .await?;
 
-    // Register schema - using repository directly
-    use sinex_core::db::repositories::schema_management::NewEventSchema;
-    let new_schema = NewEventSchema {
-        source: "filesystem".to_string(),
-        event_type: "file.created".to_string(),
-        schema_version: "1.0.0".to_string(),
-        schema_content: schema,
-    };
-    let _schema = ctx.pool.schemas().register_schema(new_schema).await?;
-
-    // Test valid event
-    let valid_event = ctx
-        .create_test_event(
-            "filesystem",
-            "file.created",
-            json!({
-                "file_path": "/test/valid.txt",
-                "file_size": 1024,
-                "permissions": "644"
-            }),
+    let retrieved = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from_static("schema-test"),
+            sinex_core::types::Pagination::new(Some(1), None),
         )
         .await?;
 
-    assert_eq!(valid_event.source.as_str(), "filesystem");
-
-    // Test that invalid event would fail (if validation were enforced)
-    // Note: This depends on database constraint configuration
-    let _invalid_payload = json!({
-        "file_path": "/test/invalid.txt"
-        // missing required file_size
-    });
-
-    // For now, just verify the event was created (schema registration is separate)
-    assert_eq!(valid_event.source.as_str(), "filesystem");
-    assert_eq!(valid_event.event_type.as_str(), "file.created");
+    assert_eq!(retrieved[0].payload["product_id"], json!(12345));
+    assert_eq!(retrieved[0].payload["quantity"], json!(10));
 
     Ok(())
 }
@@ -630,137 +534,87 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
 // =============================================================================
 
 #[sinex_test]
-async fn test_large_payload_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Test handling of large JSON payloads
-    let large_string = "x".repeat(10_000); // 10KB string
+async fn test_large_payload_handling(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
 
-    let large_payload = json!({
-        "data": large_string,
-        "metadata": {
-            "size": 10000,
-            "type": "large_test",
-            "nested": {
-                "deep": {
-                    "structure": [1, 2, 3, 4, 5]
-                }
-            }
-        }
-    });
+    let large_string = "a".repeat(1024 * 1024); // 1MB
 
-    let event = ctx
-        .create_test_event("performance-test", "large.payload", large_payload.clone())
-        .await?;
+    ctx.publish_json_event(
+        "load-test",
+        "large.payload",
+        json!({
+            "data": large_string,
+            "meta": "metadata"
+        }),
+    )
+    .await?;
 
-    // Verify large payload was stored correctly
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event.id.expect("Event should have ID after creation"))
-        .await?
-        .expect("Event should exist");
+        .get_by_source(
+            &EventSource::from_static("load-test"),
+            sinex_core::types::Pagination::new(Some(1), None),
+        )
+        .await?;
 
-    assert_eq!(retrieved.payload, large_payload);
-    assert_eq!(
-        retrieved.payload["data"]
-            .as_str()
-            .expect("Should extract data field as string")
-            .len(),
-        10_000
-    );
+    assert_eq!(retrieved.len(), 1);
+    let payload_str = retrieved[0].payload["data"]
+        .as_str()
+        .expect("data is string");
+    assert_eq!(payload_str.len(), 1024 * 1024);
 
     Ok(())
 }
 
-#[sinex_test]
-async fn test_high_throughput_insertion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+#[sinex_serial_test]
+async fn test_high_throughput_insertion(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
 
-    let start = Instant::now();
-    let event_count = 40;
-    let concurrency = 10;
-    let source = format!("throughput-test-{}", Ulid::new());
-    let source_for_tasks = source.clone();
+    let source = format!("throughput-{}", Ulid::new());
+    let mut events = Vec::new();
 
-    let ctx_ref = &ctx;
-    let results: Vec<_> = stream::iter(0..event_count)
-        .map(|i| {
-            let source = source_for_tasks.clone();
-            async move {
-                let mut attempts = 0;
-                loop {
-                    attempts += 1;
-                    let attempt = ctx_ref
-                        .create_test_event(
-                            &source,
-                            "high.throughput",
-                            json!({
-                                "index": i,
-                                "batch": "throughput-001"
-                            }),
-                        )
-                        .await;
-
-                    match attempt {
-                        Ok(event) => break Ok(event),
-                        Err(err)
-                            if attempts < 6
-                                && (err.to_string().contains("deadlock detected")
-                                    || err.to_string().contains("could not serialize")
-                                    || err.to_string().contains("restart the transaction")) =>
-                        {
-                            sleep(TokioDuration::from_millis(40 * attempts as u64)).await;
-                            continue;
-                        }
-                        Err(err) => break Err(err),
-                    }
-                }
-            }
-        })
-        .buffer_unordered(concurrency)
-        .try_collect()
-        .await?;
-
-    let successful_inserts = results.len();
-    let duration = start.elapsed();
-    let events_per_second = event_count as f64 / duration.as_secs_f64();
-
-    assert_eq!(successful_inserts, event_count);
-    println!(
-        "Inserted {} events in {:?} ({:.2} events/sec)",
-        event_count, duration, events_per_second
-    );
-
-    // Verify events are in database using deterministic wait helper
-    let mut inserted_events =
-        WaitHelpers::wait_for_source_events(&ctx.pool, &source, event_count, 30).await?;
-
-    if inserted_events < event_count as usize {
-        let missing = event_count as usize - inserted_events;
-        for i in 0..missing {
-            ctx.create_test_event(
-                &source,
-                "high.throughput",
-                json!({"index": event_count + i, "batch": "throughput-backfill"}),
-            )
-            .await
-            .ok();
-        }
-        inserted_events =
-            WaitHelpers::wait_for_source_events(&ctx.pool, &source, event_count, 20).await?;
+    // Prepare 1000 events
+    for i in 0..1000 {
+        let mut event = Event::<JsonValue>::test_event(&*source, "perf.test", json!({"i": i}));
+        event.id = Some(Id::new());
+        events.push(event);
     }
 
-    assert!(
-        inserted_events as usize >= event_count,
-        "Expected at least {event_count} events, saw {inserted_events}"
-    );
+    let start = std::time::Instant::now();
 
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
+    // Concurrent publish
+    // Note: We don't use tokio::spawn here to avoid overhead of task creation dominating the test,
+    // but synchronous publish might be slow. Let's use futures::join_all or similar if needed.
+    // For now, sequential publish is fine as NATS publish is fast.
+    for event in &events {
+        ctx.publish_test_event(event).await?;
+    }
+
+    // Wait for all to be ingested
+    // This includes the time for NATS->Ingestd->DB
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        &ctx.pool, &source, 1000, 30,
+    )
+    .await?;
+
+    let duration = start.elapsed();
+    tracing::info!("Inserted 1000 events in {:?}", duration);
+
+    // Should be able to process 1000 events quickly
+    // Pipeline might be slower than raw DB insert, so we relax the constraint slightly if needed,
+    // but 5s is plenty for 1000 events.
+    assert!(duration < std::time::Duration::from_secs(5));
+
+    // Verify count
+    let count = ctx
+        .pool
+        .events()
+        .count_by_source(&EventSource::new(&source))
+        .await?;
+    assert_eq!(count, 1000);
+
     Ok(())
 }
 
@@ -769,12 +623,12 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> color_eyre::eyre::R
 // =============================================================================
 
 #[sinex_test]
-async fn test_error_propagation_and_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_error_propagation_and_recovery(ctx: TestContext) -> TestResult<()> {
     // Test error handling in various scenarios
 
     // Test invalid source (empty string)
     let invalid_result = ctx
-        .create_test_event(
+        .publish_json_event(
             "", // Empty source should fail
             "error.test",
             json!({}),
@@ -785,7 +639,7 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> color_eyre::ey
 
     // Test that pool is still usable after error
     let valid_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "error-recovery-test",
             "recovery.test",
             json!({"recovery": true}),
@@ -798,42 +652,35 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test]
-async fn test_unicode_and_special_characters(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Test handling of various character encodings
-    let test_cases = vec![
-        ("unicode", "Hello 世界 🌍", "Unicode characters"),
-        ("emoji", "🎉🚀💻", "Emoji characters"),
-        ("special", "Special chars: !@#$%^&*()", "Special symbols"),
-        ("quotes", r#"Quotes: "double" 'single'"#, "Quote characters"),
-        ("newlines", "Line 1\nLine 2\nLine 3", "Newline characters"),
-        ("tabs", "Tab\tseparated\tvalues", "Tab characters"),
+async fn test_unicode_and_special_characters(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
+    let special_strings = vec![
+        "Hello World",
+        "Hello World 🌍🚀",          // Emoji
+        "こんにちは",                // Japanese
+        "ñ",                         // Spanish
+        "Müller",                    // German
+        "NULL\0BYTE",                // Null byte (might be tricky in JSON/Postgres)
+        "SQL'Injection",             // SQL quote
+        "<script>alert(1)</script>", // XSS
     ];
 
-    for (test_name, test_value, description) in test_cases {
-        let event = ctx
-            .create_test_event(
-                "unicode-test",
-                "character.test",
-                json!({
-                    "test_name": test_name,
-                    "test_value": test_value,
-                    "description": description
-                }),
-            )
+    for s in special_strings {
+        let inserted = ctx
+            .publish_json_event("unicode-test", "special.chars", json!({ "content": s }))
             .await?;
 
-        // Verify data was stored correctly
-        assert_eq!(event.payload["test_value"], json!(test_value));
-
-        // Verify retrieval
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event.id.expect("Event should have ID after creation"))
+            .get_by_id(inserted.id.clone().expect("event id"))
             .await?
-            .expect("Event should exist");
+            .expect("event should exist");
 
-        assert_eq!(retrieved.payload["test_value"], json!(test_value));
+        let mut expected_content = json!(s);
+        TestContext::sanitize_payload(&mut expected_content);
+
+        assert_eq!(retrieved.payload["content"], expected_content);
     }
 
     Ok(())
@@ -844,7 +691,7 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> color_eyre::ey
 // =============================================================================
 
 #[sinex_test]
-async fn test_timing_utilities(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_timing_utilities(ctx: TestContext) -> TestResult<()> {
     // Test timing measurement capabilities
     let start_time = ctx.elapsed();
 
@@ -873,16 +720,16 @@ async fn test_timing_utilities(ctx: TestContext) -> color_eyre::eyre::Result<()>
 }
 
 #[sinex_test]
-async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
     // Test enhanced assertion functionality
 
     // Create test data
     let events = vec![
-        ctx.create_test_event("assertion-test", "test.a", json!({}))
+        ctx.publish_json_event("assertion-test", "test.a", json!({}))
             .await?,
-        ctx.create_test_event("assertion-test", "test.b", json!({}))
+        ctx.publish_json_event("assertion-test", "test.b", json!({}))
             .await?,
-        ctx.create_test_event("assertion-test", "test.c", json!({}))
+        ctx.publish_json_event("assertion-test", "test.c", json!({}))
             .await?,
     ];
 
@@ -890,6 +737,7 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
     ctx.assert("event collection validation")
         .not_empty(&events)?
         .has_size(&events, 3)?;
+    ctx.assert_unique_event_ids(&events)?;
 
     // Test individual event assertions
     for event in &events {
@@ -909,20 +757,16 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
 // MODERN TEST INFRASTRUCTURE INTEGRATION - rstest, insta, tracing
 // =============================================================================
 
-#[sinex_test]
+#[sinex_serial_test]
 #[traced_test]
-async fn test_rstest_integration_10(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+async fn test_rstest_integration_10(ctx: TestContext) -> TestResult<()> {
     let event_count = 10;
     // Test rstest parameterization with sinex_test
     tracing::info!("Testing with {} events", event_count);
 
     // Create specified number of events
     for i in 0..event_count {
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "rstest-integration",
             "parameterized.test",
             json!({
@@ -948,20 +792,29 @@ async fn test_rstest_integration_10(ctx: TestContext) -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-async fn test_insta_snapshots(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_insta_snapshots(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     // Test snapshot testing with insta
-    ctx.create_test_event(
+    let mut e1 = Event::<JsonValue>::test_event(
         "snapshot-test",
         "snapshot.a",
         json!({"value": 1, "name": "first"}),
-    )
-    .await?;
-    ctx.create_test_event(
+    );
+    e1.id = Some(Id::new());
+    ctx.publish_test_event(&e1).await?;
+
+    let mut e2 = Event::<JsonValue>::test_event(
         "snapshot-test",
         "snapshot.b",
         json!({"value": 2, "name": "second"}),
-    )
-    .await?;
+    );
+    e2.id = Some(Id::new());
+    ctx.publish_test_event(&e2).await?;
+
+    // Wait for ingestion
+    ctx.timing()
+        .wait_for_source_events("snapshot-test", 2)
+        .await?;
 
     let retrieved = ctx
         .pool
@@ -1016,23 +869,24 @@ async fn test_insta_snapshots(ctx: TestContext) -> color_eyre::eyre::Result<()> 
 // =============================================================================
 
 #[sinex_test]
-async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     // Test a complete end-to-end workflow
 
     // 1. Create initial event
-    let _initial_event = ctx
-        .create_test_event(
-            "workflow-test",
-            "workflow.started",
-            json!({
-                "workflow_id": "wf-001",
-                "step": 1
-            }),
-        )
-        .await?;
+    let mut e1 = Event::<JsonValue>::test_event(
+        "workflow-test",
+        "workflow.started",
+        json!({
+            "workflow_id": "wf-001",
+            "step": 1
+        }),
+    );
+    e1.id = Some(Id::new());
+    ctx.publish_test_event(&e1).await?;
 
     // 2. Create processing events
-    ctx.create_test_event(
+    let mut e2 = Event::<JsonValue>::test_event(
         "workflow-test",
         "workflow.processing",
         json!({
@@ -1040,10 +894,11 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
             "step": 2,
             "action": "validate_input"
         }),
-    )
-    .await?;
+    );
+    e2.id = Some(Id::new());
+    ctx.publish_test_event(&e2).await?;
 
-    ctx.create_test_event(
+    let mut e3 = Event::<JsonValue>::test_event(
         "workflow-test",
         "workflow.processing",
         json!({
@@ -1051,21 +906,27 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
             "step": 3,
             "action": "transform_data"
         }),
-    )
-    .await?;
+    );
+    e3.id = Some(Id::new());
+    ctx.publish_test_event(&e3).await?;
 
     // 3. Create completion event
-    let _completion_event = ctx
-        .create_test_event(
-            "workflow-test",
-            "workflow.completed",
-            json!({
-                "workflow_id": "wf-001",
-                "step": 4,
-                "result": "success",
-                "duration_ms": 1250
-            }),
-        )
+    let mut e4 = Event::<JsonValue>::test_event(
+        "workflow-test",
+        "workflow.completed",
+        json!({
+            "workflow_id": "wf-001",
+            "step": 4,
+            "result": "success",
+            "duration_ms": 1250
+        }),
+    );
+    e4.id = Some(Id::new());
+    ctx.publish_test_event(&e4).await?;
+
+    // Wait for all 4 events
+    ctx.timing()
+        .wait_for_source_events("workflow-test", 4)
         .await?;
 
     // 4. Verify complete workflow

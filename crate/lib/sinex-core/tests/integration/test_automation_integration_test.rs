@@ -12,15 +12,58 @@
 
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_test_utils::TestResult;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{DbPoolExt, EventSource};
-use sinex_satellite_sdk::{Checkpoint, CheckpointManager};
-use sinex_test_utils::acquire_pool_test_guard;
+use sinex_core::{DbPoolExt, EventId, EventSource};
+use sinex_node_sdk::{Checkpoint, CheckpointManager};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
+use sinex_test_utils::{
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle, TestSatellitePublisher,
+};
 use std::collections::HashMap;
-use tokio::time::sleep;
+use tokio::task::yield_now;
+
+async fn start_ingestd(ctx: &TestContext) -> TestResult<TestIngestdHandle> {
+    let nats = ctx.nats_handle()?;
+    let config = TestIngestdConfig {
+        nats_url: nats.client_url().to_string(),
+        database_url: ctx.database_url().to_string(),
+        work_dir: None,
+        ..Default::default()
+    };
+    let handle = start_test_ingestd_with_config(config, Some(ctx)).await?;
+    Ok(handle)
+}
+
+async fn publish_event_via_pipeline(
+    ctx: &TestContext,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> TestResult<EventId> {
+    let publisher = TestSatellitePublisher::new(ctx.nats_client(), source.to_string());
+    let event_id = publisher.publish_event(event_type, payload).await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let event_id = event_id;
+            async move { Ok(pool.events().get_by_id(event_id.into()).await?.is_some()) }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
+    Ok(event_id.into())
+}
+
+async fn emit_event(
+    ctx: &TestContext,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> TestResult<()> {
+    publish_event_via_pipeline(ctx, source, event_type, payload).await?;
+    Ok(())
+}
 
 /// Test data setup for automation integration tests
 async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
@@ -29,7 +72,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     // Create events that various automata should process
 
     // Analytics events - for analytics automaton
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "filesystem",
         "file.created",
         json!({
@@ -41,7 +85,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     .await?;
 
     // Terminal events - for terminal command canonicalizer
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "terminal",
         "command.executed",
         json!({
@@ -54,7 +99,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     .await?;
 
     // Health events - for health aggregator
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "system",
         "resource.usage",
         json!({
@@ -67,7 +113,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     .await?;
 
     // Content events - for content automaton
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "browser",
         "page.visited",
         json!({
@@ -79,7 +126,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     .await?;
 
     // PKM events - for PKM automaton
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "editor",
         "file.edited",
         json!({
@@ -92,7 +140,8 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
     .await?;
 
     // Search events - for search automaton
-    ctx.create_test_event(
+    emit_event(
+        ctx,
         "search",
         "query.executed",
         json!({
@@ -109,30 +158,19 @@ async fn setup_automation_test_data(ctx: &TestContext) -> TestResult<()> {
 }
 
 /// Test basic automaton lifecycle - startup, processing, shutdown
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing basic automaton lifecycle");
 
-    let _guard = acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     // Setup test data
     setup_automation_test_data(&ctx).await?;
 
-    // Top up if inserts raced DB cleanup
-    if ctx.pool.events().count_all().await? < 6 {
-        tracing::warn!("Seeding produced fewer events than expected; topping up");
-        for i in 0..3 {
-            ctx.create_test_event(
-                "automation-backfill",
-                "automation.synthetic",
-                json!({"backfill": i}),
-            )
-            .await?;
-        }
-        WaitHelpers::wait_for_event_count(&ctx.pool, 6, 10).await?;
-    }
+    WaitHelpers::wait_for_event_count(&ctx.pool, 6, DEFAULT_WAIT_SECS).await?;
 
     // Verify initial event count
     let initial_events = ctx.pool.events().count_all().await?;
@@ -143,7 +181,7 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
 
     // Create a CheckpointManager to simulate automaton checkpoint handling
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -169,6 +207,7 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
     assert_eq!(final_checkpoint.processed_count, 3);
 
     tracing::info!("Basic automaton lifecycle test completed successfully");
+    ingest_handle.stop().await?;
     Ok(())
 }
 
@@ -177,6 +216,9 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
 async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing multiple automata coordination");
     ctx.ensure_clean().await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     // Setup diverse test events
     setup_automation_test_data(&ctx).await?;
@@ -191,7 +233,7 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()>
     let mut managers = HashMap::new();
     for &name in &automaton_names {
         let manager = CheckpointManager::new(
-            ctx.pool.clone(),
+            kv.clone(),
             name.to_string(),
             "default".to_string(),
             format!("test-consumer-{name}"),
@@ -222,51 +264,35 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()>
         // Save the checkpoint
         manager.save_checkpoint(&checkpoint_state).await?;
 
-        // Add a small delay to simulate real processing time
-        sleep(std::time::Duration::from_millis(10)).await;
+        yield_now().await;
     }
 
     // Verify all automata processed events without conflicts
     for (i, &name) in automaton_names.iter().enumerate() {
         let manager = managers.get(name).unwrap();
-        let checkpoint = manager.load_checkpoint().await?;
+        let _checkpoint = manager.load_checkpoint().await?;
         let expected_count = (i + 1) as u64;
 
-        if checkpoint.processed_count < expected_count {
-            tracing::warn!(
-                name = name,
-                got = checkpoint.processed_count,
-                expected = expected_count,
-                "Checkpoint processed count below expectation, topping up"
-            );
-            let mut patched = checkpoint.clone();
-            patched.processed_count = expected_count;
-            managers
-                .get(name)
-                .unwrap()
-                .save_checkpoint(&patched)
-                .await?;
-        }
-
         let refreshed = managers.get(name).unwrap().load_checkpoint().await?;
-        assert!(
-            refreshed.processed_count >= expected_count,
-            "Automaton {name} should have processed at least {expected_count} events"
+        assert_eq!(
+            refreshed.processed_count, expected_count,
+            "Automaton {name} should have processed {expected_count} events"
         );
     }
 
     tracing::info!("Multiple automata coordination test completed successfully");
+    ingest_handle.stop().await?;
     Ok(())
 }
 
 /// Test automaton recovery from checkpoint after simulated restart
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton checkpoint recovery");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     setup_automation_test_data(&ctx).await?;
 
@@ -274,7 +300,7 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> 
 
     // Create a CheckpointManager
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv.clone(),
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -298,7 +324,7 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> 
 
     // Phase 2: Simulate restart by creating new manager with same identity
     let recovery_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -341,9 +367,7 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> 
     assert_eq!(final_state.processed_count, 6);
 
     tracing::info!("Automaton checkpoint recovery test completed successfully");
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
+    ingest_handle.stop().await?;
     Ok(())
 }
 
@@ -351,23 +375,29 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 async fn test_automaton_event_filtering(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton event filtering and processing logic");
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     // Create mixed event types - some relevant, some irrelevant
-    ctx.create_test_event(
+    emit_event(
+        &ctx,
         "filesystem",
         "file.created",
         json!({"path": "/tmp/relevant.txt", "relevant": true}),
     )
     .await?;
 
-    ctx.create_test_event(
+    emit_event(
+        &ctx,
         "network",
         "connection.established",
         json!({"host": "example.com", "relevant": false}),
     )
     .await?;
 
-    ctx.create_test_event(
+    emit_event(
+        &ctx,
         "filesystem",
         "file.deleted",
         json!({"path": "/tmp/also-relevant.txt", "relevant": true}),
@@ -378,7 +408,7 @@ async fn test_automaton_event_filtering(ctx: TestContext) -> TestResult<()> {
 
     // Create CheckpointManager for filtering test
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -429,6 +459,7 @@ async fn test_automaton_event_filtering(ctx: TestContext) -> TestResult<()> {
     }
 
     tracing::info!("Automaton event filtering test completed successfully");
+    ingest_handle.stop().await?;
     Ok(())
 }
 
@@ -438,30 +469,49 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
     tracing::info!("Testing automaton performance under load");
 
     let automaton_name = "performance-test-automaton";
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
 
     // Create a substantial number of test events
-    let event_count = 25u64; // Changed to u64
+    let event_count = 25u64;
+    let publisher = TestSatellitePublisher::new(ctx.nats_client(), "performance".to_string());
     for i in 0..event_count {
-        ctx.create_test_event(
-            "performance",
-            "load.test",
-            json!({
-                "sequence": i,
-                "payload_size": "moderate",
-                "test_data": format!("Performance test event number {}", i)
-            }),
-        )
-        .await?;
+        publisher
+            .publish_event(
+                "load.test",
+                json!({
+                    "sequence": i,
+                    "payload_size": "moderate",
+                    "test_data": format!("Performance test event number {}", i)
+                }),
+            )
+            .await?;
 
-        // Small delay to avoid overwhelming the system
         if i.is_multiple_of(10) {
-            sleep(std::time::Duration::from_millis(1)).await;
+            yield_now().await;
         }
     }
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let count: i64 = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM core.events WHERE source = 'performance' AND event_type = 'load.test'"#
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0);
+                Ok::<bool, sinex_test_utils::SinexError>(count as u64 >= event_count)
+            }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
 
     // Create CheckpointManager for performance test
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -477,8 +527,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
         let batch_start = Utc::now();
         let batch_end_target = std::cmp::min(processed + batch_size, event_count);
 
-        // Simulate processing time
-        sleep(std::time::Duration::from_millis(5)).await;
+        yield_now().await;
 
         processed = batch_end_target;
 
@@ -514,13 +563,15 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
     assert_eq!(final_state.processed_count, event_count);
 
     // Performance benchmark - should process at reasonable rate
-    let events_per_second = event_count as f64 / total_duration.num_seconds() as f64;
+    let total_secs = (total_duration.num_milliseconds().max(1) as f64) / 1000.0;
+    let events_per_second = event_count as f64 / total_secs;
     assert!(
         events_per_second > 5.0,
         "Processing rate too slow: {events_per_second} events/second"
     );
 
     tracing::info!("Automaton performance test completed successfully");
+    ingest_handle.stop().await?;
     Ok(())
 }
 
@@ -529,12 +580,15 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
 async fn test_automaton_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton error handling and resilience");
 
+    let ctx = ctx.with_shared_nats().await?;
+    let mut ingest_handle = start_ingestd(&ctx).await?;
+    let kv = ctx.checkpoint_kv().await?;
     setup_automation_test_data(&ctx).await?;
 
     let automaton_name = "error-handling-automaton";
 
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         automaton_name.to_string(),
         "default".to_string(),
         "test-consumer".to_string(),
@@ -608,5 +662,6 @@ async fn test_automaton_error_handling(ctx: TestContext) -> TestResult<()> {
     }
 
     tracing::info!("Automaton error handling test completed successfully");
+    ingest_handle.stop().await?;
     Ok(())
 }

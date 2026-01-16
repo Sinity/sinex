@@ -7,7 +7,6 @@
 //! - Lock contention analysis
 //! - Atomic operation verification
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 /// Concurrent checkpoint update tests

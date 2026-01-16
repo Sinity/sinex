@@ -8,10 +8,11 @@ use sinex_core::types::validation::{
     PathValidationLevel,
     SecurePath,
 };
+use sinex_test_utils::TestResult;
 use sinex_test_utils::sinex_test;
 
 #[sinex_test]
-fn test_secure_path_validation_levels() -> color_eyre::eyre::Result<()> {
+fn test_secure_path_validation_levels() -> TestResult<()> {
     let secure_path = SecurePath::new("/valid/path", PathValidationLevel::Basic)?;
     assert_eq!(secure_path.as_str(), "/valid/path");
 
@@ -28,7 +29,7 @@ fn test_secure_path_validation_levels() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_sanitized_path_deserialization() -> color_eyre::eyre::Result<()> {
+fn test_sanitized_path_deserialization() -> TestResult<()> {
     let valid_json = json!("/tmp/valid/path");
     let deserializer = serde_json::from_value::<serde_json::Value>(valid_json).unwrap();
     let path = deserialize_sanitized_path(deserializer);
@@ -53,7 +54,7 @@ fn test_sanitized_path_deserialization() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_path_length_limits() -> color_eyre::eyre::Result<()> {
+fn test_path_length_limits() -> TestResult<()> {
     let very_long_path = "/tmp/".to_string() + &"a".repeat(5000);
     let result = SecurePath::new(&very_long_path, PathValidationLevel::Basic);
     assert!(result.is_err(), "Excessively long paths should be rejected");

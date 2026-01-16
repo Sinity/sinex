@@ -1,7 +1,7 @@
 # TIM-MultiDeviceSyncArchitecture: Multi-Device Synchronization
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
 
 
 *   **Relevant ADR:** (N/A directly, enables Vision Doc Part VI.5 for personal multi-device coherence)

@@ -15,7 +15,7 @@ Key Principles
 - Observability by default (journald heartbeat; traceable command/response)
 
 Flow
-- Satellites → NATS JetStream → sinex-ingestd → Postgres (`core.events`) → Automata → Gateway (JSON‑RPC) → CLI.
+- nodes → NATS JetStream → sinex-ingestd → Postgres (`core.events`) → Automata → Gateway (JSON‑RPC) → CLI.
 
 Data Substrate
 - Storage: PostgreSQL (+ TimescaleDB)
@@ -38,7 +38,11 @@ Schema & Taxonomy
 - Event taxonomy: `docs/current/architecture/event-taxonomy.md`
 
 Implementation Guides
-- Satellites SDK and patterns: `crate/lib/sinex-satellite-sdk/docs/overview.md`
+- nodes SDK and patterns: `crate/lib/sinex-node-sdk/docs/overview.md`
 - Gateway/CLI: see repository README and `./cli/exo.py`
+
+Deep Dives
+- Advanced patterns: [Advanced Implementation Patterns](advanced-implementation-patterns.md) for deep coverage of type system sophistication, concurrency patterns, testing infrastructure, and database architecture excellence
+- Visual reference: [System Architecture Diagrams](system-diagrams.md) for comprehensive ASCII art visualizations of all major components
 
 See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

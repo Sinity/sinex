@@ -10,6 +10,7 @@
 
   # Enable snapshot mode by default for snapshot-based tests
   virtualisation.snapshotMode = lib.mkDefault false;
+  virtualisation.baseSnapshot = lib.mkDefault "after-services";
 
   # Optimize for faster snapshot creation and restoration
   boot = {

@@ -1,0 +1,88 @@
+[package]
+name = "sinex-node-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+camino = { workspace = true }
+# Core dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+color-eyre.workspace = true
+bon.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true }
+futures = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+jsonschema.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# NATS for message bus (replaces Redis)
+async-nats.workspace = true
+
+# Time and IDs
+chrono.workspace = true
+uuid.workspace = true
+semver = { version = "1.0", features = ["serde"] }
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+dirs.workspace = true
+toml = "0.8"
+tower = "0.4"
+validator = { workspace = true }
+figment = { workspace = true }
+humantime-serde = { workspace = true }
+uncased = { workspace = true }
+
+# System
+sd-notify = "0.4"
+gethostname.workspace = true
+parking_lot = "0.12"
+ahash.workspace = true
+blake3 = "1.5"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+sysinfo = "0.31"
+nix = { version = "0.28", features = ["fs", "resource"] }
+url = "2.5"
+which = "6.0"
+urlencoding = "2.1"
+notify = { workspace = true }
+libc = "0.2"
+
+# Local dependencies
+sinex-core = { path = "../sinex-core" }
+sinex-macros = { path = "../sinex-macros", optional = true }
+# Removed sinex-preflight - now part of this crate
+# Removed sinex-nats - now part of this crate
+
+[build-dependencies]
+chrono = { workspace = true }
+
+[features]
+default = []
+event-source = []
+automaton = []
+macros = ["dep:sinex-macros"]
+preflight = []
+external-tests = []
+
+[dev-dependencies]
+tempfile = "3.13"
+sinex-test-utils = { path = "../sinex-test-utils" }
+proptest = { workspace = true }
+
+[[bin]]
+name = "sinex-preflight"
+path = "src/bin/sinex-preflight.rs"
+required-features = ["preflight"]

@@ -1,12 +1,12 @@
 // Satellite test utilities for integration testing
 // Provides test handles for satellites, ingestd, and automata
 
-use crate::TestResult;
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::TestResult;
 use camino::Utf8PathBuf;
-use sinex_core::db::DbPool;
-use sinex_core::types::{error::SinexError, Seconds};
+use sinex_core::types::{error::SinexError, Seconds, Ulid};
 use sinex_ingestd::{config::IngestdConfig, service::IngestService};
 use tokio::process::Child;
 use tokio::sync::Mutex as AsyncMutex;
@@ -20,6 +20,11 @@ pub struct TestIngestdConfig {
     pub nats_url: String,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
+    pub batch_size: usize,
+    pub batch_timeout_secs: Seconds,
+    pub consumer_fetch_timeout_ms: u64,
+    pub consumer_fetch_max_messages: usize,
+    pub namespace: Option<String>,
 }
 
 impl Default for TestIngestdConfig {
@@ -28,6 +33,11 @@ impl Default for TestIngestdConfig {
             nats_url: "nats://127.0.0.1:4222".to_string(),
             database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
             work_dir: None,
+            batch_size: 1,
+            batch_timeout_secs: Seconds::from_secs(1),
+            consumer_fetch_timeout_ms: 1_000,
+            consumer_fetch_max_messages: 100,
+            namespace: None,
         }
     }
 }
@@ -39,6 +49,8 @@ pub struct TestIngestdHandle {
     service: Option<IngestService>,
     join_handle: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     _work_dir: Option<tempfile::TempDir>,
+    nats_url: String,
+    cleanup_streams: Vec<String>,
 }
 
 impl TestIngestdHandle {
@@ -58,6 +70,33 @@ impl TestIngestdHandle {
                 return Err(
                     SinexError::service(format!("ingestd task join error: {join_err}")).into(),
                 );
+            }
+        }
+
+        if !self.cleanup_streams.is_empty() {
+            let nats_config = sinex_core::nats::NatsConnectionConfig::builder()
+                .url(self.nats_url.clone())
+                .build();
+            match nats_config.connect().await {
+                Ok(client) => {
+                    let js = async_nats::jetstream::new(client);
+                    for stream in &self.cleanup_streams {
+                        if let Err(err) = js.delete_stream(stream).await {
+                            tracing::debug!(
+                                stream = stream.as_str(),
+                                error = %err,
+                                "Failed to delete JetStream stream during ingestd cleanup"
+                            );
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        url = %self.nats_url,
+                        error = %err,
+                        "Failed to connect to NATS for ingestd cleanup"
+                    );
+                }
             }
         }
         tracing::info!(stream = %self.stream_name, "Test ingestd stopped");
@@ -96,29 +135,70 @@ pub async fn start_test_ingestd_with_config(
     let work_dir = Utf8PathBuf::try_from(work_dir_path)
         .map_err(|e| SinexError::configuration(e.to_string()))?;
 
-    let stream_name = "sinex_test_events";
-    let env = sinex_core::environment::environment();
-    let material_begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    let material_slices_stream = env.nats_stream_name("SOURCE_MATERIAL_SLICES");
-    let material_end_stream = env.nats_stream_name("SOURCE_MATERIAL_END");
+    let namespace = config
+        .namespace
+        .clone()
+        .unwrap_or_else(|| format!("ingestd-{}", Ulid::new()));
 
-    let nats_client = async_nats::connect(&config.nats_url)
-        .await
-        .map_err(|e| SinexError::network(format!("Failed to connect to NATS: {e}")))?;
+    let events_consumer = namespaced_consumer_name(&namespace, "ingestd");
+    let env = sinex_core::environment::environment();
+    let stream_name = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+    let material_begin_stream =
+        env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL_BEGIN");
+    let material_slices_stream =
+        env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL_SLICES");
+    let material_end_stream =
+        env.nats_stream_name_with_namespace(Some(&namespace), "SOURCE_MATERIAL_END");
+    let confirmations_stream = format!("{stream_name}_CONFIRMATIONS");
+    let dlq_stream = format!("{stream_name}_DLQ");
+
+    tracing::debug!("Starting ingestd with NATS {}", config.nats_url);
+    eprintln!("ingestd connecting to {}", config.nats_url);
+    let mut attempts = 0;
+    let nats_client = loop {
+        attempts += 1;
+        if let Err(err) =
+            tokio::net::TcpStream::connect(&config.nats_url.trim_start_matches("nats://")).await
+        {
+            eprintln!("tcp connect failed (attempt {attempts}): {err}");
+        }
+        let nats_config = sinex_core::nats::NatsConnectionConfig::builder()
+            .url(config.nats_url.clone())
+            .build();
+        match nats_config.connect().await {
+            Ok(client) => break client,
+            Err(err) if attempts < 10 => {
+                eprintln!("retrying ingestd NATS connect (attempt {attempts}): {err}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            Err(err) => {
+                return Err(SinexError::network(format!("Failed to connect to NATS: {err}")).into())
+            }
+        }
+    };
     let jetstream = async_nats::jetstream::new(nats_client.clone());
-    let _ = jetstream.delete_stream(stream_name).await;
+    let _ = jetstream.delete_stream(&stream_name).await;
     let _ = jetstream.delete_stream(&material_begin_stream).await;
     let _ = jetstream.delete_stream(&material_slices_stream).await;
     let _ = jetstream.delete_stream(&material_end_stream).await;
+    let _ = jetstream.delete_stream(&confirmations_stream).await;
+    let _ = jetstream.delete_stream(&dlq_stream).await;
 
     let annex_path = work_dir.join("annex");
     let state_dir = work_dir.join("assembler_state");
 
-    let ingest_config = IngestdConfig::builder()
+    let mut ingest_config = IngestdConfig::builder()
         .database_url(config.database_url.clone())
-        .nats_url(config.nats_url.clone())
-        .batch_size(1)
-        .batch_timeout_secs(Seconds::from_secs(1))
+        .nats(
+            sinex_core::nats::NatsConnectionConfig::builder()
+                .url(config.nats_url.clone())
+                .build(),
+        )
+        .batch_size(config.batch_size)
+        .batch_timeout_secs(config.batch_timeout_secs)
+        .consumer_fetch_timeout_ms(config.consumer_fetch_timeout_ms.into())
+        .consumer_fetch_max_messages(config.consumer_fetch_max_messages)
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir)
@@ -126,6 +206,18 @@ pub async fn start_test_ingestd_with_config(
         .assembler_state_dir(state_dir)
         .nats_stream_name(stream_name.to_string())
         .build();
+
+    ingest_config.nats_namespace = config.namespace.clone();
+    ingest_config.nats_consumer_name = events_consumer.clone();
+
+    let cleanup_streams = vec![
+        ingest_config.nats_stream_name.clone(),
+        confirmations_stream.clone(),
+        dlq_stream.clone(),
+        material_begin_stream.clone(),
+        material_slices_stream.clone(),
+        material_end_stream.clone(),
+    ];
 
     let service = IngestService::new(ingest_config.clone()).await?;
 
@@ -136,8 +228,9 @@ pub async fn start_test_ingestd_with_config(
         }
     });
 
-    // Verify service is ready by checking required JetStream streams exist and that the durable
-    // consumers are created (so tests don't have to guess with arbitrary sleeps).
+    // Verify service is ready by checking the events stream + consumer exist.
+    // Material streams/consumers are created by MaterialAssembler and may lag; tests that rely on
+    // material handling already wait for completion.
     tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             if join_handle.is_finished() {
@@ -160,68 +253,12 @@ pub async fn start_test_ingestd_with_config(
                 )
                 .await
             {
-                Ok(_) => {}
+                Ok(_) => return Ok(()),
                 Err(_) => {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     continue;
                 }
             }
-
-            let begin_stream = match jetstream.get_stream(&material_begin_stream).await {
-                Ok(stream) => stream,
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    continue;
-                }
-            };
-            if begin_stream
-                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
-                    "ingestd_material_begin",
-                )
-                .await
-                .is_err()
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                continue;
-            }
-
-            let slices_stream = match jetstream.get_stream(&material_slices_stream).await {
-                Ok(stream) => stream,
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    continue;
-                }
-            };
-            if slices_stream
-                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
-                    "ingestd_material_slices",
-                )
-                .await
-                .is_err()
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                continue;
-            }
-
-            let end_stream = match jetstream.get_stream(&material_end_stream).await {
-                Ok(stream) => stream,
-                Err(_) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    continue;
-                }
-            };
-            if end_stream
-                .get_consumer::<async_nats::jetstream::consumer::pull::Config>(
-                    "ingestd_material_end",
-                )
-                .await
-                .is_err()
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                continue;
-            }
-
-            return Ok(());
         }
     })
     .await
@@ -233,6 +270,8 @@ pub async fn start_test_ingestd_with_config(
         service: Some(service),
         join_handle: Arc::new(AsyncMutex::new(Some(join_handle))),
         _work_dir: work_dir_temp,
+        nats_url: config.nats_url.clone(),
+        cleanup_streams,
     };
 
     if let Some(ctx) = ctx {
@@ -251,114 +290,21 @@ pub async fn start_test_ingestd_with_config(
     Ok(handle)
 }
 
-/// Handle for a test satellite process
-pub struct TestSatelliteHandle {
-    pub name: String,
-    process: Option<Child>,
+fn namespaced_consumer_name(namespace: &str, base: &str) -> String {
+    format!("{}_{}", sanitize_namespace_token(namespace), base)
 }
 
-impl TestSatelliteHandle {
-    /// Start a new test satellite
-    pub async fn start(config: serde_json::Value, _pool: DbPool) -> TestResult<Self> {
-        // For now, return a mock handle
-        Ok(Self {
-            name: config
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("test-satellite")
-                .to_string(),
-            process: None,
+fn sanitize_namespace_token(namespace: &str) -> String {
+    namespace
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
         })
-    }
-
-    /// Stop the satellite process
-    pub async fn stop(&mut self) -> TestResult<()> {
-        if let Some(mut process) = self.process.take() {
-            process.kill().await?;
-        }
-        Ok(())
-    }
-}
-
-/// Handle for a test automaton process
-pub struct TestAutomatonHandle {
-    pub name: String,
-    process: Option<Child>,
-}
-
-impl TestAutomatonHandle {
-    /// Start a new test automaton
-    pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> TestResult<Self> {
-        // For now, return a mock handle
-        Ok(Self {
-            name: format!("test-{automaton_type}"),
-            process: None,
-        })
-    }
-
-    /// Stop the automaton process
-    pub async fn stop(&mut self) -> TestResult<()> {
-        if let Some(mut process) = self.process.take() {
-            process.kill().await?;
-        }
-        Ok(())
-    }
-}
-
-/// Orchestrator for managing multiple satellites and automata
-pub struct SatelliteOrchestrator {
-    satellites: parking_lot::Mutex<std::collections::HashMap<String, TestSatelliteHandle>>,
-    automata: parking_lot::Mutex<std::collections::HashMap<String, TestAutomatonHandle>>,
-}
-
-impl SatelliteOrchestrator {
-    pub fn new() -> Self {
-        Self {
-            satellites: parking_lot::Mutex::new(std::collections::HashMap::new()),
-            automata: parking_lot::Mutex::new(std::collections::HashMap::new()),
-        }
-    }
-
-    pub fn register_satellite(&self, name: &str, handle: TestSatelliteHandle) {
-        self.satellites.lock().insert(name.to_string(), handle);
-    }
-
-    pub fn register_automaton(&self, name: &str, handle: TestAutomatonHandle) {
-        self.automata.lock().insert(name.to_string(), handle);
-    }
-
-    pub async fn shutdown_all(&self) -> TestResult<()> {
-        // Shutdown all satellites
-        let satellite_handles: Vec<_> = {
-            let mut satellites = self.satellites.lock();
-            satellites.drain().collect()
-        };
-
-        for (_, mut handle) in satellite_handles {
-            handle.stop().await?;
-        }
-
-        // Shutdown all automata
-        let automaton_handles: Vec<_> = {
-            let mut automata = self.automata.lock();
-            automata.drain().collect()
-        };
-
-        for (_, mut handle) in automaton_handles {
-            handle.stop().await?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Create a test satellite configuration
-pub fn build_test_satellite_config(service_name: &str) -> serde_json::Value {
-    serde_json::json!({
-        "name": service_name,
-        "batch_size": 10,
-        "batch_timeout_ms": 100,
-    })
+        .collect()
 }
 
 // Comprehensive satellite management tests
@@ -367,7 +313,6 @@ mod tests {
     use super::*;
     use crate::prelude::*;
     use crate::sinex_test;
-    use crate::snapshot_helper::retry_with_snapshot;
     use crate::SinexError;
 
     #[sinex_test]
@@ -392,9 +337,10 @@ mod tests {
             .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            nats_url: format!("nats://{}", nats.client_url()),
+            nats_url: nats.client_url().to_string(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
         };
 
         let mut handle = start_test_ingestd_with_config(config.clone(), Some(&ctx)).await?;
@@ -414,9 +360,10 @@ mod tests {
             .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            nats_url: format!("nats://{}", nats.client_url()),
+            nats_url: nats.client_url().to_string(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
+            ..Default::default()
         };
         let mut handle = start_test_ingestd_with_config(config, Some(&ctx)).await?;
 
@@ -430,212 +377,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
-        retry_with_snapshot(
-            "satellite_management_utils::test_satellite_handle_creation",
-            &ctx,
-            || async {
-                ctx.ensure_clean().await?;
-                ctx.force_cleanup().await?;
-                let config = serde_json::json!({
-                    "name": "test-satellite",
-                    "source": "test",
-                    "buffer_size": 100,
-                });
-
-                let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
-
-                assert_eq!(handle.name, "test-satellite");
-
-                crate::db_common::reset_database(ctx.pool()).await?;
-                crate::db_common::verify_clean_state(ctx.pool()).await?;
-                ctx.force_cleanup().await?;
-                Ok(())
-            },
-        )
-        .await
-    }
-
-    #[sinex_test]
-    async fn test_satellite_handle_stop(ctx: TestContext) -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
-        ctx.ensure_clean().await?;
-        let config = serde_json::json!({
-            "name": "stop-test-satellite",
-        });
-
-        let mut handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
-
-        // Should be able to stop without error
-        handle.stop().await?;
-
-        // Multiple stops should be ok
-        handle.stop().await?;
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_satellite_handle_default_name(ctx: TestContext) -> TestResult<()> {
-        // Config without name should use default
-        let config = serde_json::json!({
-            "source": "test",
-        });
-
-        let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
-
-        assert_eq!(handle.name, "test-satellite");
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_automaton_handle_creation() -> TestResult<()> {
-        let handle = TestAutomatonHandle {
-            name: "test-automaton".to_string(),
-            process: None,
-        };
-
-        assert_eq!(handle.name, "test-automaton");
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_automaton_handle_stop() -> TestResult<()> {
-        let mut handle = TestAutomatonHandle {
-            name: "stop-test".to_string(),
-            process: None,
-        };
-
-        // Should be able to stop without error even with no process
-        handle.stop().await?;
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_satellite_orchestrator_creation() -> TestResult<()> {
-        let orchestrator = SatelliteOrchestrator::new();
-
-        // Initial state should be empty
-        assert!(orchestrator.satellites.lock().is_empty());
-        assert!(orchestrator.automata.lock().is_empty());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_satellite_orchestrator_register(ctx: TestContext) -> TestResult<()> {
-        let orchestrator = SatelliteOrchestrator::new();
-
-        // Register a satellite
-        let config = serde_json::json!({
-            "name": "orchestrated-satellite",
-        });
-
-        let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
-
-        orchestrator.register_satellite("test", handle);
-
-        // Should be registered
-        assert_eq!(orchestrator.satellites.lock().len(), 1);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_satellite_orchestrator_shutdown() -> TestResult<()> {
-        let orchestrator = SatelliteOrchestrator::new();
-
-        // Register some handles
-        let sat_handle = TestSatelliteHandle {
-            name: "shutdown-test".to_string(),
-            process: None,
-        };
-
-        let auto_handle = TestAutomatonHandle {
-            name: "shutdown-auto".to_string(),
-            process: None,
-        };
-
-        orchestrator.register_satellite("test", sat_handle);
-        orchestrator.register_automaton("auto", auto_handle);
-
-        // Shutdown should complete without error
-        orchestrator.shutdown_all().await?;
-
-        // All collections should be empty after shutdown
-        assert!(orchestrator.satellites.lock().is_empty());
-        assert!(orchestrator.automata.lock().is_empty());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_satellite_config_builder() -> TestResult<()> {
-        let config = build_test_satellite_config("test-service");
-
-        assert_eq!(config["name"], "test-service");
-        assert_eq!(config["batch_size"], 10);
-        assert_eq!(config["batch_timeout_ms"], 100);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_multiple_satellite_management(ctx: TestContext) -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
-        ctx.force_cleanup().await?;
-        ctx.ensure_clean().await?;
-        if let Err(e) = crate::db_common::reset_database(&ctx.pool).await {
-            tracing::warn!(error = %e, "Reset before multiple_satellite_management failed; retrying");
-            ctx.force_cleanup().await?;
-            crate::db_common::reset_database(&ctx.pool).await?;
-        }
-        let _ = crate::db_common::verify_clean_state(&ctx.pool).await;
-
-        let orchestrator = SatelliteOrchestrator::new();
-
-        // Register multiple satellites
-        for i in 0..5 {
-            let config = serde_json::json!({
-                "name": format!("satellite-{}", i),
-            });
-
-            let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
-            orchestrator.register_satellite(&format!("sat-{i}"), handle);
-        }
-
-        // Should have all satellites registered
-        assert_eq!(orchestrator.satellites.lock().len(), 5);
-
-        // Shutdown all
-        orchestrator.shutdown_all().await?;
-
-        if let Err(e) = crate::db_common::reset_database(&ctx.pool).await {
-            tracing::warn!(error = %e, "Reset after satellite management failed; forcing cleanup");
-            ctx.force_cleanup().await?;
-            crate::db_common::reset_database(&ctx.pool).await?;
-        }
-        let _ = crate::db_common::verify_clean_state(&ctx.pool).await;
-        ctx.force_cleanup().await?;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_error_handling_in_shutdown() -> TestResult<()> {
-        let orchestrator = SatelliteOrchestrator::new();
-
-        // Even with no satellites/automata, shutdown should work
-        orchestrator.shutdown_all().await?;
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_ingestd_handle_drop() -> color_eyre::eyre::Result<()> {
+    fn test_ingestd_handle_drop() -> TestResult<()> {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
             stream_name: "test-stream".to_string(),
@@ -643,40 +385,11 @@ mod tests {
             service: None,
             join_handle: Arc::new(AsyncMutex::new(None)),
             _work_dir: None,
+            nats_url: String::new(),
+            cleanup_streams: Vec::new(),
         };
 
         drop(handle); // Should not panic
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_orchestrator_thread_safety() -> color_eyre::eyre::Result<()> {
-        use std::sync::Arc;
-        use std::thread;
-
-        let orchestrator = Arc::new(SatelliteOrchestrator::new());
-        let mut handles = vec![];
-
-        // Spawn threads that register satellites
-        for i in 0..10 {
-            let orchestrator_clone = orchestrator.clone();
-            let handle = thread::spawn(move || {
-                let sat_handle = TestSatelliteHandle {
-                    name: format!("thread-sat-{i}"),
-                    process: None,
-                };
-                orchestrator_clone.register_satellite(&format!("key-{i}"), sat_handle);
-            });
-            handles.push(handle);
-        }
-
-        // Wait for all threads
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // Should have all satellites
-        assert_eq!(orchestrator.satellites.lock().len(), 10);
         Ok(())
     }
 }

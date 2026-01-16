@@ -99,6 +99,9 @@ pub enum SinexError {
 
     /// Unknown error: {0}
     Unknown(ErrorDetails),
+
+    /// KV Store error: {0}
+    Kv(ErrorDetails),
 }
 
 /// Detailed error information including message, context, and sources.
@@ -315,6 +318,10 @@ impl SinexError {
         SinexError::Unknown(ErrorDetails::new(msg))
     }
 
+    pub fn kv(msg: impl Into<String>) -> Self {
+        SinexError::Kv(ErrorDetails::new(msg))
+    }
+
     // Builder-style context methods
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
         use SinexError::*;
@@ -337,7 +344,8 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
-            | Unknown(d) => d,
+            | Unknown(d)
+            | Kv(d) => d,
         };
         details.context.insert(key.into(), value.to_string());
         self
@@ -364,7 +372,8 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
-            | Unknown(d) => d,
+            | Unknown(d)
+            | Kv(d) => d,
         };
         details.sources.push(source.to_string());
         self
@@ -523,7 +532,8 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
-            | Unknown(d) => d,
+            | Unknown(d)
+            | Kv(d) => d,
         };
         &details.context
     }
@@ -550,7 +560,8 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
-            | Unknown(d) => d,
+            | Unknown(d)
+            | Kv(d) => d,
         };
         &details.message
     }
@@ -577,7 +588,8 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
-            | Unknown(d) => d,
+            | Unknown(d)
+            | Kv(d) => d,
         };
         &details.sources
     }
@@ -604,6 +616,7 @@ impl SinexError {
             SinexError::MaxRetriesExceeded(_) => "MaxRetriesExceeded",
             SinexError::ResourceExhausted(_) => "ResourceExhausted",
             SinexError::Unknown(_) => "Unknown",
+            SinexError::Kv(_) => "Kv",
         }
     }
 }

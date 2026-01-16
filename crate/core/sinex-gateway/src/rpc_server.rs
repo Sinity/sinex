@@ -9,12 +9,11 @@ use crate::{
 use axum::{
     error_handling::HandleErrorLayer,
     extract::State,
-    http::{HeaderMap, HeaderName, StatusCode},
+    http::{HeaderMap, HeaderName, Request, StatusCode},
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
     BoxError, Json, Router,
 };
-use camino::Utf8PathBuf;
 use color_eyre::eyre::{eyre, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
@@ -22,6 +21,8 @@ use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sinex_core::coordination::CoordinationKvClient;
+use sinex_core::types::Bytes;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -29,7 +30,6 @@ use std::sync::Arc;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::{rustls, TlsAcceptor};
-use tokio_stream::StreamExt;
 use tower::{
     limit::ConcurrencyLimitLayer,
     load_shed::{error::Overloaded, LoadShedLayer},
@@ -39,26 +39,31 @@ use tower::{
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::trace::TraceLayer;
 
 // Standard library
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use std::time::Duration;
-use std::{net::SocketAddr, str::FromStr};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    str::FromStr,
+};
+use tokio::sync::RwLock;
 
-pub const DEFAULT_SOCKET_PATH: &str = "/tmp/sinex-host.sock";
+pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 
 #[derive(Debug, Clone, Deserialize)]
-struct JsonRpcRequest {
-    #[allow(dead_code)]
+pub(crate) struct JsonRpcRequest {
     jsonrpc: String,
     method: String,
     params: Value,
     id: Option<Value>,
 }
 
-fn validate_jsonrpc_request(request: &JsonRpcRequest) -> color_eyre::eyre::Result<()> {
+pub(crate) fn validate_jsonrpc_request(request: &JsonRpcRequest) -> color_eyre::eyre::Result<()> {
     if request.jsonrpc != "2.0" {
         return Err(eyre!("jsonrpc must be '2.0'"));
     }
@@ -95,26 +100,40 @@ struct UnknownMethodError {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RpcServerLimits {
-    concurrency_limit: usize,
-    request_timeout: Duration,
-    max_body_bytes: usize,
+pub(crate) struct RpcServerLimits {
+    pub(crate) concurrency_limit: usize,
+    pub(crate) request_timeout: Duration,
+    pub(crate) max_body_bytes: Bytes,
 }
 
 impl RpcServerLimits {
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         Self {
             concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 32),
             request_timeout: Duration::from_secs(env_var_u64(
                 "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
                 30,
             )),
-            max_body_bytes: env_var_usize("SINEX_GATEWAY_MAX_BODY_BYTES", 2 * 1024 * 1024),
+            max_body_bytes: Bytes::from_bytes(env_var_u64(
+                "SINEX_GATEWAY_MAX_BODY_BYTES",
+                2 * 1024 * 1024,
+            )),
+        }
+    }
+
+    fn apply_pool_limit(self, pool_max: usize) -> Self {
+        if pool_max == 0 {
+            return self;
+        }
+
+        Self {
+            concurrency_limit: self.concurrency_limit.min(pool_max),
+            ..self
         }
     }
 
     #[cfg(test)]
-    fn test_limits(concurrency_limit: usize, timeout: Duration, max_body_bytes: usize) -> Self {
+    fn test_limits(concurrency_limit: usize, timeout: Duration, max_body_bytes: Bytes) -> Self {
         Self {
             concurrency_limit,
             request_timeout: timeout,
@@ -139,54 +158,112 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
 
 #[derive(Clone)]
 struct GatewayAuth {
-    mode: GatewayAuthMode,
-}
-
-#[derive(Clone)]
-enum GatewayAuthMode {
-    Disabled,
-    StaticToken(String),
+    token: Arc<RwLock<Option<String>>>,
+    token_path: Option<PathBuf>,
 }
 
 impl GatewayAuth {
     fn from_env() -> color_eyre::eyre::Result<Self> {
-        match read_token_from_env()? {
-            Some(token) => {
-                if token.trim().is_empty() {
-                    Err(eyre!(
-                        "SINEX_RPC_TOKEN (or SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token"
-                    ))
-                } else {
-                    Ok(Self {
-                        mode: GatewayAuthMode::StaticToken(token),
-                    })
-                }
+        let (token, token_path) = read_token_and_path_from_env()?;
+
+        if let Some(ref t) = token {
+            if t.trim().is_empty() {
+                return Err(eyre!(
+                    "SINEX_RPC_TOKEN (or token file) is set but empty; refusing to start without a token"
+                ));
             }
-            None => {
-                if insecure_auth_allowed() {
-                    warn!("SINEX_GATEWAY_ALLOW_INSECURE=1 detected - RPC authentication disabled (dev/test only).");
-                    Ok(Self {
-                        mode: GatewayAuthMode::Disabled,
-                    })
-                } else {
-                    Err(eyre!(
-                        "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
-                    ))
-                }
-            }
+        } else {
+            return Err(eyre!(
+                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
+            ));
         }
+
+        Ok(Self {
+            token: Arc::new(RwLock::new(token)),
+            token_path,
+        })
     }
 
-    fn verify(&self, headers: &HeaderMap) -> Result<(), AuthError> {
-        match &self.mode {
-            GatewayAuthMode::Disabled => Ok(()),
-            GatewayAuthMode::StaticToken(expected) => {
-                let provided = extract_token(headers).ok_or(AuthError::Missing)?;
+    fn start_file_watcher(self) -> color_eyre::eyre::Result<Self> {
+        if let Some(ref path) = self.token_path {
+            let token_clone = Arc::clone(&self.token);
+            let path_clone = path.clone();
+            let path_for_closure = path.clone();
+
+            std::thread::spawn(move || {
+                use notify::{Event, EventKind, RecursiveMode, Watcher};
+
+                let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+                    match res {
+                        Ok(event) => {
+                            match event.kind {
+                                EventKind::Modify(_) | EventKind::Create(_) => {
+                                    // File was modified or created - reload token
+                                    match std::fs::read_to_string(&path_for_closure) {
+                                        Ok(new_token) => {
+                                            let trimmed = new_token.trim().to_string();
+                                            if !trimmed.is_empty() {
+                                                let mut token_lock = token_clone.blocking_write();
+                                                *token_lock = Some(trimmed);
+                                                info!("RPC token reloaded from {:?}", path_for_closure);
+                                            } else {
+                                                warn!("Token file {:?} is empty after reload", path_for_closure);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to read token file {:?} after modification: {}", path_for_closure, e);
+                                        }
+                                    }
+                                }
+                                EventKind::Remove(_) => {
+                                    // File was deleted - disable auth (with warning)
+                                    let mut token_lock = token_clone.blocking_write();
+                                    *token_lock = None;
+                                    warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
+                                }
+                                _ => {
+                                    // Ignore other events (access, metadata changes, etc.)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Token file watch error: {}", e);
+                        }
+                    }
+                }).expect("Failed to create file watcher");
+
+                if let Err(e) = watcher.watch(&path_clone, RecursiveMode::NonRecursive) {
+                    error!("Failed to watch token file {:?}: {}", path_clone, e);
+                    return;
+                }
+
+                info!("Watching token file {:?} for changes", path_clone);
+
+                // Keep the watcher alive
+                loop {
+                    std::thread::sleep(Duration::from_secs(60));
+                }
+            });
+        }
+
+        Ok(self)
+    }
+
+    async fn verify(&self, headers: &HeaderMap) -> Result<(), AuthError> {
+        let provided = extract_token(headers).ok_or(AuthError::Missing)?;
+
+        let token_guard = self.token.read().await;
+        match token_guard.as_ref() {
+            Some(expected) => {
                 if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
                     Ok(())
                 } else {
                     Err(AuthError::Invalid)
                 }
+            }
+            None => {
+                warn!("No token configured - rejecting request");
+                Err(AuthError::Missing)
             }
         }
     }
@@ -194,40 +271,40 @@ impl GatewayAuth {
     #[cfg(test)]
     fn with_test_token(token: &str) -> Self {
         Self {
-            mode: GatewayAuthMode::StaticToken(token.to_string()),
+            token: Arc::new(RwLock::new(Some(token.to_string()))),
+            token_path: None,
         }
-    }
-
-    fn is_disabled(&self) -> bool {
-        matches!(self.mode, GatewayAuthMode::Disabled)
     }
 }
 
-fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
-    if let Ok(path) = std::env::var("SINEX_RPC_TOKEN_FILE") {
+pub(crate) fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+    let (token, _) = read_token_and_path_from_env()?;
+    Ok(token)
+}
+
+fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, Option<PathBuf>)> {
+    if let Ok(path_str) = std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE") {
+        let path = PathBuf::from(&path_str);
+        let contents = std::fs::read_to_string(&path)
+            .wrap_err("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")?;
+        return Ok((Some(contents.trim().to_string()), Some(path)));
+    }
+
+    if let Ok(path_str) = std::env::var("SINEX_RPC_TOKEN_FILE") {
+        let path = PathBuf::from(&path_str);
         let contents =
-            std::fs::read_to_string(path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
-        return Ok(Some(contents.trim().to_string()));
+            std::fs::read_to_string(&path).wrap_err("Failed to read SINEX_RPC_TOKEN_FILE")?;
+        return Ok((Some(contents.trim().to_string()), Some(path)));
     }
 
     if let Ok(token) = std::env::var("SINEX_RPC_TOKEN") {
-        return Ok(Some(token.trim().to_string()));
+        return Ok((Some(token.trim().to_string()), None));
     }
 
-    Ok(None)
+    Ok((None, None))
 }
 
-fn insecure_auth_allowed() -> bool {
-    matches!(
-        std::env::var("SINEX_GATEWAY_ALLOW_INSECURE")
-            .unwrap_or_default()
-            .to_lowercase()
-            .as_str(),
-        "1" | "true" | "yes"
-    )
-}
-
-fn extract_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn extract_token(headers: &HeaderMap) -> Option<String> {
     if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(as_str) = value.to_str() {
             let trimmed = as_str.trim();
@@ -237,13 +314,10 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
         }
     }
 
-    headers
-        .get("x-sinex-rpc-token")
-        .and_then(|value| value.to_str().ok())
-        .map(|s| s.trim().to_string())
+    None
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -313,6 +387,7 @@ pub async fn dispatch_rpc_method(
     params: serde_json::Value,
 ) -> color_eyre::eyre::Result<serde_json::Value> {
     match method {
+        "system.health" => handle_system_health(services, params).await,
         // Analytics methods
         "analytics.event_count_by_source" => {
             handle_event_count_by_source(services.analytics.as_ref(), params).await
@@ -320,6 +395,10 @@ pub async fn dispatch_rpc_method(
 
         "analytics.activity_heatmap" => {
             handle_activity_heatmap(services.analytics.as_ref(), params).await
+        }
+
+        "analytics.sources_statistics" => {
+            handle_sources_statistics(services.analytics.as_ref(), params).await
         }
 
         // PKM methods
@@ -369,6 +448,88 @@ pub async fn dispatch_rpc_method(
             handle_replay_list_operations(control, params).await
         }
 
+        // Coordination methods
+        "coordination.list_instances" => {
+            let client = coordination_client(services)?;
+            handle_coordination_list_instances(client, params).await
+        }
+        "coordination.get_leader" => {
+            let client = coordination_client(services)?;
+            handle_coordination_get_leader(client, params).await
+        }
+        "coordination.instance_health" => {
+            let client = coordination_client(services)?;
+            handle_coordination_instance_health(client, params).await
+        }
+
+        // DLQ management methods
+        "dlq.list" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_list(nats, env, params).await
+        }
+        "dlq.peek" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_peek(nats, env, params).await
+        }
+        "dlq.requeue" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_requeue(nats, env, params).await
+        }
+        "dlq.purge" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_purge(nats, env, params).await
+        }
+
+        // Node operations methods
+        "nodes.list" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_nodes_list(nats, env, params).await
+        }
+        "nodes.drain" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_nodes_drain(nats, env, params).await
+        }
+        "nodes.resume" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_nodes_resume(nats, env, params).await
+        }
+        "nodes.set_horizon" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_nodes_set_horizon(nats, env, params).await
+        }
+
+        // Operations log methods
+        "ops.start" => {
+            let pool = services.pool();
+            handle_ops_start(pool, params).await
+        }
+        "ops.list" => {
+            let pool = services.pool();
+            handle_ops_list(pool, params).await
+        }
+        "ops.get" => {
+            let pool = services.pool();
+            handle_ops_get(pool, params).await
+        }
+        "ops.cancel" => {
+            let pool = services.pool();
+            handle_ops_cancel(pool, params).await
+        }
+
+        // Audit trail methods
+        "audit.get" => {
+            let pool = services.pool();
+            handle_audit_get(pool, params).await
+        }
+
         _ => Err(color_eyre::Report::new(UnknownMethodError {
             method: method.to_string(),
         })),
@@ -381,7 +542,61 @@ fn replay_control_client<'a>(
     services
         .replay_control
         .as_ref()
-        .ok_or_else(|| eyre!("Replay control bus is not initialised"))
+        .ok_or_else(|| eyre!("Replay control bus is not initialized"))
+}
+
+fn coordination_client<'a>(
+    services: &'a ServiceContainer,
+) -> color_eyre::eyre::Result<&'a CoordinationKvClient> {
+    services
+        .coordination
+        .as_ref()
+        .map(|arc| arc.as_ref())
+        .ok_or_else(|| eyre!("Coordination client is not initialized (NATS connection required)"))
+}
+
+fn nats_client_required<'a>(
+    services: &'a ServiceContainer,
+) -> color_eyre::eyre::Result<&'a async_nats::Client> {
+    services
+        .nats_client()
+        .ok_or_else(|| eyre!("NATS client is not available"))
+}
+
+/// Health check endpoint
+///
+/// Returns 200 OK if both database and NATS are reachable,
+/// 503 Service Unavailable otherwise.
+async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
+    // Check database connectivity
+    let db_ok = sqlx::query("SELECT 1")
+        .execute(state.services.pool())
+        .await
+        .is_ok();
+
+    // Check NATS connectivity
+    let nats_ok = state
+        .services
+        .nats_client()
+        .map(|client| matches!(client.connection_state(), async_nats::connection::State::Connected))
+        .unwrap_or(false);
+
+    if db_ok && nats_ok {
+        (StatusCode::OK, "OK").into_response()
+    } else {
+        let mut reasons = Vec::new();
+        if !db_ok {
+            reasons.push("database");
+        }
+        if !nats_ok {
+            reasons.push("nats");
+        }
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Service unhealthy: {}", reasons.join(", ")),
+        )
+            .into_response()
+    }
 }
 
 /// Main RPC handler using dispatch table
@@ -390,7 +605,7 @@ async fn handle_rpc(
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
-    if let Err(err) = state.auth.verify(&headers) {
+    if let Err(err) = state.auth.verify(&headers).await {
         return err.into_response();
     }
 
@@ -430,15 +645,11 @@ async fn handle_rpc(
 #[derive(Debug)]
 enum BindAddress {
     Tcp { host: String, port: u16 },
-    UnixSocket { path: Utf8PathBuf },
 }
 
 impl BindAddress {
     /// Create bind address from environment variables or defaults
-    fn from_env_or_socket_path(
-        socket_path: Utf8PathBuf,
-        cli_tcp: Option<&str>,
-    ) -> color_eyre::eyre::Result<Self> {
+    fn from_env_or_default(cli_tcp: Option<&str>) -> color_eyre::eyre::Result<Self> {
         if let Some(spec) = cli_tcp {
             let (host, port) = parse_tcp_listen(spec)?;
             return Ok(BindAddress::Tcp { host, port });
@@ -449,15 +660,8 @@ impl BindAddress {
             return Ok(BindAddress::Tcp { host, port });
         }
 
-        if let Ok(host) = std::env::var("SINEX_GATEWAY_HOST") {
-            let port = std::env::var("SINEX_GATEWAY_PORT")
-                .ok()
-                .and_then(|p| p.parse::<u16>().ok())
-                .unwrap_or(9999);
-            return Ok(BindAddress::Tcp { host, port });
-        }
-
-        Ok(BindAddress::UnixSocket { path: socket_path })
+        let (host, port) = parse_tcp_listen(DEFAULT_TCP_LISTEN)?;
+        Ok(BindAddress::Tcp { host, port })
     }
 }
 
@@ -560,24 +764,51 @@ fn load_rustls_config(
     }
 }
 
-fn guard_tcp_auth(bind_address: &BindAddress, auth: &GatewayAuth) -> color_eyre::eyre::Result<()> {
-    if let BindAddress::Tcp { host, .. } = bind_address {
-        if auth.is_disabled() {
-            return Err(eyre!(
-                "TCP binding requires SINEX_RPC_TOKEN; insecure mode (SINEX_GATEWAY_ALLOW_INSECURE) is only allowed for Unix socket bindings"
-            ));
-        }
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Ok(addr) = host.parse::<IpAddr>() {
+        return addr.is_loopback();
+    }
+    false
+}
 
-        // Disallow obvious remote exposure on insecure hosts even with token defaults.
-        if host != "127.0.0.1" && host != "localhost" {
+fn client_tls_required_override() -> bool {
+    matches!(
+        std::env::var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    )
+}
+
+fn require_mtls_for_remote(
+    bind_address: &BindAddress,
+    client_ca: Option<&str>,
+) -> color_eyre::eyre::Result<()> {
+    let host_requires = match bind_address {
+        BindAddress::Tcp { host, .. } => !is_loopback_host(host),
+    };
+
+    if (host_requires || client_tls_required_override()) && client_ca.is_none() {
+        return Err(eyre!(
+            "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)"
+        ));
+    }
+    Ok(())
+}
+
+fn warn_if_remote_bind(bind_address: &BindAddress) {
+    if let BindAddress::Tcp { host, .. } = bind_address {
+        if !is_loopback_host(host) {
             warn!(
                 bind_host = %host,
-                "Gateway TCP binding is exposed beyond loopback; ensure TLS termination/mTLS is configured"
+                "Gateway RPC is exposed beyond loopback; ensure mTLS and firewalling are configured"
             );
         }
     }
-
-    Ok(())
 }
 
 fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
@@ -593,9 +824,24 @@ where
                 .layer(LoadShedLayer::new())
                 .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
                 .layer(TimeoutLayer::new(limits.request_timeout))
-                .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
+                .layer(RequestBodyLimitLayer::new(limits.max_body_bytes.as_usize()))
                 .layer(CorsLayer::permissive())
                 .into_inner(),
+        )
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                let request_id = request
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("unknown");
+                tracing::info_span!(
+                    "rpc.request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    request_id = request_id
+                )
+            }),
         )
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
         .layer(SetRequestIdLayer::new(
@@ -639,7 +885,7 @@ mod tests {
     };
     use reqwest::Client;
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
     use std::net::SocketAddr;
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
@@ -648,8 +894,6 @@ mod tests {
 
     fn clear_tcp_env() {
         std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");
-        std::env::remove_var("SINEX_GATEWAY_HOST");
-        std::env::remove_var("SINEX_GATEWAY_PORT");
     }
 
     fn build_test_router(limits: RpcServerLimits) -> Router {
@@ -677,8 +921,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn concurrency_limit_returns_429() -> color_eyre::eyre::Result<()> {
-        let limits = RpcServerLimits::test_limits(1, Duration::from_secs(5), 1024 * 1024);
+    async fn concurrency_limit_returns_429() -> TestResult<()> {
+        let limits =
+            RpcServerLimits::test_limits(1, Duration::from_secs(5), Bytes::from_mebibytes(1));
         let router = build_test_router(limits);
         let (addr, handle) = spawn_router(router).await;
         let client = Client::new();
@@ -716,8 +961,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn timeout_layer_returns_504() -> color_eyre::eyre::Result<()> {
-        let limits = RpcServerLimits::test_limits(8, Duration::from_millis(20), 1024 * 1024);
+    async fn timeout_layer_returns_504() -> TestResult<()> {
+        let limits =
+            RpcServerLimits::test_limits(8, Duration::from_millis(20), Bytes::from_mebibytes(1));
         let router = build_test_router(limits);
         let (addr, handle) = spawn_router(router).await;
         let client = Client::new();
@@ -739,8 +985,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn body_limit_returns_413() -> color_eyre::eyre::Result<()> {
-        let limits = RpcServerLimits::test_limits(8, Duration::from_secs(5), 16);
+    async fn body_limit_returns_413() -> TestResult<()> {
+        let limits = RpcServerLimits::test_limits(8, Duration::from_secs(5), Bytes::from_bytes(16));
         let router = build_test_router(limits);
         let big_payload = format!("{{\"payload\":\"{}\"}}", "x".repeat(32));
 
@@ -762,8 +1008,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn rpc_responses_include_request_id_header() -> color_eyre::eyre::Result<()> {
-        let limits = RpcServerLimits::test_limits(4, Duration::from_secs(1), 1024);
+    async fn rpc_responses_include_request_id_header() -> TestResult<()> {
+        let limits =
+            RpcServerLimits::test_limits(4, Duration::from_secs(1), Bytes::from_bytes(1024));
         let router = build_test_router(limits);
         let (addr, handle) = spawn_router(router).await;
         let client = Client::new();
@@ -785,28 +1032,48 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn tcp_binding_requires_opt_in() -> color_eyre::eyre::Result<()> {
+    async fn tcp_binding_defaults_to_loopback() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        let addr =
-            BindAddress::from_env_or_socket_path(Utf8PathBuf::from(DEFAULT_SOCKET_PATH), None)?;
 
-        assert!(
-            matches!(addr, BindAddress::UnixSocket { .. }),
-            "TCP binding should remain disabled unless explicitly opted in"
-        );
+        let addr = BindAddress::from_env_or_default(None)?;
+        match addr {
+            BindAddress::Tcp { host, port } => {
+                assert_eq!(&host, "127.0.0.1");
+                assert_eq!(port, 9999);
+            }
+        }
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn tcp_binding_env_opt_in_respected() -> color_eyre::eyre::Result<()> {
+    async fn mtls_configuration_is_loaded() -> TestResult<()> {
+        let _guard = ENV_LOCK.lock().await;
+
+        std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
+        std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
+        std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+
+        let (cert, key, ca) = tls_paths_from_env()?;
+        assert_eq!(cert, "cert.pem");
+        assert_eq!(key, "key.pem");
+        assert_eq!(ca, Some("ca.pem".to_string()));
+
+        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        let (_, _, ca) = tls_paths_from_env()?;
+        assert!(ca.is_none());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn tcp_binding_env_opt_in_respected() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
         std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
 
-        let addr =
-            BindAddress::from_env_or_socket_path(Utf8PathBuf::from(DEFAULT_SOCKET_PATH), None)?;
+        let addr = BindAddress::from_env_or_default(None)?;
 
         match addr {
             BindAddress::Tcp { host, port } => {
@@ -821,15 +1088,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn tcp_binding_cli_override_wins() -> color_eyre::eyre::Result<()> {
+    async fn tcp_binding_cli_override_wins() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
         std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777");
 
-        let addr = BindAddress::from_env_or_socket_path(
-            Utf8PathBuf::from(DEFAULT_SOCKET_PATH),
-            Some("127.0.0.1:8888"),
-        )?;
+        let addr = BindAddress::from_env_or_default(Some("127.0.0.1:8888"))?;
 
         match addr {
             BindAddress::Tcp { host, port } => {
@@ -844,39 +1108,44 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn tcp_binding_invalid_cli_spec_rejected() -> color_eyre::eyre::Result<()> {
+    async fn tcp_binding_invalid_cli_spec_rejected() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
 
-        let result = BindAddress::from_env_or_socket_path(
-            Utf8PathBuf::from(DEFAULT_SOCKET_PATH),
-            Some("not-a-valid-spec"),
-        );
+        let result = BindAddress::from_env_or_default(Some("not-a-valid-spec"));
 
         assert!(result.is_err());
         Ok(())
     }
 
     #[test]
-    fn tcp_binding_disallows_insecure_mode() -> color_eyre::eyre::Result<()> {
-        let bind = BindAddress::Tcp {
-            host: "127.0.0.1".into(),
+    fn mtls_required_for_non_loopback_bind() -> TestResult<()> {
+        let remote = BindAddress::Tcp {
+            host: "0.0.0.0".to_string(),
             port: 8080,
         };
-        let insecure = GatewayAuth {
-            mode: GatewayAuthMode::Disabled,
+        assert!(require_mtls_for_remote(&remote, None).is_err());
+        assert!(require_mtls_for_remote(&remote, Some("ca.pem")).is_ok());
+
+        let loopback = BindAddress::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
         };
-        let secure = GatewayAuth::with_test_token("secret");
+        assert!(require_mtls_for_remote(&loopback, None).is_ok());
+        Ok(())
+    }
 
-        assert!(
-            guard_tcp_auth(&bind, &insecure).is_err(),
-            "TCP binding should reject disabled auth"
-        );
-        assert!(
-            guard_tcp_auth(&bind, &secure).is_ok(),
-            "TCP binding should allow static token auth"
-        );
-
+    #[test]
+    fn mtls_override_requires_client_ca() -> TestResult<()> {
+        let _guard = ENV_LOCK.blocking_lock();
+        std::env::set_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+        let loopback = BindAddress::Tcp {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+        };
+        assert!(require_mtls_for_remote(&loopback, None).is_err());
+        assert!(require_mtls_for_remote(&loopback, Some("ca.pem")).is_ok());
+        std::env::remove_var("SINEX_GATEWAY_REQUIRE_CLIENT_TLS");
         Ok(())
     }
 
@@ -894,7 +1163,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn gateway_auth_blocks_missing_token() -> color_eyre::eyre::Result<()> {
+    async fn gateway_auth_blocks_missing_token() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = HeaderMap::new();
         assert!(matches!(auth.verify(&headers), Err(AuthError::Missing)));
@@ -902,7 +1171,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn gateway_auth_accepts_bearer_header() -> color_eyre::eyre::Result<()> {
+    async fn gateway_auth_accepts_bearer_header() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -912,189 +1181,59 @@ mod tests {
         assert!(auth.verify(&headers).is_ok());
         Ok(())
     }
-
-    #[sinex_test]
-    async fn gateway_auth_accepts_custom_header() -> color_eyre::eyre::Result<()> {
-        let auth = GatewayAuth::with_test_token("secret");
-        let mut headers = HeaderMap::new();
-        headers.insert("x-sinex-rpc-token", HeaderValue::from_static("secret"));
-        assert!(auth.verify(&headers).is_ok());
-        Ok(())
-    }
-}
-
-#[doc(hidden)]
-pub mod test_support {
-    use super::*;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum GatewayAuthModeSnapshot {
-        Disabled,
-        StaticToken,
-    }
-
-    pub fn gateway_auth_mode_from_env() -> color_eyre::eyre::Result<GatewayAuthModeSnapshot> {
-        let auth = GatewayAuth::from_env()?;
-        Ok(match auth.mode {
-            GatewayAuthMode::Disabled => GatewayAuthModeSnapshot::Disabled,
-            GatewayAuthMode::StaticToken(_) => GatewayAuthModeSnapshot::StaticToken,
-        })
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    pub struct RpcServerLimitsSnapshot {
-        pub concurrency_limit: usize,
-        pub request_timeout_secs: u64,
-        pub max_body_bytes: usize,
-    }
-
-    pub fn extract_token(headers: &HeaderMap) -> Option<String> {
-        super::extract_token(headers)
-    }
-
-    pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-        super::constant_time_eq(a, b)
-    }
-
-    pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
-        super::read_token_from_env()
-    }
-
-    pub fn insecure_auth_allowed() -> bool {
-        super::insecure_auth_allowed()
-    }
-
-    pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
-        let limits = RpcServerLimits::from_env();
-        RpcServerLimitsSnapshot {
-            concurrency_limit: limits.concurrency_limit,
-            request_timeout_secs: limits.request_timeout.as_secs(),
-            max_body_bytes: limits.max_body_bytes,
-        }
-    }
-
-    pub fn validate_jsonrpc_value(value: &Value) -> color_eyre::eyre::Result<()> {
-        let request: JsonRpcRequest = serde_json::from_value(value.clone())
-            .wrap_err("Invalid JSON-RPC request payload")?;
-        super::validate_jsonrpc_request(&request)
-    }
 }
 
 /// Run the RPC server with configurable binding
 pub async fn run(
-    socket_path: sinex_core::SanitizedPath,
     tcp_listen: Option<&str>,
     services: ServiceContainer,
 ) -> color_eyre::eyre::Result<()> {
-    let bind_address =
-        BindAddress::from_env_or_socket_path(Utf8PathBuf::from(socket_path.as_str()), tcp_listen)?;
+    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
 
-    let auth = GatewayAuth::from_env()?;
-    guard_tcp_auth(&bind_address, &auth)?;
+    let auth = GatewayAuth::from_env()?.start_file_watcher()?;
+    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
     let state = AppState { services, auth };
-
-    let limits = RpcServerLimits::from_env();
 
     let base_router = Router::new()
         .route("/rpc", post(handle_rpc))
-        .route("/", post(handle_rpc)); // Accept RPC calls at base path for CLI compatibility
+        .route("/", post(handle_rpc))
+        .route("/health", get(health_check));
 
     let app = apply_rpc_layers(base_router, &limits).with_state(state);
 
-    match bind_address {
-        BindAddress::Tcp { host, port } => {
-            let addr = format!("{}:{}", host, port);
-            let listener = tokio::net::TcpListener::bind(&addr).await?;
-            let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
-            let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
-            let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-            info!("RPC server listening on TLS {}", addr);
+    let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
+    require_mtls_for_remote(&bind_address, client_ca.as_deref())?;
+    warn_if_remote_bind(&bind_address);
 
-            loop {
-                let (stream, peer) = listener.accept().await?;
-                let app_clone = app.clone();
-                let acceptor = acceptor.clone();
+    let BindAddress::Tcp { host, port } = bind_address;
+    let addr = format!("{}:{}", host, port);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    info!("RPC server listening on TLS {}", addr);
 
-                tokio::spawn(async move {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
-                            let builder = HyperBuilder::new(TokioExecutor::new());
-                            let service = TowerToHyperService::new(app_clone);
-                            let io = TokioIo::new(tls_stream);
-                            if let Err(err) = builder.serve_connection(io, service).await {
-                                error!(
-                                    ?err,
-                                    "TLS RPC connection from {:?} closed with error", peer
-                                );
-                            }
-                        }
-                        Err(err) => {
-                            error!(?err, "TLS handshake failed for {:?}", peer);
-                        }
-                    }
-                });
-            }
-        }
-        BindAddress::UnixSocket { path } => {
-            let path_str = path.as_str();
-            let socket_path = std::path::Path::new(path_str);
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let app_clone = app.clone();
+        let acceptor = acceptor.clone();
 
-            if let Some(parent) = socket_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .wrap_err("Failed to create Unix socket directory")?;
-            }
-
-            if socket_path.exists() {
-                if let Err(e) = tokio::fs::remove_file(socket_path).await {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        return Err(color_eyre::eyre::eyre!(
-                            "Failed to remove existing Unix socket {}: {}",
-                            path_str,
-                            e
-                        ));
+        tokio::spawn(async move {
+            match acceptor.accept(stream).await {
+                Ok(tls_stream) => {
+                    let builder = HyperBuilder::new(TokioExecutor::new());
+                    let service = TowerToHyperService::new(app_clone);
+                    let io = TokioIo::new(tls_stream);
+                    if let Err(err) = builder.serve_connection(io, service).await {
+                        error!(?err, "TLS RPC connection from {:?} closed with error", peer);
                     }
                 }
-            }
-
-            let listener = tokio::net::UnixListener::bind(socket_path)
-                .wrap_err("Failed to bind Unix socket")?;
-            info!("RPC server listening on Unix socket {}", path_str);
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Err(e) =
-                    tokio::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
-                        .await
-                {
-                    warn!("Failed to set Unix socket permissions to 0600: {}", e);
+                Err(err) => {
+                    error!(?err, "TLS handshake failed for {:?}", peer);
                 }
             }
-
-            let mut incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
-            let app = app;
-
-            while let Some(stream) = incoming.next().await {
-                match stream {
-                    Ok(stream) => {
-                        let service_app = app.clone();
-                        tokio::spawn(async move {
-                            let builder = HyperBuilder::new(TokioExecutor::new());
-                            let service = TowerToHyperService::new(service_app);
-                            let io = TokioIo::new(stream);
-                            if let Err(err) = builder.serve_connection(io, service).await {
-                                error!(?err, "Unix RPC connection closed with error");
-                            }
-                        });
-                    }
-                    Err(err) => {
-                        error!(?err, "Failed to accept Unix socket connection");
-                    }
-                }
-            }
-        }
+        });
     }
 
+    #[allow(unreachable_code)]
     Ok(())
 }

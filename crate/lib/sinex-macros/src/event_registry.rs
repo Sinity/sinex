@@ -228,17 +228,17 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
         category.events.iter().map(|event| {
             let variant_name = &event.name;
             quote! {
-                EventEnvelope::#variant_name(event) => event.to_json_event(),
+                EventEnvelope::#variant_name(event) => event.to_json_event().map_err(Into::into),
             }
         })
     });
 
     quote! {
         impl EventEnvelope {
-            pub fn to_json_event(self) -> Event<JsonValue> {
+            pub fn to_json_event(self) -> std::result::Result<sinex_core::Event<sinex_core::JsonValue>, sinex_core::SinexError> {
                 match self {
                     #(#match_arms)*
-                    EventEnvelope::Unknown(event) => event,
+                    EventEnvelope::Unknown(event) => Ok(event),
                 }
             }
         }
@@ -248,10 +248,10 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
 
     #[sinex_test]
-    fn test_event_registry_parsing() -> color_eyre::eyre::Result<()> {
+    fn test_event_registry_parsing() -> TestResult<()> {
         let input = quote! {
             sources {
                 FILESYSTEM => "fs",

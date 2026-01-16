@@ -23,7 +23,7 @@
 
   Dogsheep:                        Sinex:
   Twitter API → sqlite-utils   →   Terminal events → ingestd → PostgreSQL
-  GitHub API  → dogsheep-beta  →   File events → satellites → Event store
+  GitHub API  → dogsheep-beta  →   File events → nodes → Event store
   Photos EXIF → datasette      →   Desktop events → processors → Analysis
 
   3. Exploration & Analysis Layer
@@ -219,9 +219,8 @@
   - Together: Complete personal data timeline with analysis
 
   This creates a "personal data OS" where Sinex is the kernel (capturing events), Datasette is the shell (exploring data), and Dogsheep
-  provides backward compatibility with external services.
+  provides integration with external services.
 
 > do write down into docs/planning/roadmap/datasette-integration-opportunities.md
   ⎿  Interrupted by user
-
 

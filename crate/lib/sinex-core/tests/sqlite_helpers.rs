@@ -4,10 +4,11 @@ use sinex_core::types::utils::sqlite_helpers::{
     QueryResultExt, SqliteConnection, SqliteQueryBuilder, SqliteStatementExt,
 };
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use tempfile::NamedTempFile;
 
 #[sinex_test]
-fn sqlite_connection_helpers_cover_read_modes() -> color_eyre::eyre::Result<()> {
+fn sqlite_connection_helpers_cover_read_modes() -> TestResult<()> {
     let temp_file = NamedTempFile::new().unwrap();
     let path = Utf8Path::from_path(temp_file.path()).unwrap();
 
@@ -24,7 +25,7 @@ fn sqlite_connection_helpers_cover_read_modes() -> color_eyre::eyre::Result<()> 
 }
 
 #[sinex_test]
-fn statement_and_query_helpers_attach_context() -> color_eyre::eyre::Result<()> {
+fn statement_and_query_helpers_attach_context() -> TestResult<()> {
     let temp_file = NamedTempFile::new().unwrap();
     let conn = Connection::open(temp_file.path()).unwrap();
     conn.execute("CREATE TABLE test (id INTEGER)", []).unwrap();

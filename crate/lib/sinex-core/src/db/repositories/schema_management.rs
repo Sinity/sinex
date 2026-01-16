@@ -165,6 +165,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 .begin()
                 .await
                 .map_err(|e| db_error(e, "begin schema reactivation transaction"))?;
+            set_repeatable_read(&mut tx).await?;
 
             sqlx::query!(
                 r#"
@@ -226,6 +227,31 @@ impl<'a> SchemaManagementRepository<'a> {
             .begin()
             .await
             .map_err(|e| db_error(e, "begin schema registration transaction"))?;
+        set_repeatable_read(&mut tx).await?;
+
+        let existing_version = sqlx::query!(
+            r#"
+            SELECT content_hash
+            FROM sinex_schemas.event_payload_schemas
+            WHERE source = $1
+              AND event_type = $2
+              AND schema_version = $3
+            "#,
+            source.as_str(),
+            event_type.as_str(),
+            schema_version.as_str()
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "check schema version conflict"))?;
+
+        if let Some(row) = existing_version {
+            if row.content_hash != content_hash {
+                return Err(SinexError::validation(format!(
+                    "schema version already exists for {source}/{event_type} at {schema_version}"
+                )));
+            }
+        }
 
         // Deactivate existing active schemas for this source/event_type
         sqlx::query!(
@@ -830,6 +856,14 @@ impl<'a> SchemaManagementRepository<'a> {
 
         Ok(id)
     }
+}
+
+async fn set_repeatable_read(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> DbResult<()> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set repeatable read isolation"))?;
+    Ok(())
 }
 
 /// Schema statistics

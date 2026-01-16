@@ -4,31 +4,32 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{prelude::*, EphemeralNats, EventOverrides, TestSatellitePublisher};
+use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
+use sinex_test_utils::{prelude::*, EventOverrides, TestSatellitePublisher};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
-#[sinex_test]
-async fn test_duplicate_event_rejection_smoke() -> color_eyre::Result<()> {
-    run_duplicate_event_rejection(3).await
-}
-
-async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_nats().await?;
-
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+async fn start_consumer(
+    ctx: &TestContext,
+    strict_validation: bool,
+) -> color_eyre::Result<(
+    jetstream::Context,
+    JetStreamTopology,
+    tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>,
+)> {
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
-    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
+    let validator = EventValidator::new(strict_validation);
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
 
     let js = nats.jetstream_with_client(nats_client.clone());
-    let env = ctx.env();
-
-    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
+    let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
     js.get_or_create_stream(jetstream::stream::Config {
         name: base_stream.clone(),
-        subjects: vec![env.nats_subject("events.raw.>")],
+        subjects: vec![ctx.pipeline_namespace().subject("events.raw.>")],
         retention: jetstream::stream::RetentionPolicy::Limits,
         max_messages: 10_000,
         storage: jetstream::stream::StorageType::File,
@@ -36,16 +37,62 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     })
     .await?;
 
-    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
-    let consumer = JetStreamConsumer::new(
+    let topology = JetStreamTopology::new(
+        &env,
+        base_stream.clone(),
+        ctx.pipeline_namespace().consumer_name("ingestd"),
+        Some(&namespace),
+    );
+    let consumer = JetStreamConsumer::with_ack_wait(
         nats_client.clone(),
         pool.clone(),
         Arc::new(RwLock::new(validator)),
-        topology,
-    );
-    let _consumer_handle = tokio::spawn(async move { consumer.run().await });
+        topology.clone(),
+        Duration::from_secs(1),
+    )
+    .with_batch_fetch_config(10, Duration::from_millis(200));
+    let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let base_stream = base_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&base_stream)
+                    .await
+                    .map_err(|e| sinex_core::types::error::SinexError::network(e.to_string()))?;
+                let info = stream
+                    .info()
+                    .await
+                    .map_err(|e| sinex_core::types::error::SinexError::network(e.to_string()))?;
+                Ok(info.state.consumer_count > 0)
+            }
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
+
+    Ok((js, topology, consumer_handle))
+}
+
+#[sinex_test]
+async fn test_duplicate_event_rejection_smoke() -> color_eyre::Result<()> {
+    run_duplicate_event_rejection(2).await
+}
+
+async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result<()> {
+    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client.clone(),
+        "test",
+        Some(namespace.clone()),
+    );
+
+    let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
     for _ in 0..event_count {
         let event_id = Ulid::new();
@@ -62,18 +109,14 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
             )
             .await?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        let mut event = None;
-        for _ in 0..10 {
-            event = pool.events().get_by_id(event_id.into()).await?;
-            if event.is_some() {
-                break;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-
-        assert!(event.is_some(), "First publish should succeed");
+        WaitHelpers::wait_for_condition(
+            || {
+                let pool = pool.clone();
+                async move { Ok(pool.events().get_by_id(event_id.into()).await?.is_some()) }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
 
         publisher
             .publish_event_with_overrides(
@@ -83,7 +126,24 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
             )
             .await?;
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        WaitHelpers::wait_for_condition(
+            || {
+                let pool = pool.clone();
+                async move {
+                    let rows = sqlx::query!(
+                        "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
+                        ulid_to_uuid(event_id)
+                    )
+                    .fetch_one(&pool)
+                    .await?
+                    .count
+                    .unwrap_or(0);
+                    Ok(rows == 1)
+                }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
 
         let all_events = sqlx::query!(
             "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
@@ -99,42 +159,24 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
         );
     }
 
+    consumer_handle.abort();
     Ok(())
 }
 
 #[sinex_test]
 async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_nats().await?;
+    let ctx = TestContext::new().await?.with_shared_nats().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(false);
-
-    let js = ctx.jetstream().await?;
-    let env = ctx.env();
-    let publisher = TestSatellitePublisher::new(nats_client.clone(), "test");
-
-    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
-    js.get_or_create_stream(jetstream::stream::Config {
-        name: base_stream.clone(),
-        subjects: vec![env.nats_subject("events.raw.>")],
-        retention: jetstream::stream::RetentionPolicy::Limits,
-        max_messages: 10_000,
-        storage: jetstream::stream::StorageType::File,
-        ..Default::default()
-    })
-    .await?;
-
-    let topology = JetStreamTopology::new(&env, base_stream.clone(), "ingestd".to_string());
-    let consumer = JetStreamConsumer::new(
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let publisher = TestSatellitePublisher::with_namespace(
         nats_client.clone(),
-        pool.clone(),
-        Arc::new(RwLock::new(validator)),
-        topology,
+        "test",
+        Some(namespace.clone()),
     );
-    let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
     let event_id = Ulid::new();
     let overrides = EventOverrides {
@@ -161,7 +203,7 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
         handle.await?;
     }
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), DEFAULT_WAIT_SECS).await?;
 
     let event_count = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
@@ -176,5 +218,6 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
         "Concurrent duplicates should result in exactly one event"
     );
 
+    consumer_handle.abort();
     Ok(())
 }

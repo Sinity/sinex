@@ -5,6 +5,7 @@
 - `current/` — single source of truth for what exists and works today (architecture, security, testing).
 - `planning/` — active playbooks (`active/`), roadmap/priorities (`roadmap/`), proposals under consideration (`proposals/`), and backlog (`backlog/TODO.md`).
 - `vision/` — long-term direction and explorations.
+- `archived/` — superseded or historical docs kept for reference.
 - `documentation-guidelines.md` — authoring conventions.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
 
@@ -25,6 +26,10 @@
 ## Vision (long-term)
 
 - `vision/manifesto.md` and `vision/*.md` — Strategic direction and exploratory designs. Check file headers for currency notes.
+
+## Archived (historical)
+
+- `archived/README.md` — how and when to move docs into the archive.
 
 ## Host / Deployment Notes
 

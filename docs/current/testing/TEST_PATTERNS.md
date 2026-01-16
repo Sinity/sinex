@@ -2,6 +2,11 @@
 
 A comprehensive guide to reusable test patterns extracted from the sinex-test-utils crate.
 
+> Pipeline-first rule: before seeding any events, call `let ctx = ctx.with_nats().await?;` (or
+> `with_shared_nats()`) and use `ctx.publish_json_event(...)` so every test exercises the actual
+> ingestion path. Direct database fabrication helpers (formerly `ctx.db_only()`) have been
+> removed to avoid bypassing ingestd.
+
 ---
 
 ## 1. Database Test Patterns
@@ -28,9 +33,10 @@ let test_db = acquire_test_database().await?;
 
 **Best Practices**:
 - Use advisory locks for inter-process coordination
-- Pool size configurable via `SINEX_TESTUTILS_POOL_SIZE` environment variable
+- Pool size defaults to 2× Nextest test threads, minimum 64, and shrinks if Postgres
+  `max_connections` would be exceeded
 - Automatic cleanup with background manager to avoid blocking
-- Connection limits tunable via `SINEX_TESTUTILS_CONN_BUDGET`
+- Slot pools cap at 4 connections; admin pool caps at 8
 
 **Key Files**:
 - `/realm/project/sinex/crate/lib/sinex-test-utils/src/database_pool.rs` (1790+ lines)
@@ -56,11 +62,7 @@ let baseline_events = pool.events().count_all().await?;
 **Best Practices**:
 - Call `verify_clean_state()` to ensure database is ready
 - Track baseline event count for delta calculations
-- Relax strict FKs that conflict with synthetic test IDs:
-  ```sql
-  ALTER TABLE core.processor_checkpoints 
-    DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey
-  ```
+- For checkpoint state, purge the NATS KV entries (e.g., via test helpers) instead of modifying database constraints.
 - Retry cleanup once on failure before giving up
 
 **Key Functions**:
@@ -72,36 +74,40 @@ let baseline_events = pool.events().count_all().await?;
 
 ### 1.3 Fixture Insertion Patterns
 
-**Pattern**: Use production Event creation APIs with TestContext convenience methods.
+**Pattern**: Use pipeline-first approach (`ctx.publish_json_event`) to exercise the full ingestion
+path. Direct repository access is available for rare cases where pipeline isolation isn't needed.
 
 ```rust
-// Direct production API - no wrappers
-let event = Event::<JsonValue>::test_event(
-    "fs-watcher",
-    "file.created",
-    json!({"path": "/test/file.txt", "size": 1024})
-);
-
-// Direct repository access via pool
-ctx.pool.events().insert(event).await?;
-
-// TestContext convenience for common patterns
-let event = ctx.create_test_event(
+// PREFERRED: Pipeline-first approach (exercises NATS → ingestd → DB)
+let event = ctx.publish_json_event(
     "fs-watcher",
     "file.created",
     json!({"path": "/test/file.txt", "size": 1024})
 ).await?;
 
-// Batch insertion
-let events = vec![/* Event instances */];
-ctx.insert_events(&events).await?;
+// ALTERNATIVE: Direct repository access (for unit tests that don't need pipeline)
+let event = Event::<JsonValue>::test_event(
+    "fs-watcher",
+    "file.created",
+    json!({"path": "/test/file.txt", "size": 1024})
+);
+ctx.pool.events().insert(event).await?;
+
+// Batch insertion via pipeline
+let events = vec![
+    ("fs-watcher", "file.changed", json!({"path": "/test.file"})),
+    ("terminal", "command.executed", json!({"command": "ls"})),
+];
+for (source, event_type, payload) in events {
+    ctx.publish_json_event(source, event_type, payload).await?;
+}
 ```
 
 **Key Pattern**:
-- Use production APIs directly when possible
-- TestContext wrapper adds test-specific concerns (sanitization, provenance)
-- Payload sanitization removes malicious patterns automatically
-- Source material registration automatic for FK satisfaction
+- Always use `ctx.with_shared_nats().await?` before creating events
+- `ctx.publish_json_event()` exercises the real ingestion pipeline
+- Direct repository access (`ctx.pool.events().insert()`) bypasses pipeline (use sparingly)
+- Payload sanitization and source material registration handled automatically
 
 ---
 
@@ -151,7 +157,7 @@ CREATE DATABASE test_db WITH TEMPLATE template_db
 #[sinex_test]
 async fn test_example(ctx: TestContext) -> Result<()> {
     // ctx is automatically created
-    let event = ctx.create_test_event("source", "type", json!({})).await?;
+    let event = ctx.publish_json_event("source", "type", json!({})).await?;
     // ctx is automatically cleaned up
     Ok(())
 }
@@ -208,7 +214,7 @@ async fn test_concurrent_test_execution(
 
             // Each performs operations
             for j in 0..10 {
-                ctx.create_test_event(
+                ctx.publish_json_event(
                     &format!("task_{i}"),
                     "concurrent.test",
                     json!({"iteration": j}),
@@ -286,94 +292,80 @@ pub async fn force_cleanup(&self) -> Result<()> {
 
 ---
 
+### 2.4 Pipeline Harness Concurrency Guard
+
+**Pattern**: A process-wide semaphore caps how many PipelineHarness instances run in parallel, preventing JetStream-heavy suites from starving ingestd.
+
+- Default limit scales with CPU count (`available_parallelism / 6`, clamped to 1..6).
+- Additional pipeline tests wait for a permit instead of hitting the 30 s timeout, keeping DLQ/e2e suites deterministic.
+- Permits are released automatically when `scope.shutdown()` completes or when the harness drops during panic unwinding.
+
+Use this guard before increasing individual test timeouts when `jetstream_dlq_test` or `jetstream_e2e_integration_test` exceed 30 s.
+
+---
+
 ## 3. Property Test Patterns
 
 ### 3.1 Event-Focused Strategies
 
-**Pattern**: Reusable proptest strategies for common Sinex types.
+**Pattern**: Define proptest strategies locally in the test module to keep scope tight.
 
 ```rust
-pub struct SinexStrategies;
+fn file_path_strategy() -> BoxedStrategy<String> {
+    prop_oneof![
+        Just("/tmp/test.txt".to_string()),
+        Just("/home/user/document.pdf".to_string()),
+        "/[a-z0-9/._-]{1,100}\\.[a-z]{1,5}".prop_map(|s| s.to_string()),
+    ]
+    .boxed()
+}
 
-impl SinexStrategies {
-    /// Strategy for valid event sources
-    pub fn event_source() -> BoxedStrategy<String> {
-        prop_oneof![
-            Just("filesystem".to_string()),
-            Just("shell.kitty".to_string()),
-            "[a-z][a-z0-9._]*".prop_map(|s| s.to_string()),
-        ].boxed()
-    }
+fn event_source_strategy() -> BoxedStrategy<String> {
+    prop_oneof![
+        Just("filesystem".to_string()),
+        Just("shell.kitty".to_string()),
+        "[a-z][a-z0-9._]*".prop_map(|s| s.to_string()),
+    ]
+    .boxed()
+}
 
-    /// Strategy for valid event types
-    pub fn event_type() -> BoxedStrategy<String> {
+fn json_payload_strategy() -> BoxedStrategy<Value> {
+    let leaf = prop_oneof![
+        any::<bool>().prop_map(Value::from),
+        any::<i64>().prop_map(Value::from),
+        ".*".prop_map(Value::from),
+    ];
+
+    leaf.prop_recursive(
+        8,   // max depth
+        256, // max nodes
+        10,  // max items per collection
+        |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..10).prop_map(Value::from),
+                prop::collection::hash_map(".*", inner, 0..10)
+                    .prop_map(|map| Value::from(map.into_iter().collect::<serde_json::Map<_, _>>())),
+            ]
+        },
+    )
+    .boxed()
+}
+
+fn filesystem_event_strategy() -> BoxedStrategy<(String, String, Value)> {
+    (
+        Just("filesystem".to_string()),
         prop_oneof![
             Just("file.created".to_string()),
             Just("file.modified".to_string()),
-            "[a-z][a-z0-9._]*\\.[a-z][a-z0-9._]*".prop_map(|s| s.to_string()),
-        ].boxed()
-    }
-
-    /// Strategy for JSON payloads
-    pub fn json_payload() -> BoxedStrategy<Value> {
-        let leaf = prop_oneof![
-            any::<bool>().prop_map(Value::from),
-            any::<i64>().prop_map(Value::from),
-            ".*".prop_map(Value::from),
-        ];
-
-        leaf.prop_recursive(
-            8,   // max depth
-            256, // max nodes
-            10,  // max items per collection
-            |inner| {
-                prop_oneof![
-                    prop::collection::vec(inner.clone(), 0..10).prop_map(Value::from),
-                    prop::collection::hash_map(".*", inner, 0..10)
-                        .prop_map(|map| Value::from(map.into_iter().collect::<serde_json::Map<_, _>>())),
-                ]
-            },
-        ).boxed()
-    }
-
-    /// Domain-specific strategies
-    pub fn filesystem_event() -> BoxedStrategy<(String, String, Value)> {
-        (
-            Just("filesystem".to_string()),
-            prop_oneof![
-                Just("file.created".to_string()),
-                Just("file.modified".to_string()),
-                Just("file.deleted".to_string()),
-            ],
-            (Self::file_path(), any::<u64>())
-                .prop_map(|(path, size)| json!({
-                    "path": path,
-                    "size": size,
-                    "modified_time": "2025-01-01T00:00:00Z"
-                })),
-        ).boxed()
-    }
-
-    /// Malicious input testing
-    pub fn malicious_payload() -> BoxedStrategy<Value> {
-        prop_oneof![
-            // SQL injection attempts
-            Just(json!({
-                "path": "'; DROP TABLE events; --",
-                "command": "$(rm -rf /)"
-            })),
-            // XSS attempts
-            Just(json!({
-                "content": "<script>alert('xss')</script>",
-                "html": "<img src=x onerror=alert(1)>"
-            })),
-            // Path traversal
-            Just(json!({
-                "path": "../../etc/passwd",
-                "file": "../../../root/.ssh/id_rsa"
-            })),
-        ].boxed()
-    }
+            Just("file.deleted".to_string()),
+        ],
+        (file_path_strategy(), any::<u64>()).prop_map(|(path, size)| json!({
+            "path": path,
+            "size": size,
+            "modified_time": "2025-01-01T00:00:00Z"
+        })),
+    )
+    .boxed()
 }
 ```
 
@@ -395,16 +387,16 @@ and automatically persist failing seeds to `target/proptest-regressions/`.
 #[sinex_prop(cases = 64, timeout = "45s", seed = 1337)]
 async fn filesystem_property(
     ctx: &TestContext,
-    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+    #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    let inserted = ctx.create_test_event(&source, &ty, payload).await?;
+    let inserted = ctx.publish_json_event(&source, &ty, payload).await?;
     assert_eq!(inserted.source.as_str(), source);
     Ok(())
 }
 
 sinex_proptest! {
-    fn ulid_roundtrip(value in SinexStrategies::json_payload()) -> TestResult<()> {
+    fn ulid_roundtrip(value in json_payload_strategy()) -> TestResult<()> {
         let text = value.to_string();
         let decoded: Value = serde_json::from_str(&text)?;
         prop_assert_eq!(decoded, value);
@@ -434,7 +426,7 @@ sinex_proptest! {
 
 ### 3.3 Custom Generators (ULIDs, Events)
 
-**Pattern**: Use production types directly, leverage fixtures for complex objects.
+**Pattern**: Use production types directly, leverage dataset seeding helpers for complex objects.
 
 ```rust
 // ULID generation via production API
@@ -528,18 +520,16 @@ async fn test_ingestd_integration(ctx: TestContext) -> Result<()> {
 
 ---
 
-### 4.2 gRPC Client Setup
+### 4.2 Service Client Setup
 
-**Pattern**: Clients created from live ingestd service.
+**Pattern**: Use the SDK transport or NATS clients; there are no gRPC clients.
 
 ```rust
-// Services provide gRPC endpoints
-// Clients connect to live services
-// Automatic reconnection on transient failures
+// Services publish events/materials over JetStream
+// Clients use the SDK or direct NATS publishers
 
-// Example pattern (service-specific)
-let client = YourGrpcClient::connect(service_url).await?;
-let response = client.your_method(request).await?;
+let publisher = runtime.transport().nats_publisher()?;
+publisher.publish_event(event).await?;
 ```
 
 ---
@@ -575,13 +565,13 @@ async fn test_with_nats(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
     // 1. Create events using production event creation
-    let fs_event = ctx.create_test_event(
+    let fs_event = ctx.publish_json_event(
         "fs-watcher",
         "file.created",
         json!({"path": "/data/report.pdf", "size": 2048}),
     ).await?;
 
-    let term_event = ctx.create_test_event(
+    let term_event = ctx.publish_json_event(
         "terminal",
         "command.executed",
         json!({
@@ -683,34 +673,18 @@ ctx.assert("complex check")
 
 ### 5.2 Error Matching Patterns
 
-**Pattern**: ErrorAssertions trait for error testing.
+**Pattern**: Explicit error matching without helper traits.
 
 ```rust
-pub trait ErrorAssertions<T> {
-    /// Assert result contains specific error text
-    fn assert_contains_error(self, text: &str) -> Result<T, SinexError>;
-
-    /// Assert result is specific error type
-    fn assert_error_type<E: Error + 'static + Send + Sync>(self) -> Result<T, SinexError>;
-
-    /// Assert result fails with any error
-    fn assert_fails(self) -> Result<SinexError, SinexError>;
-
-    /// Assert result succeeds
-    fn assert_succeeds(self) -> Result<T, SinexError>;
-}
-
-// Usage
 let result = some_operation().await;
-result
-    .assert_contains_error("validation")?
-    .assert_fails()?;
+let err = result.expect_err("expected failure");
+assert!(err.to_string().contains("validation"));
 
-// Or with flow control
-let error = some_operation()
-    .await
-    .assert_fails()?;
-assert!(error.to_string().contains("expected message"));
+// If you need to inspect variants:
+match err {
+    SinexError::Validation { .. } => { /* expected */ }
+    other => panic!("unexpected error: {other}"),
+}
 ```
 
 ---
@@ -723,7 +697,7 @@ assert!(error.to_string().contains("expected message"));
 // Macro-based with automatic naming
 #[sinex_test]
 async fn test_event_snapshot(ctx: TestContext) -> Result<()> {
-    let event = ctx.create_test_event(
+    let event = ctx.publish_json_event(
         "snapshot-test",
         "test.snapshot",
         json!({"key": "value"}),
@@ -748,7 +722,7 @@ async fn test_custom_snapshot(ctx: TestContext) -> Result<()> {
 
 **Features**:
 - Auto-generated baseline snapshots
-- Update mode: `INSTA_UPDATE=always cargo nextest run -p sinex-test-utils`
+- Update mode: `INSTA_UPDATE=always cargo xtask test --profile reliable --prime -- -p sinex-test-utils`
 - YAML, JSON, debug, and inline formats
 - Git-friendly diffs for review
 
@@ -762,7 +736,7 @@ async fn test_custom_snapshot(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_event_ordering(ctx: TestContext) -> Result<()> {
     // Create events in sequence
-    let first = ctx.create_test_event(
+    let first = ctx.publish_json_event(
         "timeline",
         "event.first",
         json!({"seq": 1}),
@@ -770,7 +744,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let second = ctx.create_test_event(
+    let second = ctx.publish_json_event(
         "timeline",
         "event.second",
         json!({"seq": 2}),
@@ -828,9 +802,9 @@ async fn test_with_fixture(test_context_fixture: TestContext) -> Result<()> {
 
 ---
 
-### 6.2 Data Fixtures
+### 6.2 Rstest Fixtures
 
-**Pattern**: Standard fixtures for common test data.
+**Pattern**: Rstest fixtures for common test data.
 
 ```rust
 #[fixture]
@@ -866,7 +840,7 @@ async fn test_all_sources(
     ctx: TestContext,
 ) -> Result<()> {
     for source in sources {
-        ctx.create_test_event(source, "test.type", json!({})).await?;
+        ctx.publish_json_event(source, "test.type", json!({})).await?;
     }
     Ok(())
 }
@@ -898,12 +872,11 @@ ctx.timing().wait_for_event_count(expected).await?;
 - Use exponential backoff
 - Respect timing metadata
 
-### 7.4 DO: Test Error Cases with ErrorAssertions
+### 7.4 DO: Test Error Cases Explicitly
 
 ```rust
-result
-    .assert_contains_error("expected message")?
-    .assert_fails()?;
+let result = ctx.publish_json_event("", "valid.type", json!({})).await;
+assert!(result.is_err());
 ```
 
 ### 7.5 DO: Use `#[sinex_prop]` / `sinex_proptest!` For Edge Cases
@@ -912,10 +885,10 @@ result
 #[sinex_prop(cases = 64)]
 async fn fuzz_create(
     ctx: &TestContext,
-    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+    #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    ctx.create_test_event(&source, &ty, payload).await?;
+    ctx.publish_json_event(&source, &ty, payload).await?;
     Ok(())
 }
 
@@ -943,7 +916,7 @@ ctx.timing().wait_for_event_count(1).await?;
 ### 7.7 DON'T: Mock Production Types
 
 - Always use real Event, EventSource, etc.
-- Use builders for complex objects
+- Use `Event::new` or explicit helpers for complex objects
 - Trust production APIs
 
 ### 7.8 DON'T: Assume Event Ordering
@@ -961,7 +934,7 @@ ctx.timing().wait_for_event_count(1).await?;
 ### 7.10 DON'T: Skip Error Testing
 
 - Test both success and failure paths
-- Use ErrorAssertions for consistency
+- Assert on error types or messages explicitly
 - Verify error messages are meaningful
 
 ---
@@ -973,11 +946,9 @@ ctx.timing().wait_for_event_count(1).await?;
 | Database Isolation | database_pool.rs | TestDatabase | `acquire_test_database().await?` |
 | Test Context | test_context.rs | TestContext | `#[sinex_test] async fn test(ctx: TestContext)` |
 | Assertions | test_context.rs | ContextualAssert | `ctx.assert("msg").eq(&a, &b)?` |
-| Properties | property_testing.rs | SinexStrategies | `#[sinex_prop]` / `sinex_proptest!` |
-| Fixtures | fixtures.rs | UserSessionFixture | `#[fixture] pub fn fixture()` |
-| Builders | builders.rs | TestCheckpointBuilder | `TestCheckpointBuilder::new()` |
-| Error Testing | error_testing.rs | ErrorAssertions | `result.assert_fails()?` |
-| Service Management | satellite_management_utils.rs | TestIngestdHandle | `start_test_ingestd_with_config()` |
+| Properties | property_testing.rs | Local strategies | `#[sinex_prop]` / `sinex_proptest!` |
+| Dataset Seeding | dataset_seeds.rs | EventSpec / SeedClock | `seed_events_via_db(&ctx, &clock, &specs)` |
+| Service Management | node_management_utils.rs | TestIngestdHandle | `start_test_ingestd_with_config()` |
 | NATS | nats.rs | EphemeralNats | `EphemeralNats::new().await?` |
 | Macros | macros/src/lib.rs | #[sinex_test] | `#[sinex_test] async fn test()` |
 
@@ -996,7 +967,7 @@ async fn test_unit_example(
     #[case] event_type: &str,
 ) -> Result<()> {
     // Arrange
-    let event = ctx.create_test_event(
+    let event = ctx.publish_json_event(
         source,
         event_type,
         json!({"test_key": "test_value"}),
@@ -1023,7 +994,7 @@ async fn test_unit_example(
 async fn test_integration_example(ctx: TestContext) -> Result<()> {
     // Setup: Create test data
     for i in 0..5 {
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "integration-test",
             "test.event",
             json!({"index": i}),
@@ -1049,15 +1020,15 @@ async fn test_integration_example(ctx: TestContext) -> Result<()> {
 
 ### Complete Property Test
 ```rust
-use sinex_test_utils::property_testing::SinexStrategies;
+// See section 3.1 for strategy helpers used below.
 
 #[sinex_prop(cases = 128, timeout = "60s")]
 async fn property_events_roundtrip(
     ctx: &TestContext,
-    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+    #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    let inserted = ctx.create_test_event(&source, &ty, payload.clone()).await?;
+    let inserted = ctx.publish_json_event(&source, &ty, payload.clone()).await?;
     let fetched = ctx
         .pool
         .events()
@@ -1072,7 +1043,7 @@ async fn property_events_roundtrip(
 sinex_proptest! {
     #![cases = 64]
     #[timeout = "45s"]
-    fn property_ulids_roundtrip(value in SinexStrategies::json_payload()) -> TestResult<()> {
+    fn property_ulids_roundtrip(value in json_payload_strategy()) -> TestResult<()> {
         let body = value.to_string();
         let decoded: Value = serde_json::from_str(&body)?;
         prop_assert_eq!(decoded, value);
@@ -1086,10 +1057,10 @@ sinex_proptest! {
 ## 10. Troubleshooting
 
 ### Issue: "Database pool exhausted"
-**Solution**: Increase pool size or reduce concurrent tests
-```bash
-export SINEX_TESTUTILS_POOL_SIZE=20
-```
+**Solution**: Reduce concurrent tests or raise PostgreSQL `max_connections`. The pool size is
+derived from Nextest test threads (minimum 64) and will auto-shrink if the server cap is too low.
+Use `cargo xtask test --profile fast` for fewer concurrent tests, or adjust
+`.config/nextest.toml` if you need a lower ceiling.
 
 ### Issue: "Advisory lock timeout"
 **Solution**: Database may be stuck, check system load
@@ -1108,7 +1079,7 @@ necessary when debugging local Postgres issues:
 ```bash
 # Only needed if the cached template is corrupted locally
 rm target/sinex-test-utils/template_stamp.json
-cargo nextest run -p sinex-test-utils
+cargo xtask test --profile reliable --prime -- -p sinex-test-utils
 ```
 
 ### Issue: "Tests hang on cleanup"
@@ -1121,7 +1092,233 @@ ps aux | grep sqlx
 
 ---
 
-## 11. Performance Optimization
+## 11. Timing & Synchronization Patterns
+
+### 11.1 TestSynchronizer - Race-Free One-Shot Signals
+
+**Pattern**: Deterministic wait points for background tasks without race conditions.
+
+**Use Case**: Waiting for a background task to reach a specific state (e.g., checkpoint saved, leader elected, material finalized).
+
+**Mechanism**: Uses `tokio::sync::watch` channel for efficient one-shot signaling.
+
+```rust
+use sinex_test_utils::timing_utils::TestSynchronizer;
+
+#[sinex_test]
+async fn test_background_checkpoint(ctx: TestContext) -> Result<()> {
+    let sync = ctx.timing().synchronizer(Duration::from_secs(5));
+
+    // Background task
+    let sync_clone = sync.clone();
+    tokio::spawn(async move {
+        // ... do work ...
+        sync_clone.signal();
+    });
+
+    // Wait for signal or timeout
+    sync.wait().await?;
+
+    // Proceed with assertions after known synchronization point
+    Ok(())
+}
+```
+
+**Why This Matters**:
+- No race conditions (unlike sleep + check loops)
+- Fails fast on timeout with clear error
+- Zero busy-waiting overhead
+
+---
+
+### 11.2 TestBarrier - Coordinating Multiple Concurrent Tasks
+
+**Pattern**: Ensures N tasks all reach a synchronization point before proceeding.
+
+**Use Case**: Thundering herd tests, concurrent access verification, coordinated writes.
+
+**Mechanism**: Wraps `tokio::sync::Barrier` with timeout support.
+
+```rust
+use sinex_test_utils::timing_utils::TestBarrier;
+
+#[sinex_test]
+async fn test_concurrent_ingestion(ctx: TestContext) -> Result<()> {
+    let barrier = ctx.timing().barrier(3);
+    let timeout = Duration::from_secs(10);
+
+    // Launch 3 concurrent ingestors
+    let mut handles = vec![];
+    for i in 0..3 {
+        let barrier = barrier.clone();
+        handles.push(tokio::spawn(async move {
+            // Setup work...
+
+            // All tasks wait here
+            barrier.wait(timeout).await?;
+
+            // Now all proceed simultaneously
+            // ... coordinated work ...
+            Ok::<_, SinexError>(())
+        }));
+    }
+
+    // Wait for all to complete
+    for handle in handles {
+        handle.await??;
+    }
+
+    Ok(())
+}
+```
+
+**Best Practices**:
+- Use for concurrency stress tests
+- Verify system behavior under simultaneous load
+- Test lock contention and ordering guarantees
+
+---
+
+### 11.3 WaitHelpers - Adaptive Polling
+
+**Pattern**: Wait for database state changes with minimal latency and no fixed sleeps.
+
+**Why Not `tokio::time::sleep`**:
+```rust
+// ❌ BAD: Fixed sleep is either too short (flaky) or too long (slow)
+tokio::time::sleep(Duration::from_millis(500)).await;
+let events = ctx.pool.events().count().await?;
+assert_eq!(events, 5);  // May fail if ingestion takes 600ms
+
+// ✅ GOOD: Adaptive polling completes as soon as condition met
+ctx.timing().wait_for_event_count(5).await?;
+```
+
+**Available Helpers**:
+
+```rust
+// Wait for specific event count
+ctx.timing().wait_for_event_count(expected_count).await?;
+
+// Wait for events from specific source
+ctx.timing()
+    .wait_for_source_events(&source, expected_count, timeout)
+    .await?;
+
+// Generic condition polling
+ctx.timing()
+    .wait_for_condition(
+        || async {
+            let count = ctx.pool.events().count().await?;
+            Ok(count >= 5)
+        },
+        Duration::from_secs(30)
+    )
+    .await?;
+```
+
+**Implementation Details**:
+- Starts with 10ms intervals, backs off to 100ms
+- Completes immediately when condition met
+- Returns clear timeout error with last observed state
+- CI-friendly: generous timeouts, fast completion on success
+
+**Anti-Pattern to Avoid**:
+```rust
+// ❌ NEVER DO THIS
+use std::thread;
+thread::sleep(Duration::from_millis(100));  // Blocks executor!
+
+// ❌ AVOID THIS
+tokio::time::sleep(Duration::from_secs(1)).await;  // Fixed delay
+```
+
+**Always use adaptive polling instead**:
+```rust
+// ✅ DO THIS
+ctx.timing().wait_for_event_count(n).await?;
+```
+
+---
+
+### 11.4 Testing Processors With Optional Database Dependency
+
+**Architecture** (as of Jan 2025):
+- **Checkpoints**: ALWAYS stored in NATS KV (`KV_sinex_checkpoints`)
+- **DATABASE_URL**: Optional dependency - only needed for processors that query events
+- **`SINEX_EDGE_MODE=1`**: Not a "mode" - just suppresses DATABASE_URL requirement error + enables schema cache
+
+**Database Dependency by Processor Type**:
+
+| Type | Needs DATABASE_URL? | Example |
+|------|---------------------|---------|
+| **Ingestors** | ❌ No | fs-watcher, terminal-node, desktop-node |
+| **Automata** | ✅ Usually yes | analytics-automaton, search-automaton, pkm-automaton |
+
+**Why Automata Need DATABASE_URL**:
+- Query historical events from `core.events` table
+- Aggregate data across event streams
+- Build derived views and indexes
+
+**Why Ingestors Don't**:
+- Only capture and publish events to NATS
+- Never query the event database
+
+**What `SINEX_EDGE_MODE=1` Actually Does**:
+1. Suppresses configuration error when DATABASE_URL is missing
+2. Enables schema broadcast cache (subscribes to `system.schemas.active` for validation)
+
+**Testing Ingestors Without Database**:
+
+```rust
+#[sinex_test]
+async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
+    // Set SINEX_EDGE_MODE to allow missing DATABASE_URL
+    std::env::set_var("SINEX_EDGE_MODE", "1");
+    std::env::remove_var("DATABASE_URL");
+
+    let ctx = ctx.with_shared_nats().await?;
+
+    // Initialize ingestor - works without DATABASE_URL
+    let processor = MyIngestor::new(/* ... */);
+    let runner = StreamProcessorRunner::new(/* ... */).await?;
+
+    // Checkpoints work regardless (always NATS KV)
+    let checkpoint = runner.current_checkpoint().await?;
+    assert!(checkpoint.is_some());
+
+    std::env::remove_var("SINEX_EDGE_MODE");
+    Ok(())
+}
+```
+
+**Testing Automata With Database**:
+
+```rust
+#[sinex_test]
+async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
+    // DATABASE_URL present via TestContext
+    let ctx = ctx.with_shared_nats().await?;
+
+    let processor = MyAutomaton::new(/* ... */);
+    let runner = StreamProcessorRunner::new(/* ... */).await?;
+
+    // Automaton can query events via db_pool handle
+    // ... processor queries core.events ...
+
+    Ok(())
+}
+```
+
+**Key Points**:
+1. **There is no "checkpoint mode"** - checkpoints are always NATS KV
+2. **`SINEX_EDGE_MODE` is not a mode** - it's a permission flag + schema cache enabler
+3. **DATABASE_URL is just an optional dependency** - present or absent, everything else works the same
+4. **Test coverage**: Verify ingestors work without DATABASE_URL; automata work with it
+
+---
+
+## 12. Performance Optimization
 
 ### Baseline Metrics
 - Template creation: ~5-15 minutes (first run)
@@ -1131,9 +1328,9 @@ ps aux | grep sqlx
 
 ### Optimization Strategies
 1. **Template caching**: Leverage migrations fingerprint
-2. **Pool sizing**: Match concurrent test count
-3. **Connection limits**: Tune per `SINEX_TESTUTILS_CONN_BUDGET`
-4. **Minimal fixtures**: Only create what you need
+2. **Pool sizing**: Keep Nextest test threads aligned with Postgres capacity
+3. **Connection limits**: Keep slot pools small (4) and admin pool small (8)
+4. **Minimal datasets**: Only create what you need
 5. **Batch operations**: Insert events in groups when possible
 
 ### Monitoring

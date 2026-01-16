@@ -27,7 +27,7 @@ async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn event_validator_blocks_ulid_time_skew_attack(
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult<()> {
     let validator = EventValidator::new();
     let future_ulid = Ulid::from_datetime(Utc::now() + Duration::hours(1));
 
@@ -37,7 +37,7 @@ async fn event_validator_blocks_ulid_time_skew_attack(
         json!({"scenario": "future-id"}),
     )
     .from_material(Id::<SourceMaterial>::new(), 0)
-    .build();
+    .build()?;
 
     event.id = Some(Id::from_ulid(future_ulid));
     event.ts_orig = Some(Utc::now());

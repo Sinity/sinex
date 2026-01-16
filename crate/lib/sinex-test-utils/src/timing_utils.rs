@@ -7,15 +7,15 @@
 
 use crate::prelude::*;
 use crate::Result;
-use crate::TestResult;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
-use sinex_core::types::*; // Use production primitives from sinex-types
+use sinex_core::types::Pagination;
+use sinex_core::utils::CoordinationPrimitive;
 use sinex_core::*;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
 
 /// Standard timeout policy for tests.
 pub const DEFAULT_WAIT_SECS: u64 = 30;
@@ -24,42 +24,40 @@ pub const STRESS_WAIT_SECS: u64 = 90;
 
 /// Deterministic synchronization primitive to replace arbitrary sleeps
 pub struct TestSynchronizer {
-    notify: Arc<Notify>,
-    condition: Arc<AtomicBool>,
+    tx: tokio::sync::watch::Sender<bool>,
+    rx: tokio::sync::watch::Receiver<bool>,
     timeout_duration: Duration,
 }
 
 impl TestSynchronizer {
     /// Create a new test synchronizer with timeout
     pub fn new(timeout_duration: Duration) -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
         Self {
-            notify: Arc::new(Notify::new()),
-            condition: Arc::new(AtomicBool::new(false)),
+            tx,
+            rx,
             timeout_duration,
         }
     }
 
     /// Wait for condition to be signaled or timeout
     pub async fn wait(&self) -> TestResult<()> {
-        if self.condition.load(Ordering::Acquire) {
-            return Ok(());
-        }
-
-        tokio::time::timeout(self.timeout_duration, self.notify.notified())
+        let mut rx = self.rx.clone();
+        tokio::time::timeout(self.timeout_duration, rx.wait_for(|&val| val))
             .await
-            .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))?;
+            .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))?
+            .map_err(|e| SinexError::unknown(format!("Watch error: {}", e)))?;
         Ok(())
     }
 
     /// Signal that condition is met
     pub fn signal(&self) {
-        self.condition.store(true, Ordering::Release);
-        self.notify.notify_waiters();
+        let _ = self.tx.send(true);
     }
 
     /// Reset the synchronizer for reuse
     pub fn reset(&self) {
-        self.condition.store(false, Ordering::Release);
+        let _ = self.tx.send(false);
     }
 }
 
@@ -69,51 +67,48 @@ impl TestSynchronizer {
 
 /// Barrier for coordinating multiple test tasks
 pub struct TestBarrier {
-    notify: Arc<Notify>,
-    counter: Arc<AtomicUsize>,
+    barrier: Arc<tokio::sync::Barrier>,
     target: usize,
-    generation: Arc<AtomicUsize>,
+    arrivals_total: AtomicUsize,
+    generation: AtomicUsize,
 }
 
 impl TestBarrier {
     /// Create a new test barrier for coordinating multiple tasks
     pub fn new(participant_count: usize) -> Self {
         Self {
-            notify: Arc::new(Notify::new()),
-            counter: Arc::new(AtomicUsize::new(0)),
+            barrier: Arc::new(tokio::sync::Barrier::new(participant_count)),
             target: participant_count,
-            generation: Arc::new(AtomicUsize::new(0)),
+            arrivals_total: AtomicUsize::new(0),
+            generation: AtomicUsize::new(0),
         }
     }
 
     /// Wait for all participants to reach the barrier
     pub async fn wait(&self, timeout_duration: Duration) -> TestResult<()> {
-        let current_generation = self.generation.load(Ordering::Acquire);
-        let count = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
-
-        if count == self.target {
-            // Last participant - reset for next use and notify all
-            self.counter.store(0, Ordering::Release);
-            self.generation.fetch_add(1, Ordering::AcqRel);
-            self.notify.notify_waiters();
-            Ok(())
-        } else {
-            // Wait for last participant
-            loop {
-                if self.generation.load(Ordering::Acquire) > current_generation {
-                    return Ok(());
+        self.arrivals_total.fetch_add(1, Ordering::SeqCst);
+        match tokio::time::timeout(timeout_duration, self.barrier.wait()).await {
+            Ok(wait_result) => {
+                if wait_result.is_leader() {
+                    self.generation.fetch_add(1, Ordering::SeqCst);
                 }
-
-                tokio::time::timeout(timeout_duration, self.notify.notified())
-                    .await
-                    .map_err(|_| SinexError::timeout("TestBarrier wait timed out"))?;
+                Ok(())
+            }
+            Err(_) => {
+                self.arrivals_total.fetch_sub(1, Ordering::SeqCst);
+                Err(SinexError::timeout("TestBarrier wait timed out").into())
             }
         }
     }
 
     /// Get current participants count
     pub fn current_count(&self) -> usize {
-        self.counter.load(Ordering::Acquire)
+        let arrivals = self.arrivals_total.load(Ordering::Acquire);
+        let completed = self
+            .generation
+            .load(Ordering::Acquire)
+            .saturating_mul(self.target);
+        arrivals.saturating_sub(completed)
     }
 
     /// Get current generation (number of times barrier has been passed)
@@ -125,7 +120,6 @@ impl TestBarrier {
 /// Worker readiness coordinator for thundering herd tests
 pub struct WorkerReadinessCoordinator {
     counter: CoordinationPrimitive,
-    target_workers: usize,
 }
 
 impl WorkerReadinessCoordinator {
@@ -135,7 +129,6 @@ impl WorkerReadinessCoordinator {
                 target_workers,
                 format!("worker_readiness_{target_workers}"),
             ),
-            target_workers,
         }
     }
 
@@ -153,6 +146,17 @@ impl WorkerReadinessCoordinator {
     pub fn ready_count(&self) -> usize {
         self.counter.get()
     }
+}
+
+fn collect_event_ids(events: Vec<Event<JsonValue>>) -> Option<Vec<EventId>> {
+    let mut ids = Vec::with_capacity(events.len());
+    for event in events {
+        match event.id {
+            Some(id) => ids.push(id),
+            None => return None,
+        }
+    }
+    Some(ids)
 }
 
 /// Wait helpers that use production query builders (NO RAW SQL)
@@ -262,6 +266,223 @@ impl WaitHelpers {
 
         let final_count = pool.events().count_by_event_type(&event_type).await? as usize;
         Ok(final_count)
+    }
+
+    /// Wait until a specific event is persisted.
+    pub async fn wait_for_event_id(
+        pool: &DbPool,
+        event_id: sinex_core::EventId,
+        timeout_secs: u64,
+    ) -> TestResult<()> {
+        let pool = pool.clone();
+        let event_id = event_id.clone();
+
+        sinex_core::types::utils::wait_for_condition_adaptive(
+            || async { Ok(pool.events().get_by_id(event_id.clone()).await?.is_some()) },
+            timeout_secs,
+            &format!("event id {event_id} persisted"),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Wait for event id failed")
+                .with_context("event_id", event_id.to_string())
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_event_id")
+        })?;
+        Ok(())
+    }
+
+    /// Wait for a specific ordered set of recent event ids (most recent first).
+    pub async fn wait_for_recent_event_ids(
+        pool: &DbPool,
+        expected_ids: &[EventId],
+        timeout_secs: u64,
+    ) -> TestResult<Vec<EventId>> {
+        if expected_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pool = pool.clone();
+        let expected = Arc::new(expected_ids.to_vec());
+        let expected_len = expected.len();
+
+        let check_pool = pool.clone();
+        let check_expected = expected.clone();
+        sinex_core::types::utils::wait_for_condition_adaptive(
+            move || {
+                let pool = check_pool.clone();
+                let expected = check_expected.clone();
+                async move {
+                    let events = pool.events().get_recent(expected.len() as i64).await?;
+                    let ids = match collect_event_ids(events) {
+                        Some(ids) => ids,
+                        None => return Ok(false),
+                    };
+                    Ok(ids.as_slice() == expected.as_slice())
+                }
+            },
+            timeout_secs,
+            &format!("recent event ids len={expected_len}"),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Wait for recent event ids failed")
+                .with_context("expected_len", expected_len)
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_recent_event_ids")
+        })?;
+
+        let events = pool.events().get_recent(expected_len as i64).await?;
+        let ids = collect_event_ids(events).ok_or_else(|| {
+            SinexError::unknown("Wait for recent event ids returned events missing ids")
+        })?;
+        Ok(ids)
+    }
+
+    /// Wait for a specific ordered set of event ids for a source (most recent first).
+    pub async fn wait_for_source_event_ids(
+        pool: &DbPool,
+        source: &str,
+        expected_ids: &[EventId],
+        timeout_secs: u64,
+    ) -> TestResult<Vec<EventId>> {
+        if expected_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pool = pool.clone();
+        let expected = Arc::new(expected_ids.to_vec());
+        let expected_len = expected.len();
+        let event_source = EventSource::new(source);
+        let source_label = event_source.as_str().to_string();
+
+        let check_pool = pool.clone();
+        let check_expected = expected.clone();
+        let check_source = event_source.clone();
+        sinex_core::types::utils::wait_for_condition_adaptive(
+            move || {
+                let pool = check_pool.clone();
+                let expected = check_expected.clone();
+                let event_source = check_source.clone();
+                async move {
+                    let pagination = Pagination::with_bounds(
+                        Some(expected.len() as i64),
+                        Some(0),
+                        expected.len() as i64,
+                        expected.len() as i64,
+                    );
+                    let events = pool
+                        .events()
+                        .get_by_source(&event_source, pagination)
+                        .await?;
+                    let ids = match collect_event_ids(events) {
+                        Some(ids) => ids,
+                        None => return Ok(false),
+                    };
+                    Ok(ids.as_slice() == expected.as_slice())
+                }
+            },
+            timeout_secs,
+            &format!("source '{source_label}' event ids len={expected_len}"),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Wait for source event ids failed")
+                .with_context("source", &source_label)
+                .with_context("expected_len", expected_len)
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_source_event_ids")
+        })?;
+
+        let pagination = Pagination::with_bounds(
+            Some(expected_len as i64),
+            Some(0),
+            expected_len as i64,
+            expected_len as i64,
+        );
+        let events = pool
+            .events()
+            .get_by_source(&event_source, pagination)
+            .await?;
+        let ids = collect_event_ids(events).ok_or_else(|| {
+            SinexError::unknown("Wait for source event ids returned events missing ids")
+        })?;
+        Ok(ids)
+    }
+
+    /// Wait for a specific ordered set of event ids for an event type (most recent first).
+    pub async fn wait_for_event_type_event_ids(
+        pool: &DbPool,
+        event_type: &EventType,
+        expected_ids: &[EventId],
+        timeout_secs: u64,
+    ) -> TestResult<Vec<EventId>> {
+        if expected_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pool = pool.clone();
+        let expected = Arc::new(expected_ids.to_vec());
+        let expected_len = expected.len();
+        let event_type = event_type.clone();
+        let event_type_label = event_type.as_str().to_string();
+
+        let check_pool = pool.clone();
+        let check_expected = expected.clone();
+        let check_event_type = event_type.clone();
+        sinex_core::types::utils::wait_for_condition_adaptive(
+            move || {
+                let pool = check_pool.clone();
+                let expected = check_expected.clone();
+                let event_type = check_event_type.clone();
+                async move {
+                    let pagination = Pagination::with_bounds(
+                        Some(expected.len() as i64),
+                        Some(0),
+                        expected.len() as i64,
+                        expected.len() as i64,
+                    );
+                    let events = pool
+                        .events()
+                        .get_by_event_type(&event_type, pagination)
+                        .await?;
+                    let ids = match collect_event_ids(events) {
+                        Some(ids) => ids,
+                        None => return Ok(false),
+                    };
+                    Ok(ids.as_slice() == expected.as_slice())
+                }
+            },
+            timeout_secs,
+            &format!("event type '{event_type_label}' event ids len={expected_len}"),
+        )
+        .await
+        .map_err(|e| {
+            SinexError::timeout("Wait for event type ids failed")
+                .with_context("event_type", &event_type_label)
+                .with_context("expected_len", expected_len)
+                .with_context("timeout_duration", format!("{timeout_secs}s"))
+                .with_source(e)
+                .with_operation("wait_for_event_type_event_ids")
+        })?;
+
+        let pagination = Pagination::with_bounds(
+            Some(expected_len as i64),
+            Some(0),
+            expected_len as i64,
+            expected_len as i64,
+        );
+        let events = pool
+            .events()
+            .get_by_event_type(&event_type, pagination)
+            .await?;
+        let ids = collect_event_ids(events).ok_or_else(|| {
+            SinexError::unknown("Wait for event type ids returned events missing ids")
+        })?;
+        Ok(ids)
     }
 
     /// Wait for condition with timeout using production adaptive wait helpers
@@ -391,6 +612,55 @@ impl<'ctx> TimingUtils<'ctx> {
         .await
     }
 
+    /// Wait for a specific event id
+    pub async fn wait_for_event_id(
+        &self,
+        pool: &DbPool,
+        event_id: sinex_core::EventId,
+        timeout_secs: u64,
+    ) -> TestResult<()> {
+        WaitHelpers::wait_for_event_id(pool, event_id, timeout_secs).await
+    }
+
+    /// Wait for recent event ids (most recent first).
+    pub async fn wait_for_recent_event_ids(
+        &self,
+        expected_ids: &[EventId],
+    ) -> TestResult<Vec<EventId>> {
+        WaitHelpers::wait_for_recent_event_ids(&self.ctx.pool, expected_ids, DEFAULT_WAIT_SECS)
+            .await
+    }
+
+    /// Wait for event ids by source (most recent first).
+    pub async fn wait_for_source_event_ids(
+        &self,
+        source: &str,
+        expected_ids: &[EventId],
+    ) -> TestResult<Vec<EventId>> {
+        WaitHelpers::wait_for_source_event_ids(
+            &self.ctx.pool,
+            source,
+            expected_ids,
+            DEFAULT_WAIT_SECS,
+        )
+        .await
+    }
+
+    /// Wait for event ids by event type (most recent first).
+    pub async fn wait_for_event_type_event_ids(
+        &self,
+        event_type: &EventType,
+        expected_ids: &[EventId],
+    ) -> TestResult<Vec<EventId>> {
+        WaitHelpers::wait_for_event_type_event_ids(
+            &self.ctx.pool,
+            event_type,
+            expected_ids,
+            DEFAULT_WAIT_SECS,
+        )
+        .await
+    }
+
     /// Create event counter for coordination using production primitives
     pub fn event_counter(&self, target: usize) -> CoordinationPrimitive {
         CoordinationPrimitive::event_counter(target, format!("test_{}", self.ctx.test_name()))
@@ -440,11 +710,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    type Result<T> = std::result::Result<T, SinexError>;
-
-    #[sinex_test]
-    async fn test_synchronizer_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
+    #[sinex_serial_test]
+    async fn test_synchronizer_basic(ctx: TestContext) -> TestResult<()> {
         ctx.ensure_clean().await?;
         crate::db_common::reset_database(&ctx.pool).await?;
         crate::db_common::verify_clean_state(&ctx.pool).await?;
@@ -478,7 +745,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_synchronizer_concurrent(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_synchronizer_concurrent(ctx: TestContext) -> TestResult<()> {
         let sync = Arc::new(TestSynchronizer::new(Duration::from_secs(5)));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -519,9 +786,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_barrier_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
+    #[sinex_serial_test]
+    async fn test_barrier_basic(ctx: TestContext) -> TestResult<()> {
         let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -562,7 +828,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_barrier_timeout(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_barrier_timeout(ctx: TestContext) -> TestResult<()> {
         let barrier = Arc::new(TestBarrier::new(3));
 
         // Only 2 participants (less than required)
@@ -591,7 +857,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_worker_readiness_coordinator(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_worker_readiness_coordinator(ctx: TestContext) -> TestResult<()> {
         let coordinator = WorkerReadinessCoordinator::new(3);
 
         // Simulate workers becoming ready
@@ -619,11 +885,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_event_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_wait_helpers_event_count(ctx: TestContext) -> TestResult<()> {
         ctx.ensure_clean().await?;
         // Insert some events
         for i in 0..5 {
-            ctx.create_test_event("wait-test", "test.event", json!({"index": i}))
+            ctx.publish_json_event("wait-test", "test.event", json!({"index": i}))
                 .await?;
         }
 
@@ -634,9 +900,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_wait_helpers_source_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
+    #[sinex_serial_test]
+    async fn test_wait_helpers_source_events(ctx: TestContext) -> TestResult<()> {
         retry_with_snapshot(
             "timing_utils::test_wait_helpers_source_events",
             &ctx,
@@ -647,12 +912,12 @@ mod tests {
                 crate::db_common::verify_clean_state(&ctx.pool).await?;
                 // Insert events from different sources
                 for i in 0..3 {
-                    ctx.create_test_event("source-a", "test.event", json!({"index": i}))
+                    ctx.publish_json_event("source-a", "test.event", json!({"index": i}))
                         .await?;
                 }
 
                 for i in 0..2 {
-                    ctx.create_test_event("source-b", "test.event", json!({"index": i}))
+                    ctx.publish_json_event("source-b", "test.event", json!({"index": i}))
                         .await?;
                 }
 
@@ -662,7 +927,7 @@ mod tests {
                 if count_a < 3 {
                     let missing = 3 - count_a;
                     for i in 0..missing {
-                        ctx.create_test_event("source-a", "test.event", json!({"index": 10 + i}))
+                        ctx.publish_json_event("source-a", "test.event", json!({"index": 10 + i}))
                             .await?;
                     }
                     count_a =
@@ -675,7 +940,7 @@ mod tests {
                 if count_b < 2 {
                     let missing = 2 - count_b;
                     for i in 0..missing {
-                        ctx.create_test_event("source-b", "test.event", json!({"index": 20 + i}))
+                        ctx.publish_json_event("source-b", "test.event", json!({"index": 20 + i}))
                             .await?;
                     }
                     count_b =
@@ -691,7 +956,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> TestResult<()> {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
@@ -721,7 +986,7 @@ mod tests {
     #[sinex_test]
     async fn test_wait_helpers_multiple_conditions(
         ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -764,7 +1029,7 @@ mod tests {
     #[sinex_test]
     async fn test_timing_patterns_event_processing(
         ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .await
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;
@@ -780,7 +1045,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_test_phases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_patterns_test_phases(ctx: TestContext) -> TestResult<()> {
         let phases = vec!["setup", "execution", "validation", "cleanup"];
         let (tracker, phase_names) = TimingPatterns::create_test_phases(&phases);
 
@@ -798,9 +1063,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_timing_utils_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
+    #[sinex_serial_test]
+    async fn test_timing_utils_integration(ctx: TestContext) -> TestResult<()> {
         ctx.ensure_clean().await?;
         crate::db_common::reset_database(&ctx.pool).await?;
         crate::db_common::verify_clean_state(&ctx.pool).await?;
@@ -808,7 +1072,7 @@ mod tests {
 
         // Insert events
         for i in 0..3 {
-            ctx.create_test_event("timing-test", "integration", json!({"index": i}))
+            ctx.publish_json_event("timing-test", "integration", json!({"index": i}))
                 .await?;
         }
 
@@ -818,7 +1082,7 @@ mod tests {
             .unwrap_or(0);
         if count < 3 {
             for j in 0..(3 - count) {
-                ctx.create_test_event("timing-test", "integration", json!({"topup": j}))
+                ctx.publish_json_event("timing-test", "integration", json!({"topup": j}))
                     .await?;
             }
         }
@@ -839,7 +1103,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_synchronizer(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_utils_synchronizer(ctx: TestContext) -> TestResult<()> {
         let timing = ctx.timing();
         let sync = timing.synchronizer(Duration::from_secs(5));
 
@@ -863,7 +1127,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_barrier(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_utils_barrier(ctx: TestContext) -> TestResult<()> {
         let timing = ctx.timing();
         let barrier = Arc::new(timing.barrier(2));
 
@@ -885,7 +1149,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> TestResult<()> {
         let timing = ctx.timing();
         let tracker = timing.progress_tracker(3);
 
@@ -903,7 +1167,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_event_counter(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_utils_event_counter(ctx: TestContext) -> TestResult<()> {
         let timing = ctx.timing();
         let counter = timing.event_counter(10);
 
@@ -923,20 +1187,6 @@ mod tests {
 
         assert_eq!(counter.get(), 10);
 
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_barrier_generation_tracking() -> TestResult<()> {
-        let barrier = TestBarrier::new(2);
-
-        assert_eq!(barrier.generation(), 0);
-        assert_eq!(barrier.current_count(), 0);
-
-        // After one participant
-        barrier.counter.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(barrier.current_count(), 1);
-        assert_eq!(barrier.generation(), 0);
         Ok(())
     }
 }

@@ -3,7 +3,7 @@
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
-use sinex_core::db::repositories::{DbPoolExt, EventRepositoryTx};
+use sinex_core::db::repositories::EventRepositoryTx;
 use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -103,7 +103,6 @@ pub struct StreamingCascadeAnalyzer {
     config: CascadeAnalyzerConfig,
 }
 
-#[allow(dead_code)]
 impl StreamingCascadeAnalyzer {
     fn quote_identifier(name: &str) -> String {
         let mut quoted = String::with_capacity(name.len() + 2);
@@ -254,21 +253,6 @@ impl StreamingCascadeAnalyzer {
         Ok(table_name)
     }
 
-    /// Create temporary tables for analysis  
-    async fn create_temp_tables(&self, session_id: &str) -> Result<String> {
-        // Validate session_id to prevent SQL injection
-        Self::validate_session_id(session_id)?;
-
-        let table_name = self
-            .pool
-            .events()
-            .prepare_cascade_session(session_id, false)
-            .await
-            .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
-        debug!("Created temporary table {}", table_name);
-        Ok(table_name)
-    }
-
     /// Populate initial events to analyze (transaction version)
     async fn populate_initial_events_tx(
         &self,
@@ -282,17 +266,6 @@ impl StreamingCascadeAnalyzer {
 
         let mut repo = EventRepositoryTx::new(tx);
         repo.populate_cascade_roots(table_name, event_ids)
-            .await
-            .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
-        debug!("Populated {} initial events", event_ids.len());
-        Ok(())
-    }
-
-    /// Populate initial events to analyze
-    async fn populate_initial_events(&self, table_name: &str, event_ids: &[Ulid]) -> Result<()> {
-        self.pool
-            .events()
-            .populate_cascade_roots(table_name, event_ids)
             .await
             .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
         debug!("Populated {} initial events", event_ids.len());
@@ -452,145 +425,6 @@ impl StreamingCascadeAnalyzer {
         Ok(())
     }
 
-    /// Build dependency graph using iterative deepening
-    async fn build_dependency_graph(&self, table_name: &str) -> Result<usize> {
-        let depth = self
-            .pool
-            .events()
-            .expand_cascade(table_name, self.config.max_depth as i32)
-            .await
-            .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
-
-        info!("Built dependency graph with max depth {}", depth);
-        Ok(depth)
-    }
-
-    /// Calculate histogram of cascade depths
-    async fn calculate_depth_histogram(&self, table_name: &str) -> Result<HashMap<usize, usize>> {
-        let rows = self
-            .pool
-            .events()
-            .cascade_depth_histogram(table_name)
-            .await
-            .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
-
-        let mut histogram = HashMap::new();
-        for (depth, count) in rows {
-            histogram.insert(depth as usize, count as usize);
-        }
-
-        Ok(histogram)
-    }
-
-    /// Count total affected events
-    async fn count_affected_events(&self, table_name: &str) -> Result<usize> {
-        let count = self
-            .pool
-            .events()
-            .cascade_node_count(table_name)
-            .await
-            .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
-        Ok(count as usize)
-    }
-
-    /// Find integrity violations
-    async fn find_integrity_violations(&self, table_name: &str) -> Result<Vec<IntegrityViolation>> {
-        let rows = self
-            .pool
-            .events()
-            .cascade_integrity_violations(table_name, 100)
-            .await
-            .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
-
-        let mut violations = Vec::new();
-        for (live_id, archived_id) in rows {
-            violations.push(IntegrityViolation {
-                archived_event_id: archived_id,
-                live_event_id: live_id,
-                violation_type: ViolationType::LiveToArchived,
-                severity: Severity::Critical,
-            });
-        }
-
-        if !violations.is_empty() {
-            warn!("Found {} integrity violations", violations.len());
-        }
-
-        Ok(violations)
-    }
-
-    /// Detect circular dependencies using Tarjan's algorithm
-    async fn detect_circular_dependencies(
-        &self,
-        table_name: &str,
-    ) -> Result<Vec<CircularDependency>> {
-        let quoted_table = Self::quote_identifier(table_name);
-        // For now, use a simple SQL approach to find potential cycles
-        // In production, would implement proper Tarjan's algorithm
-        let max_cycle_depth = self.config.max_depth.max(1);
-        let query = format!(
-            r#"
-            WITH RECURSIVE cycle_check AS (
-                SELECT 
-                    id,
-                    parent_ids,
-                    ARRAY[id] as path,
-                    FALSE as has_cycle
-                FROM {}
-                WHERE depth = 0
-                
-                UNION ALL
-                
-                SELECT 
-                    t.id,
-                    t.parent_ids,
-                    cc.path || t.id,
-                    t.id = ANY(cc.path) as has_cycle
-                FROM {} t
-                JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
-                WHERE NOT cc.has_cycle
-                AND array_length(cc.path, 1) < {1}
-            )
-            SELECT (path)::uuid[] AS path
-            FROM cycle_check
-            WHERE has_cycle
-            LIMIT 10
-            "#,
-            quoted_table, max_cycle_depth
-        );
-
-        let rows = sqlx::query_as::<_, (Vec<Uuid>,)>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| db_error(e, "detect circular dependencies"))?;
-
-        let mut cycles = Vec::new();
-        for (path,) in rows {
-            let converted: Vec<Ulid> = path.into_iter().map(Ulid::from_uuid).collect();
-            cycles.push(CircularDependency {
-                cycle: converted,
-                is_strong: true, // Conservative assumption
-            });
-        }
-
-        if !cycles.is_empty() {
-            warn!("Found {} circular dependencies", cycles.len());
-        }
-
-        Ok(cycles)
-    }
-
-    /// Clean up temporary tables
-    async fn cleanup_temp_tables(&self, table_name: &str) -> Result<()> {
-        self.pool
-            .events()
-            .cleanup_cascade_session(table_name)
-            .await
-            .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
-        debug!("Cleaned up temporary table {}", table_name);
-        Ok(())
-    }
-
     /// Plan safe execution order for cascade operations
     pub async fn plan_cascade_order(&self, event_ids: &[Ulid]) -> Result<Vec<Ulid>> {
         // Perform topological sort to get safe execution order
@@ -613,7 +447,10 @@ impl StreamingCascadeAnalyzer {
             r#"
             SELECT 
                 id as event_id,
-                source_event_ids
+                CASE
+                    WHEN source_event_ids IS NULL THEN NULL
+                    ELSE ARRAY(SELECT ulid_to_uuid(elem) FROM unnest(source_event_ids) AS elem)
+                END as source_event_ids
             FROM core.events
             WHERE id = ANY($1::ulid[])
             "#,
@@ -626,13 +463,13 @@ impl StreamingCascadeAnalyzer {
         // Build graph
         for row in rows {
             let event_id: Ulid = row.get("event_id");
-            let source_ids: Option<Vec<Ulid>> = row.get("source_event_ids");
+            let source_ids: Option<Vec<Uuid>> = row.get("source_event_ids");
 
             if let Some(source_ids) = source_ids {
                 for source_id in source_ids {
+                    let source_id = Ulid::from_uuid(source_id);
                     if event_ids.contains(&source_id) {
-                        dependencies.get_mut(&source_id).unwrap().push(event_id);
-                        *in_degree.get_mut(&event_id).unwrap() += 1;
+                        record_dependency(&mut dependencies, &mut in_degree, source_id, event_id);
                     }
                 }
             }
@@ -682,10 +519,22 @@ impl StreamingCascadeAnalyzer {
     }
 }
 
+fn record_dependency(
+    dependencies: &mut HashMap<Ulid, Vec<Ulid>>,
+    in_degree: &mut HashMap<Ulid, usize>,
+    source_id: Ulid,
+    event_id: Ulid,
+) {
+    dependencies.entry(source_id).or_default().push(event_id);
+    *in_degree.entry(event_id).or_insert(0) += 1;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use chrono::Utc;
+    use serde_json::json;
+    use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
     fn session_id_validation_enforces_length() -> TestResult<()> {
@@ -698,6 +547,60 @@ mod tests {
     fn session_id_validation_rejects_invalid_chars() -> TestResult<()> {
         assert!(StreamingCascadeAnalyzer::validate_session_id("valid_session_1").is_ok());
         assert!(StreamingCascadeAnalyzer::validate_session_id("invalid-session").is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn record_dependency_inserts_missing_keys() -> TestResult<()> {
+        let mut dependencies = HashMap::new();
+        let mut in_degree = HashMap::new();
+        let source_id = Ulid::new();
+        let event_id = Ulid::new();
+
+        record_dependency(&mut dependencies, &mut in_degree, source_id, event_id);
+
+        assert_eq!(dependencies.get(&source_id), Some(&vec![event_id]));
+        assert_eq!(in_degree.get(&event_id), Some(&1));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
+        let analyzer = StreamingCascadeAnalyzer::new(ctx.pool.clone());
+        let now = Utc::now();
+        let payload = json!({});
+
+        let a = Ulid::new();
+        let b = Ulid::new();
+        let c = Ulid::new();
+        let cycle_links = vec![(a, vec![b]), (b, vec![c]), (c, vec![a])];
+
+        for (event_id, parents) in &cycle_links {
+            let parents_uuid: Vec<Uuid> = parents.iter().map(|id| id.to_uuid()).collect();
+            sqlx::query(
+                "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) \
+                 VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",
+            )
+            .bind(event_id.to_uuid())
+            .bind("cascade-test")
+            .bind("cascade.test")
+            .bind("test-host")
+            .bind(payload.clone())
+            .bind(now)
+            .bind(parents_uuid)
+            .execute(&ctx.pool)
+            .await?;
+        }
+
+        let err = analyzer
+            .plan_cascade_order(&[a, b, c])
+            .await
+            .expect_err("cycle should be detected in cascade ordering");
+        assert!(
+            err.to_string().contains("Circular dependencies"),
+            "unexpected error: {err}"
+        );
+
         Ok(())
     }
 }

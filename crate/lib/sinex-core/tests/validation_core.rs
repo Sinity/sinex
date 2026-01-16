@@ -5,9 +5,10 @@ use sinex_core::types::validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
 };
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn path_validation_blocks_traversal() -> color_eyre::eyre::Result<()> {
+fn path_validation_blocks_traversal() -> TestResult<()> {
     assert!(validate_path("normal/path.txt").is_ok());
     assert!(validate_path("/absolute/path.txt").is_ok());
     assert!(validate_path("/etc/passwd\0.txt").is_err());
@@ -20,7 +21,7 @@ fn path_validation_blocks_traversal() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn filename_sanitization_removes_disallowed_characters() -> color_eyre::eyre::Result<()> {
+fn filename_sanitization_removes_disallowed_characters() -> TestResult<()> {
     assert_eq!(
         sanitize_filename_component("normal.txt").unwrap(),
         "normal.txt"
@@ -36,7 +37,7 @@ fn filename_sanitization_removes_disallowed_characters() -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-fn json_validation_enforces_limits() -> color_eyre::eyre::Result<()> {
+fn json_validation_enforces_limits() -> TestResult<()> {
     assert!(validate_json(r#"{"key": "value", "number": 42}"#).is_ok());
 
     let large = format!(r#"{{"data": "{}"}}"#, "x".repeat(11_000_000));
@@ -56,7 +57,7 @@ fn json_validation_enforces_limits() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn json_value_validation_checks_structure() -> color_eyre::eyre::Result<()> {
+fn json_value_validation_checks_structure() -> TestResult<()> {
     let valid = json!({"key": "value", "number": 42});
     assert!(validate_json_value(&valid).is_ok());
 
@@ -74,7 +75,7 @@ fn json_value_validation_checks_structure() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn deserialize_json_with_validation_enforces_schema() -> color_eyre::eyre::Result<()> {
+fn deserialize_json_with_validation_enforces_schema() -> TestResult<()> {
     #[derive(Debug, serde::Deserialize, PartialEq)]
     struct TestStruct {
         name: String,

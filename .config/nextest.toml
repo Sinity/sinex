@@ -1,15 +1,33 @@
 [profile.default]
-# Default: use available CPU parallelism.
-test-threads = "num-cpus"
+# Default: reliable settings with standard filtering.
+test-threads = 12
+# Perf/stress/external suites run only under explicit profiles.
+default-filter = '''
+all() - (
+  (package(sinex-schema) & test(test_index_performance_benefit))
+  | (package(sinex-schema) & test(performance_constraint_tests::))
+  | (package(sinex-schema) & test(stress_tests::))
+  | (package(sinex-services) & test(test_analytics_large_dataset_performance))
+  | (package(sinex-services) & test(test_service_performance_integration))
+  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
+  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
+  | (package(sinex-satellite-sdk) & binary(security))
+  | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
+  | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
+  | (package(sinex-core) & test(perf_database_ordering_consistency))
+)
+'''
 
 failure-output = "immediate-final"
 success-output = "never"
 
 status-level = "pass"
 
-retries = 1
+retries = 3
 
-slow-timeout = { period = "120s", terminate-after = 1 }
+slow-timeout = { period = "180s", terminate-after = 1 }
 
 
 # Better failure reporting
@@ -20,7 +38,7 @@ store-failure-output = true
 
 [profile.fast]
 # Fast local runs: keep parallelism high, short timeout, no retries.
-test-threads = "num-cpus"
+test-threads = 12
 failure-output = "immediate-final"
 success-output = "never"
 retries = 0
@@ -29,11 +47,56 @@ slow-timeout = { period = "120s", terminate-after = 1 }
 
 [profile.reliable]
 # CI/reliable runs: keep parallelism high and retry flakes more.
-test-threads = "num-cpus"
+test-threads = 12
 failure-output = "immediate-final"
 success-output = "never"
 retries = 3
 slow-timeout = { period = "180s", terminate-after = 1 }
+
+[profile.secure]
+# Secure transport suite: runs reliable settings with TLS-enabled harnesses.
+test-threads = 12
+failure-output = "immediate-final"
+success-output = "never"
+retries = 3
+slow-timeout = { period = "180s", terminate-after = 1 }
+
+[profile.secure.env]
+SINEX_TEST_USE_TLS = "1"
+
+[profile.soak]
+# Long-running soak runs, including stress/perf suites.
+test-threads = 12
+failure-output = "immediate-final"
+success-output = "never"
+retries = 0
+slow-timeout = { period = "900s", terminate-after = 1 }
+default-filter = "all()"
+
+[profile.ci]
+# CI runs: same as reliable, with CI-only skips baked into the filter.
+test-threads = 12
+failure-output = "immediate-final"
+success-output = "never"
+retries = 3
+slow-timeout = { period = "180s", terminate-after = 1 }
+default-filter = '''
+all() - (
+  (package(sinex-schema) & test(test_index_performance_benefit))
+  | (package(sinex-schema) & test(performance_constraint_tests::))
+  | (package(sinex-schema) & test(stress_tests::))
+  | (package(sinex-services) & test(test_analytics_large_dataset_performance))
+  | (package(sinex-services) & test(test_service_performance_integration))
+  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
+  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
+  | (package(sinex-satellite-sdk) & binary(security))
+  | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
+  | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
+  | (package(sinex-core) & test(perf_database_ordering_consistency))
+)
+'''
 
 
 # Debug profile - show all output
@@ -47,7 +110,7 @@ slow-timeout = { period = "300s", terminate-after = 1 }
 
 [profile.parallel]
 # Same parallelism as fast, but with minimal output.
-test-threads = "num-cpus"
+test-threads = 12
 failure-output = "final"
 success-output = "never"
 retries = 0
@@ -61,3 +124,56 @@ failure-output = "immediate-final"
 success-output = "never"
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 1 }
+
+
+[profile.bench]
+# Benchmark profile: higher timeout for pool stress testing
+test-threads = "num-cpus"
+failure-output = "final"
+success-output = "never"
+retries = 0
+slow-timeout = { period = "600s", terminate-after = 1 }
+
+[profile.perf]
+# Explicit perf suites only.
+test-threads = "num-cpus"
+failure-output = "final"
+success-output = "never"
+retries = 0
+slow-timeout = { period = "600s", terminate-after = 1 }
+default-filter = '''
+(package(sinex-schema) & test(test_index_performance_benefit))
+  | (package(sinex-schema) & test(performance_constraint_tests::))
+  | (package(sinex-schema) & test(stress_tests::))
+  | (package(sinex-services) & test(test_analytics_large_dataset_performance))
+  | (package(sinex-services) & test(test_service_performance_integration))
+  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
+  | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
+  | (package(sinex-core) & test(perf_database_ordering_consistency))
+'''
+
+[profile.stress]
+# Explicit stress/chaos suites only.
+test-threads = "num-cpus"
+failure-output = "final"
+success-output = "never"
+retries = 0
+slow-timeout = { period = "900s", terminate-after = 1 }
+default-filter = '''
+(package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
+  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
+'''
+
+[profile.external]
+# Explicit external/git-annex suites only.
+test-threads = "num-cpus"
+failure-output = "final"
+success-output = "never"
+retries = 0
+slow-timeout = { period = "900s", terminate-after = 1 }
+default-filter = '''
+(package(sinex-satellite-sdk) & binary(blob_manager_integration))
+  | (package(sinex-satellite-sdk) & binary(security))
+'''

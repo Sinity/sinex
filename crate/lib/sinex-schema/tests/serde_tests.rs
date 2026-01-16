@@ -10,12 +10,10 @@ mod serde_tests {
     use serde_json;
     use sinex_schema::schema::records::*;
     use sinex_schema::ulid::Ulid;
-
-    #[allow(dead_code)]
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_event_record_serialization() -> TestResult<()> {
+    fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
         let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -54,7 +52,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_blob_record_serialization() -> TestResult<()> {
+    fn test_blob_record_serialization() -> color_eyre::eyre::Result<()> {
         let blob = BlobRecord {
             id: Ulid::new(),
             annex_backend: "SHA256E".to_string(),
@@ -80,33 +78,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_checkpoint_record_serialization() -> TestResult<()> {
-        let checkpoint = CheckpointRecord {
-            id: Ulid::new(),
-            processor_name: "test-processor".to_string(),
-            consumer_group: "test-group".to_string(),
-            consumer_name: "test-consumer".to_string(),
-            last_processed_id: Some(Ulid::new()),
-            processed_count: 42,
-            checkpoint_data: Some(serde_json::json!({"offset": 100})),
-            checkpoint_version: 1,
-            created_at: Utc::now(),
-            last_activity: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        let json = serde_json::to_string(&checkpoint).expect("Should serialize to JSON");
-        let deserialized: CheckpointRecord =
-            serde_json::from_str(&json).expect("Should deserialize from JSON");
-
-        assert_eq!(checkpoint.id, deserialized.id);
-        assert_eq!(checkpoint.processor_name, deserialized.processor_name);
-        assert_eq!(checkpoint.processed_count, deserialized.processed_count);
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_entity_record_serialization() -> TestResult<()> {
+    fn test_entity_record_serialization() -> color_eyre::eyre::Result<()> {
         let entity = EntityRecord {
             id: Ulid::new(),
             entity_type: "person".to_string(),
@@ -133,7 +105,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_source_material_record_serialization() -> TestResult<()> {
+    fn test_source_material_record_serialization() -> color_eyre::eyre::Result<()> {
         let material = SourceMaterialRecord {
             id: Ulid::new(),
             material_kind: "annex".to_string(),
@@ -160,7 +132,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_optional_fields_serialization() -> TestResult<()> {
+    fn test_optional_fields_serialization() -> color_eyre::eyre::Result<()> {
         // Test that optional fields serialize correctly as null
         let ts_orig = Utc::now();
         let event = EventRecord {
@@ -194,7 +166,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_ulid_serialization_in_records() -> TestResult<()> {
+    fn test_ulid_serialization_in_records() -> color_eyre::eyre::Result<()> {
         // Test that ULIDs serialize as strings in records
         let ts_orig = Utc::now();
         let event = EventRecord {
@@ -235,7 +207,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_datetime_serialization_in_records() -> TestResult<()> {
+    fn test_datetime_serialization_in_records() -> color_eyre::eyre::Result<()> {
         let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -271,7 +243,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_json_payload_preservation() -> TestResult<()> {
+    fn test_json_payload_preservation() -> color_eyre::eyre::Result<()> {
         let complex_payload = serde_json::json!({
             "nested": {
                 "array": [1, 2, 3],
@@ -315,7 +287,7 @@ mod serde_tests {
     }
 
     #[sinex_test]
-    fn test_pretty_print_formatting() -> TestResult<()> {
+    fn test_pretty_print_formatting() -> color_eyre::eyre::Result<()> {
         let ts_orig = Utc::now();
         let event = EventRecord {
             id: Ulid::new(),
@@ -357,11 +329,9 @@ mod no_serde_tests {
     // When serde feature is disabled, Record structs should not have serde derives
     // This is enforced at compile time, so these tests mainly document the behavior
     use sinex_test_utils::sinex_test;
-    use sinex_test_utils::TestResult;
 
-    #[allow(dead_code)]
     #[sinex_test]
-    fn test_serde_feature_disabled() -> TestResult<()> {
+    fn test_serde_feature_disabled() -> color_eyre::eyre::Result<()> {
         // This test just documents that without the serde feature,
         // the Record structs don't have serialization capabilities
         // The actual enforcement is at compile time via cfg_attr

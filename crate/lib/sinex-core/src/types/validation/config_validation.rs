@@ -5,12 +5,9 @@
 
 use crate::types::domain::SanitizedPath;
 use crate::types::validation::validate_path;
+use crate::types::Seconds;
 use camino::Utf8PathBuf;
-use serde::{
-    de::{self, Visitor},
-    Deserialize, Deserializer, Serialize,
-};
-use std::fmt;
+use serde::{de, Deserialize, Deserializer, Serialize};
 use validator::{Validate, ValidationError};
 
 /// Common configuration validation traits
@@ -37,8 +34,17 @@ pub struct DatabaseConfig {
     #[validate(range(min = 0, max = 100))]
     pub min_connections: u32,
 
-    #[validate(range(min = 1, max = 300))]
-    pub timeout_secs: u64,
+    #[validate(custom(function = "validate_timeout_secs"))]
+    pub timeout_secs: Seconds,
+}
+
+fn validate_timeout_secs(value: &Seconds) -> Result<(), ValidationError> {
+    let secs = value.as_secs();
+    if (1..=300).contains(&secs) {
+        Ok(())
+    } else {
+        Err(ValidationError::new("timeout_secs_out_of_range"))
+    }
 }
 
 /// Server configuration with validation
@@ -77,7 +83,8 @@ pub fn validate_directory_path(path: &str) -> Result<(), ValidationError> {
     }
 
     // Use our existing path validation
-    crate::validate_path(path).map_err(|_| ValidationError::new("invalid_directory_path"))?;
+    crate::validation::validate_path(path)
+        .map_err(|_| ValidationError::new("invalid_directory_path"))?;
 
     Ok(())
 }
@@ -89,8 +96,8 @@ pub fn validate_file_path(path: &str) -> Result<(), ValidationError> {
     }
 
     // Use our existing path validation
-    let _path_buf =
-        crate::validate_path(path).map_err(|_| ValidationError::new("invalid_file_path"))?;
+    let _path_buf = crate::validation::validate_path(path)
+        .map_err(|_| ValidationError::new("invalid_file_path"))?;
 
     // Check it's not a directory indicator
     if path.ends_with('/') || path.ends_with('\\') {
@@ -119,11 +126,20 @@ pub struct SecurityConfig {
     #[validate(length(min = 32, max = 512))]
     pub secret_key: String,
 
-    #[validate(range(min = 60, max = 86400))]
-    pub token_expiry_secs: u64,
+    #[validate(custom(function = "validate_token_expiry_secs"))]
+    pub token_expiry_secs: Seconds,
 
     #[validate(range(min = 1, max = 100))]
     pub max_login_attempts: u32,
+}
+
+fn validate_token_expiry_secs(value: &Seconds) -> Result<(), ValidationError> {
+    let secs = value.as_secs();
+    if (60..=86_400).contains(&secs) {
+        Ok(())
+    } else {
+        Err(ValidationError::new("token_expiry_secs_out_of_range"))
+    }
 }
 
 /// Path validation levels for different security contexts
@@ -202,87 +218,6 @@ impl SecurePath {
     pub fn as_str(&self) -> &str {
         self.inner.as_str()
     }
-}
-
-/// Custom deserializer for paths that validates during deserialization
-pub struct ValidatedPathDeserializer {
-    _level: PathValidationLevel,
-}
-
-impl ValidatedPathDeserializer {
-    pub fn new(level: PathValidationLevel) -> Self {
-        Self { _level: level }
-    }
-}
-
-#[allow(dead_code)]
-struct PathVisitor {
-    level: PathValidationLevel,
-}
-
-impl<'de> Visitor<'de> for PathVisitor {
-    type Value = SecurePath;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a valid file path")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        SecurePath::new(value, self.level)
-            .map_err(|e| E::custom(format!("Invalid path '{value}': {e}")))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        self.visit_str(&value)
-    }
-}
-
-impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
-    type Error = serde::de::value::Error;
-
-    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        Err(de::Error::custom(
-            "ValidatedPathDeserializer can only deserialize strings",
-        ))
-    }
-
-    serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char bytes
-        byte_buf option unit unit_struct newtype_struct seq tuple
-        tuple_struct map struct enum identifier ignored_any
-    }
-
-    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        // This won't be called directly, but we need to implement it
-        Err(de::Error::custom("Use deserialize_string instead"))
-    }
-
-    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        // This won't be called directly either, but we implement for completeness
-        Err(de::Error::custom(
-            "ValidatedPathDeserializer should be used with serde_with",
-        ))
-    }
-}
-
-/// Convenience function to create a validated path deserializer
-pub fn validated_path_deserializer(level: PathValidationLevel) -> ValidatedPathDeserializer {
-    ValidatedPathDeserializer::new(level)
 }
 
 /// Helper for deserializing SanitizedPath with validation

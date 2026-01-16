@@ -7,7 +7,7 @@ authors.workspace = true
 [dependencies]
 # Core dependencies
 sinex-core = { path = "../sinex-core" }
-sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
 
 # Async runtime
 tokio.workspace = true
@@ -40,3 +40,4 @@ sha2 = "0.10"
 [dev-dependencies]
 sinex-test-utils = { path = "../sinex-test-utils" }
 sinex-schema = { path = "../sinex-schema" }
+futures.workspace = true

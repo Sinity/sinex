@@ -5,7 +5,7 @@ validates them, writes them to PostgreSQL, and relays them to streaming sinks.
 
 Key responsibilities:
 
-- Accept gRPC requests from satellites and enforce schema validation.
+- Consume JetStream events/materials from satellites and enforce schema validation.
 - Persist events and source material through the repositories in `sinex-core`.
 - Publish derived data to JetStream so downstream services receive updates.
 - Coordinate schema migrations by integrating with `sinex-schema`.

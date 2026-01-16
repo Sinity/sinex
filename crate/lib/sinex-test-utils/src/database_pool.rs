@@ -2,7 +2,7 @@
 
 use crate::Result;
 use chrono::Utc;
-use futures::{future::BoxFuture, Future};
+use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -21,16 +21,17 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+use toml::Value;
 use tracing::warn;
 use url::Url;
 
-#[allow(dead_code)]
-static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
-#[allow(dead_code)]
-static SLOT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+const MIN_POOL_SIZE: usize = 64;
+const POOL_SIZE_MULTIPLIER: usize = 2;
+const SLOT_MAX_CONNECTIONS: u32 = 4;
+const ADMIN_MAX_CONNECTIONS: u32 = 8;
 
 /// Pool performance metrics
 static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(PoolMetrics::new);
@@ -116,6 +117,42 @@ pub struct SlotStats {
     pub quarantined: bool,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CleanupDiagnostics {
+    slot_name: String,
+    template_name: Option<String>,
+    last_clean_time: Option<String>,
+    last_clean_result: Option<String>,
+    residuals: Option<Vec<(String, i64)>>,
+    quarantined: bool,
+}
+
+impl CleanupDiagnostics {
+    pub(crate) fn format_for_error(&self) -> String {
+        let template_name = self.template_name.as_deref().unwrap_or("unknown");
+        let last_clean_time = self.last_clean_time.as_deref().unwrap_or("unknown");
+        let last_clean_result = self.last_clean_result.as_deref().unwrap_or("unknown");
+        let residuals = match &self.residuals {
+            Some(rows) if !rows.is_empty() => rows
+                .iter()
+                .map(|(table, count)| format!("{table}:{count}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "none".to_string(),
+        };
+
+        format!(
+            "slot={}\ntemplate={}\nlast_clean_time={}\nlast_clean_result={}\nresiduals={}\nquarantined={}",
+            self.slot_name,
+            template_name,
+            last_clean_time,
+            last_clean_result,
+            residuals,
+            self.quarantined
+        )
+    }
+}
+
 /// Get current pool statistics
 pub fn get_pool_stats() -> PoolStats {
     // Aggregate connection counts if pool exists.
@@ -195,6 +232,10 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
 
 /// Template database name cached for the current test process  
 static TEMPLATE_DB_NAME: OnceLock<String> = OnceLock::new();
+
+pub(crate) fn template_db_name() -> Option<String> {
+    TEMPLATE_DB_NAME.get().cloned()
+}
 
 /// Mutex to ensure only one thread creates the template database
 use lazy_static::lazy_static;
@@ -361,19 +402,21 @@ async fn store_pool_meta(conn: &mut PgConnection, db_name: &str, meta: &PoolMeta
     Ok(())
 }
 
-fn clean_after_use_enabled() -> bool {
-    std::env::var_os("SINEX_TESTUTILS_CLEAN_AFTER_USE").is_some()
-}
-
 fn migrations_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_dir = crate_dir.join("../sinex-schema");
     let migrations_dir = schema_dir.join("src/migrations").canonicalize().ok()?;
+    let schema_src_dir = schema_dir.join("src/schema").canonicalize().ok()?;
 
     let mut entries: Vec<PathBuf> = fs::read_dir(&migrations_dir)
         .ok()?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
+    entries.extend(
+        fs::read_dir(&schema_src_dir)
+            .ok()?
+            .filter_map(|entry| entry.ok().map(|e| e.path())),
+    );
     entries.sort();
 
     let mut hasher = Sha256::new();
@@ -396,7 +439,6 @@ struct PoolConfig {
     size: usize,
     admin_url: String,
     base_url: String,
-    template_name: String,
     slot_max_connections: u32,
     admin_max_connections: u32,
 }
@@ -406,30 +448,88 @@ impl Default for PoolConfig {
         let base_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
         let admin_url = std::env::var("DATABASE_URL_SUPERUSER")
-            .or_else(|_| std::env::var("SINEX_TESTUTILS_ADMIN_URL"))
             .unwrap_or_else(|_| force_user(&replace_db_name(&base_url, "postgres"), "postgres"));
-        let default_size = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8)
-            .clamp(8, 32);
-        let size = std::env::var("SINEX_TESTUTILS_POOL_SIZE")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|&s: &usize| s > 0)
-            .unwrap_or(default_size);
+        let size = default_pool_size();
 
-        let mut config = Self {
+        Self {
             size,
             admin_url,
             base_url,
-            template_name: "sinex_test_template_shared".to_string(),
-            slot_max_connections: 0,
-            admin_max_connections: 0,
-        };
-
-        config.recompute_connection_limits();
-        config
+            slot_max_connections: SLOT_MAX_CONNECTIONS,
+            admin_max_connections: ADMIN_MAX_CONNECTIONS,
+        }
     }
+}
+
+fn default_pool_size() -> usize {
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(MIN_POOL_SIZE);
+    let test_threads = nextest_test_threads(cpu_count).unwrap_or(cpu_count).max(1);
+    let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
+    target.max(MIN_POOL_SIZE)
+}
+
+fn nextest_test_threads(cpu_count: usize) -> Option<usize> {
+    if !is_nextest_run() && nextest_profile_name().is_none() {
+        return None;
+    }
+
+    let profile = nextest_profile_name().unwrap_or_else(|| "default".to_string());
+    let config_path = find_nextest_config()?;
+    let raw = fs::read_to_string(config_path).ok()?;
+    let config: Value = toml::from_str(&raw).ok()?;
+    let profile_cfg = config.get("profile")?.get(&profile)?;
+    let test_threads = profile_cfg.get("test-threads")?;
+    match test_threads {
+        Value::Integer(value) if *value > 0 => Some(*value as usize),
+        Value::String(value) => parse_num_cpus_expression(value, cpu_count),
+        _ => None,
+    }
+}
+
+fn parse_num_cpus_expression(value: &str, cpu_count: usize) -> Option<usize> {
+    let trimmed = value.trim();
+    if trimmed == "num-cpus" {
+        return Some(cpu_count);
+    }
+    if let Some(rest) = trimmed.strip_prefix("num-cpus-") {
+        let delta: usize = rest.parse().ok()?;
+        return Some(cpu_count.saturating_sub(delta).max(1));
+    }
+    if let Some(rest) = trimmed.strip_prefix("num-cpus+") {
+        let delta: usize = rest.parse().ok()?;
+        return Some(cpu_count.saturating_add(delta).max(1));
+    }
+    None
+}
+
+fn nextest_profile_name() -> Option<String> {
+    for key in ["NEXTEST_PROFILE", "NEXTEST_PROFILE_NAME"] {
+        if let Ok(value) = std::env::var(key) {
+            if !value.trim().is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn find_nextest_config() -> Option<PathBuf> {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        let candidate = dir.join(".config/nextest.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn is_nextest_run() -> bool {
+    std::env::var_os("NEXTEST_RUN_ID").is_some() || std::env::var_os("NEXTEST").is_some()
 }
 
 fn force_user(url: &str, user: &str) -> String {
@@ -454,51 +554,10 @@ fn replace_db_name(url: &str, db: &str) -> String {
     url.replace("/sinex_dev", &format!("/{db}"))
 }
 
-/// Pool configuration with customizable parameters
 impl PoolConfig {
-    /// Create config with custom pool size
-    pub fn with_size(size: usize) -> Self {
-        let mut config = Self::default();
-        if size > 0 {
-            config.size = size;
-        }
-        config.recompute_connection_limits();
-        config
-    }
-
-    /// Create config with custom template name
-    pub fn with_template(template_name: &str) -> Self {
-        let mut config = Self {
-            template_name: template_name.to_string(),
-            ..Self::default()
-        };
-        config.recompute_connection_limits();
-        config
-    }
-
-    fn recompute_connection_limits(&mut self) {
-        fn parse_env_u32(name: &str) -> Option<u32> {
-            std::env::var(name).ok().and_then(|v| v.parse().ok())
-        }
-
-        // Default to 480 to work with the NixOS module's 500 max_connections minimum
-        // Leaves 20 connections for admin/other processes
-        let conn_budget = parse_env_u32("SINEX_TESTUTILS_CONN_BUDGET").unwrap_or(480);
-
-        let slot_max = parse_env_u32("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
-            .map(|v| v.clamp(1, 32))
-            .unwrap_or(4);
-        self.slot_max_connections = slot_max;
-
-        let admin_default = self.slot_max_connections.max(1).clamp(1, 8);
-        let admin_max = parse_env_u32("SINEX_TESTUTILS_ADMIN_MAX_CONNECTIONS")
-            .map(|v| v.clamp(1, 32))
-            .unwrap_or(admin_default);
-        self.admin_max_connections = admin_max;
-
-        // Ensure pool size respects the connection budget
+    fn apply_connection_budget(&mut self, budget: u32) {
         let per_slot = self.slot_max_connections.max(1);
-        let usable_budget = conn_budget.saturating_sub(self.admin_max_connections);
+        let usable_budget = budget.saturating_sub(self.admin_max_connections);
         let max_size = (usable_budget / per_slot).max(1);
         if (self.size as u32) > max_size {
             self.size = max_size as usize;
@@ -590,6 +649,18 @@ impl TestDatabase {
         })
     }
 
+    pub(crate) fn cleanup_diagnostics(&self) -> CleanupDiagnostics {
+        let (time, result, residuals) = self.slot.slot_health_snapshot();
+        CleanupDiagnostics {
+            slot_name: self.name.clone(),
+            template_name: template_db_name(),
+            last_clean_time: time.map(|t| t.to_rfc3339()),
+            last_clean_result: result,
+            residuals,
+            quarantined: self.slot.quarantined.load(Ordering::SeqCst),
+        }
+    }
+
     /// Force cleanup of this database (for testing)
     pub async fn force_cleanup(&self) -> Result<()> {
         clean_database(&self.slot, &self.pool, &self.name, self.url()).await
@@ -613,7 +684,6 @@ struct CleanupTask {
     slot_url: String,
     slot: Arc<DatabaseSlot>,
     lock_conn: Option<PoolConnection<Postgres>>,
-    clean_after_use: bool,
 }
 
 /// Background cleanup manager to handle resource cleanup safely
@@ -625,12 +695,20 @@ impl CleanupManager {
     fn new() -> Self {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<CleanupTask>();
 
-        // Spawn background cleanup task
-        tokio::spawn(async move {
-            while let Some(task) = receiver.recv().await {
-                Self::process_cleanup_task(task).await;
-            }
-        });
+        std::thread::Builder::new()
+            .name("sinex-cleanup".into())
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build cleanup runtime");
+                rt.block_on(async move {
+                    while let Some(task) = receiver.recv().await {
+                        Self::process_cleanup_task(task).await;
+                    }
+                });
+            })
+            .expect("failed to spawn cleanup manager thread");
 
         Self { sender }
     }
@@ -641,55 +719,58 @@ impl CleanupManager {
             Err(err) => {
                 let task = err.0;
                 eprintln!("⚠️  Cleanup manager channel closed, running cleanup inline");
-                tokio::spawn(async move {
-                    CleanupManager::process_cleanup_task(task).await;
+                std::thread::spawn(|| {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(CleanupManager::process_cleanup_task(task));
+                    } else {
+                        let _ =
+                            futures::executor::block_on(CleanupManager::process_cleanup_task(task));
+                    }
                 });
             }
         }
     }
 
     async fn process_cleanup_task(task: CleanupTask) {
-        // If enabled, do best-effort cleanup while the advisory lock is still held so other
-        // processes never observe the slot as “free” while still dirty.
+        // Clean while holding the advisory lock so other processes never observe a dirty slot.
         let mut lock_conn = task.lock_conn;
-        if task.clean_after_use {
-            let clean_result = tokio::time::timeout(
-                Duration::from_secs(10),
-                clean_database(&task.slot, &task.pool, &task.slot_name, &task.slot_url),
-            )
-            .await;
+        let clean_result = tokio::time::timeout(
+            Duration::from_secs(10),
+            clean_database(&task.slot, &task.pool, &task.slot_name, &task.slot_url),
+        )
+        .await;
 
-            match clean_result {
-                Ok(Ok(())) => {
-                    if let Some(conn) = lock_conn.as_mut() {
-                        if let Ok(Some(mut meta)) =
-                            load_pool_meta(conn.as_mut(), &task.slot_name).await
-                        {
-                            meta.dirty = false;
-                            meta.last_error = None;
-                            meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
-                            let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
-                        }
+        match clean_result {
+            Ok(Ok(())) => {
+                if let Some(conn) = lock_conn.as_mut() {
+                    if let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
+                    {
+                        meta.dirty = false;
+                        meta.last_error = None;
+                        meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
+                        let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }
-                Ok(Err(e)) => {
-                    if let Some(conn) = lock_conn.as_mut() {
-                        if let Ok(Some(mut meta)) =
-                            load_pool_meta(conn.as_mut(), &task.slot_name).await
-                        {
-                            meta.dirty = true;
-                            meta.last_error = Some(e.to_string());
-                            meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
-                            let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
-                        }
+            }
+            Ok(Err(e)) => {
+                if let Some(conn) = lock_conn.as_mut() {
+                    if let Ok(Some(mut meta)) = load_pool_meta(conn.as_mut(), &task.slot_name).await
+                    {
+                        meta.dirty = true;
+                        meta.last_error = Some(e.to_string());
+                        meta.updated_at_rfc3339 = Utc::now().to_rfc3339();
+                        let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }
-                Err(_) => {
-                    eprintln!(
-                        "⚠️  Timeout cleaning {} on release; leaving it dirty",
-                        task.slot_name
-                    );
-                }
+            }
+            Err(_) => {
+                eprintln!(
+                    "⚠️  Timeout cleaning {} on release; leaving it dirty",
+                    task.slot_name
+                );
             }
         }
 
@@ -749,7 +830,6 @@ impl Drop for TestDatabase {
             self.name, lock_id
         );
 
-        let clean_after_use = clean_after_use_enabled();
         let task = CleanupTask {
             lock_id,
             pool: self.pool.clone(),
@@ -757,29 +837,10 @@ impl Drop for TestDatabase {
             slot_url: self.slot.url.clone(),
             slot: self.slot.clone(),
             lock_conn: self.lock_conn.take(),
-            clean_after_use,
         };
 
-        if clean_after_use {
-            // In nextest (process-per-test), the process exits immediately after the test returns.
-            // Best-effort background cleanup may never run. Prefer completing cleanup inline when
-            // a Tokio runtime is available.
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        tokio::task::block_in_place(|| {
-                            handle.block_on(CleanupManager::process_cleanup_task(task))
-                        })
-                    }));
-                }
-                Err(_) => {
-                    CLEANUP_MANAGER.schedule_cleanup(task);
-                }
-            }
-        } else {
-            // Default: schedule cleanup via the cleanup manager instead of blocking Drop.
-            CLEANUP_MANAGER.schedule_cleanup(task);
-        }
+        task.slot.quarantined.store(true, Ordering::SeqCst);
+        CLEANUP_MANAGER.schedule_cleanup(task);
 
         // Clear the pool reference immediately
         let mut pool_opt = self.slot.pool.lock();
@@ -804,8 +865,6 @@ struct DatabaseSlot {
     pool: Mutex<Option<DbPool>>, // Current pool if in use
     in_use: AtomicBool,
     quarantined: AtomicBool,
-    // Track when the slot was acquired to help debug issues
-    last_acquired: Mutex<Option<std::time::Instant>>,
     // Track when the slot was released for cooldown
     last_released: Mutex<Option<std::time::Instant>>,
     // Track last cleanup outcome for diagnostics
@@ -865,7 +924,18 @@ pub(crate) struct DatabasePool {
 
 impl DatabasePool {
     /// Initialize the pool
-    async fn new(config: PoolConfig) -> Result<Self> {
+    async fn new(mut config: PoolConfig, force_eager: bool) -> Result<Self> {
+        if let Some(budget) = detect_connection_budget(&config.admin_url).await {
+            let previous = config.size;
+            config.apply_connection_budget(budget);
+            if config.size < previous {
+                eprintln!(
+                    "⚠️  Reducing pool size to {} (from {}) to respect Postgres max_connections budget ({budget})",
+                    config.size, previous
+                );
+            }
+        }
+
         eprintln!(
             "🚀 Initializing database pool with {} databases (reusing existing if available)...",
             config.size
@@ -879,10 +949,11 @@ impl DatabasePool {
         // N pool DBs) in every process causes severe lock contention and tests hit the per-test
         // 30s watchdog. Under nextest, we build the in-memory slot list only, and provision pool
         // databases lazily when acquired.
-        let is_nextest =
-            std::env::var_os("NEXTEST_RUN_ID").is_some() || std::env::var_os("NEXTEST").is_some();
-        let eager_override = std::env::var_os("SINEX_TESTUTILS_EAGER_PROVISION").is_some();
-        if is_nextest && !eager_override {
+        let is_nextest = is_nextest_run();
+        if is_nextest && force_eager {
+            eprintln!("⚙️  Forcing eager pool provisioning for this run");
+        }
+        if is_nextest && !force_eager {
             let template_guard = ensure_template_database(
                 &config.admin_url,
                 &config.base_url,
@@ -902,7 +973,6 @@ impl DatabasePool {
                     url,
                     pool: Mutex::new(None),
                     in_use: AtomicBool::new(false),
-                    last_acquired: Mutex::new(None),
                     last_released: Mutex::new(None),
                     last_clean_time: Mutex::new(None),
                     last_clean_result: Mutex::new(None),
@@ -1094,14 +1164,6 @@ impl DatabasePool {
                                 .fetch_one(&db_pool)
                                 .await;
 
-                                let checkpoints_has_metadata = sqlx::query_scalar::<_, bool>(
-                                    "SELECT COUNT(*) = 2 FROM information_schema.columns \
-                                     WHERE table_schema = 'core' AND table_name = 'processor_checkpoints' \
-                                       AND column_name IN ('checkpoint_version', 'created_at')",
-                                )
-                                .fetch_one(&db_pool)
-                                .await;
-
                                 let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
                                     "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
                                      WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
@@ -1110,41 +1172,28 @@ impl DatabasePool {
                                 .fetch_one(&db_pool)
                                 .await;
 
-                                match (
-                                    events_has_blobs,
-                                    events_has_subnano,
-                                    checkpoints_has_metadata,
-                                    payload_has_updated_at,
-                                ) {
-                                    (Ok(true), Ok(true), Ok(true), Ok(true)) => {}
-                                    (Ok(false), _, _, _) => {
+                                match (events_has_blobs, events_has_subnano, payload_has_updated_at)
+                                {
+                                    (Ok(true), Ok(true), Ok(true)) => {}
+                                    (Ok(false), _, _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing core.events.associated_blob_ids; recreating"
                                         );
                                     }
-                                    (_, Ok(false), _, _) => {
+                                    (_, Ok(false), _) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing or mis-typed core.events.ts_orig_subnano; recreating"
                                         );
                                     }
-                                    (_, _, Ok(false), _) => {
-                                        needs_recreate = true;
-                                        eprintln!(
-                                            "  Database {name} missing core.processor_checkpoints metadata columns; recreating"
-                                        );
-                                    }
-                                    (_, _, _, Ok(false)) => {
+                                    (_, _, Ok(false)) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Database {name} missing sinex_schemas.event_payload_schemas.updated_at; recreating"
                                         );
                                     }
-                                    (Err(err), _, _, _)
-                                    | (_, Err(err), _, _)
-                                    | (_, _, Err(err), _)
-                                    | (_, _, _, Err(err)) => {
+                                    (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
                                         needs_recreate = true;
                                         eprintln!(
                                             "  Failed to inspect columns in {name} ({err}); recreating"
@@ -1207,6 +1256,9 @@ impl DatabasePool {
 
                 // Store URL for later pool creation
                 let url = base_url.replace("/sinex_dev", &format!("/{name}"));
+                ensure_pool_db_invariants(&url)
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
 
                 Ok::<_, color_eyre::eyre::Error>((name, url))
             });
@@ -1225,7 +1277,6 @@ impl DatabasePool {
                 url,
                 pool: Mutex::new(None),
                 in_use: AtomicBool::new(false),
-                last_acquired: Mutex::new(None),
                 last_released: Mutex::new(None),
                 last_clean_time: Mutex::new(None),
                 last_clean_result: Mutex::new(None),
@@ -1262,6 +1313,24 @@ impl DatabasePool {
         }
     }
 
+    fn slot_pool_options(
+        slot_max_connections: u32,
+        acquire_timeout: Duration,
+    ) -> sqlx::postgres::PgPoolOptions {
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(slot_max_connections)
+            .acquire_timeout(acquire_timeout)
+            .before_acquire(|conn, _meta| {
+                Box::pin(async move {
+                    if let Err(err) = ensure_default_session_state_conn(conn).await {
+                        eprintln!("  ⚠️  Session preflight failed: {err}");
+                        return Ok(false);
+                    }
+                    Ok(true)
+                })
+            })
+    }
+
     /// Acquire a database from the pool
     async fn acquire(&self) -> Result<TestDatabase> {
         let start_time = std::time::Instant::now();
@@ -1292,9 +1361,8 @@ impl DatabasePool {
                 // Try to connect to this database. Under nextest we provision pool databases
                 // lazily; if the DB is missing, create it from the shared template then retry.
                 let connect_opts = || {
-                    sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(self.slot_max_connections)
-                        .acquire_timeout(Duration::from_secs(2)) // Shorter timeout for faster iteration
+                    Self::slot_pool_options(self.slot_max_connections, Duration::from_secs(2))
+                        // Shorter timeout for faster iteration
                         .connect(&slot.url)
                 };
 
@@ -1504,79 +1572,73 @@ impl DatabasePool {
                     *pool_opt = Some(pool.clone());
                 }
 
-                let clean_after_use = clean_after_use_enabled();
+                let existing_meta = match tokio::time::timeout(
+                    Duration::from_secs(2),
+                    load_pool_meta(lock_conn.as_mut(), &slot.name),
+                )
+                .await
+                {
+                    Ok(Ok(meta)) => meta,
+                    Ok(Err(_)) | Err(_) => None,
+                };
 
-                if clean_after_use {
-                    let existing_meta = match tokio::time::timeout(
-                        Duration::from_secs(2),
-                        load_pool_meta(lock_conn.as_mut(), &slot.name),
-                    )
-                    .await
+                let expected_fp = self.expected_fingerprint.clone();
+                let expected_ext = self.expected_extensions.clone();
+
+                let meta_matches = existing_meta
+                    .as_ref()
+                    .map(|m| m.fingerprint == expected_fp && m.extensions == expected_ext)
+                    .unwrap_or(false);
+
+                // If the DB is from an older template/extension set, prefer recreation over
+                // cleanup; cleanup can't fix schema/extension drift.
+                if existing_meta.is_some() && !meta_matches {
+                    eprintln!(
+                        "♻️  Slot {} metadata mismatches current template; recreating it",
+                        slot.name
+                    );
+                    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                        .bind(lock_id)
+                        .execute(lock_conn.as_mut())
+                        .await;
+                    drop(lock_conn);
+                    let _ = pool.close().await;
+                    let _ = recreate_pool_database(&slot.name, &slot.url).await;
                     {
-                        Ok(Ok(meta)) => meta,
-                        Ok(Err(_)) | Err(_) => None,
-                    };
-
-                    let expected_fp = self.expected_fingerprint.clone();
-                    let expected_ext = self.expected_extensions.clone();
-
-                    let meta_matches = existing_meta
-                        .as_ref()
-                        .map(|m| m.fingerprint == expected_fp && m.extensions == expected_ext)
-                        .unwrap_or(false);
-
-                    // If the DB is from an older template/extension set, prefer recreation over
-                    // cleanup; cleanup can't fix schema/extension drift.
-                    if existing_meta.is_some() && !meta_matches {
-                        eprintln!(
-                            "♻️  Slot {} metadata mismatches current template; recreating it",
-                            slot.name
-                        );
-                        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-                            .bind(lock_id)
-                            .execute(lock_conn.as_mut())
-                            .await;
-                        drop(lock_conn);
-                        let _ = pool.close().await;
-                        let _ = recreate_pool_database(&slot.name, &slot.url).await;
-                        {
-                            let mut pool_opt = slot.pool.lock();
-                            *pool_opt = None;
-                        }
-                        slot.in_use.store(false, Ordering::Release);
-                        continue;
+                        let mut pool_opt = slot.pool.lock();
+                        *pool_opt = None;
                     }
+                    slot.in_use.store(false, Ordering::Release);
+                    continue;
+                }
 
-                    let was_clean = existing_meta.as_ref().map(|m| !m.dirty).unwrap_or(false);
+                let was_clean = existing_meta.as_ref().map(|m| !m.dirty).unwrap_or(false);
 
-                    // Mark dirty immediately after lock acquisition (crash-safe).
-                    let dirty_meta = PoolMeta {
-                        fingerprint: expected_fp,
-                        extensions: expected_ext,
-                        dirty: true,
-                        updated_at_rfc3339: Utc::now().to_rfc3339(),
-                        last_error: None,
-                    };
-                    if let Err(e) =
-                        store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await
-                    {
-                        eprintln!("⚠️  Failed to persist pool meta for {}: {}", slot.name, e);
-                    }
+                // Mark dirty immediately after lock acquisition (crash-safe).
+                let dirty_meta = PoolMeta {
+                    fingerprint: expected_fp.clone(),
+                    extensions: expected_ext.clone(),
+                    dirty: true,
+                    updated_at_rfc3339: Utc::now().to_rfc3339(),
+                    last_error: None,
+                };
+                if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
+                    eprintln!("⚠️  Failed to persist pool meta for {}: {}", slot.name, e);
+                }
 
-                    if was_clean {
-                        let acquisition_time = start_time.elapsed();
-                        POOL_METRICS.record_acquisition(acquisition_time);
+                if was_clean {
+                    let acquisition_time = start_time.elapsed();
+                    POOL_METRICS.record_acquisition(acquisition_time);
 
-                        return Ok(TestDatabase {
-                            name: slot.name.clone(),
-                            pool: pool.clone(),
-                            slot: slot.clone(),
-                            lock_id,
-                            lock_conn: Some(lock_conn),
-                            acquired_at: Instant::now(),
-                            acquisition_process_id: pid,
-                        });
-                    }
+                    return Ok(TestDatabase {
+                        name: slot.name.clone(),
+                        pool: pool.clone(),
+                        slot: slot.clone(),
+                        lock_id,
+                        lock_conn: Some(lock_conn),
+                        acquired_at: Instant::now(),
+                        acquisition_process_id: pid,
+                    });
                 }
 
                 // Clean it before use (default behavior, and also the fallback when the slot is
@@ -1606,17 +1668,14 @@ impl DatabasePool {
                         eprintln!("⚠️  Failed to clean database {}: {}", slot.name, e);
                         POOL_METRICS.record_cleanup_failure();
 
-                        if clean_after_use {
-                            let dirty_meta = PoolMeta {
-                                fingerprint: self.expected_fingerprint.clone(),
-                                extensions: self.expected_extensions.clone(),
-                                dirty: true,
-                                updated_at_rfc3339: Utc::now().to_rfc3339(),
-                                last_error: Some(e.to_string()),
-                            };
-                            let _ =
-                                store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
-                        }
+                        let dirty_meta = PoolMeta {
+                            fingerprint: self.expected_fingerprint.clone(),
+                            extensions: self.expected_extensions.clone(),
+                            dirty: true,
+                            updated_at_rfc3339: Utc::now().to_rfc3339(),
+                            last_error: Some(e.to_string()),
+                        };
+                        let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
 
                         // Release the advisory lock on the same session that acquired it.
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
@@ -1723,14 +1782,8 @@ fn is_timescaledb_missing_library_error(err: &sqlx::Error) -> bool {
 async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> Result<()> {
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
-
-    let slot_max_connections = std::env::var("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(4);
-
     let mut template_guard =
-        ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
+        ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS).await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
     let start = Instant::now();
@@ -1994,18 +2047,39 @@ async fn clean_database(
     eprintln!("🧹 Cleaning database: {db_name}");
     let mut working_pool = pool.clone();
     let mut residuals: Option<Vec<(String, i64)>> = None;
-
-    // Use the shared db_common implementation
-    // Relax strict FK that can block synthetic test IDs
-    let _ = sqlx::query(
-        "ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey",
-    )
-    .execute(&working_pool)
-    .await;
+    let mut schema_recreated = false;
 
     let mut attempt = 0usize;
     loop {
         attempt += 1;
+        if let Some(reason) = schema_mismatch_reason(&working_pool).await? {
+            if schema_recreated {
+                let err = SinexError::unknown(format!(
+                    "Database {db_name} schema mismatch after recreation: {reason}"
+                ));
+                slot.record_clean_result(Err(err.to_string()), residuals.clone());
+                slot.quarantined.store(true, Ordering::SeqCst);
+                return Err(err);
+            }
+
+            eprintln!("  ♻️  Database {db_name} schema mismatch ({reason}); recreating");
+            recreate_pool_database(db_name, db_url)
+                .await
+                .map_err(|recreate_err| {
+                    POOL_METRICS.record_cleanup_failure();
+                    SinexError::unknown(format!(
+                        "Schema mismatch recreate failed for {db_name}: {recreate_err}"
+                    ))
+                })?;
+            let fresh_pool = DatabasePool::slot_pool_options(4, Duration::from_secs(5))
+                .connect(db_url)
+                .await?;
+            working_pool = fresh_pool;
+            schema_recreated = true;
+            continue;
+        }
+
+        // Use the shared db_common implementation
         match crate::db_common::reset_database(&working_pool).await {
             Ok(_) => {
                 if let Err(verify_err) = crate::db_common::verify_clean_state(&working_pool).await {
@@ -2052,9 +2126,7 @@ async fn clean_database(
                             ))
                         })?;
                     // Fresh pool for the recreated database
-                    let fresh_pool = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(4)
-                        .acquire_timeout(Duration::from_secs(5))
+                    let fresh_pool = DatabasePool::slot_pool_options(4, Duration::from_secs(5))
                         .connect(db_url)
                         .await?;
                     working_pool = fresh_pool;
@@ -2110,6 +2182,180 @@ async fn log_remaining_rows(pool: &DbPool) -> Option<Vec<(String, i64)>> {
     }
 }
 
+async fn core_events_trigger_exists(pool: &DbPool, trigger_name: &str) -> Result<bool> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM pg_trigger \
+         WHERE tgrelid = to_regclass('core.events') \
+           AND tgname = $1 \
+           AND NOT tgisinternal)",
+    )
+    .bind(trigger_name)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| SinexError::database(e.to_string()))
+}
+
+async fn core_events_triggers_missing_reason(pool: &DbPool) -> Result<Option<String>> {
+    let has_no_update = core_events_trigger_exists(pool, "trg_events_no_update").await?;
+    let has_archive = core_events_trigger_exists(pool, "trg_events_archive_before_delete").await?;
+
+    if has_no_update && has_archive {
+        return Ok(None);
+    }
+
+    let mut missing = Vec::new();
+    if !has_no_update {
+        missing.push("trg_events_no_update");
+    }
+    if !has_archive {
+        missing.push("trg_events_archive_before_delete");
+    }
+
+    Ok(Some(format!(
+        "missing core.events triggers ({})",
+        missing.join(", ")
+    )))
+}
+
+async fn ensure_core_events_triggers(pool: &DbPool) -> Result<()> {
+    let missing_reason = core_events_triggers_missing_reason(pool).await?;
+    if missing_reason.is_none() {
+        return Ok(());
+    }
+
+    let mut conn = pool.acquire().await?;
+
+    if !core_events_trigger_exists(pool, "trg_events_no_update").await? {
+        sqlx::query(
+            r#"
+            CREATE OR REPLACE FUNCTION core.fn_events_no_update()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'UPDATE on core.events is forbidden';
+            END $$;
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| SinexError::database(e.to_string()))?;
+        sqlx::query("DROP TRIGGER IF EXISTS trg_events_no_update ON core.events")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| SinexError::database(e.to_string()))?;
+        sqlx::query(
+            "CREATE TRIGGER trg_events_no_update \
+             BEFORE UPDATE ON core.events \
+             FOR EACH ROW EXECUTE FUNCTION core.fn_events_no_update()",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| SinexError::database(e.to_string()))?;
+        eprintln!("  ⚠️  Restored trg_events_no_update on core.events");
+    }
+
+    if !core_events_trigger_exists(pool, "trg_events_archive_before_delete").await? {
+        sqlx::query(
+            r#"
+            CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            DECLARE
+              op_id TEXT := current_setting('sinex.operation_id', true);
+              sup_id ulid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
+              who TEXT := current_setting('sinex.archived_by', true);
+              why TEXT := current_setting('sinex.archive_reason', true);
+            BEGIN
+              IF op_id IS NULL OR op_id = '' THEN
+                RAISE EXCEPTION 'DELETE on core.events requires sinex.operation_id to be set in this session';
+              END IF;
+
+              INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
+              RETURN OLD;
+            END $$;
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| SinexError::database(e.to_string()))?;
+        sqlx::query("DROP TRIGGER IF EXISTS trg_events_archive_before_delete ON core.events")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| SinexError::database(e.to_string()))?;
+        sqlx::query(
+            "CREATE TRIGGER trg_events_archive_before_delete \
+             BEFORE DELETE ON core.events \
+             FOR EACH ROW EXECUTE FUNCTION core.fn_archive_before_delete()",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| SinexError::database(e.to_string()))?;
+        eprintln!("  ⚠️  Restored trg_events_archive_before_delete on core.events");
+    }
+
+    Ok(())
+}
+
+async fn ensure_pool_db_invariants(db_url: &str) -> Result<()> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect(db_url)
+        .await
+        .map_err(|e| SinexError::database(e.to_string()))?;
+
+    let result = ensure_core_events_triggers(&pool).await;
+    pool.close().await;
+    result
+}
+
+async fn schema_mismatch_reason(pool: &DbPool) -> Result<Option<String>> {
+    let events_exists =
+        sqlx::query_scalar::<_, Option<String>>("SELECT to_regclass('core.events')::text")
+            .fetch_one(pool)
+            .await?;
+    if events_exists.as_deref() != Some("core.events") {
+        return Ok(Some("missing core.events schema".to_string()));
+    }
+
+    let events_has_blobs = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = 'core' AND table_name = 'events' AND column_name = 'associated_blob_ids')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !events_has_blobs {
+        return Ok(Some(
+            "missing core.events.associated_blob_ids column".to_string(),
+        ));
+    }
+
+    let events_has_subnano = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = 'core' AND table_name = 'events' \
+           AND column_name = 'ts_orig_subnano' AND data_type = 'integer')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !events_has_subnano {
+        return Ok(Some(
+            "missing core.events.ts_orig_subnano column".to_string(),
+        ));
+    }
+
+    let payload_has_updated_at = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = 'sinex_schemas' AND table_name = 'event_payload_schemas' \
+           AND column_name = 'updated_at')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !payload_has_updated_at {
+        return Ok(Some(
+            "missing sinex_schemas.event_payload_schemas.updated_at column".to_string(),
+        ));
+    }
+
+    core_events_triggers_missing_reason(pool).await
+}
 fn admin_url_from_slot(slot_url: &str) -> Result<String> {
     let mut url =
         Url::parse(slot_url).map_err(|e| SinexError::database(format!("Invalid slot url: {e}")))?;
@@ -2124,16 +2370,18 @@ fn base_url_from_slot(slot_url: &str) -> Result<String> {
     Ok(url.to_string())
 }
 
+fn url_with_db_name(raw_url: &str, db_name: &str) -> Result<String> {
+    let mut url = Url::parse(raw_url)
+        .map_err(|e| SinexError::database(format!("Invalid database url: {e}")))?;
+    url.set_path(&format!("/{db_name}"));
+    Ok(url.to_string())
+}
+
 async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
     let admin_url = admin_url_from_slot(slot_url)?;
     let base_url = base_url_from_slot(slot_url)?;
-    let slot_max_connections = std::env::var("SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(4);
-
     let mut template_guard =
-        ensure_template_database(&admin_url, &base_url, slot_max_connections).await?;
+        ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS).await?;
     let template_name = template_guard.info.name.clone();
     let template_extensions = template_guard.info.extensions.clone();
 
@@ -2156,6 +2404,8 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
         )
         .await?;
         let _ = grant_pool_database_permissions(db_name).await;
+        let db_url = base_url.replace("/sinex_dev", &format!("/{db_name}"));
+        ensure_pool_db_invariants(&db_url).await?;
         let meta = PoolMeta {
             fingerprint: migrations_fingerprint(),
             extensions: template_extensions.clone(),
@@ -2181,58 +2431,75 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> Result<()> {
     }
 }
 
-/// Ensure a pooled connection is returned to default session state; best-effort only.
-pub async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
-    let mut conn = pool.acquire().await?;
+async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> Result<()> {
     if let Ok(role) = sqlx::query_scalar::<_, String>("SHOW session_replication_role")
-        .fetch_one(conn.as_mut())
+        .fetch_one(&mut *conn)
         .await
     {
         if role != "origin" {
             sqlx::query("SET session_replication_role = 'origin'")
-                .execute(conn.as_mut())
+                .execute(&mut *conn)
                 .await
                 .map_err(|e| SinexError::database(e.to_string()))?;
             eprintln!("  ⚠️  Reset session_replication_role from {role} to origin");
         }
     }
     if let Ok(row_sec) = sqlx::query_scalar::<_, String>("SHOW row_security")
-        .fetch_one(conn.as_mut())
+        .fetch_one(&mut *conn)
         .await
     {
         if row_sec.to_lowercase() != "on" {
             sqlx::query("SET row_security = on")
-                .execute(conn.as_mut())
+                .execute(&mut *conn)
                 .await
                 .map_err(|e| SinexError::database(e.to_string()))?;
             eprintln!("  ⚠️  Reset row_security to on");
         }
     }
 
-    // Check critical triggers are enabled
     let config = crate::cleanup_config::CleanupConfig::default();
     for table in config.tables_requiring_trigger_disable() {
         let query = format!(
-            "SELECT NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '{}'::regclass AND NOT tgenabled IN ('O','D')) AS enabled",
+            "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = '{}'::regclass AND tgenabled NOT IN ('O','A')) AS needs_enable",
             table.table_name
         );
-        if let Ok(enabled) = sqlx::query_scalar::<_, Option<bool>>(&query)
-            .fetch_one(conn.as_mut())
+        if let Ok(needs_enable) = sqlx::query_scalar::<_, Option<bool>>(&query)
+            .fetch_one(&mut *conn)
             .await
         {
-            if enabled == Some(false) {
-                sqlx::query(&format!(
+            if needs_enable == Some(true) {
+                let enable = sqlx::query(&format!(
                     "ALTER TABLE {} ENABLE TRIGGER ALL",
                     table.table_name
                 ))
-                .execute(conn.as_mut())
-                .await
-                .map_err(|e| SinexError::database(e.to_string()))?;
-                eprintln!("  ⚠️  Re-enabled triggers on {}", table.table_name);
+                .execute(&mut *conn)
+                .await;
+                match enable {
+                    Ok(_) => {
+                        eprintln!("  ⚠️  Re-enabled triggers on {}", table.table_name);
+                    }
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("hypertables do not support") {
+                            eprintln!(
+                                "  ⚠️  Skipping trigger enable on hypertable {}",
+                                table.table_name
+                            );
+                        } else {
+                            return Err(SinexError::database(msg));
+                        }
+                    }
+                }
             }
         }
     }
     Ok(())
+}
+
+/// Ensure a pooled connection is returned to default session state; best-effort only.
+pub async fn ensure_default_session_state(pool: &DbPool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    ensure_default_session_state_conn(conn.as_mut()).await
 }
 
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
@@ -2330,7 +2597,7 @@ pub async fn acquire_test_database() -> Result<TestDatabase> {
 
     if pool_lock.is_none() {
         let config = PoolConfig::default();
-        let pool = Arc::new(DatabasePool::new(config).await?);
+        let pool = Arc::new(DatabasePool::new(config, false).await?);
         *pool_lock = Some(pool);
     }
 
@@ -2392,6 +2659,33 @@ async fn connect_admin_with_retry(admin_url: &str) -> Result<PgConnection> {
             .map(|e| e.to_string())
             .unwrap_or_else(|| "unknown error".to_string())
     )))
+}
+
+async fn detect_connection_budget(admin_url: &str) -> Option<u32> {
+    let mut conn = connect_admin_with_retry(admin_url).await.ok()?;
+    let max_connections: i64 =
+        sqlx::query_scalar("SELECT current_setting('max_connections')::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .ok()?;
+
+    let reserved: i64 =
+        sqlx::query_scalar("SELECT current_setting('superuser_reserved_connections')::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap_or(3);
+
+    // Leave headroom for template provisioning, cleanup tasks, and ad-hoc diagnostics.
+    const SAFETY_MARGIN: i64 = 16;
+
+    let effective = max_connections
+        .saturating_sub(reserved)
+        .saturating_sub(SAFETY_MARGIN);
+    if effective <= 0 {
+        return None;
+    }
+
+    Some(effective as u32)
 }
 
 async fn harden_template_database(
@@ -2692,9 +2986,12 @@ async fn ensure_template_database(
         // Connect to template database and run all migrations
         let template_pool_future = async {
             // Use DATABASE_URL_SUPERUSER if available (CI environment), otherwise use admin URL
-            let template_migration_url = std::env::var("DATABASE_URL_SUPERUSER")
-                .unwrap_or_else(|_| template_admin_url.clone())
-                .replace("/sinex_dev", &format!("/{}", template_name));
+            let template_migration_url =
+                if let Ok(super_url) = std::env::var("DATABASE_URL_SUPERUSER") {
+                    url_with_db_name(&super_url, template_name)?
+                } else {
+                    url_with_db_name(&template_admin_url, template_name)?
+                };
 
             let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(template_pool_max)
@@ -2916,10 +3213,6 @@ async fn check_required_extensions(pool: &DbPool) -> Result<()> {
                 .await?;
 
         if available.is_none() {
-            if ext_name == "ulid" {
-                install_ulid_compat_layer(pool).await?;
-                continue;
-            }
             missing_required.push(format!("{ext_name} ({description})"));
             continue;
         }
@@ -3010,10 +3303,7 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()
             .fetch_optional(pool)
             .await?;
 
-    if available.is_none() && extension == "ulid" {
-        install_ulid_compat_layer(pool).await?;
-        return Ok(());
-    } else if available.is_none() {
+    if available.is_none() {
         return Err(SinexError::database(format!(
             "Extension {extension} is not available in the current PostgreSQL installation"
         )));
@@ -3023,55 +3313,6 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> Result<()
     sqlx::query(&create_stmt).execute(pool).await.map_err(|e| {
         SinexError::database(format!("Failed to create extension {extension}: {e}"))
     })?;
-
-    Ok(())
-}
-
-async fn install_ulid_compat_layer(pool: &DbPool) -> Result<()> {
-    warn!("ULID extension unavailable; installing compatibility shim for tests");
-    sqlx::query("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-        .execute(pool)
-        .await
-        .map_err(|e| SinexError::database(format!("Failed to enable pgcrypto: {e}")))?;
-
-    sqlx::query(
-        r#"
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ulid') THEN
-                EXECUTE 'CREATE DOMAIN ulid AS uuid';
-            END IF;
-        END
-        $$;
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database(format!("Failed to create ULID domain shim: {e}")))?;
-
-    sqlx::query(
-        r#"
-        CREATE OR REPLACE FUNCTION gen_ulid() RETURNS uuid
-        LANGUAGE SQL
-        STABLE
-        AS $$ SELECT gen_random_uuid() $$;
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database(format!("Failed to create gen_ulid() shim: {e}")))?;
-
-    sqlx::query(
-        r#"
-        CREATE OR REPLACE FUNCTION pgx_ulid_generate() RETURNS uuid
-        LANGUAGE SQL
-        STABLE
-        AS $$ SELECT gen_ulid() $$;
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| SinexError::database(format!("Failed to create pgx_ulid_generate() shim: {e}")))?;
 
     Ok(())
 }
@@ -3168,13 +3409,6 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
 
         // Reset operation_id
         let _ = sqlx::query("RESET sinex.operation_id").execute(pool).await;
-
-        // Relax strict FKs that make synthetic test IDs cumbersome
-        let _ = sqlx::query(
-            "ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS processor_checkpoints_last_processed_id_fkey",
-        )
-        .execute(pool)
-        .await;
 
         eprintln!("✅ Template database optimized for test performance");
         Ok::<(), SinexError>(())
@@ -3287,32 +3521,31 @@ pub async fn reset_pool() -> Result<()> {
     Ok(())
 }
 
-/// Execute a future with a temporary pool size, restoring the original configuration afterwards.
-pub async fn with_pool_size<F, Fut, T>(size: usize, f: F) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    let previous = std::env::var("SINEX_TESTUTILS_POOL_SIZE").ok();
-    std::env::set_var("SINEX_TESTUTILS_POOL_SIZE", size.to_string());
-    reset_pool().await?;
+/// Prime the pool by ensuring the template and all pool databases exist.
+pub async fn prime_pool() -> Result<()> {
+    let pool = {
+        let mut pool_lock = POOL.lock().await;
+        if let Some(pool) = pool_lock.as_ref().cloned() {
+            pool
+        } else {
+            let config = PoolConfig::default();
+            let pool = Arc::new(DatabasePool::new(config, true).await?);
+            *pool_lock = Some(pool.clone());
+            pool
+        }
+    };
 
-    let result = f().await;
-
-    if let Some(prev) = previous {
-        std::env::set_var("SINEX_TESTUTILS_POOL_SIZE", prev);
-    } else {
-        std::env::remove_var("SINEX_TESTUTILS_POOL_SIZE");
+    for slot in &pool.slots {
+        ensure_pool_database_exists(&slot.name, &slot.url).await?;
     }
 
-    reset_pool().await?;
-    result
+    Ok(())
 }
 
 /// Initialize pool with custom configuration (for testing)
 async fn _init_pool_with_config(config: PoolConfig) -> Result<()> {
     let mut pool_lock = POOL.lock().await;
-    let pool = Arc::new(DatabasePool::new(config).await?);
+    let pool = Arc::new(DatabasePool::new(config, true).await?);
     *pool_lock = Some(pool);
     Ok(())
 }
@@ -3325,14 +3558,14 @@ fn _get_pool_config() -> PoolConfig {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::sinex_bench;
+    use crate::{sinex_bench, TestResult};
 
     /// Benchmark database acquisition from pool
     ///
     /// This measures the time to acquire a clean database from the pool,
     /// including advisory lock acquisition and cleanup verification.
     #[sinex_bench]
-    fn bench_acquire_database() -> color_eyre::eyre::Result<()> {
+    fn bench_acquire_database() -> TestResult<()> {
         let db = acquire_test_database().await?;
         // Database is automatically returned on drop
         drop(db);
@@ -3344,7 +3577,7 @@ mod benches {
     /// Measures contention and performance when multiple tasks
     /// try to acquire databases simultaneously.
     #[sinex_bench(args = [2, 4, 8, 16])]
-    async fn bench_concurrent_acquisition(arg: usize) -> color_eyre::eyre::Result<()> {
+    async fn bench_concurrent_acquisition(arg: usize) -> TestResult<()> {
         let concurrency = arg;
         let handles: Vec<_> = (0..concurrency)
             .map(|_| {
@@ -3369,7 +3602,7 @@ mod benches {
     ///
     /// Measures the time to clean a database with various amounts of data
     #[sinex_bench]
-    fn bench_database_cleanup() -> color_eyre::eyre::Result<()> {
+    fn bench_database_cleanup() -> TestResult<()> {
         // Setup: Get a database and populate it
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -3378,8 +3611,8 @@ mod benches {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
-            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
+            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
+            OperationRecord, Provenance, SourceMaterial,
         };
 
         let repo = pool.events();
@@ -3401,7 +3634,7 @@ mod benches {
 
     /// Benchmark template database operations
     #[sinex_bench]
-    fn bench_ensure_template_database() -> color_eyre::eyre::Result<()> {
+    fn bench_ensure_template_database() -> TestResult<()> {
         let config = PoolConfig::default();
         // This should be fast after first run (cached)
         let guard = ensure_template_database(
@@ -3416,7 +3649,7 @@ mod benches {
 
     /// Benchmark pool health check
     #[sinex_bench]
-    fn bench_pool_health_check() -> color_eyre::eyre::Result<()> {
+    fn bench_pool_health_check() -> TestResult<()> {
         // Ensure pool is initialized
         let _ = acquire_test_database().await?;
 
@@ -3426,7 +3659,7 @@ mod benches {
 
     /// Benchmark database statistics collection
     #[sinex_bench]
-    fn bench_get_database_stats() -> color_eyre::eyre::Result<()> {
+    fn bench_get_database_stats() -> TestResult<()> {
         let db = acquire_test_database().await?;
 
         // Insert some varied data
@@ -3434,8 +3667,8 @@ mod benches {
         use sinex_core::*;
         use sinex_core::*;
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
-            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
+            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
+            OperationRecord, Provenance, SourceMaterial,
         };
 
         let repo = pool.events();

@@ -3,9 +3,7 @@
 #![doc = include_str!("../docs/testing_quality_overview.md")]
 #![doc = include_str!("../../../../TESTING.md")]
 
-//! Workspace testing utilities and fixtures.
-// Allow dead code in test utilities - many functions are provided for test use
-#![allow(dead_code)]
+//! Workspace testing utilities and dataset seeding.
 
 // Allow procedural macros to refer to this crate by name.
 extern crate self as sinex_test_utils;
@@ -13,7 +11,7 @@ extern crate self as sinex_test_utils;
 // Re-export the procedural macros from internal macros crate
 #[cfg(feature = "bench")]
 pub use sinex_test_utils_macros::sinex_bench;
-pub use sinex_test_utils_macros::{sinex_prop, sinex_proptest, sinex_test};
+pub use sinex_test_utils_macros::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
 
 // Re-export anyhow for test ergonomics
 pub use color_eyre::eyre::{anyhow, bail, ensure, Context};
@@ -24,8 +22,25 @@ pub use sinex_core::types::error::SinexError;
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
+pub use channel_test_support::{
+    BackpressureManager, BackpressureOutcome, BackpressureStrategy, ChannelHarness, ChannelMonitor,
+    ChannelReceiverExt, ChannelSenderExt, ChannelStats, MonitoredReceiver, MonitoredSender,
+};
 pub use chaos::ChaosInjestor;
+pub use dataset_seeds::{
+    seed_analytics_dataset_perf_via_pipeline, seed_analytics_dataset_perf_via_scope,
+    seed_analytics_dataset_semantic_min_via_pipeline,
+    seed_analytics_dataset_semantic_min_via_scope, seed_events_via_pipeline, seed_events_via_scope,
+    seed_fixture_events_via_pipeline, seed_fixture_events_via_scope,
+    seed_query_dataset_perf_via_pipeline, seed_query_dataset_perf_via_scope,
+    seed_query_dataset_semantic_min_via_pipeline, seed_query_dataset_semantic_min_via_scope,
+    AnalyticsDataset, DatasetVariant, EventSpec, QueryDataset, SeedClock, TimestampSpec,
+};
 pub use jetstream::ensure_material_streams;
+pub use pipeline::PipelineHarness;
+pub use pipeline_namespace::PipelineNamespace;
+pub use pipeline_scope::PipelineScope;
+pub use preflight::system_test_preflight;
 pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
@@ -63,25 +78,20 @@ impl Drop for ProptestCasesGuard {
 }
 
 // Import all the existing modules - all private
-mod builders;
-#[cfg(feature = "channel-testing")]
-mod channel_behavior_utils;
-#[cfg(feature = "channel-testing")]
-mod channel_enhancements;
-#[cfg(feature = "channel-testing")]
-mod channel_helpers;
+pub mod channel_test_support;
 mod chaos;
 pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
-mod deployment_scenario_utils;
-mod error_testing;
-mod fixture_config;
-pub mod fixtures;
+pub mod dataset_seeds;
 mod jetstream;
-mod nats;
+pub mod nats;
 pub mod path_validation;
 pub mod permissions;
+mod pipeline;
+mod pipeline_namespace;
+mod pipeline_scope;
+pub mod preflight;
 mod property_testing;
 pub mod resources;
 mod satellite_management_utils;
@@ -113,11 +123,16 @@ pub mod static_fixtures;
 // Create prelude module from common/mod.rs
 pub mod prelude {
     // Core test infrastructure
+    pub use crate::dataset_seeds::{
+        AnalyticsDataset, DatasetVariant, EventSpec, QueryDataset, SeedClock, TimestampSpec,
+    };
+    pub use crate::system_test_preflight;
     pub use crate::TestContext;
     pub use crate::TestResult;
-    pub use crate::{sinex_prop, sinex_proptest, sinex_test};
+    pub use crate::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
     pub use crate::{
-        ChaosInjestor, EphemeralNats, EventOverrides, TestSatellitePublisher, TestSnapshot,
+        ChaosInjestor, EphemeralNats, EventOverrides, PipelineHarness, PipelineScope,
+        TestSatellitePublisher, TestSnapshot,
     };
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
@@ -126,12 +141,10 @@ pub mod prelude {
         assert_debug_snapshot, assert_json_snapshot, assert_snapshot, assert_yaml_snapshot,
     };
     pub use rstest::{fixture, rstest};
-    #[allow(deprecated)]
-    pub use similar_asserts::{assert_eq as assert_similar, assert_str_eq};
     pub use tracing_test::traced_test;
 
     // Test macros for enhanced functionality
-    pub use crate::{assert_snapshot_named, rstest_async};
+    pub use crate::{assert_snapshot_named, rstest_async, sinex_pipeline_test};
 
     // Common test fixtures
     pub use crate::{
@@ -142,16 +155,15 @@ pub mod prelude {
             SOURCE_FIXTURE_REPO_SECONDARY,
         },
         optional_extension_missing, pool_slot_count, test_context_fixture, test_db_pool,
-        test_event_sources, test_event_types, test_paths, test_sources, with_pool_size,
+        test_event_sources, test_event_types, test_paths, test_sources,
     };
 
     // Core sinex imports - now using flattened namespace
+    pub use sinex_core::validation::{validate_json, validate_path};
     pub use sinex_core::{
-        validate_json,
-        validate_path,
         Blob,
         BlobRecord,
-        CheckpointRepository,
+
         ConsumerGroup,
         ConsumerName,
         // Database functionality (now available at root)
@@ -233,7 +245,6 @@ pub mod prelude {
 // Re-export modern test dependencies directly - they are now core infrastructure
 pub use insta::{assert_json_snapshot, assert_yaml_snapshot};
 pub use rstest::{fixture, rstest};
-pub use similar_asserts::assert_eq as similar_assert_eq;
 pub use tracing_test::traced_test;
 
 // Common test fixtures as rstest fixtures
@@ -299,29 +310,19 @@ pub async fn test_context_with_tracing() -> TestContext {
 }
 
 // Re-export main types for direct import - only what should be public
-#[cfg(feature = "channel-testing")]
-pub use channel_enhancements::{
-    create_enhanced_event_sender, ChannelDiagnostics, ChannelHealthReport, DiagnosticsReport,
-    EnhancedEventSender, PerformanceMetrics as ChannelPerformanceMetrics,
-};
 pub use database_pool::{
     acquire_admin_connection, acquire_pool_test_guard, acquire_test_database, check_pool_health,
     ensure_default_session_state, get_pool_stats, get_pool_stats_async, get_slot_stats,
-    optional_extension_missing, pool_slot_count, reset_pool, with_pool_size, DatabasePoolTestGuard,
+    optional_extension_missing, pool_slot_count, prime_pool, reset_pool, DatabasePoolTestGuard,
     DatabaseStats, PoolHealthReport, TestDatabase,
 };
 pub use db_common::test_db_pool;
-pub use deployment_scenario_utils::{
-    CompatibilityResult, CompatibilityTestScenario, ComponentConfig, ConfigCompatibilityTester,
-    DependencyAvailability, DependencyType, EnvironmentSetup, EnvironmentType, ExpectedOutcome,
-    ExternalDependency, PerformanceExpectations, PerformanceMetrics, ResourceConstraints,
-    ValidationExpectation, ValidationStep, ValidationType,
-};
 pub use nats::EphemeralNats;
 pub use satellite_management_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
 pub use satellite_runtime::{TestRuntime, TestRuntimeBuilder};
+pub use session_guards::EnvGuard;
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]
 
@@ -339,8 +340,8 @@ mod tests {
     use sinex_core::DbPoolExt;
     use sinex_core::*;
     use sinex_core::{
-        Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue,
-        Operation, OperationRecord, Provenance, SourceMaterial,
+        Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
+        OperationRecord, Provenance, SourceMaterial,
     };
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
@@ -360,12 +361,13 @@ mod tests {
     // Module-specific tests should be in their respective modules.
 
     #[sinex_test]
-    async fn test_complete_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_complete_workflow(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().await?;
         // Demonstrates a complete workflow using production APIs
 
         // 1. Create events using production event creation
         let fs_event = ctx
-            .create_test_event(
+            .publish_json_event(
                 "fs-watcher",
                 "file.created",
                 json!({
@@ -376,7 +378,7 @@ mod tests {
             .await?;
 
         let term_event = ctx
-            .create_test_event(
+            .publish_json_event(
                 "terminal",
                 "command.executed",
                 json!({
@@ -413,11 +415,9 @@ mod tests {
         Ok(())
     }
 
-    // NOTE: Module-specific tests have been moved to their respective modules:
-    // - Builder tests -> builders.rs
+    // NOTE: Module-specific tests live alongside their helpers:
     // - Timing tests -> timing_utils.rs
     // - Database pool tests -> database_pool.rs
-    // - Fixture tests -> fixtures.rs
     // - Assertion tests -> test_context.rs
 
     #[sinex_test]
@@ -429,10 +429,11 @@ mod tests {
         ctx: TestContext,
         #[case] source: &str,
         #[case] event_type: &str,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Create event with parameterized values
+        let ctx = ctx.with_nats().await?;
         let event = ctx
-            .create_test_event(source, event_type, json!({"param_test": true}))
+            .publish_json_event(source, event_type, json!({"param_test": true}))
             .await?;
 
         // Verify event was created correctly
@@ -471,19 +472,19 @@ mod tests {
     async fn test_string_length_variations(
         #[case] name: &str,
         #[case] length: usize,
-    ) -> color_eyre::eyre::Result<()> {
-        let ctx = TestContext::new().await?;
+    ) -> TestResult<()> {
+        let ctx = TestContext::new().await?.with_nats().await?;
 
         let source = "a".repeat(length);
         let event = ctx
-            .create_test_event(&source, "proptest.length", json!({"test_name": name}))
+            .publish_json_event(&source, "proptest.length", json!({"test_name": name}))
             .await?;
         assert_eq!(event.source.as_str(), source);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_property_testing_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
         // Comprehensive property test with database - test various valid inputs
 
         // Test edge cases with various valid inputs
@@ -499,7 +500,7 @@ mod tests {
 
         for (source, event_type, payload) in test_cases {
             let event = ctx
-                .create_test_event(source, event_type, payload.clone())
+                .publish_json_event(source, event_type, payload.clone())
                 .await?;
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);
@@ -511,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_edge_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_edge_cases(ctx: TestContext) -> TestResult<()> {
         // Test edge cases
         for (size_kb, special_chars, nested_depth) in [
             (10, "normal text", 3),
@@ -521,7 +522,7 @@ mod tests {
             // Large payload test
             let large = "x".repeat(size_kb * 1024);
             let event = ctx
-                .create_test_event(
+                .publish_json_event(
                     "edge",
                     "large",
                     json!({
@@ -534,7 +535,7 @@ mod tests {
 
             // Special characters test
             let event = ctx
-                .create_test_event("edge", "special", json!({"text": special_chars}))
+                .publish_json_event("edge", "special", json!({"text": special_chars}))
                 .await?;
             let mut expected_payload = json!({"text": special_chars});
             TestContext::sanitize_payload(&mut expected_payload);
@@ -545,108 +546,25 @@ mod tests {
             for _ in 0..nested_depth {
                 nested = json!({"nested": nested});
             }
-            ctx.create_test_event("edge", "nested", nested).await?;
+            ctx.publish_json_event("edge", "nested", nested).await?;
         }
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_concurrent_test_execution() -> color_eyre::eyre::Result<()> {
+    async fn test_concurrent_test_execution() -> TestResult<()> {
         // Test body disabled pending refactor - currently just returns Ok()
         Ok(())
-
-        /* DISABLED PENDING REFACTOR
-        use color_eyre::eyre::eyre;
-        drop(ctx);
-        crate::database_pool::with_pool_size(12, || async {
-            // Test that multiple tests can run concurrently without interference
-            const TASKS: usize = 5;
-            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(TASKS));
-            let mut handles = vec![];
-
-            for i in 0..TASKS {
-                let barrier_clone = barrier.clone();
-                let handle = tokio::spawn(async move {
-                    let ctx = TestContext::with_name(&format!("concurrent_{i}"))
-                        .await?;
-
-                    // Synchronize all tasks to start at same time
-                    barrier_clone.wait().await;
-
-                    // Each performs operations
-                    for j in 0..10 {
-                        let task_source = format!("task_{i}");
-                        ctx.create_test_event(
-                            &task_source,
-                            "concurrent.test",
-                            json!({"iteration": j}),
-                        )
-                        .await?;
-                    }
-
-                    // Allow the database to flush the inserts before querying.
-                    const EXPECTED_EVENTS: usize = 10;
-                    const MAX_ATTEMPTS: usize = 20;
-                    const RETRY_DELAY_MS: u64 = 100;
-
-                    let mut observed = 0usize;
-                    for attempt in 0..MAX_ATTEMPTS {
-                        let events = ctx
-                            .pool
-                            .events()
-                            .get_by_source(&EventSource::from(format!("task_{i}")), sinex_core::types::Pagination::new(Some(100), None))
-                            .await
-                            .map_err(|e| eyre!("Failed to get events by source: {e}"))?;
-                        observed = events.len();
-                        if observed == EXPECTED_EVENTS {
-                            break;
-                        }
-                        if attempt + 1 < MAX_ATTEMPTS {
-                            tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS))
-                                .await;
-                        }
-                    }
-
-                    assert_eq!(observed, EXPECTED_EVENTS);
-
-                    // Verify only sees own events using direct repository access
-                    for k in 0..TASKS {
-                        if k != i {
-                            let other_events = ctx
-                                .pool
-                                .events()
-                                .get_by_source(&EventSource::from(format!("task_{k}")), sinex_core::types::Pagination::new(Some(100), None))
-                                .await
-                                .map_err(|e| eyre!("Failed to get other events: {e}"))?;
-                            assert_eq!(other_events.len(), 0);
-                        }
-                    }
-
-                    Ok::<(), color_eyre::eyre::Report>(())
-                });
-                handles.push(handle);
-            }
-
-            for handle in handles {
-                handle
-                    .await
-                    .map_err(|e| eyre!("Task failed: {e}"))?;
-            }
-
-            Ok(())
-        })
-        .await
-        */
     }
 
     #[sinex_test]
-    async fn test_error_propagation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_error_propagation(ctx: TestContext) -> TestResult<()> {
         // Test that errors propagate correctly through Result
 
         // Test validation error
         let result = ctx
-            .create_test_event(
+            .publish_json_event(
                 "", // Empty source should fail
                 "test",
                 json!({}),
@@ -656,7 +574,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("source"));
 
         // Test that custom errors work with Result
-        fn failing_operation() -> color_eyre::eyre::Result<()> {
+        fn failing_operation() -> TestResult<()> {
             Err(SinexError::validation("Custom validation error".to_string()).into())
         }
 
@@ -672,7 +590,7 @@ mod tests {
     }
 
     #[sinex_test(timeout = 30)]
-    async fn test_timeout_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timeout_handling(ctx: TestContext) -> TestResult<()> {
         // Test that the timeout attribute works
         // This test should complete quickly, well under 5 seconds
 
@@ -680,7 +598,7 @@ mod tests {
 
         // Do some work
         for i in 0..10 {
-            ctx.create_test_event("timeout_test", "test", json!({"index": i}))
+            ctx.publish_json_event("timeout_test", "test", json!({"index": i}))
                 .await?;
         }
 
@@ -694,9 +612,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_result_type_alias() -> color_eyre::eyre::Result<()> {
+    async fn test_result_type_alias() -> TestResult<()> {
         // Test that Result is properly aliased
-        fn returns_test_result() -> color_eyre::eyre::Result<String> {
+        fn returns_test_result() -> TestResult<String> {
             Ok("success".to_string())
         }
 
@@ -704,7 +622,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result?, "success");
 
-        fn returns_error() -> color_eyre::eyre::Result<()> {
+        fn returns_error() -> TestResult<()> {
             Err(SinexError::unknown("test error".to_string()).into())
         }
 
@@ -715,14 +633,14 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_builder_method_chaining_order(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
         // Test that events can be created with different parameter orders
         let event1 = ctx
-            .create_test_event("order1", "test", json!({"a": 1}))
+            .publish_json_event("order1", "test", json!({"a": 1}))
             .await?;
 
         let event2 = ctx
-            .create_test_event("order2", "test", json!({"a": 1}))
+            .publish_json_event("order2", "test", json!({"a": 1}))
             .await?;
 
         // Both should succeed despite different order
@@ -733,7 +651,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_assertion_edge_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_assertion_edge_cases(ctx: TestContext) -> TestResult<()> {
         // Test assertion boundary conditions
         let empty_vec: Vec<i32> = vec![];
         let non_empty_vec = vec![1, 2, 3];
@@ -768,16 +686,14 @@ mod tests {
     // Test Framework Infrastructure Tests - Core State Management
 
     #[sinex_test]
-    async fn test_context_event_count_tracking_accuracy(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    async fn test_context_event_count_tracking_accuracy(ctx: TestContext) -> TestResult<()> {
         // Test that event counting is accurate across operations
         ctx.force_cleanup().await?;
         let baseline = ctx.current_event_count().await?;
 
         // Insert events one by one and verify count
         for i in 1..=5 {
-            ctx.create_test_event("count-test", "increment", json!({"index": i}))
+            ctx.publish_json_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
             let current_count = ctx.current_event_count().await?;
@@ -789,17 +705,10 @@ mod tests {
         }
 
         // Batch insert and verify
-        let batch_events = (0..10)
-            .map(|i| {
-                Event::<JsonValue>::test_event(
-                    EventSource::from("count-test"),
-                    EventType::from("batch"),
-                    json!({"batch_index": i}),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        ctx.insert_events(&batch_events).await?;
+        for i in 0..10 {
+            ctx.publish_json_event("count-test", "batch", json!({"batch_index": i}))
+                .await?;
+        }
 
         let final_count = ctx.current_event_count().await?;
         assert_eq!(
@@ -812,9 +721,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_context_timing_measurement_precision(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    async fn test_context_timing_measurement_precision(ctx: TestContext) -> TestResult<()> {
         // Test that timing measurements are precise and monotonic
         let start_elapsed = ctx.elapsed();
 
@@ -858,9 +765,7 @@ mod tests {
     // Database Pool Management Tests
 
     #[sinex_test]
-    async fn test_database_pool_concurrent_allocation(
-        ctx: TestContext,
-    ) -> color_eyre::eyre::Result<()> {
+    async fn test_database_pool_concurrent_allocation(ctx: TestContext) -> TestResult<()> {
         // Test that multiple contexts can be allocated concurrently without deadlock
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
@@ -878,7 +783,7 @@ mod tests {
                 match TestContext::with_name(&format!("concurrent_alloc_{i}")).await {
                     Ok(ctx) => {
                         // Do some work to hold the context
-                        ctx.create_test_event("pool-test", "allocation", json!({"task_id": i}))
+                        ctx.publish_json_event("pool-test", "allocation", json!({"task_id": i}))
                             .await?;
 
                         success_count.fetch_add(1, Ordering::SeqCst);
@@ -908,7 +813,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_database_cleanup_on_drop(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_database_cleanup_on_drop(ctx: TestContext) -> TestResult<()> {
         // Test that database is properly cleaned when context is dropped
         let test_id = uuid::Uuid::new_v4().to_string();
 
@@ -918,7 +823,7 @@ mod tests {
 
             // Insert identifiable data
             temp_ctx
-                .create_test_event("cleanup-test", "marker", json!({"test_id": test_id}))
+                .publish_json_event("cleanup-test", "marker", json!({"test_id": test_id}))
                 .await?;
 
             // Verify it exists using direct repository access
@@ -958,26 +863,26 @@ mod tests {
     // Test Fixture Lifecycle Management
 
     #[sinex_test]
-    async fn test_fixture_lazy_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_fixture_lazy_initialization(ctx: TestContext) -> TestResult<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
         ctx.force_cleanup().await?;
         let baseline = ctx.current_event_count().await?;
 
-        ctx.create_test_event("fixture-test", "initialization", json!({"lazy": true}))
+        ctx.publish_json_event("fixture-test", "initialization", json!({"lazy": true}))
             .await?;
 
         let after_event = ctx.current_event_count().await?;
         assert_eq!(
             after_event,
             baseline + 1,
-            "Context should add exactly one event when create_test_event is called"
+            "Context should add exactly one event when publish_json_event is called"
         );
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_fixture_resource_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_fixture_resource_cleanup(ctx: TestContext) -> TestResult<()> {
         // Test that fixture resources are cleaned up properly
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
@@ -1020,11 +925,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_event_relationships(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_complex_event_relationships(ctx: TestContext) -> TestResult<()> {
         // Test that we can create and query events with dependencies
 
         // Create a checkpoint event
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "sinex",
             "checkpoint.saved",
             json!({
@@ -1035,7 +940,7 @@ mod tests {
         .await?;
 
         // Create an automaton event that references the checkpoint
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "automaton",
             "checkpoint.processed",
             json!({

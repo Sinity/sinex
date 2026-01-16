@@ -226,7 +226,7 @@ mod tests {
     use crate::sinex_test;
 
     #[sinex_test]
-    async fn test_validate_test_path_accepts_safe_paths() -> color_eyre::eyre::Result<()> {
+    async fn test_validate_test_path_accepts_safe_paths() -> TestResult<()> {
         // These should be accepted (assuming /tmp exists)
         let temp_path = format!("{}/test-file.txt", env::temp_dir().to_string_lossy());
         assert!(validate_test_path(&temp_path).is_ok());
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validate_test_path_rejects_dangerous_paths() -> color_eyre::eyre::Result<()> {
+    async fn test_validate_test_path_rejects_dangerous_paths() -> TestResult<()> {
         // These should be rejected
         let dangerous_paths = [
             "/etc/passwd",
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_test_temp_dir() -> color_eyre::eyre::Result<()> {
+    async fn test_create_test_temp_dir() -> TestResult<()> {
         let temp_dir = create_test_temp_dir("path_validation_test")?;
 
         // Directory should exist
@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_test_temp_file() -> color_eyre::eyre::Result<()> {
+    async fn test_create_test_temp_file() -> TestResult<()> {
         let temp_file = create_test_temp_file("file_test", "test-data.txt")?;
 
         // File path should be valid
@@ -300,7 +300,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_sanitize_filename() -> color_eyre::eyre::Result<()> {
+    async fn test_sanitize_filename() -> TestResult<()> {
         let test_cases = [
             ("normal_file.txt", "normal_file.txt"),
             ("file/with/slashes.txt", "file_with_slashes.txt"),
@@ -319,7 +319,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_remove_test_dir_safety() -> color_eyre::eyre::Result<()> {
+    async fn test_remove_test_dir_safety() -> TestResult<()> {
         // Create a legitimate test directory
         let test_dir = create_test_temp_dir("removal_test")?;
 
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_path_depth_validation() -> color_eyre::eyre::Result<()> {
+    async fn test_path_depth_validation() -> TestResult<()> {
         // Reasonable depth should be fine
         let reasonable_path = "/tmp/sinex-test/sub1/sub2/sub3/file.txt";
         assert!(validate_test_path(reasonable_path).is_ok());

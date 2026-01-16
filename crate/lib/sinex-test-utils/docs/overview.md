@@ -1,7 +1,7 @@
 # Sinex Test Utilities
 
 A comprehensive testing framework for the Sinex event-driven data capture system, providing
-database isolation, fixture management, and robust testing patterns.
+database isolation, dataset seeding, and robust testing patterns.
 
 ## Quick Start
 
@@ -9,9 +9,9 @@ database isolation, fixture management, and robust testing patterns.
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
     // Create test event using production APIs
-    let event = ctx.create_test_event(
+    let event = ctx.publish_json_event(
         "fs-watcher",
         "file.created",
         json!({"path": "/test.txt", "size": 1024})
@@ -27,13 +27,13 @@ async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
     Ok(())
 }
-```
 
 ## Core Features
 
 ### Database Isolation
 
-Each test gets its own isolated database from a 64-database pool using PostgreSQL advisory locks:
+Each test gets its own isolated database from a pool sized at 2× Nextest test threads (minimum 64,
+and reduced if Postgres `max_connections` would be exceeded) using PostgreSQL advisory locks:
 
 - True isolation between parallel tests.
 - Automatic cleanup after test completion.
@@ -49,20 +49,26 @@ Tests work directly with production APIs rather than mocks:
 - Catch integration issues early.
 - Simplified test maintenance (no mock synchronization).
 
-### Rich Fixtures
+### Dataset Seeding
 
-Pre-built test data for common scenarios:
+Repeatable dataset seeds for common scenarios:
 
 ```rust
-// Standard user session with mixed event types
-let session = fixtures::standard_user_session(&ctx).await?;
+use sinex_test_utils::dataset_seeds::{seed_events_via_pipeline, EventSpec, SeedClock};
 
-// Large dataset for performance testing
-let dataset = fixtures::performance_dataset_with_size(&ctx, 10_000).await?;
-
-// Error scenarios for edge case testing
-let errors = fixtures::error_scenarios(&ctx).await?;
+let clock = SeedClock::default();
+let specs = vec![
+    EventSpec::new("fs-watcher", "file.created", json!({"path": "/tmp/a"})),
+    EventSpec::new("terminal", "command.executed", json!({"command": "ls"})),
+];
+let ctx = ctx.with_nats().await?;
+let pipeline = ctx.pipeline().await?;
+let ids = seed_events_via_pipeline(&pipeline, &clock, &specs).await?;
+assert_eq!(ids.len(), 2);
 ```
+
+Pipeline seeding helpers (`seed_events_via_pipeline`, `seed_events_via_scope`) enforce
+`SeedClock::fixed()` to keep pipeline suites deterministic.
 
 ### Context-Aware Assertions
 
@@ -91,7 +97,7 @@ Automatic log capture and verification:
 
 ```rust
 #[sinex_test(trace = true)]
-async fn test_with_logging(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_with_logging(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Starting test");
     // ... test logic ...
     ctx.assert_logged("Starting test")?;  // Verify log message
@@ -131,7 +137,7 @@ the binary path with `NATS_SERVER_BIN=/path/to/nats-server` when you need a cust
 All test functionality is accessed through `TestContext`, providing:
 
 - Isolated database per test.
-- Event creation builders.
+- Event creation helpers.
 - Query abstractions.
 - Assertion helpers.
 - Timing utilities.
@@ -152,7 +158,7 @@ Direct production API usage – no wrapper builders:
 
 ```rust
 // Using convenience helper for simple test events
-ctx.create_test_event("fs-watcher", "file.modified", json!({"path": "/tmp/test"})).await?;
+ctx.publish_json_event("fs-watcher", "file.modified", json!({"path": "/tmp/test"})).await?;
 
 // Using production Event::new() with actual payload types
 let event = Event::new(FileCreatedPayload {
@@ -164,7 +170,7 @@ let event = Event::new(FileCreatedPayload {
 ctx.pool.events().insert(event).await?;
 
 // For quick tests without specific payload types
-ctx.create_test_event(
+ctx.publish_json_event(
     "my-service",
     "user.action",
     json!({"user_id": 123, "action": "login"})
@@ -185,15 +191,4 @@ let single = ctx.pool.events().get_by_id(&event_id).await?;
 // Use repository methods directly - no wrapper helpers
 ```
 
-## Fixtures
-
-Access reusable test scenarios through the unified fixture manager:
-
-```rust
-// Access fixtures through ctx.fixtures() namespace
-let session = ctx.fixtures().user_session().await?;
-let dataset = ctx.fixtures().large_dataset().await?;
-let errors = ctx.fixtures().validation_failures().await?;
-
-// Or use the nested namespaces for better organization
 ```

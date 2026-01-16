@@ -35,7 +35,6 @@
 //! ```
 
 use crate::db_common;
-use crate::TestResult;
 use color_eyre::eyre::{eyre, Result};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -297,10 +296,10 @@ impl DualMeasurement {
 mod tests {
     use super::*;
     use crate::prelude::DatasetSize;
-    use crate::sinex_test;
+    use crate::{sinex_test, TestResult};
 
     #[sinex_test]
-    async fn test_dataset_size() -> color_eyre::eyre::Result<()> {
+    async fn test_dataset_size() -> TestResult<()> {
         assert_eq!(DatasetSize::Small.fixture_name(), "small");
         assert_eq!(DatasetSize::Small.event_count(), 1_000);
         assert_eq!(DatasetSize::Large.fixture_name(), "large");
@@ -309,7 +308,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_dual_measurement() -> color_eyre::eyre::Result<()> {
+    async fn test_dual_measurement() -> TestResult<()> {
         let measurement = DualMeasurement {
             cold_cache: Duration::from_millis(100),
             warm_cache: Duration::from_millis(25),
@@ -322,7 +321,7 @@ mod tests {
 
     #[cfg(feature = "bench")]
     #[sinex_test]
-    async fn test_bench_context_creation() -> color_eyre::eyre::Result<()> {
+    async fn test_bench_context_creation() -> TestResult<()> {
         // This will fail if database isn't available, which is OK for tests
         if std::env::var("BENCH_DATABASE_URL").is_ok() {
             let ctx = BenchContext::new().await?;

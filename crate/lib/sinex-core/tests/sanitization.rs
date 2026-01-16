@@ -4,16 +4,17 @@ use sinex_core::payloads::filesystem::FileCreatedPayload;
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::{Event, EventSource, EventType, Id, Provenance};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-async fn path_traversal_sanitization() -> color_eyre::eyre::Result<()> {
+async fn path_traversal_sanitization() -> TestResult<()> {
     let mut event = Event::dynamic(
         EventSource::new("../../../etc/passwd"),
         EventType::new("security.test"),
         json!({"path": "../../sensitive/file.txt"}),
     )
     .with_provenance(Provenance::from_material(Id::new(), 0, None, None))
-    .build();
+    .build()?;
 
     let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
     assert!(was_modified);
@@ -26,14 +27,14 @@ async fn path_traversal_sanitization() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn null_byte_sanitization() -> color_eyre::eyre::Result<()> {
+async fn null_byte_sanitization() -> TestResult<()> {
     let mut event = Event::dynamic(
         EventSource::new("test\0source"),
         EventType::new("security.test"),
         json!({"data": "test\0value"}),
     )
     .with_provenance(Provenance::from_material(Id::new(), 0, None, None))
-    .build();
+    .build()?;
 
     let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
     assert!(was_modified);
@@ -42,14 +43,14 @@ async fn null_byte_sanitization() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn sql_injection_payload_preserved() -> color_eyre::eyre::Result<()> {
+async fn sql_injection_payload_preserved() -> TestResult<()> {
     let mut event = Event::dynamic(
         EventSource::new("security.test"),
         EventType::new("sql.injection"),
         json!({"query": "'; DROP TABLE events; --"}),
     )
     .with_provenance(Provenance::from_material(Id::new(), 0, None, None))
-    .build();
+    .build()?;
 
     let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
     assert!(!was_modified);
@@ -65,7 +66,7 @@ async fn sql_injection_payload_preserved() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn generic_sanitizer_with_typed_event() -> color_eyre::eyre::Result<()> {
+async fn generic_sanitizer_with_typed_event() -> TestResult<()> {
     let payload = FileCreatedPayload {
         path: SanitizedPath::from("../../../malicious/file.txt".to_string()),
         size: 1024,
@@ -75,7 +76,7 @@ async fn generic_sanitizer_with_typed_event() -> color_eyre::eyre::Result<()> {
 
     let mut event = Event::builder(payload)
         .with_provenance(Provenance::from_material(Id::new(), 0, None, None))
-        .build();
+        .build()?;
 
     let was_modified = EventSanitizer::sanitize_event_generic(&mut event).unwrap();
     assert!(was_modified);

@@ -114,18 +114,15 @@ For secrets requiring periodic rotation:
 
 ## Current Implementation Status
 
-❌ Not Implemented:
-- No agenix in flake.nix
-- No .age encrypted files in repository  
-- No age.secrets declarations in NixOS modules
-- No actual secrets management beyond environment variables
+✅ Implemented:
+- agenix is included in the flake inputs and imported by the Sinex NixOS module.
+- `.age` files under `secret/` are decrypted to `/run/agenix/<name>` and exposed via `config.sinex.secrets.paths`.
+- Gateway requires `sinex-gateway-admin-token.age` (or `services.sinex.secrets.gatewayAdminTokenFile`) and refuses to start without it.
 
-⏳ Would Need Implementation:
-- [ ] Add agenix to flake inputs
-- [ ] Generate age keys for host/user
-- [ ] Create encrypted secrets files
-- [ ] Add age.secrets declarations to NixOS config
-- [ ] Integrate with services that need secrets
+⚠️ Operator tasks (per deployment):
+- Generate age keys for host/user and encrypt secrets.
+- Place encrypted `.age` files under `secret/` or set explicit secret file paths.
+- Rotate secrets by updating the encrypted file and rebuilding.
 
 ## Related Documentation
 - ADR-006: NixOS Secrets Management Tool Decision

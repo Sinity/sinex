@@ -1,10 +1,10 @@
 # Ingest Service
 
-`service.rs` implements the gRPC server that satellites talk to. It handles the
-`IngestService` protobuf methods, applies validation, and delegates to database
-repositories.
+`service.rs` orchestrates ingestd startup and the JetStream consumers that
+receive events and source material from satellites. It applies validation,
+delegates persistence to repositories, and drives material assembly.
 
-- Wraps the tonic-generated stubs in tracing and retry guards.
+- Runs JetStream consumers for events and material slices.
 - Batches writes to reduce contention.
 - Emits structured logs with ULIDs for provenance tracking.
 

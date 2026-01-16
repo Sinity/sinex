@@ -7,9 +7,8 @@
 use crate::schema::*;
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;
-use tracing::warn;
-
-const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb"];
+use std::env;
+const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -381,9 +380,7 @@ impl MigrationTrait for Migration {
                 "#,
             )
             .await?;
-        manager
-            .create_table(ProcessorCheckpoints::create_table_statement())
-            .await?;
+
         manager
             .create_table(Entities::create_table_statement())
             .await?;
@@ -394,12 +391,7 @@ impl MigrationTrait for Migration {
         manager
             .create_table(EventClusters::create_table_statement())
             .await?;
-        manager
-            .create_table(SatelliteInstances::create_table_statement())
-            .await?;
-        manager
-            .create_table(SatelliteSignals::create_table_statement())
-            .await?;
+
         manager
             .create_table(ProcessorManifests::create_table_statement())
             .await?;
@@ -432,25 +424,9 @@ impl MigrationTrait for Migration {
         manager
             .create_table(EventClusterMembers::create_table_statement())
             .await?;
-        manager
-            .create_table(ServiceLeadership::create_table_statement())
-            .await?;
+
         manager
             .create_table(TransactionalOutbox::create_table_statement())
-            .await?;
-
-        // Coordination indexes to keep leadership queries fast
-        manager
-            .get_connection()
-            .execute_unprepared(SatelliteInstances::create_indexes_sql())
-            .await?;
-        manager
-            .get_connection()
-            .execute_unprepared(SatelliteSignals::create_indexes_sql())
-            .await?;
-        manager
-            .get_connection()
-            .execute_unprepared(ServiceLeadership::create_indexes_sql())
             .await?;
 
         // --- Phase 3: Apply Foreign Keys and Triggers ---
@@ -460,6 +436,10 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(ArchivedEvents::create_archive_trigger_sql())
+            .await?;
+        manager
+            .get_connection()
+            .execute_unprepared(Events::create_no_update_trigger_sql())
             .await?;
         manager
             .get_connection()
@@ -479,10 +459,7 @@ impl MigrationTrait for Migration {
             .get_connection()
             .execute_unprepared(&EventAnnotations::create_updated_at_trigger_sql())
             .await?;
-        manager
-            .get_connection()
-            .execute_unprepared(&ProcessorCheckpoints::create_updated_at_trigger_sql())
-            .await?;
+
         manager
             .get_connection()
             .execute_unprepared(&EventPayloadSchemas::create_updated_at_trigger_sql())
@@ -516,6 +493,12 @@ impl MigrationTrait for Migration {
             manager.create_index(index).await?;
         }
         for index_sql in Entities::create_gin_indexes_sql() {
+            manager
+                .get_connection()
+                .execute_unprepared(&index_sql)
+                .await?;
+        }
+        for index_sql in Entities::create_trigram_indexes_sql() {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
@@ -560,9 +543,7 @@ impl MigrationTrait for Migration {
         for index in TransactionalOutbox::create_indexes() {
             manager.create_index(index).await?;
         }
-        for index in ProcessorCheckpoints::create_indexes() {
-            manager.create_index(index).await?;
-        }
+
         for index in EventPayloadSchemas::create_indexes() {
             manager.create_index(index).await?;
         }
@@ -584,6 +565,16 @@ impl MigrationTrait for Migration {
 
     /// Reverts the entire canonical schema.
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let allow = env::var("SINEX_ALLOW_SCHEMA_DOWN")
+            .unwrap_or_default()
+            .to_lowercase();
+        if !matches!(allow.as_str(), "1" | "true" | "yes" | "on") {
+            return Err(DbErr::Custom(
+                "Schema down migration is destructive; set SINEX_ALLOW_SCHEMA_DOWN=1 to proceed."
+                    .to_string(),
+            ));
+        }
+
         // Drop everything in reverse dependency order.
         manager
             .get_connection()
@@ -604,6 +595,7 @@ impl MigrationTrait for Migration {
 }
 
 async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Result<(), DbErr> {
+    let mut missing: Vec<String> = Vec::new();
     for extension in REQUIRED_EXTENSIONS {
         let mut target = *extension;
         let check_sql = format!(
@@ -638,15 +630,24 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
         }
 
         if !resolved_available {
-            warn!(
-                extension = %extension,
-                "Skipping unavailable PostgreSQL extension; install it manually if needed"
-            );
+            let label = if *extension == "ulid" {
+                "ulid (or pgx_ulid)".to_string()
+            } else {
+                String::from(*extension)
+            };
+            missing.push(label);
             continue;
         }
 
         let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{ext}";"#, ext = target);
         conn.execute_unprepared(&statement).await?;
+    }
+
+    if !missing.is_empty() {
+        return Err(DbErr::Custom(format!(
+            "Required PostgreSQL extensions missing: {}",
+            missing.join(", ")
+        )));
     }
 
     Ok(())

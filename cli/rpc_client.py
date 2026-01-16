@@ -4,6 +4,7 @@ Sinex RPC Client - JSON-RPC 2.0 client for sinex-gateway service
 """
 
 import json
+import ssl
 import time
 from typing import Optional, Dict, List, Any, Union, Tuple
 from datetime import datetime, timedelta
@@ -26,14 +27,39 @@ class SinexRPCClient:
     
     def __init__(
         self,
-        rpc_url: str = "http://127.0.0.1:9999",
+        rpc_url: str = "https://127.0.0.1:9999",
         timeout: int = 30,
         token: Optional[str] = None,
+        ca_cert_path: Optional[str] = None,
+        client_cert_path: Optional[str] = None,
+        client_key_path: Optional[str] = None,
     ):
+        parsed = urllib.parse.urlparse(rpc_url)
+        if parsed.scheme and parsed.scheme != "https":
+            raise ValueError("RPC URL must use https://; gateway requires TLS.")
+        if not parsed.scheme:
+            raise ValueError("RPC URL must include a scheme (https://...).")
+
         self.rpc_url = rpc_url
         self.timeout = timeout
         self._request_id = 0
         self.token = token
+        self._ssl_context = None
+        if parsed.scheme == "https":
+            if ca_cert_path:
+                self._ssl_context = ssl.create_default_context(cafile=ca_cert_path)
+            else:
+                self._ssl_context = ssl.create_default_context()
+            if client_cert_path or client_key_path:
+                if not client_cert_path or not client_key_path:
+                    raise ValueError(
+                        "Both client cert and key are required for mTLS "
+                        "(SINEX_RPC_CLIENT_CERT + SINEX_RPC_CLIENT_KEY)."
+                    )
+                self._ssl_context.load_cert_chain(
+                    certfile=client_cert_path,
+                    keyfile=client_key_path,
+                )
     
     def _next_id(self) -> int:
         """Get next request ID."""
@@ -60,7 +86,6 @@ class SinexRPCClient:
             }
             if self.token:
                 headers['Authorization'] = f"Bearer {self.token}"
-                headers['X-Sinex-Rpc-Token'] = self.token
 
             req = urllib.request.Request(
                 url=self.rpc_url,
@@ -70,7 +95,10 @@ class SinexRPCClient:
             )
             
             # Make request
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            urlopen_kwargs = {"timeout": self.timeout}
+            if self._ssl_context is not None:
+                urlopen_kwargs["context"] = self._ssl_context
+            with urllib.request.urlopen(req, **urlopen_kwargs) as response:
                 response_data = json.loads(response.read().decode('utf-8'))
             
             # Check for JSON-RPC errors
@@ -142,9 +170,8 @@ class SinexRPCClient:
         }
         return self._call_rpc("analytics.activity_heatmap", params)
     
-    # Utility methods for CLI compatibility
-    
-    def query_events_compatible(
+    # Utility methods for CLI formatting
+    def query_events(
         self,
         source: Optional[str] = None,
         event_type: Optional[str] = None,
@@ -154,11 +181,7 @@ class SinexRPCClient:
         limit: int = 50,
         host: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Query events with CLI-compatible parameters.
-        
-        Returns events in a format compatible with the existing CLI display functions.
-        """
+        """Query events with CLI-friendly parameters."""
         # Parse time parameters
         start_time = None
         end_time = None
@@ -186,8 +209,8 @@ class SinexRPCClient:
             offset=0
         )
         
-        # Convert RPC results to CLI-compatible format
-        compatible_events = []
+        # Convert RPC results to CLI format
+        formatted_events = []
         for result in results:
             # Parse payload if it's a string
             payload = result.get('payload', {})
@@ -214,9 +237,9 @@ class SinexRPCClient:
             if host and event['host'] != host:
                 continue
                 
-            compatible_events.append(event)
+            formatted_events.append(event)
         
-        return compatible_events
+        return formatted_events
 
     # Replay Control Methods
 
@@ -313,25 +336,23 @@ class SinexRPCClient:
             raise SinexRPCError(-32603, "RPC response missing operations list")
         return operations
     
-    def get_sources_statistics(self) -> List[Dict[str, Any]]:
-        """Get sources statistics compatible with CLI sources command."""
-        # Get event counts by source
-        counts = self.get_event_count_by_source(days_back=365)  # Get all-time stats
-        
-        # Convert to CLI-compatible format
+    def get_sources_statistics(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get detailed per-source statistics."""
+        result = self._call_rpc("analytics.sources_statistics", {"limit": limit})
         sources_stats = []
-        for source, count in counts.items():
+        for entry in result:
+            first_event = entry.get("first_event")
+            last_event = entry.get("last_event")
             sources_stats.append({
-                'source': source,
-                'event_count': count,
-                'event_type_count': 1,  # RPC doesn't provide this breakdown
-                'host_count': 1,  # RPC doesn't provide this breakdown
-                'first_event': datetime.now() - timedelta(days=30),  # Placeholder
-                'last_event': datetime.now(),  # Placeholder
-                'avg_ingest_delay': None  # RPC doesn't provide this
+                "source": entry["source"],
+                "event_count": entry["event_count"],
+                "event_type_count": entry.get("event_type_count", 0),
+                "host_count": entry.get("host_count", 0),
+                "first_event": self._parse_datetime(first_event) if first_event else None,
+                "last_event": self._parse_datetime(last_event) if last_event else None,
+                "avg_ingest_delay": entry.get("avg_ingest_delay"),
             })
-        
-        return sorted(sources_stats, key=lambda x: x['event_count'], reverse=True)
+        return sources_stats
     
     # Helper methods
     
@@ -413,19 +434,49 @@ class SinexRPCClient:
 
 # Convenience functions for backward compatibility
 
-def create_client(rpc_url: str = None, token: str = None) -> SinexRPCClient:
+def create_client(
+    rpc_url: str = None,
+    token: str = None,
+    ca_cert_path: str = None,
+    client_cert_path: str = None,
+    client_key_path: str = None,
+) -> SinexRPCClient:
     """Create a configured RPC client."""
+    # Try common environment variables
+    import os
     if rpc_url is None:
-        # Try common environment variables
-        import os
-        rpc_url = os.environ.get('SINEX_RPC_URL', 'http://127.0.0.1:9999')
-        if token is None:
-            token = os.environ.get('SINEX_RPC_TOKEN')
+        rpc_url = os.environ.get('SINEX_RPC_URL', 'https://127.0.0.1:9999')
+    if token is None:
+        token = os.environ.get('SINEX_RPC_TOKEN')
+    if ca_cert_path is None:
+        ca_cert_path = os.environ.get('SINEX_RPC_CA_CERT')
+    if client_cert_path is None:
+        client_cert_path = os.environ.get('SINEX_RPC_CLIENT_CERT')
+    if client_key_path is None:
+        client_key_path = os.environ.get('SINEX_RPC_CLIENT_KEY')
     
-    return SinexRPCClient(rpc_url, token=token)
+    return SinexRPCClient(
+        rpc_url,
+        token=token,
+        ca_cert_path=ca_cert_path,
+        client_cert_path=client_cert_path,
+        client_key_path=client_key_path,
+    )
 
 
-def test_connection(rpc_url: str = None, token: str = None) -> bool:
+def test_connection(
+    rpc_url: str = None,
+    token: str = None,
+    ca_cert_path: str = None,
+    client_cert_path: str = None,
+    client_key_path: str = None,
+) -> bool:
     """Test if RPC server is reachable."""
-    client = create_client(rpc_url, token=token)
+    client = create_client(
+        rpc_url,
+        token=token,
+        ca_cert_path=ca_cert_path,
+        client_cert_path=client_cert_path,
+        client_key_path=client_key_path,
+    )
     return client.ping()

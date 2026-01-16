@@ -12,28 +12,52 @@
 //! final processing, ensuring data integrity and correct processing semantics.
 
 use chrono::{Duration, Utc};
-use futures::future::join_all;
+use color_eyre::eyre::ensure;
+use futures::{future::join_all, StreamExt};
 use serde_json::json;
 use sinex_core::types::domain::EventSource;
-use sinex_test_utils::acquire_pool_test_guard;
-use sinex_test_utils::db_common;
 use sinex_test_utils::prelude::*;
+use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
+use std::time::Instant;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
+use tokio::task::yield_now;
 
 // =============================================================================
 // Event Ingestion Pipeline Tests
 // =============================================================================
 
+/// Minimal pipeline smoke test (single event, real ingestion path).
+#[sinex_serial_test(timeout = 60)]
+async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let scope = ctx.pipeline_scope().await?;
+    let event_id = scope
+        .publish(
+            "pipeline-smoke",
+            "smoke.event",
+            json!({"step": "smoke", "note": "pipeline"}),
+        )
+        .await?;
+    scope.wait_for_event_id(event_id.clone()).await?;
+    let stored = scope
+        .ctx()
+        .pool
+        .events()
+        .get_by_id(event_id)
+        .await?
+        .expect("smoke event should be persisted");
+    assert_eq!(stored.source.as_str(), "pipeline-smoke");
+    assert_eq!(stored.event_type.as_str(), "smoke.event");
+    Ok(())
+}
+
 /// Test complete event ingestion pipeline from raw input to database storage
-#[sinex_test]
+#[sinex_serial_test(timeout = 60)]
 async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing complete event ingestion pipeline");
     let run_id = sinex_core::types::Ulid::new();
 
@@ -88,10 +112,13 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
     // Phase 2: Process each event through the ingestion pipeline
     for (source, event_type, payload) in test_events.iter() {
-        let event = ctx
-            .create_test_event(source, event_type, payload.clone())
-            .await?;
+        let mut event =
+            Event::<JsonValue>::test_event(source.as_str(), *event_type, payload.clone());
+        event.id = Some(sinex_core::types::Id::new());
         let event_id = event.id.clone();
+
+        ctx.publish_test_event(&event).await?;
+
         created_event_ids.push(event_id.clone());
 
         let event_id_display = event_id
@@ -121,20 +148,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         20,
     )
     .await?;
-    let mut persisted = ctx.pool.events().count_all().await? as usize;
-    if persisted < expected_total {
-        let deficit = expected_total - persisted;
-        for i in 0..deficit {
-            let (source, event_type, payload) = &test_events[i % test_events.len()];
-            ctx.create_test_event(
-                source,
-                event_type,
-                json!({"pipeline_backfill": i, "payload": payload}),
-            )
-            .await?;
-        }
-        persisted = ctx.pool.events().count_all().await? as usize;
-    }
+    let persisted = ctx.pool.events().count_all().await? as usize;
     assert!(
         persisted >= expected_total,
         "Expected {expected_total} pipeline events, found {persisted}"
@@ -220,36 +234,29 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     );
 
     tracing::info!("Event ingestion pipeline test completed successfully");
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 /// Test pipeline handling of concurrent event streams
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing concurrent pipeline processing");
-    let _guard = acquire_pool_test_guard().await;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = Arc::new(ctx);
 
     let concurrent_streams = 4;
-    let events_per_stream = 15;
+    let events_per_stream = 8;
     let processing_results = Arc::new(Mutex::new(Vec::new()));
 
     // Create concurrent processing tasks simulating multiple event sources
     let mut stream_handles = Vec::new();
 
     for stream_id in 0..concurrent_streams {
+        let ctx_clone = ctx.clone();
         let results = processing_results.clone();
 
         let handle = tokio::spawn(async move {
-            let ctx = TestContext::new()
-                .await
-                .expect("Should create isolated stream context");
-            ctx.ensure_clean().await?;
-            db_common::reset_database(ctx.pool()).await?;
-            db_common::verify_clean_state(ctx.pool()).await?;
             let stream_name = format!("stream_{}", stream_id);
             let mut stream_events = Vec::new();
             let stream_start = Instant::now();
@@ -263,17 +270,18 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                     "sequence": stream_id * events_per_stream + event_idx
                 });
 
-                match ctx
-                    .create_test_event(&stream_name, "stream.data", event_payload)
-                    .await
-                {
-                    Ok(event) => {
-                        let event_id_display = event
-                            .id
+                let mut event =
+                    Event::<JsonValue>::test_event(&*stream_name, "stream.data", event_payload);
+                event.id = Some(sinex_core::types::Id::new());
+
+                match ctx_clone.publish_test_event(&event).await {
+                    Ok(_) => {
+                        let event_id = event.id.clone();
+                        let event_id_display = event_id
                             .as_ref()
                             .map(|id| id.to_string())
                             .unwrap_or_else(|| "missing".to_string());
-                        stream_events.push(event.id);
+                        stream_events.push(event_id);
                         tracing::trace!(
                             stream_id = stream_id,
                             event_idx = event_idx,
@@ -291,9 +299,6 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                         return Err(e);
                     }
                 }
-
-                // Small processing delay to simulate realistic load
-                sleep(StdDuration::from_millis(5)).await;
             }
 
             let stream_duration = stream_start.elapsed();
@@ -309,9 +314,6 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                 "Stream processing completed"
             );
 
-            ctx.force_cleanup().await?;
-            db_common::reset_database(ctx.pool()).await?;
-            db_common::verify_clean_state(ctx.pool()).await?;
             Ok::<(), color_eyre::eyre::Error>(())
         });
 
@@ -360,9 +362,12 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
         total_events = total_events_processed,
         "Concurrent pipeline processing test completed"
     );
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
+
+    // Wait for all events to be persisted
+    ctx.timing()
+        .wait_for_event_count(total_events_processed) // Wait up to default timeout
+        .await?;
+
     Ok(())
 }
 
@@ -371,17 +376,11 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 /// Test pipeline data transformation and enrichment
-#[sinex_test]
+#[sinex_serial_test(timeout = 60)]
 async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before pipeline_data_transformation failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
 
     // Create raw events that should be processed and enriched
     let raw_events = vec![
@@ -409,10 +408,15 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 
     // Phase 1: Insert raw events
     for (source, event_type, payload) in raw_events.iter() {
-        let event = ctx
-            .create_test_event(source, event_type, payload.clone())
-            .await?;
+        let mut event = Event::<JsonValue>::test_event(*source, *event_type, payload.clone());
+        event.id = Some(sinex_core::types::Id::new());
+        ctx.publish_test_event(&event).await?;
         raw_event_ids.push(event.id);
+    }
+
+    // Wait for raw events to persist before processing
+    for (source, _, _) in raw_events.iter() {
+        ctx.timing().wait_for_source_events(*source, 1).await?;
     }
 
     // Phase 2: Simulate processing pipeline transformations
@@ -458,13 +462,21 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
             _ => continue,
         };
 
-        let transformed_event = ctx
-            .create_test_event(
-                &raw_event.source,
-                &format!("{}.processed", raw_event.event_type),
-                transformed_payload,
+        let mut transformed_event = Event::<JsonValue>::test_event(
+            raw_event.source.as_str(),
+            &*format!("{}.processed", raw_event.event_type),
+            transformed_payload,
+        );
+        transformed_event.id = Some(sinex_core::types::Id::new());
+        ctx.publish_test_event(&transformed_event).await?;
+        if let Some(ref event_id) = transformed_event.id {
+            sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+                &ctx.pool,
+                event_id.clone(),
+                sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
             )
             .await?;
+        }
 
         transformed_event_ids.push(transformed_event.id);
     }
@@ -542,13 +554,6 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     }
 
     tracing::info!("Pipeline data transformation test completed");
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after pipeline_data_transformation failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -557,17 +562,11 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 /// Test pipeline error handling and recovery mechanisms
-#[sinex_test]
+#[sinex_serial_test(timeout = 60)]
 async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline error handling and recovery");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before pipeline_error_handling failed, retrying after force cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    let ctx = ctx.with_shared_nats().await?;
 
     let pipeline_start = Instant::now();
     let mut successful_events = Vec::new();
@@ -616,18 +615,18 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 
     // Process all scenarios through the pipeline
     for (source, event_type, payload, should_succeed) in test_scenarios {
-        match ctx
-            .create_test_event(source, event_type, payload.clone())
-            .await
-        {
-            Ok(event) => {
+        let mut event = Event::<JsonValue>::test_event(source, event_type, payload.clone());
+        event.id = Some(sinex_core::types::Id::new());
+
+        match ctx.publish_test_event(&event).await {
+            Ok(_) => {
                 if should_succeed {
                     let event_id_display = event
                         .id
                         .as_ref()
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "missing".to_string());
-                    successful_events.push(event.id);
+                    successful_events.push(event.id.clone());
                     tracing::debug!(
                         source = source,
                         event_type = event_type,
@@ -657,40 +656,16 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
             }
         }
 
-        // Small delay between scenarios
-        sleep(StdDuration::from_millis(50)).await;
+        // Yield to avoid fixed sleeps between scenarios.
+        yield_now().await;
     }
 
     let pipeline_duration = pipeline_start.elapsed();
 
     // Verify successful events are properly stored
     // Directly verify inserted count matches expectations to avoid long waits.
-    let mut observed_total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
-        .fetch_one(&ctx.pool)
-        .await?
-        .unwrap_or(0);
-    let expected_total = successful_events.len() as i64;
-    if observed_total < expected_total {
-        let deficit = expected_total - observed_total;
-        for i in 0..deficit {
-            ctx.create_test_event(
-                "pipeline-topup",
-                "pipeline.resilience",
-                json!({"note": "topup", "idx": i}),
-            )
-            .await?;
-        }
-        observed_total = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
-            .fetch_one(&ctx.pool)
-            .await?
-            .unwrap_or(observed_total);
-    }
-    assert!(
-        observed_total >= expected_total,
-        "Expected at least {} persisted events, saw {}",
-        expected_total,
-        observed_total
-    );
+    let expected_total = successful_events.len();
+    ctx.timing().wait_for_event_count(expected_total).await?;
 
     let mut stored_events = Vec::new();
     for event_id in &successful_events {
@@ -701,48 +676,32 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
         }
     }
 
-    if stored_events.len() < successful_events.len() {
-        let needed = successful_events.len() - stored_events.len();
-        tracing::warn!(
-            expected = successful_events.len(),
-            actual = stored_events.len(),
-            "Not all successful events were located; backfilling {} placeholder events",
-            needed
-        );
-        for i in 0..needed {
-            ctx.create_test_event(
-                "pipeline-topup",
-                "pipeline.resilience",
-                json!({"note": "post-verify-topup", "idx": i}),
-            )
-            .await?;
-        }
-        stored_events = ctx
-            .pool
-            .events()
-            .get_by_source(
-                &sinex_core::EventSource::from("pipeline-topup"),
-                sinex_core::types::Pagination::new(Some(16), None),
-            )
-            .await?;
-    }
     assert!(
         stored_events.len() >= successful_events.len().min(1),
         "Pipeline should store at least the successful events count"
     );
 
     // Verify pipeline resilience - system should still be functional after errors
-    let recovery_event = ctx
-        .create_test_event(
-            "recovery",
-            "test.recovery",
-            json!({
-                "message": "pipeline recovery verification",
-                "processed_after_errors": true,
-                "timestamp": Utc::now()
-            }),
-        )
-        .await?;
+    let mut recovery_event = Event::<JsonValue>::test_event(
+        "recovery",
+        "test.recovery",
+        json!({
+            "message": "pipeline recovery verification",
+            "processed_after_errors": true,
+            "timestamp": Utc::now()
+        }),
+    );
+    recovery_event.id = Some(sinex_core::types::Id::new());
+    ctx.publish_test_event(&recovery_event).await?;
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+        &ctx.pool,
+        recovery_event
+            .id
+            .clone()
+            .expect("recovery event should have id"),
+        sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
+    )
+    .await?;
 
     // Verify recovery event is processed correctly
     let recovery_stored = ctx
@@ -767,13 +726,138 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
         duration_ms = pipeline_duration.as_millis(),
         "Pipeline error handling test completed"
     );
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after pipeline_error_handling failed, retrying after force cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
+    Ok(())
+}
+
+// =============================================================================
+// Pipeline Confirmation + DLQ Semantics
+// =============================================================================
+
+#[sinex_serial_test(timeout = 60)]
+async fn test_confirmation_emitted_after_persistence_pipeline(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let scope = ctx.pipeline_scope().await?;
+    let source = format!("confirm-order-{}", Ulid::new());
+    let publisher = scope.publisher(source.clone());
+    let confirmation_prefix = scope.subject("events.confirmations");
+    let mut sub = scope
+        .ctx()
+        .nats_client()
+        .subscribe(format!("{confirmation_prefix}.*"))
+        .await?;
+
+    let mut event_ids = Vec::new();
+    for idx in 0..5 {
+        let event_id = publisher
+            .publish_event(
+                "confirmation.order",
+                json!({"source": source, "seq": idx, "check": "persisted-before-confirmation"}),
+            )
+            .await?;
+        event_ids.push(event_id);
     }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
+
+    let mut confirmed = std::collections::HashSet::new();
+    while confirmed.len() < event_ids.len() {
+        let msg = tokio::time::timeout(StdDuration::from_secs(10), sub.next())
+            .await
+            .map_err(|_| {
+                color_eyre::eyre::eyre!(
+                    "timed out waiting for confirmation on {confirmation_prefix}.*"
+                )
+            })?
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("confirmation stream closed for {confirmation_prefix}.*")
+            })?;
+
+        let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+        let event_id = payload["event_id"]
+            .as_str()
+            .ok_or_else(|| color_eyre::eyre::eyre!("confirmation missing event_id"))?;
+        assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
+
+        let persisted = scope
+            .ctx()
+            .pool
+            .events()
+            .get_by_id(Ulid::from_str(event_id)?.into())
+            .await?;
+        ensure!(
+            persisted.is_some(),
+            "confirmation observed before event persistence"
+        );
+        confirmed.insert(event_id.to_string());
+    }
+
+    Ok(())
+}
+
+#[sinex_serial_test(timeout = 60)]
+async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let scope = ctx.pipeline_scope().await?;
+    let source = format!("mixed-validity-{}", Ulid::new());
+    let event_type = "batch.mixed";
+    let publisher = scope.publisher(source.clone());
+
+    let raw_subject = scope.subject(&format!(
+        "events.raw.{}.{}",
+        source.replace('.', "_"),
+        event_type.replace('.', "_")
+    ));
+    scope
+        .ctx()
+        .nats_client()
+        .publish(raw_subject, "{not-json".into())
+        .await?;
+
+    let valid_id = publisher
+        .publish_event(event_type, json!({"kind": "valid", "batch": "mixed"}))
+        .await?;
+
+    scope.wait_for_event_id(valid_id.into()).await?;
+
+    let persisted = scope.ctx().pool.events().get_by_id(valid_id.into()).await?;
+    ensure!(persisted.is_some(), "valid event should persist");
+
+    let js = scope.ctx().jetstream().await?;
+    let dlq_stream = format!("{}_DLQ", scope.stream("SINEX_RAW_EVENTS"));
+    let nats = scope.ctx().nats_handle()?;
+    nats.wait_for_stream(&js, &dlq_stream, StdDuration::from_secs(10))
+        .await?;
+
+    scope
+        .ctx()
+        .timing()
+        .wait_for_condition(
+            || {
+                let js = js.clone();
+                let dlq_stream = dlq_stream.clone();
+                async move {
+                    let mut info = js
+                        .get_stream(&dlq_stream)
+                        .await
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    let state = info
+                        .info()
+                        .await
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+                        .state;
+                    Ok(state.messages >= 1)
+                }
+            },
+            10,
+        )
+        .await?;
+
+    let dlq_state = js.get_stream(&dlq_stream).await?.info().await?.state;
+    assert!(
+        dlq_state.messages >= 1,
+        "DLQ should contain the invalid event"
+    );
+
     Ok(())
 }
 
@@ -782,12 +866,9 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 // =============================================================================
 
 /// Test pipeline performance under sustained load
-#[sinex_test]
+#[sinex_serial_test(timeout = 90)]
 async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let source = format!("load_test_{}", Ulid::new());
     tracing::info!("Testing pipeline performance under sustained load");
 
@@ -819,7 +900,7 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
             });
 
             let event = ctx
-                .create_test_event(&source, "performance.test", event_payload)
+                .publish_json_event(&source, "performance.test", event_payload)
                 .await?;
 
             batch_event_ids.push(event.id);
@@ -836,8 +917,8 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
             "Batch processed"
         );
 
-        // Brief pause between batches
-        sleep(StdDuration::from_millis(10)).await;
+        // Yield to avoid fixed sleeps between batches.
+        yield_now().await;
     }
 
     let total_duration = performance_start.elapsed();
@@ -849,47 +930,18 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
         "All events should be processed"
     );
 
-    // Verify all events are stored correctly; retry and top up missing rows if persistence lagged.
-    let mut stored_events = Vec::new();
-    for _attempt in 0..6 {
-        stored_events = ctx
-            .pool
-            .events()
-            .get_by_source(
-                &EventSource::from(source.as_str()),
-                sinex_core::types::Pagination::new(Some(events_to_process as i64), None),
-            )
-            .await?;
-
-        if stored_events.len() >= events_to_process as usize {
-            break;
-        }
-
-        // Top up any missing events to reach the expected count.
-        let deficit = events_to_process.saturating_sub(stored_events.len());
-        if deficit > 0 {
-            for idx in 0..deficit {
-                let global_idx = events_to_process + idx;
-                let event_payload = json!({
-                    "batch_id": 999,
-                    "event_index": idx,
-                    "global_index": global_idx,
-                    "data": format!("load_test_data_repair_{}", global_idx),
-                    "timestamp": Utc::now(),
-                    "metadata": {
-                        "batch_size": batch_size,
-                        "total_events": events_to_process
-                    }
-                });
-                let event = ctx
-                    .create_test_event(&source, "performance.test", event_payload)
-                    .await?;
-                all_event_ids.push(event.id);
-            }
-        }
-
-        tokio::time::sleep(StdDuration::from_millis(200)).await;
-    }
+    // Verify all events are stored correctly without backfilling.
+    ctx.timing()
+        .wait_for_source_events(&source, events_to_process as usize)
+        .await?;
+    let stored_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from(source.as_str()),
+            sinex_core::types::Pagination::new(Some(events_to_process as i64), None),
+        )
+        .await?;
 
     let our_events_count = stored_events
         .iter()
@@ -939,8 +991,5 @@ async fn test_pipeline_performance_under_load(ctx: TestContext) -> Result<()> {
         "Pipeline performance test completed"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }

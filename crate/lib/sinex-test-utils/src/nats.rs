@@ -1,3 +1,5 @@
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,6 +15,7 @@ use async_nats::{
 };
 use color_eyre::eyre::{eyre, Result};
 use rand::Rng;
+use sinex_core::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::{
     process::{Child, Command},
@@ -22,53 +25,145 @@ use tokio::{
 use tokio_stream::StreamExt;
 use which::which;
 
+static SHARED_NATS_REGISTRY: Lazy<AsyncMutex<HashMap<String, Arc<EphemeralNats>>>> =
+    Lazy::new(|| AsyncMutex::new(HashMap::new()));
+
 /// Ephemeral JetStream-enabled NATS server spawned for tests.
 pub struct EphemeralNats {
     process: Arc<AsyncMutex<Option<Child>>>,
     url: String,
     _store: TempDir,
+    log_path: Option<PathBuf>,
     chaos: Option<ChaosConfig>,
     stream_prefix: Option<String>,
+    tls: Option<TlsConfig>,
+    token: Option<String>,
 }
 
 impl EphemeralNats {
-    /// Start a fresh NATS server with JetStream enabled on a random localhost port.
+    /// Start a fresh NATS server using default configuration.
     pub async fn start() -> Result<Self> {
-        let binary = Self::resolve_binary()?;
+        EphemeralNatsBuilder::default().start().await
+    }
+
+    /// Start a fresh NATS server with optional config file.
+    pub async fn start_with_config(config_file: Option<PathBuf>) -> Result<Self> {
+        let mut builder = EphemeralNatsBuilder::default();
+        builder.config_file = config_file;
+        builder.start().await
+    }
+
+    pub fn builder() -> EphemeralNatsBuilder {
+        EphemeralNatsBuilder::default()
+    }
+}
+
+#[derive(Debug, Clone, Default, bon::Builder)]
+pub struct EphemeralNatsBuilder {
+    pub config_file: Option<PathBuf>,
+    pub tls: Option<TlsConfig>,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    pub ca_cert: PathBuf,
+    pub server_cert: PathBuf,
+    pub server_key: PathBuf,
+    pub client_cert: PathBuf,
+    pub client_key: PathBuf,
+}
+
+impl EphemeralNatsBuilder {
+    pub fn with_tls_fixtures_path(mut self, path: impl AsRef<Path>) -> Self {
+        let p = path.as_ref();
+        self.tls = Some(TlsConfig {
+            ca_cert: p.join("ca.pem"),
+            server_cert: p.join("server.pem"),
+            server_key: p.join("server-key.pem"),
+            client_cert: p.join("client.pem"),
+            client_key: p.join("client-key.pem"),
+        });
+        self
+    }
+
+    pub fn with_config_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config_file = Some(path.into());
+        self
+    }
+
+    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+}
+
+impl EphemeralNatsBuilder {
+    pub async fn start(self) -> Result<EphemeralNats> {
+        let binary = EphemeralNats::resolve_binary()?;
 
         let store_dir = TempDir::new()?;
         tokio::fs::create_dir_all(store_dir.path()).await?;
 
-        // Nextest runs tests concurrently in separate processes. The old "reserve a port then
-        // spawn" approach can race and accidentally attach multiple EphemeralNats instances to
-        // the same port, which later causes cross-test interference when one test kills the
-        // shared server. Retry a few times and ensure the spawned child is the server we connect
-        // to before declaring readiness.
+        // Nextest runs tests concurrently in separate processes.
+        let log_path = store_dir.path().join("nats.log");
+        let log_file = std::fs::File::create(&log_path)?;
+        let log_err = log_file.try_clone()?;
+
         let (url, child) = {
             const MAX_ATTEMPTS: usize = 10;
             let mut attempt = 0usize;
             loop {
                 attempt += 1;
-                let port = Self::reserve_port()?;
-                let url = format!("127.0.0.1:{port}");
+                let port = EphemeralNats::reserve_port()?;
+                // If TLS is enabled, we might need a different scheme,
+                // but for raw TCP connection checks "127.0.0.1:port" is usually fine.
+                // However, the client URL exposed to tests needs to match scheme.
+                let url = if self.tls.is_some() {
+                    format!("tls://127.0.0.1:{port}")
+                } else {
+                    format!("127.0.0.1:{port}")
+                };
 
-                let mut child = Command::new(&binary)
-                    .arg("--jetstream")
+                let mut cmd = Command::new(&binary);
+                cmd.arg("--jetstream")
                     .arg("--store_dir")
                     .arg(store_dir.path())
                     .arg("--port")
                     .arg(port.to_string())
                     .arg("--http_port")
                     .arg("0")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()?;
+                    .stdout(std::process::Stdio::from(log_file.try_clone()?))
+                    .stderr(std::process::Stdio::from(log_err.try_clone()?));
 
-                match Self::wait_for_ready(&url, &mut child).await {
+                if let Some(cfg) = &self.config_file {
+                    cmd.arg("--config").arg(cfg);
+                }
+
+                if let Some(tls) = &self.tls {
+                    cmd.arg("--tls")
+                        .arg("--tlscert")
+                        .arg(&tls.server_cert)
+                        .arg("--tlskey")
+                        .arg(&tls.server_key)
+                        .arg("--tlscacert")
+                        .arg(&tls.ca_cert)
+                        .arg("--tlsverify");
+                }
+
+                if let Some(token) = &self.token {
+                    cmd.arg("--auth").arg(token);
+                }
+
+                let mut child = cmd.spawn()?;
+
+                // We pass the raw port for the connectivity check.
+                match EphemeralNats::wait_for_ready(port, &mut child).await {
                     Ok(()) => break (url, child),
                     Err(err) => {
                         let _ = child.start_kill();
                         let _ = timeout(Duration::from_secs(1), child.wait()).await;
+
                         if attempt >= MAX_ATTEMPTS {
                             return Err(err);
                         }
@@ -77,23 +172,64 @@ impl EphemeralNats {
             }
         };
 
-        Ok(Self {
+        Ok(EphemeralNats {
             process: Arc::new(AsyncMutex::new(Some(child))),
             url,
             _store: store_dir,
+            log_path: Some(log_path),
             chaos: None,
             stream_prefix: None,
+            tls: self.tls,
+            token: self.token,
         })
     }
+}
 
+impl EphemeralNats {
     /// Return the client URL (e.g. `127.0.0.1:4222`).
     pub fn client_url(&self) -> &str {
         &self.url
     }
 
+    /// Return the tail of the NATS log file, if logging is enabled.
+    pub fn log_tail(&self, max_lines: usize) -> Option<String> {
+        let path = self.log_path.as_ref()?;
+        let contents = std::fs::read_to_string(path).ok()?;
+        let mut lines: Vec<&str> = contents.lines().collect();
+        if lines.len() > max_lines {
+            lines = lines.split_off(lines.len().saturating_sub(max_lines));
+        }
+        Some(lines.join("\n"))
+    }
+
+    /// Assert the NATS log does not contain any of the provided needles.
+    pub fn assert_log_does_not_contain(&self, needles: &[&str], max_lines: usize) -> Result<()> {
+        let Some(tail) = self.log_tail(max_lines) else {
+            return Ok(());
+        };
+        for needle in needles {
+            if tail.contains(needle) {
+                return Err(eyre!(
+                    "nats-server log contains unexpected entry '{needle}':\n{tail}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Expose underlying process for managed shutdown.
     pub fn process_handle(&self) -> Arc<AsyncMutex<Option<Child>>> {
         self.process.clone()
+    }
+
+    /// Stop the underlying NATS process (best-effort).
+    pub async fn shutdown(&self) -> Result<()> {
+        let mut guard = self.process.lock().await;
+        if let Some(mut child) = guard.take() {
+            let _ = child.start_kill();
+            let _ = timeout(Duration::from_secs(2), child.wait()).await;
+        }
+        Ok(())
     }
 
     /// Connect an async-nats client to this server.
@@ -102,7 +238,24 @@ impl EphemeralNats {
             cfg.simulate_latency().await;
             cfg.maybe_fail("simulated connection failure")?;
         }
-        timeout(Duration::from_secs(5), async_nats::connect(&self.url))
+
+        let mut config = NatsConnectionConfig::default();
+        config.url = self.url.clone();
+        config.require_tls = self.tls.is_some();
+        if let Some(tls) = &self.tls {
+            config.ca_cert = Some(tls.ca_cert.clone());
+            config.client_cert = Some(tls.client_cert.clone());
+            config.client_key = Some(tls.client_key.clone());
+        }
+        if let Some(token) = &self.token {
+            config.token = Some(token.clone());
+        }
+        let opts = config
+            .to_options()
+            .await
+            .map_err(|e| eyre!("failed to build NATS connect options: {e}"))?;
+
+        timeout(Duration::from_secs(5), opts.connect(&self.url))
             .await
             .map_err(|_| eyre!("timed out connecting to NATS at {}", self.url))?
             .map_err(|err| eyre!("failed to connect to NATS at {}: {err}", self.url))
@@ -332,7 +485,8 @@ impl EphemeralNats {
         Ok(port)
     }
 
-    async fn wait_for_ready(url: &str, child: &mut Child) -> Result<()> {
+    async fn wait_for_ready(port: u16, child: &mut Child) -> Result<()> {
+        let addr = format!("127.0.0.1:{port}");
         let mut last_err = None;
         for _ in 0..50 {
             if let Ok(Some(status)) = child.try_wait() {
@@ -341,16 +495,14 @@ impl EphemeralNats {
                 ));
             }
 
-            match timeout(Duration::from_millis(250), async_nats::connect(url)).await {
-                Ok(Ok(client)) => {
-                    drop(client);
-                    // Ensure we didn't accidentally connect to some other NATS instance while our
-                    // child failed to bind (common in port races).
-                    if let Ok(Some(status)) = child.try_wait() {
-                        return Err(eyre!(
-                            "nats-server process exited during startup (status: {status})"
-                        ));
-                    }
+            match timeout(
+                Duration::from_millis(250),
+                tokio::net::TcpStream::connect(&addr),
+            )
+            .await
+            {
+                Ok(Ok(_stream)) => {
+                    // Connected successfully
                     return Ok(());
                 }
                 Ok(Err(err)) => {
@@ -363,7 +515,7 @@ impl EphemeralNats {
             }
         }
         Err(eyre!(
-            "nats-server at {url} did not become ready: {:?}",
+            "nats-server at {addr} did not become ready: {:?}",
             last_err
         ))
     }
@@ -401,4 +553,105 @@ impl ChaosConfig {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum SharedNatsProfile {
+    Default,
+    SecureTls,
+}
+
+impl SharedNatsProfile {
+    fn key(self) -> &'static str {
+        match self {
+            SharedNatsProfile::Default => "default",
+            SharedNatsProfile::SecureTls => "secure-tls",
+        }
+    }
+
+    pub(crate) fn builder(self) -> EphemeralNatsBuilder {
+        match self {
+            SharedNatsProfile::Default => EphemeralNats::builder(),
+            SharedNatsProfile::SecureTls => {
+                let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../tests/fixtures/tls");
+                let fixture_dir = fixture_dir
+                    .canonicalize()
+                    .unwrap_or(fixture_dir);
+                EphemeralNats::builder().with_tls_fixtures_path(fixture_dir)
+            }
+        }
+    }
+}
+
+async fn get_or_init_shared(id: &str, builder: EphemeralNatsBuilder) -> Result<Arc<EphemeralNats>> {
+    if let Some(existing) = SHARED_NATS_REGISTRY.lock().await.get(id).cloned() {
+        return Ok(existing);
+    }
+
+    let instance = Arc::new(builder.start().await?);
+    let mut guard = SHARED_NATS_REGISTRY.lock().await;
+    Ok(guard
+        .entry(id.to_string())
+        .or_insert_with(|| instance.clone())
+        .clone())
+}
+
+/// Obtain (or lazily start) a shared EphemeralNats instance for the given profile.
+pub async fn shared_ephemeral_nats(profile: SharedNatsProfile) -> Result<Arc<EphemeralNats>> {
+    let builder = profile.builder();
+    get_or_init_shared(profile.key(), builder).await
+}
+
+/// Obtain (or lazily start) a shared EphemeralNats instance with a custom key.
+/// Use `reset_shared_ephemeral_nats` if you need to replace an existing key.
+pub async fn shared_ephemeral_nats_with_key(
+    key: &str,
+    builder: EphemeralNatsBuilder,
+) -> Result<Arc<EphemeralNats>> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(eyre!("shared NATS key must be non-empty"));
+    }
+    get_or_init_shared(key, builder).await
+}
+
+/// Clear cached shared NATS instances so tests can start with fresh configs.
+pub async fn reset_shared_ephemeral_nats() -> Result<()> {
+    let instances = {
+        let mut guard = SHARED_NATS_REGISTRY.lock().await;
+        guard.drain().map(|(_, v)| v).collect::<Vec<_>>()
+    };
+
+    for instance in instances {
+        instance.shutdown().await?;
+    }
+
+    Ok(())
+}
+
+/// Ensure the default coordination buckets exist for tests.
+pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> {
+    const LEADERSHIP_TTL_SECS: u64 = 15;
+
+    let _ = js
+        .create_key_value(jetstream::kv::Config {
+            bucket: "KV_sinex_instances".to_string(),
+            history: 1,
+            ..Default::default()
+        })
+        .await
+        .ok();
+
+    let _ = js
+        .create_key_value(jetstream::kv::Config {
+            bucket: "KV_sinex_leadership".to_string(),
+            history: 5,
+            max_age: Duration::from_secs(LEADERSHIP_TTL_SECS),
+            ..Default::default()
+        })
+        .await
+        .ok();
+
+    Ok(())
 }

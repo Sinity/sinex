@@ -9,9 +9,9 @@
 //     use sinex_test_utils::prelude::*;
 //
 //     #[sinex_test]
-//     async fn test_basic_functionality(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+//     async fn test_basic_functionality(ctx: TestContext) -> TestResult<()> {
 //         let event = ctx
-//             .create_test_event(\"your-component\", \"action.performed\", json!({\"key\": \"value\"}))
+//             .publish_json_event(\"your-component\", \"action.performed\", json!({\"key\": \"value\"}))
 //             .await?;
 //
 //         let source_ref = sinex_core::EventSource::from(\"your-component\");

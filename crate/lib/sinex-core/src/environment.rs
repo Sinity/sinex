@@ -4,17 +4,26 @@
 //! between development, staging, and production environments. All resources (database names,
 //! NATS subjects, socket paths, work directories) are namespaced based on SINEX_ENVIRONMENT.
 
-use color_eyre::eyre::{eyre, Result};
+use crate::types::error::{Result, SinexError};
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
 use url::{form_urlencoded, Url};
 
 /// Default environment when SINEX_ENVIRONMENT is not set
 const DEFAULT_ENVIRONMENT: &str = "dev";
 
-/// Valid environment names
-const VALID_ENVIRONMENTS: &[&str] = &["dev", "staging", "prod"];
+/// Max environment name length.
+const MAX_ENVIRONMENT_LEN: usize = 64;
+
+fn allow_default_environment() -> bool {
+    cfg!(debug_assertions) || cfg!(test)
+}
+
+fn is_valid_environment_name(name: &str) -> bool {
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
 
 /// Environment context providing namespaced resource access
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +33,20 @@ pub struct SinexEnvironment {
 }
 
 impl SinexEnvironment {
+    fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in path.as_ref().components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        normalized
+    }
+
     fn path_is_namespaced<P: AsRef<Path>>(&self, path: P) -> bool {
         let suffix = format!("-{}", self.name);
         path.as_ref()
@@ -33,15 +56,19 @@ impl SinexEnvironment {
 
     /// Get the current environment from SINEX_ENVIRONMENT variable
     pub fn current() -> Result<Self> {
-        let name = env::var("SINEX_ENVIRONMENT").unwrap_or_else(|_| {
-            warn!(
-                "SINEX_ENVIRONMENT not set, defaulting to '{}'",
-                DEFAULT_ENVIRONMENT
-            );
-            DEFAULT_ENVIRONMENT.to_string()
-        });
-
-        Self::new(&name)
+        match env::var("SINEX_ENVIRONMENT") {
+            Ok(name) => Self::new(&name),
+            Err(_) if allow_default_environment() => {
+                warn!(
+                    "SINEX_ENVIRONMENT not set, defaulting to '{}'",
+                    DEFAULT_ENVIRONMENT
+                );
+                Self::new(DEFAULT_ENVIRONMENT)
+            }
+            Err(_) => Err(SinexError::configuration(
+                "SINEX_ENVIRONMENT must be set for non-dev builds",
+            )),
+        }
     }
 
     /// Create a new environment context with validation
@@ -49,15 +76,23 @@ impl SinexEnvironment {
         let name = name.trim().to_lowercase();
 
         if name.is_empty() {
-            return Err(eyre!("Environment name cannot be empty"));
+            return Err(SinexError::configuration(
+                "Environment name cannot be empty",
+            ));
         }
 
-        if !VALID_ENVIRONMENTS.contains(&name.as_str()) {
-            return Err(eyre!(
-                "Invalid environment '{}'. Valid environments: {}",
-                name,
-                VALID_ENVIRONMENTS.join(", ")
-            ));
+        if name.len() > MAX_ENVIRONMENT_LEN {
+            return Err(SinexError::configuration(format!(
+                "Environment name cannot exceed {} characters",
+                MAX_ENVIRONMENT_LEN
+            )));
+        }
+
+        if !is_valid_environment_name(&name) {
+            return Err(SinexError::configuration(format!(
+                "Invalid environment '{}'. Use [a-z0-9_-]+",
+                name
+            )));
         }
 
         info!("Initialized Sinex environment: {}", name);
@@ -97,11 +132,11 @@ impl SinexEnvironment {
     /// Modifies the database URL to use environment-specific database name
     pub fn database_url(&self, base_url: &str) -> Result<String> {
         if base_url.trim().is_empty() {
-            return Err(eyre!("Database URL cannot be empty"));
+            return Err(SinexError::configuration("Database URL cannot be empty"));
         }
 
-        let mut url =
-            Url::parse(base_url).map_err(|e| eyre!("Invalid database URL format: {e}"))?;
+        let mut url = Url::parse(base_url)
+            .map_err(|e| SinexError::configuration(format!("Invalid database URL format: {e}")))?;
         let mut query_pairs: Vec<(String, String)> = url
             .query_pairs()
             .map(|(key, value)| (key.into_owned(), value.into_owned()))
@@ -113,9 +148,9 @@ impl SinexEnvironment {
         {
             let (_, value) = &mut query_pairs[idx];
             if value.is_empty() {
-                return Err(eyre!(
+                return Err(SinexError::configuration(format!(
                     "dbname query parameter is empty in database URL: {base_url}"
-                ));
+                )));
             }
 
             if self.is_already_namespaced(value) {
@@ -137,10 +172,10 @@ impl SinexEnvironment {
             .unwrap_or_default();
 
         if segments.is_empty() || segments.last().map_or(true, |s| s.is_empty()) {
-            return Err(eyre!(
+            return Err(SinexError::configuration(format!(
                 "Database name missing from URL and no dbname query parameter provided: {}",
                 base_url
-            ));
+            )));
         }
 
         if segments
@@ -227,12 +262,70 @@ impl SinexEnvironment {
         }
     }
 
+    /// Get NATS credentials file path if authentication is enabled
+    ///
+    /// Reads from NATS_CREDS environment variable or falls back to
+    /// namespaced path in runtime directory if not implicitly set.
+    pub fn nats_creds_path(&self) -> Option<PathBuf> {
+        if let Ok(creds) = env::var("NATS_CREDS") {
+            return Some(PathBuf::from(creds));
+        }
+
+        let runtime_creds = self.runtime_dir().join("nats.creds");
+        if runtime_creds.exists() {
+            return Some(runtime_creds);
+        }
+
+        None
+    }
+
+    /// Get an environment-namespaced NATS subject with an additional test namespace.
+    pub fn nats_subject_with_namespace(
+        &self,
+        namespace: Option<&str>,
+        base_subject: &str,
+    ) -> String {
+        let trimmed = base_subject.trim_start_matches('.');
+        if let Some(ns) = namespace {
+            let ns = ns.trim_matches('.');
+            if ns.is_empty() {
+                return self.nats_subject(trimmed);
+            }
+            self.nats_subject(&format!("{ns}.{}", trimmed))
+        } else {
+            self.nats_subject(trimmed)
+        }
+    }
+
+    /// Get an environment-namespaced stream name with an additional namespace suffix.
+    pub fn nats_stream_name_with_namespace(
+        &self,
+        namespace: Option<&str>,
+        base_name: &str,
+    ) -> String {
+        if let Some(ns) = namespace {
+            let suffix = ns
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>();
+            self.nats_stream_name(&format!("{base_name}_{suffix}"))
+        } else {
+            self.nats_stream_name(base_name)
+        }
+    }
+
     /// Get environment-namespaced socket path
     ///
     /// Modifies socket paths to include environment:
-    /// - /run/sinex/ingest.sock -> /run/sinex-dev/ingest.sock
+    /// - /tmp/sinex-host.sock -> /tmp-dev/sinex-host.sock
     pub fn socket_path<P: AsRef<Path>>(&self, base_path: P) -> PathBuf {
-        let path = base_path.as_ref();
+        let path = Self::normalize_path(base_path);
 
         if let Some(parent) = path.parent() {
             if let Some(filename) = path.file_name() {
@@ -277,10 +370,10 @@ impl SinexEnvironment {
     /// Modifies work directories to include environment:
     /// - /tmp/sinex -> /tmp/sinex-dev
     pub fn work_directory<P: AsRef<Path>>(&self, base_path: P) -> PathBuf {
-        let path = base_path.as_ref();
+        let path = Self::normalize_path(base_path);
 
         // Check if already namespaced
-        if self.path_is_namespaced(path) {
+        if self.path_is_namespaced(&path) {
             debug!(
                 "Work directory already namespaced for environment {}",
                 self.name
@@ -326,14 +419,14 @@ impl SinexEnvironment {
         }
 
         // Check that critical paths are namespaced
-        let socket_path = self.socket_path("/run/sinex/ingest.sock");
+        let socket_path = self.socket_path("/tmp/sinex-host.sock");
         if !socket_path.to_string_lossy().contains(&self.name) {
-            return Err(eyre!("Socket path isolation failed"));
+            return Err(SinexError::configuration("Socket path isolation failed"));
         }
 
         let work_dir = self.work_directory("/tmp/sinex");
         if !work_dir.to_string_lossy().contains(&self.name) {
-            return Err(eyre!("Work directory isolation failed"));
+            return Err(SinexError::configuration("Work directory isolation failed"));
         }
 
         info!(
@@ -358,14 +451,63 @@ impl Default for SinexEnvironment {
 /// Global environment instance (lazy initialized)
 static ENVIRONMENT: std::sync::OnceLock<SinexEnvironment> = std::sync::OnceLock::new();
 
+#[cfg(any(test, feature = "testing"))]
+static ENVIRONMENT_OVERRIDE: std::sync::OnceLock<std::sync::RwLock<Option<SinexEnvironment>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(any(test, feature = "testing"))]
+pub struct EnvironmentOverrideGuard {
+    previous: Option<SinexEnvironment>,
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl Drop for EnvironmentOverrideGuard {
+    fn drop(&mut self) {
+        let lock = ENVIRONMENT_OVERRIDE.get_or_init(|| std::sync::RwLock::new(None));
+        if let Ok(mut guard) = lock.write() {
+            *guard = self.previous.take();
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub fn override_environment_for_tests(name: &str) -> Result<EnvironmentOverrideGuard> {
+    let env = SinexEnvironment::new(name)?;
+    let lock = ENVIRONMENT_OVERRIDE.get_or_init(|| std::sync::RwLock::new(None));
+    let mut guard = lock
+        .write()
+        .map_err(|_| SinexError::invalid_state("Failed to acquire environment override lock"))?;
+    let previous = guard.clone();
+    *guard = Some(env);
+    Ok(EnvironmentOverrideGuard { previous })
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn environment_override() -> Option<SinexEnvironment> {
+    ENVIRONMENT_OVERRIDE
+        .get()
+        .and_then(|lock| lock.read().ok().and_then(|guard| guard.as_ref().cloned()))
+}
+
 /// Get the global environment instance
-pub fn environment() -> &'static SinexEnvironment {
-    ENVIRONMENT.get_or_init(|| {
-        SinexEnvironment::current().unwrap_or_else(|e| {
-            warn!("Failed to initialize environment: {}, using dev", e);
-            SinexEnvironment {
-                name: "dev".to_string(),
-            }
+pub fn environment() -> SinexEnvironment {
+    #[cfg(any(test, feature = "testing"))]
+    if let Some(env) = environment_override() {
+        return env;
+    }
+
+    ENVIRONMENT
+        .get_or_init(|| {
+            SinexEnvironment::current().unwrap_or_else(|e| {
+                if allow_default_environment() {
+                    warn!("Failed to initialize environment: {}, using dev", e);
+                    SinexEnvironment {
+                        name: "dev".to_string(),
+                    }
+                } else {
+                    panic!("Failed to initialize environment: {e}");
+                }
+            })
         })
-    })
+        .clone()
 }

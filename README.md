@@ -153,7 +153,7 @@ NixOS VM harness.
 - Nix package manager with flakes enabled
 - [devenv](https://devenv.sh) CLI (installed alongside the dev environment; all helper commands assume it exists)
 - PostgreSQL (automatically set up in dev shell)
-- Git (for git-annex integration)
+- Git + git-annex (mandatory)
 
 ### Development Setup
 ```bash
@@ -179,7 +179,7 @@ environment loads, matching the `nix develop` experience.
 > Always enter the shell (or let `direnv` manage it) before invoking Cargo, scripts, or CLI helpers.
 
 ### Database defaults
-The dev shell and Cargo configuration export the Postgres settings automatically:
+The dev shell exports the Postgres settings automatically:
 
 - `PGHOST=/run/postgresql`
 - `PGUSER=sinity`
@@ -187,13 +187,12 @@ The dev shell and Cargo configuration export the Postgres settings automatically
 - `DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql`
 
 As long as you are inside `nix develop`/`direnv`, commands such as `cargo check`, `cargo expand`,
-and `sqlx` no longer require per-command overrides. If you need to point at another database, copy
-`.env.example` to `.env` (kept out of version control) and set those variables before launching the shell.
+and SQLx-powered builds no longer require per-command overrides. If you need to point at another database,
+export the env vars before entering the shell (or set them in your session); `.env` is a manual override only.
 
-> **SQLx offline mode:** Only the Nix flake build exports `SQLX_OFFLINE=true` (so the sandbox can
-> compile without a database). Leave it unset during normal development; that way every
-> `sqlx::query!` is validated against the live schema. Regenerate the cache with
-> `cargo xtask sqlx-prepare` whenever SQL changes so the flake build stays in sync.
+> **SQLx checks:** The workspace always validates `sqlx::query!` macros against a live database
+> during compilation. Keep Postgres reachable whenever you run Cargo commands so these queries
+> can acquire metadata automatically (no offline SQLx cache directory is used).
 
 > **PostgreSQL extensions:** Migrations assume the database already has `timescaledb`,
 > `ulid`, `pg_jsonschema`, and `vector` installed. Provision them once as the `postgres`
@@ -221,7 +220,7 @@ devenv up health document canonicalizer    # Optional processors
 
 # Run satellites in scanner mode
 cargo run --bin sinex-fs-watcher -- scan /path/to/scan
-cargo run --bin sinex-terminal-satellite -- scan --source kitty
+cargo run --bin sinex-terminal-node -- scan --source kitty
 
 # Query recent events
 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
@@ -236,8 +235,10 @@ systemctl status sinex-fs-watcher
 Configuration is managed through the NixOS module system. Each satellite can be enabled/disabled independently. See `nixos/example.nix` for example configuration.
 
 ### RPC Authentication
-- `sinex-gateway` **requires** a token via `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`) before serving JSON-RPC. The CLI automatically reads the same environment variable or accepts `--rpc-token`.
-- For automated tests or local experiments you can temporarily bypass auth via `SINEX_GATEWAY_ALLOW_INSECURE=1`, but never enable this in shared environments.
+- `sinex-gateway` **requires** a token via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`) before serving JSON-RPC. The CLI automatically reads the same environment variable or accepts `--rpc-token`.
+- Gateway RPC is TLS-only; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
+- Non-loopback binds require mTLS; clients must supply `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY`.
+- Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce client certs even on loopback.
 - Blob uploads are additionally capped by `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB). Oversized payloads are rejected before they reach git-annex, keeping RPC handling predictable.
 
 ## 🧪 Testing
@@ -245,17 +246,17 @@ Configuration is managed through the NixOS module system. Each satellite can be 
 The Sinex test suite is optimized for parallel execution, achieving 50%+ faster test runs:
 
 - **Parallel Execution**: Automatically uses all available CPU cores
-- **Database Isolation**: 64-database pool with PostgreSQL advisory locks
-- **Fast Testing**: `cargo xtask test --profile reliable` for the common dev loop (Nextest-only; `cargo test` is unsupported)
+- **Database Isolation**: pool size is 2× Nextest test threads (min 64), capped by PostgreSQL `max_connections`, with advisory locks
+- **Common Testing**: `cargo xtask test --profile reliable --prime` for the dev loop (Nextest-only; `cargo test` is unsupported). CI uses profile `ci` (reliable + CI-only skips).
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
-See [`TESTING.md`](TESTING.md) for the detailed testing guide.
+See [`TESTING.md`](TESTING.md) for the detailed testing guide and config/precedence notes.
 
 Quick commands:
 ```bash
 cargo xtask check                         # cargo check --workspace
-cargo xtask test --profile reliable       # Library + property suites via nextest (required workflow)
-cargo nextest run --workspace --profile reliable   # Full nextest matrix after db:migrate
+cargo xtask test --profile reliable --prime  # Nextest with pool priming
+cargo xtask test --profile ci --prime        # CI selection (reliable + CI-only skips)
 NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
   ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke     # VM smoke tests
 ```
@@ -266,15 +267,13 @@ GitHub Actions exercises the exact same scripts you run locally. Before pushing,
 
 | When you touch… | Run locally | Why |
 | --- | --- | --- |
-| Any Rust code | `SQLX_OFFLINE=1 cargo check --workspace --all-features` | Mirrors the offline check inside `db-checks.yml` / `ci.yml`. |
+| Any Rust code | `cargo xtask check` | Fast local guard; CI runs `cargo xtask ci workspace`. |
 | Event payloads or schema helpers | `cargo xtask schema generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
-| SQL queries, migrations, or SeaORM files | `cargo xtask sqlx-prepare` | Rebuilds `.sqlx/` metadata for every crate; `db-checks.yml` enforces a clean diff. |
-| Nothing but want a fast sanity sweep | `cargo xtask test --profile reliable` | Matches the single Nextest run in CI. |
+| CI-equivalent test selection | `cargo xtask test --profile ci --prime` | Matches CI Nextest selection (reliable + CI-only skips). |
 
 Additional notes:
 
-- The dev shell automatically wires `scripts/rustc_wrapper.sh` through `sccache`. CI caches both `~/.cache/sccache` and Cargo registries, so you get the same benefit locally if you keep the cache warm.
-- A single “Auto Update” workflow (cron + manual) now opens PRs for both schema bundles and `.sqlx` metadata by running the xtask commands above on `master`. You should rarely need to push straight to `master`; let the workflow generate refresh PRs whenever possible.
+- A single “Auto Update” workflow (cron + manual) now opens PRs for schema bundles by running the xtask commands above on `master`. You should rarely need to push straight to `master`; let the workflow generate refresh PRs whenever possible.
 
 ## 📚 Documentation
 
@@ -302,7 +301,6 @@ sinex/
 │   ├── core/                      # Runtime binaries
 │   │   ├── sinex-ingestd/         # Central ingestion daemon
 │   │   ├── sinex-gateway/         # API gateway service
-│   │   └── sinex-rpc-dispatcher/  # RPC scan/explore worker
 │   ├── lib/                       # Shared libraries
 │   │   ├── sinex-core/            # Core types + database repositories
 │   │   ├── sinex-schema/          # Database schema + migrations (SeaORM)
@@ -312,9 +310,9 @@ sinex/
 │   │   ├── sinex-services/
 │   │   └── sinex-test-utils/
 │   └── satellites/                # Event satellites & automata
-│       ├── sinex-terminal-satellite/
-│       ├── sinex-desktop-satellite/
-│       ├── sinex-system-satellite/
+│       ├── sinex-terminal-node/
+│       ├── sinex-desktop-node/
+│       ├── sinex-system-node/
 │       ├── sinex-fs-watcher/
 │       ├── sinex-terminal-command-canonicalizer/
 │       ├── sinex-health-aggregator/

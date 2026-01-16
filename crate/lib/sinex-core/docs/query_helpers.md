@@ -24,7 +24,9 @@ let event = query_one(
 ## Transaction Helpers
 
 ```ignore
-use sinex_core::db::query_helpers::{with_retry_transaction, with_transaction, db_error};
+use sinex_core::db::query_helpers::{
+    with_retry_transaction_idempotent, with_transaction, db_error, IdempotentTransaction,
+};
 
 # async fn example(pool: &sinex_core::DbPool) -> sinex_core::types::SinexResult<()> {
 let result = with_transaction(pool, |tx| Box::pin(async move {
@@ -37,15 +39,21 @@ let result = with_transaction(pool, |tx| Box::pin(async move {
 })).await?;
 
 let retry_config = sinex_core::types::retry::RetryConfig::default();
-let result = with_retry_transaction(pool, retry_config, |tx| Box::pin(async move {
-    sqlx::query("UPDATE table SET value = $1 WHERE id = $2")
-        .bind("new_value")
-        .bind(123)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| db_error(e, "update operation"))?;
-    Ok(())
-})).await?;
+let result = with_retry_transaction_idempotent(
+    pool,
+    retry_config,
+    IdempotentTransaction::new(),
+    |tx| Box::pin(async move {
+        sqlx::query("UPDATE table SET value = $1 WHERE id = $2")
+            .bind("new_value")
+            .bind(123)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, "update operation"))?;
+        Ok(())
+    }),
+)
+.await?;
 # Ok(())
 # }
 ```

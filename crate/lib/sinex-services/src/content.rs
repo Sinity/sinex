@@ -4,16 +4,60 @@
 
 use crate::error::{Result as ServiceResult, SinexError};
 use sinex_core::db::DbPool;
-use sinex_satellite_sdk::annex::BlobManager;
+use sinex_node_sdk::annex::BlobManager;
 use std::sync::Arc;
+use std::time::Instant;
+use tracing::warn;
 
 pub struct ContentService {
     blob_manager: Arc<BlobManager>,
+    pool: DbPool,
 }
 
 impl ContentService {
-    pub fn new(_pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
-        Self { blob_manager }
+    pub fn new(pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
+        Self { blob_manager, pool }
+    }
+
+    /// Get the database pool
+    pub fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+
+    async fn record_operation(
+        &self,
+        operation_type: &str,
+        operator: &str,
+        scope: serde_json::Value,
+        result_status: &str,
+        result_message: Option<&str>,
+        preview_summary: Option<serde_json::Value>,
+        duration_ms: Option<i32>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"
+            INSERT INTO core.operations_log (
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+            operation_type,
+            operator,
+            scope,
+            result_status,
+            result_message,
+            preview_summary,
+            duration_ms
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Store content as blob and return annex key
@@ -25,20 +69,71 @@ impl ContentService {
         content: &[u8],
         filename: &str,
         content_type: &str,
-        _source: &str,
+        source: &str,
     ) -> ServiceResult<String> {
-        let blob_metadata = self
+        let started = Instant::now();
+        let scope = serde_json::json!({
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": content.len(),
+            "source": source
+        });
+
+        let blob_metadata = match self
             .blob_manager
             .ingest_from_bytes(content, filename, content_type)
             .await
-            .map_err(|e| {
+        {
+            Ok(metadata) => metadata,
+            Err(e) => {
                 let debug_error = format!("{:?}", e);
+                let duration_ms = elapsed_ms(started.elapsed());
+                if let Err(err) = self
+                    .record_operation(
+                        "content.store",
+                        source,
+                        scope.clone(),
+                        "failure",
+                        Some(&debug_error),
+                        None,
+                        duration_ms,
+                    )
+                    .await
+                {
+                    warn!(error = %err, "Failed to record content.store failure");
+                }
+
                 eprintln!("Blob ingestion error for {}: {}", filename, debug_error);
-                SinexError::service(format!("Blob storage failed: {}", debug_error))
-                    .with_operation("blob_manager.ingest_from_bytes")
-                    .with_context("filename", filename)
-                    .with_context("content_type", content_type)
-            })?;
+                return Err(
+                    SinexError::service(format!("Blob storage failed: {}", debug_error))
+                        .with_operation("blob_manager.ingest_from_bytes")
+                        .with_context("filename", filename)
+                        .with_context("content_type", content_type),
+                );
+            }
+        };
+
+        let duration_ms = elapsed_ms(started.elapsed());
+        let preview = serde_json::json!({
+            "annex_key": blob_metadata.annex_key(),
+            "size_bytes": blob_metadata.size_bytes,
+            "content_hash": blob_metadata.content_hash,
+            "checksum_blake3": blob_metadata.checksum_blake3,
+        });
+        if let Err(err) = self
+            .record_operation(
+                "content.store",
+                source,
+                scope,
+                "success",
+                None,
+                Some(preview),
+                duration_ms,
+            )
+            .await
+        {
+            warn!(error = %err, "Failed to record content.store success");
+        }
 
         Ok(blob_metadata.annex_key())
     }
@@ -59,7 +154,7 @@ impl ContentService {
     pub async fn get_content_metadata(
         &self,
         annex_key: &str,
-    ) -> ServiceResult<sinex_satellite_sdk::annex::BlobMetadata> {
+    ) -> ServiceResult<sinex_node_sdk::annex::BlobMetadata> {
         let blob_metadata = self
             .blob_manager
             .get_blob_metadata(annex_key)
@@ -81,4 +176,9 @@ impl ContentService {
                 .with_context("annex_key", annex_key)
         })
     }
+}
+
+fn elapsed_ms(duration: std::time::Duration) -> Option<i32> {
+    let millis = duration.as_millis().min(i32::MAX as u128);
+    i32::try_from(millis).ok()
 }

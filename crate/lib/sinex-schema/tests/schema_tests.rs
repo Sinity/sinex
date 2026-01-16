@@ -351,10 +351,6 @@ mod index_tests {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
 
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(pool).await?;
-
         // Create tables and indexes
         sqlx::query(
             &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
@@ -373,7 +369,7 @@ mod index_tests {
         }
 
         for i in 0..40 {
-            ctx.create_test_event("test-source", "test-event", serde_json::json!({"index": i}))
+            ctx.publish_json_event("test-source", "test-event", serde_json::json!({"index": i}))
                 .await
                 .unwrap();
         }
@@ -397,9 +393,6 @@ mod index_tests {
                 plan_str
             );
         }
-        sinex_test_utils::db_common::reset_database(pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(pool).await?;
-        ctx.force_cleanup().await?;
         Ok(())
     }
 }
@@ -482,9 +475,7 @@ mod migration_tests {
 // Helper functions for testing
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct ColumnInfo {
-    column_name: String,
     data_type: String,
     is_nullable: bool,
     is_primary_key: bool,
@@ -535,7 +526,6 @@ async fn get_table_columns(
                 dtype = row.udt_name.unwrap_or_default();
             }
             let info = ColumnInfo {
-                column_name: name.clone(),
                 data_type: dtype,
                 is_nullable: row.is_nullable.unwrap_or(false),
                 is_primary_key: row.is_primary_key.unwrap_or(false),
@@ -546,11 +536,8 @@ async fn get_table_columns(
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct IndexInfo {
     index_name: String,
-    is_unique: bool,
-    column_names: Vec<String>,
 }
 
 async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<IndexInfo> {
@@ -579,8 +566,6 @@ async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<Inde
     rows.into_iter()
         .map(|row| IndexInfo {
             index_name: row.index_name,
-            is_unique: row.is_unique,
-            column_names: row.column_names.unwrap_or_default(),
         })
         .collect()
 }

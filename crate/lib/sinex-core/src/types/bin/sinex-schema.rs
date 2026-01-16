@@ -103,14 +103,12 @@ async fn main() -> Result<()> {
     );
 
     let pool = if needs_db {
-        Some(
-            PgPool::connect(
-                cli.database_url
-                    .as_deref()
-                    .ok_or_else(|| eyre!("DATABASE_URL is required for this command"))?,
-            )
-            .await?,
-        )
+        let base_url = cli
+            .database_url
+            .as_deref()
+            .ok_or_else(|| eyre!("DATABASE_URL is required for this command"))?;
+        let namespaced_url = sinex_core::environment().database_url(base_url)?;
+        Some(PgPool::connect(&namespaced_url).await?)
     } else {
         None
     };

@@ -155,7 +155,6 @@ jobs:
         if: steps.prod-secret.outputs.has_secret == 'true'
         env:
           DATABASE_URL: ${{ secrets.SINEX_PROD_DATABASE_URL }}
-          SQLX_OFFLINE: '1'
         shell: bash
         run: |
           nix develop --accept-flake-config --no-pure-eval --command \

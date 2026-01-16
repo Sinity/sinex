@@ -4,7 +4,6 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
-use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use async_nats::jetstream::Context as JetStream;
@@ -495,7 +494,7 @@ impl RegressionDetector {
 
 /// Test regression detection for database operations
 #[sinex_bench]
-async fn test_database_operation_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_operation_regression_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
 
@@ -671,7 +670,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> color
 
 /// Test regression detection with multiple operations
 #[sinex_bench]
-async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_multi_operation_regression_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
 
@@ -814,7 +813,7 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_ey
 
 #[sinex_test]
 async fn test_jetstream_publish_regression_detection(
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = nats.jetstream_with_client(client.clone());
@@ -897,7 +896,7 @@ async fn test_jetstream_publish_regression_detection(
 
 /// Test regression detection with custom thresholds
 #[sinex_bench]
-async fn test_custom_threshold_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_custom_threshold_regression_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("🔍 Testing custom threshold regression detection");

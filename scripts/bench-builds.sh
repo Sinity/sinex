@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple benchmark harness for Sinex builds and SQLx-related steps.
+# Simple benchmark harness for Sinex builds.
 # Run this inside your dev environment (e.g. `devenv shell`) so cargo sees
 # the right toolchain and Postgres settings.
 #
@@ -10,13 +10,12 @@ set -euo pipefail
 #   RUNS=5 scripts/bench-builds.sh
 #
 # You can comment out individual bench() calls below if you only care about
-# a subset (e.g. just sqlx-prepare or just nix build).
+# a subset (e.g. just nix build).
 #
-# For nextest + DB pool tuning, use `scripts/bench-nextest.sh`.
+# For nextest benchmarks, use `scripts/bench-nextest.sh` (wrapper for `cargo xtask bench`).
 
 RUNS="${RUNS:-3}"
 NIX_NO_LINK="${NIX_NO_LINK:-1}"
-BENCH_NO_SQLX_DIR="${BENCH_NO_SQLX_DIR:-0}"
 
 repo_root() {
   local dir
@@ -89,29 +88,6 @@ bench() {
   echo
 }
 
-hide_sqlx_dir() {
-  if [[ ! -d ".sqlx" ]]; then
-    echo ""
-    return 0
-  fi
-  local tmp
-  tmp="$(mktemp -d)"
-  mv .sqlx "$tmp/sqlx"
-  echo "$tmp/sqlx"
-}
-
-restore_sqlx_dir() {
-  local saved="$1"
-  if [[ -z "$saved" ]]; then
-    return 0
-  fi
-  if [[ -d ".sqlx" ]]; then
-    echo "ERROR: refusing to restore .sqlx; directory already exists at repo root" >&2
-    exit 1
-  fi
-  mv "$saved" .sqlx
-}
-
 main() {
   local root
   root="$(repo_root)"
@@ -130,68 +106,28 @@ main() {
   if [[ -z "${SINEX_DEVENV_SYSTEM:-}" ]]; then
     echo "NOTE: SINEX_DEVENV_SYSTEM is not set; you probably want to run this inside 'devenv shell'." >&2
   fi
-  if [[ "$BENCH_NO_SQLX_DIR" == "1" ]]; then
-    echo "BENCH_NO_SQLX_DIR=1 (temporarily hides .sqlx and runs only online variants)"
-  fi
   echo
 
-  local saved_sqlx=""
-  if [[ "$BENCH_NO_SQLX_DIR" == "1" ]]; then
-    saved_sqlx="$(hide_sqlx_dir)"
-    trap 'restore_sqlx_dir "$saved_sqlx"' EXIT
-  fi
+  # 1) Fast-ish baseline: core correctness checks
+  bench "cargo xtask check" \
+    cargo xtask check
 
-  # 1) Fast-ish baseline: core correctness checks (includes sqlx prepare --check with SQLX_OFFLINE=1)
-  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
-    bench "cargo xtask check" \
-      cargo xtask check
-  fi
-
-  # 2) SQLx offline vs online compile-time checking
-  # Offline: uses .sqlx JSON cache, SQLX_OFFLINE=1
-  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
-    bench "cargo xtask sqlx-check (offline, .sqlx)" \
-      cargo xtask sqlx-check
-  fi
-
-  # Online: skips .sqlx and talks to a live Postgres, requires DATABASE_URL
-  bench "cargo xtask sqlx-check --online (no .sqlx)" \
-    cargo xtask sqlx-check --online
-
-  # 3) SQLx offline metadata regeneration cost (writes/refreshes .sqlx)
-  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
-    bench "cargo xtask sqlx-prepare (regen .sqlx)" \
-      cargo xtask sqlx-prepare
-  fi
-
-  # 4) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
+  # 2) CI-style pipeline with ephemeral Postgres (migrate + schema + tests)
   bench "cargo xtask ci postgres -- cargo xtask ci workspace" \
     cargo xtask ci postgres -- cargo xtask ci workspace
 
-  # 5) Nix flake build for a single binary (ingest daemon).
-  # Offline: current design, uses .sqlx cache and SQLX_OFFLINE=1
+  # 3) Nix flake build for a single binary (ingest daemon).
   local -a nix_args=()
   if [[ "$NIX_NO_LINK" == "1" ]]; then
     nix_args+=(--no-link)
   fi
 
-  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
-    bench "nix build .#sinexIngestd (offline, .sqlx)" \
-      nix build "${nix_args[@]}" .#sinexIngestd
-  fi
+  bench "nix build .#sinexIngestd" \
+    nix build "${nix_args[@]}" .#sinexIngestd
 
-  # Online: experimental path using ephemeral Postgres for SQLx at build time
-  bench "nix build .#sinexIngestdOnline (online, no .sqlx)" \
-    nix build "${nix_args[@]}" .#sinexIngestdOnline
-
-  # 6) Nix flake build for the full suite (symlinkJoin).
-  if [[ "$BENCH_NO_SQLX_DIR" != "1" ]]; then
-    bench "nix build .#sinex (offline, .sqlx)" \
-      nix build "${nix_args[@]}" .#sinex
-  fi
-
-  bench "nix build .#sinexOnline (online, no .sqlx)" \
-    nix build "${nix_args[@]}" .#sinexOnline
+  # 4) Nix flake build for the full suite (symlinkJoin).
+  bench "nix build .#sinex" \
+    nix build "${nix_args[@]}" .#sinex
 
   echo "Benchmarks complete."
 }

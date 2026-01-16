@@ -17,23 +17,29 @@
 //!
 //! // Simple database benchmark
 //! bench_with_db!(bench_insert_event, |ctx: &BenchContext| async move {
-//!     let event = create_test_event();
-//!     insert_event(ctx.pool(), event).await
+//!     let event = Event::<JsonValue>::test_event("bench.source", "bench.event", json!({}));
+//!     ctx.pool().events().insert(event).await
 //! });
 //!
 //! // Parameterized benchmark
 //! #[divan::bench(args = [10, 100, 1000])]
 //! fn bench_bulk_insert(bencher: Bencher, count: usize) {
 //!     let ctx = &*BENCH_CONTEXT;
-//!     let events: Vec<_> = (0..count).map(|_| create_test_event()).collect();
-//!     
+//!     let events: Vec<_> = (0..count)
+//!         .map(|i| Event::<JsonValue>::test_event("bench.source", format!("bench.event.{i}"), json!({})))
+//!         .collect();
+//!
 //!     bencher.bench_local(|| {
 //!         ctx.runtime.block_on(async {
-//!             insert_events(ctx.pool(), &events).await.unwrap()
+//!             for event in &events {
+//!                 ctx.pool().events().insert(event.clone()).await.unwrap();
+//!             }
 //!         })
 //!     });
 //! }
 //! ```
+
+use crate::TestResult;
 
 #[cfg(feature = "bench")]
 pub use crate::bench_context::{BenchContext, DualMeasurement, BENCH_CONTEXT};
@@ -182,7 +188,6 @@ pub fn is_significant_change(change_percent: f64, std_dev_percent: Option<f64>) 
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use crate::TestResult;
 
     #[cfg(feature = "bench")]
     #[sinex_test]

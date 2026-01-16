@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use sinex_core::DbPoolExt;
 use sinex_core::EventSource;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 
 // Example 1: Basic rstest integration with automatic TestContext
 #[sinex_test]
@@ -20,6 +19,7 @@ async fn test_automatic_rstest_integration(
     #[case] event_type: &str,
     #[case] payload: Value,
 ) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
     // The sinex_test macro detects #[case] attributes and automatically:
     // 1. Adds #[rstest] attribute
     // 2. Creates TestContext for each case
@@ -27,7 +27,7 @@ async fn test_automatic_rstest_integration(
     // 4. Provides timeout and progress tracking
 
     let event = ctx
-        .create_test_event(source, event_type, payload.clone())
+        .publish_json_event(source, event_type, payload.clone())
         .await?;
 
     assert_eq!(event.source.as_str(), source);
@@ -42,11 +42,12 @@ async fn test_automatic_rstest_integration(
 // Example 2: Tracing integration with sinex_test
 #[sinex_test]
 async fn test_automatic_tracing(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
     // With trace = true, tracing is automatically enabled
     tracing::info!("Starting test with automatic tracing");
 
     let event = ctx
-        .create_test_event("traced-test", "test.event", json!({}))
+        .publish_json_event("traced-test", "test.event", json!({}))
         .await?;
 
     tracing::debug!("Created event: {:?}", event.id);
@@ -102,15 +103,15 @@ async fn test_snapshots_with_rstest(
     #[case] operation: &str,
     #[case] data: Value,
 ) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
     let _event = ctx
-        .create_test_event("filesystem", &format!("file.{operation}"), data)
+        .publish_json_event("filesystem", &format!("file.{operation}"), data)
         .await?;
 
     // Snapshot paths are automatically configured to include:
     // - Test function name
     // - Case identifier
     // This prevents snapshot conflicts between cases
-    // ctx.snapshot_event(&event, Some(operation)); // Not implemented yet
 
     Ok(())
 }
@@ -127,6 +128,7 @@ async fn test_all_features_combined(
     #[case] count: usize,
     #[case] tags: Vec<&str>,
 ) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
     ctx.force_cleanup().await?;
     let baseline = ctx.current_event_count().await?;
     let source_ref = sinex_core::EventSource::from("bulk-test");
@@ -142,7 +144,7 @@ async fn test_all_features_combined(
     let mut event_ids = Vec::new();
     for i in 0..count {
         let event = ctx
-            .create_test_event(
+            .publish_json_event(
                 "bulk-test",
                 "item.created",
                 json!({
@@ -194,11 +196,8 @@ async fn test_all_features_combined(
         "tags": tags,
         "event_count": events.len(),
         "first_id": event_ids.first(),
-        "last_id": event_ids.last(),
-    });
+        "last_id": event_ids.last()});
     let _ = &summary;
-
-    // ctx.snapshot(&summary, Some(&format!("summary_{}", size_name))); // Not implemented yet
 
     // Verify logging worked
     ctx.assert_logged(&format!("Processing {} dataset", size_name))?;
@@ -209,9 +208,10 @@ async fn test_all_features_combined(
 // Example 6: Property testing still works with sinex_test
 #[sinex_test]
 async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
     // Test context is available for actual database operations
     let _event = ctx
-        .create_test_event(
+        .publish_json_event(
             "proptest",
             "validation.test",
             json!({"test": "property_testing"}),
@@ -227,7 +227,7 @@ async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
 }
 
 // Example 7: Fixtures work seamlessly
-#[sinex_test]
+#[sinex_serial_test]
 #[case("created")]
 #[case("modified")]
 async fn test_with_fixtures(
@@ -236,7 +236,7 @@ async fn test_with_fixtures(
     test_paths: Vec<Utf8PathBuf>,    // Another fixture
     #[case] operation: &str,
 ) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    let ctx = ctx.with_nats().await?;
     ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
@@ -244,7 +244,7 @@ async fn test_with_fixtures(
     // Fixtures are injected alongside rstest parameters
     for source in &test_sources {
         for path in &test_paths {
-            ctx.create_test_event(
+            ctx.publish_json_event(
                 source,
                 &format!("file.{operation}"),
                 json!({"path": path.as_str()}),
@@ -265,7 +265,7 @@ async fn test_with_fixtures(
         );
         let deficit = expected - count;
         for extra in 0..deficit {
-            ctx.create_test_event(
+            ctx.publish_json_event(
                 test_sources
                     .get(extra as usize % test_sources.len())
                     .copied()

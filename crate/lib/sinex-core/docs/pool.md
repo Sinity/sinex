@@ -42,6 +42,13 @@ The pool configuration is carefully tuned to balance:
 - **Latency**: Minimize connection acquisition time
 - **Resource Usage**: Avoid connection thrashing and memory bloat
 
+### Contention Instrumentation
+
+- `SINEX_POOL_ACQUIRE_WARN_MS` (default: `100`) controls when pool acquisition latency emits a warning.
+  Set to a higher value for noisy environments or lower it to detect early contention.
+- `SINEX_POOL_ACQUIRE_TIMEOUT_SECS` (default: `30`) sets a hard timeout for per-call pool acquisition
+  helpers used by coordination paths.
+
 ### Recommended Settings by Workload
 
 - **High-throughput ingestion**: 25-50 connections

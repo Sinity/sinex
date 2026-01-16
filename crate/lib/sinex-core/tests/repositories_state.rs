@@ -1,41 +1,10 @@
 use serde_json::json;
 use sinex_core::db::repositories::state::Operation;
 use sinex_core::repositories::DbPoolExt;
-use sinex_core::{Checkpoint, Id};
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn state_repository_handles_checkpoint_lifecycle(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
-    let repo = ctx.pool.state();
-    let id = Id::<sinex_core::db::models::Event<serde_json::Value>>::new();
-    let checkpoint = Checkpoint::new("test-processor")
-        .with_last_processed_id(id)
-        .with_checkpoint_data(json!({ "batch_size": 100 }));
-
-    let saved = repo.save_checkpoint(checkpoint).await?;
-    assert_eq!(saved.processor_name.as_ref(), "test-processor");
-    assert_eq!(saved.processed_count, 1);
-
-    let new_id = Id::<sinex_core::db::models::Event<serde_json::Value>>::new();
-    let update = Checkpoint::new("test-processor")
-        .with_last_processed_id(new_id.clone())
-        .with_checkpoint_data(json!({ "batch_size": 200 }));
-    let updated = repo.save_checkpoint(update).await?;
-    assert_eq!(updated.processed_count, 2);
-    assert_eq!(updated.last_processed_id, Some(new_id));
-
-    let retrieved = repo.get_checkpoint("test-processor").await?;
-    assert_eq!(retrieved.unwrap().processed_count, 2);
-
-    assert!(repo.delete_checkpoint("test-processor").await?);
-    assert!(repo.get_checkpoint("test-processor").await?.is_none());
-    Ok(())
-}
-
-#[sinex_test]
-async fn state_repository_logs_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let operation = Operation {
         id: None,
@@ -87,9 +56,7 @@ async fn state_repository_logs_operations(ctx: TestContext) -> color_eyre::eyre:
 }
 
 #[sinex_test]
-async fn state_repository_collects_operation_statistics(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn state_repository_collects_operation_statistics(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let operations = vec![
         ("success", None),

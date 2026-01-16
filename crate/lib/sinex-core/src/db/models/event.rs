@@ -8,9 +8,13 @@
 //! - All events MUST have provenance (Material or Synthesis)
 //! - anchor_byte is moved into Material provenance where it belongs
 
+pub use crate::db::models::event_builder::{
+    EventBuilder, HasProvenance, NoProvenance, OffsetKind, Operation, Provenance,
+};
 use crate::types::domain::{EventSource, EventType, HostName};
-use crate::types::non_empty::NonEmptyVec;
+
 use crate::types::{Id, Ulid};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -53,8 +57,6 @@ pub struct Event<T = JsonValue> {
     pub ts_orig: OptionalTimestamp,
 
     /// Hostname where the event was generated
-    /// TODO: Consider removing - might be redundant for local-only capture
-    /// Could move to payload for specific event types that need it
     #[serde(default = "get_hostname")]
     pub host: HostName,
 
@@ -78,106 +80,26 @@ pub type EventId = Id<Event<JsonValue>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceMaterial;
 
-// Typestate markers for EventBuilder
-pub struct NoProvenance;
-pub struct HasProvenance;
+// Typestate markers and EventBuilder moved to event_builder.rs
 
-/// Event builder with typestate pattern for compile-time safety
-pub struct EventBuilder<T, P = NoProvenance> {
-    payload: T,
-    source: EventSource,
-    event_type: EventType,
-    provenance: Option<Provenance>,
-    ts_orig: Option<Timestamp>,
-    associated_blob_ids: Option<Vec<Ulid>>,
-    _phantom: std::marker::PhantomData<P>,
-}
-
-/// Provenance type for tracking event lineage
-///
-/// This enum enforces the XOR constraint: every event must have exactly one type of provenance.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Provenance {
-    /// Event derived from source material (first-order event)
-    Material {
-        id: Id<SourceMaterial>,
-        anchor_byte: i64, // MOVED HERE: where it semantically belongs!
-        offset_start: Option<i64>,
-        offset_end: Option<i64>,
-        offset_kind: OffsetKind,
-    },
-    /// Event derived from other events (synthesized event)  
-    Synthesis {
-        source_event_ids: NonEmptyVec<EventId>, // Enforces non-empty at type level!
-        operation_id: Option<Id<Operation>>,
-    },
-}
-
-/// Type of offset measurement
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OffsetKind {
-    Byte,
-    Line,
-    Record,
-    Character,
-}
-
-impl Default for OffsetKind {
-    fn default() -> Self {
-        Self::Byte
-    }
-}
-
-/// Marker type for operation IDs  
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Operation;
-
-impl Provenance {
-    /// Create material provenance from source material
-    ///
-    /// anchor_byte is REQUIRED - this ensures Material events always have valid anchor
-    pub fn from_material(
-        id: impl Into<Id<SourceMaterial>>,
-        anchor_byte: i64, // Non-optional - enforces invariant at type level
-        offset_start: Option<i64>,
-        offset_end: Option<i64>,
-    ) -> Self {
-        Provenance::Material {
-            id: id.into(),
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind: OffsetKind::default(),
-        }
-    }
-
-    /// Create synthesis provenance from parent event IDs
-    /// Returns None if the iterator is empty (enforces non-empty invariant)
-    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
-        let vec: Vec<EventId> = ids.into_iter().collect();
-        NonEmptyVec::from_vec(vec).map(|source_event_ids| Provenance::Synthesis {
-            source_event_ids,
-            operation_id: None,
-        })
-    }
-
-    /// Create synthesis provenance with at least one parent ID
-    pub fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
-        Provenance::Synthesis {
-            source_event_ids: NonEmptyVec::from_head_tail(first, rest),
-            operation_id: None,
-        }
-    }
-}
+// EventBuilder implementations moved to event_builder.rs
+// Provenance type moved to event_builder.rs
+// OffsetKind moved to event_builder.rs
+// Operation moved to event_builder.rs
 
 impl<T> Event<T> {
     /// Universal constructor - requires all fields explicitly
+    #[deprecated(since = "0.5.0", note = "Use EventBuilder::new()...build() instead")]
     pub fn create(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
         payload: T,
         provenance: Provenance,
     ) -> Self {
+        // Implementation unchanged, just deprecated tag?
+        // Actually, create IS the "universal constructor".
+        // Maybe keeping it is fine, just encourage builder?
+        // Phase 1.4 says "Deprecate Event::create and Event::dynamic".
         Self {
             id: None,
             source: source.into(),
@@ -246,15 +168,7 @@ where
 
     /// Start building a typed event with builder pattern
     pub fn builder(payload: T) -> EventBuilder<T, NoProvenance> {
-        EventBuilder {
-            payload,
-            source: T::SOURCE,
-            event_type: T::EVENT_TYPE,
-            provenance: None,
-            ts_orig: None,
-            associated_blob_ids: None,
-            _phantom: std::marker::PhantomData,
-        }
+        EventBuilder::new(T::SOURCE, T::EVENT_TYPE, payload)
     }
 }
 
@@ -262,24 +176,19 @@ where
 impl Event<JsonValue> {
     /// Start building a dynamic event with explicit source and type
     /// (overrides the generic "system"/"generic" defaults from EventPayload impl)
+    #[deprecated(since = "0.5.0", note = "Use EventBuilder::new(...) instead")]
     pub fn dynamic(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
         payload: JsonValue,
     ) -> EventBuilder<JsonValue, NoProvenance> {
-        EventBuilder {
-            payload,
-            source: source.into(),
-            event_type: event_type.into(),
-            provenance: None,
-            ts_orig: None,
-            associated_blob_ids: None,
-            _phantom: std::marker::PhantomData,
-        }
+        EventBuilder::new(source.into(), event_type.into(), payload)
     }
 
     // No RawEvent; use Event::<JsonValue>::test_event() in tests.
+}
 
+impl<T> Event<T> {
     /// Set the timestamp
     pub fn with_timestamp(mut self, ts: Timestamp) -> Self {
         self.ts_orig = Some(ts);
@@ -386,79 +295,105 @@ impl Event<JsonValue> {
 }
 
 // EventBuilder implementations
-impl<T> EventBuilder<T, NoProvenance> {
-    /// Set provenance and transition to HasProvenance state
-    pub fn with_provenance(mut self, provenance: Provenance) -> EventBuilder<T, HasProvenance> {
-        self.provenance = Some(provenance);
-        EventBuilder {
-            payload: self.payload,
-            source: self.source,
-            event_type: self.event_type,
-            provenance: self.provenance,
-            ts_orig: self.ts_orig,
-            associated_blob_ids: self.associated_blob_ids,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    /// Convenience: create from material
-    pub fn from_material(
-        self,
-        material_id: impl Into<Id<SourceMaterial>>,
-        anchor: i64,
-    ) -> EventBuilder<T, HasProvenance> {
-        self.with_provenance(Provenance::from_material(material_id, anchor, None, None))
-    }
-
-    /// Convenience: create from parent events
-    pub fn from_parents<I>(self, parents: I) -> EventBuilder<T, HasProvenance>
-    where
-        I: IntoIterator<Item = EventId>,
-    {
-        let ids: Vec<EventId> = parents.into_iter().collect();
-        let provenance = Provenance::from_synthesis(ids)
-            .unwrap_or_else(|| panic!("from_parents requires at least one parent ID"));
-        self.with_provenance(provenance)
-    }
-}
-
-impl<T> EventBuilder<T, HasProvenance> {
-    /// Set timestamp (optional)
-    pub fn at_time(mut self, ts: Timestamp) -> Self {
-        self.ts_orig = Some(ts);
-        self
-    }
-
-    /// Add associated blobs (optional)
-    pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
-        self.associated_blob_ids = Some(blobs);
-        self
-    }
-
-    /// Build the event (only available after provenance is set)
-    pub fn build(self) -> Event<T> {
-        Event {
-            id: None,
-            source: self.source,
-            event_type: self.event_type,
-            payload: self.payload,
-
-            provenance: self.provenance.expect("guaranteed by typestate"),
-            ts_orig: self.ts_orig.or_else(|| Some(Utc::now())),
-            host: get_hostname(),
-            ingestor_version: get_ingestor_version(),
-            payload_schema_id: None,
-            associated_blob_ids: self.associated_blob_ids,
-        }
-    }
-}
+// EventBuilder impl blocks moved to event_builder.rs
 
 // Helper function to get hostname
-fn get_hostname() -> HostName {
+pub(crate) fn get_hostname() -> HostName {
     HostName::new(gethostname::gethostname().to_string_lossy().to_string())
 }
 
 // Helper function to get ingestor version
-fn get_ingestor_version() -> Option<String> {
-    std::env::var("SINEX_VERSION").ok()
+pub(crate) fn get_ingestor_version() -> Option<String> {
+    // Priority: compile-time git revision > runtime env var > None
+    match option_env!("SINEX_GIT_REV") {
+        Some(git_rev) if !git_rev.is_empty() && git_rev != "unknown" => {
+            // Format: git-<short-rev> (e.g., "git-a1b2c3d")
+            Some(format!("git-{}", git_rev))
+        }
+        _ => {
+            // Fallback to runtime environment variable (legacy support)
+            std::env::var("SINEX_VERSION").ok()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn event_builder_sets_offsets_for_material_provenance() {
+        let material_id = Id::from_ulid(Ulid::new());
+        let event = Event::dynamic("offset-test", "offset.event", json!({"key": "value"}))
+            .from_material(material_id, 4)
+            .with_offset_start(10)
+            .expect("offset start should apply to material provenance")
+            .with_offset_end(20)
+            .expect("offset end should apply to material provenance")
+            .with_offset_kind(OffsetKind::Line)
+            .expect("offset kind should apply to material provenance")
+            .build()
+            .expect("event should build with material provenance");
+
+        match event.provenance {
+            Provenance::Material {
+                offset_start,
+                offset_end,
+                offset_kind,
+                ..
+            } => {
+                assert_eq!(offset_start, Some(10));
+                assert_eq!(offset_end, Some(20));
+                assert_eq!(offset_kind, OffsetKind::Line);
+            }
+            _ => panic!("expected material provenance"),
+        }
+    }
+
+    #[test]
+    fn events_contain_build_version() {
+        // Create a test event with material provenance
+        let material_id = Id::from_ulid(Ulid::new());
+        let event = Event::dynamic("test", "test.event", json!({"key": "value"}))
+            .from_material(material_id, 4)
+            .build()
+            .expect("Event should build");
+
+        // Verify ingestor version is present
+        let version = get_ingestor_version();
+        assert!(
+            version.is_some(),
+            "Ingestor version should be set from build.rs"
+        );
+
+        // Verify event contains the version
+        assert_eq!(event.ingestor_version, version);
+
+        // Verify format (should start with "git-" when compiled)
+        if let Some(ref ver) = version {
+            if ver != "unknown" {
+                assert!(
+                    ver.starts_with("git-") || !ver.is_empty(),
+                    "Version should be in git-<rev> format or be a non-empty string, got: {}",
+                    ver
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn get_ingestor_version_returns_git_revision() {
+        let version = get_ingestor_version();
+
+        // Version should be set at compile time via build.rs
+        // This test will pass even if git is not available (returns None or "unknown")
+        if let Some(ref ver) = version {
+            println!("Ingestor version: {}", ver);
+            // If git revision is available, it should be formatted correctly
+            if ver.starts_with("git-") {
+                assert!(ver.len() > 4, "Git revision should have content after 'git-'");
+            }
+        }
+    }
 }

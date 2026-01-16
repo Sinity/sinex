@@ -1,7 +1,7 @@
 // # Temporal Chaos Testing
 //
 // This module implements Phase 6 of the comprehensive test plan: temporal chaos scenarios
-// and worker idempotency testing. These tests focus on the system's behavior under
+// and ordering safety testing. These tests focus on the system's behavior under
 // extreme timing conditions, concurrent load, and ordering violations.
 //
 // ## Test Categories
@@ -12,12 +12,6 @@
 // - Verify no events are dropped during overwhelming bursts
 // - Validate database performance under high-velocity ingestion
 //
-// ### ♻️ Worker Idempotency Tests
-// - Insert duplicate work items and verify graceful handling
-// - Test that processing operations are truly idempotent
-// - Verify no double-effects occur from repeated processing
-// - Check database constraints prevent corruption from duplicates
-//
 // ### ⏰ Event Ordering Tests
 // - Send causally impossible event sequences (file.deleted before file.created)
 // - Test handling of timestamp violations and out-of-order events
@@ -25,10 +19,8 @@
 // - Validate ULID-based ordering under extreme conditions
 //
 // ### 🔀 Concurrency Chaos Tests
-// - Multiple workers claiming work simultaneously with microsecond precision
-// - Test SELECT FOR UPDATE SKIP LOCKED behavior under extreme contention
-// - Verify no work item is processed multiple times under any circumstances
-// - Validate worker coordination under maximum concurrent load
+// - Simultaneous producers under microsecond timing windows
+// - Validate ordering and consistency under maximum concurrent load
 //
 // ## Performance Expectations
 //
@@ -40,15 +32,12 @@
 //
 // These tests verify the temporal invariants that are critical for system reliability:
 // 1. **No Lost Events**: Even under overwhelming load, every event must be captured
-// 2. **Idempotent Processing**: Workers must handle duplicate work gracefully
-// 3. **Ordering Resilience**: System must cope with impossible event sequences
-// 4. **Concurrency Safety**: No race conditions under maximum contention
+// 2. **Ordering Resilience**: System must cope with impossible event sequences
+// 3. **Concurrency Safety**: No race conditions under maximum contention
 
-use sinex_test_utils::TestResult;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::{events, worker_test_utils};
-use std::collections::HashSet;
+use sinex_test_utils::events;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Barrier, RwLock, Semaphore};
@@ -62,13 +51,9 @@ pub struct TemporalChaosMetrics {
     pub events_sent: AtomicUsize,
     pub events_processed: AtomicUsize,
     pub events_lost: AtomicUsize,
-    pub duplicate_work_items: AtomicUsize,
     pub ordering_violations: AtomicUsize,
-    pub worker_conflicts: AtomicUsize,
     pub database_contentions: AtomicU64,
     pub max_event_burst_rate: AtomicU64,
-    pub worker_claim_collisions: AtomicU64,
-    pub idempotency_violations: AtomicU64,
     pub temporal_consistency_errors: AtomicU64,
     pub test_start_time: std::time::Instant,
     pub burst_timestamps: RwLock<Vec<std::time::Instant>>,
@@ -80,13 +65,9 @@ impl TemporalChaosMetrics {
             events_sent: AtomicUsize::new(0),
             events_processed: AtomicUsize::new(0),
             events_lost: AtomicUsize::new(0),
-            duplicate_work_items: AtomicUsize::new(0),
             ordering_violations: AtomicUsize::new(0),
-            worker_conflicts: AtomicUsize::new(0),
             database_contentions: AtomicU64::new(0),
             max_event_burst_rate: AtomicU64::new(0),
-            worker_claim_collisions: AtomicU64::new(0),
-            idempotency_violations: AtomicU64::new(0),
             temporal_consistency_errors: AtomicU64::new(0),
             test_start_time: std::time::Instant::now(),
             burst_timestamps: RwLock::new(Vec::new()),
@@ -127,30 +108,14 @@ impl TemporalChaosMetrics {
         );
         println!("Events lost: {}", self.events_lost.load(Ordering::Relaxed));
         println!(
-            "Duplicate work items: {}",
-            self.duplicate_work_items.load(Ordering::Relaxed)
-        );
-        println!(
             "Ordering violations: {}",
             self.ordering_violations.load(Ordering::Relaxed)
-        );
-        println!(
-            "Worker conflicts: {}",
-            self.worker_conflicts.load(Ordering::Relaxed)
         );
         println!(
             "Database contentions: {}",
             self.database_contentions.load(Ordering::Relaxed)
         );
         println!("Max burst rate: {:.2} events/sec", burst_rate);
-        println!(
-            "Worker claim collisions: {}",
-            self.worker_claim_collisions.load(Ordering::Relaxed)
-        );
-        println!(
-            "Idempotency violations: {}",
-            self.idempotency_violations.load(Ordering::Relaxed)
-        );
         println!(
             "Temporal consistency errors: {}",
             self.temporal_consistency_errors.load(Ordering::Relaxed)
@@ -181,33 +146,11 @@ impl Default for ThunderingHerdConfig {
     }
 }
 
-/// Configuration for worker idempotency tests
-#[derive(Debug, Clone)]
-pub struct IdempotencyConfig {
-    pub work_items: usize,
-    pub duplicate_factor: usize, // How many times to duplicate each item
-    pub concurrent_workers: usize,
-    pub processing_delay_ms: u64,
-    pub verify_no_double_effects: bool,
-}
-
-impl Default for IdempotencyConfig {
-    fn default() -> Self {
-        Self {
-            work_items: 100,
-            duplicate_factor: 3,
-            concurrent_workers: 10,
-            processing_delay_ms: 10,
-            verify_no_double_effects: true,
-        }
-    }
-}
-
 // ==================== THUNDERING HERD TESTS ====================
 
 /// Test system behavior under extreme event bursts
 #[sinex_test]
-async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
     let config = ThunderingHerdConfig::default();
 
@@ -257,7 +200,7 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> color_eyre:
                 }
             }
 
-            color_eyre::eyre::Result::<()>::Ok(())
+            TestResult::<()>::Ok(())
         });
 
         sender_handles.push(handle);
@@ -319,7 +262,9 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> color_eyre:
 
 /// Test collector backpressure handling under sustained high load
 #[sinex_test]
-async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_collector_backpressure_extreme_load(
+    ctx: TestContext,
+) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
     let config = ThunderingHerdConfig {
         total_events: 5000,
@@ -391,7 +336,7 @@ async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> color_eyr
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
 
-            color_eyre::eyre::Result::<()>::Ok(())
+            TestResult::<()>::Ok(())
         });
 
         sender_handles.push(handle);
@@ -440,278 +385,11 @@ async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> color_eyr
     Ok(())
 }
 
-// ==================== WORKER IDEMPOTENCY TESTS ====================
-
-/// Test worker handling of duplicate work items
-#[sinex_test]
-async fn test_worker_idempotency_duplicate_work_items(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let metrics = Arc::new(TemporalChaosMetrics::new());
-    let config = IdempotencyConfig::default();
-
-    println!(
-        "=== Worker Idempotency Test: {} items, {}x duplicates ===",
-        config.work_items, config.duplicate_factor
-    );
-
-    // Phase 1: Create base work items
-    let base_event_ids = ctx
-        .create_and_insert_events("idempotency_test", config.work_items)
-        .await?;
-
-    // Phase 2: Create duplicate work queue entries for each event
-    let mut all_queue_ids = Vec::new();
-    for event_id in &base_event_ids {
-        for dup_idx in 0..config.duplicate_factor {
-            let queue_id = worker_test_utils::create_work_item(
-                ctx.pool(),
-                &format!("idempotency_agent_{}", dup_idx),
-                *event_id,
-            )
-            .await?;
-            all_queue_ids.push(queue_id);
-            metrics.duplicate_work_items.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    println!(
-        "Created {} total work items ({} duplicates)",
-        all_queue_ids.len(),
-        all_queue_ids.len() - config.work_items
-    );
-
-    // Phase 3: Process work items with concurrent workers
-    let processed_events = Arc::new(RwLock::new(HashSet::new()));
-    let mut worker_handles = Vec::new();
-
-    for worker_id in 0..config.concurrent_workers {
-        let pool = ctx.pool().clone();
-        let metrics_clone = metrics.clone();
-        let processed_clone = processed_events.clone();
-        let agent_name = format!("idempotency_agent_{}", worker_id % config.duplicate_factor);
-
-        let handle = tokio::spawn(async move {
-            let mut local_processed = 0;
-
-            loop {
-                // Try to claim work using the real work queue system
-                let claimed_items =
-                    claim_work_queue_items(&pool, &agent_name, "test_worker", 1).await?;
-
-                if claimed_items.is_empty() {
-                    break; // No more work available
-                }
-
-                for item in claimed_items {
-                    // Check if we've already processed this event (idempotency check)
-                    {
-                        let mut processed_set = processed_clone.write().await;
-                        if !processed_set.insert(item.queue_id) {
-                            // This work item was already processed - idempotency violation!
-                            metrics_clone
-                                .idempotency_violations
-                                .fetch_add(1, Ordering::Relaxed);
-                            eprintln!(
-                                "IDEMPOTENCY VIOLATION: Work item {} processed multiple times",
-                                item.queue_id
-                            );
-                        }
-                    }
-
-                    // Simulate processing work
-                    tokio::time::sleep(Duration::from_millis(config.processing_delay_ms)).await;
-
-                    // Mark work as completed
-                    complete_work_queue_item(&pool, item.queue_id).await?;
-
-                    local_processed += 1;
-                    metrics_clone.record_event_processed();
-                }
-            }
-
-            color_eyre::eyre::Result::<usize>::Ok(local_processed)
-        });
-
-        worker_handles.push(handle);
-    }
-
-    // Phase 4: Wait for all workers to complete
-    let mut total_processed = 0;
-    for handle in worker_handles {
-        let worker_processed = handle.await??;
-        total_processed += worker_processed;
-    }
-
-    // Phase 5: Verification
-    let processed_unique_events = processed_events.read().await.len();
-    let idempotency_violations = metrics.idempotency_violations.load(Ordering::Relaxed);
-
-    println!("Total work items processed: {}", total_processed);
-    println!("Unique events processed: {}", processed_unique_events);
-    println!("Idempotency violations: {}", idempotency_violations);
-
-    // Critical assertions for idempotency
-    if config.verify_no_double_effects {
-        assert_eq!(
-            idempotency_violations, 0,
-            "Idempotency violations detected: {}",
-            idempotency_violations
-        );
-        assert_eq!(
-            processed_unique_events, config.work_items,
-            "Expected {} unique events, but processed {}",
-            config.work_items, processed_unique_events
-        );
-    }
-
-    // Verify that duplicate work items were handled (total > unique)
-    assert!(
-        total_processed >= processed_unique_events,
-        "Total processed ({}) should be >= unique events ({})",
-        total_processed,
-        processed_unique_events
-    );
-
-    metrics.print_summary().await;
-    Ok(())
-}
-
-/// Test SELECT FOR UPDATE SKIP LOCKED behavior under extreme contention
-#[sinex_test]
-async fn test_worker_claim_collision_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let metrics = Arc::new(TemporalChaosMetrics::new());
-    let config = IdempotencyConfig {
-        work_items: 50,
-        concurrent_workers: 20, // More workers than work items
-        processing_delay_ms: 100,
-        ..Default::default()
-    };
-
-    println!(
-        "=== Worker Claim Collision Test: {} workers competing for {} items ===",
-        config.concurrent_workers, config.work_items
-    );
-
-    // Phase 1: Create work items
-    let event_ids = ctx
-        .create_and_insert_events("collision_test", config.work_items)
-        .await?;
-
-    for event_id in &event_ids {
-        worker_test_utils::create_work_item(ctx.pool(), "collision_agent", *event_id).await?;
-    }
-
-    // Phase 2: Launch competing workers with microsecond timing
-    let barrier = Arc::new(Barrier::new(config.concurrent_workers));
-    let claimed_items = Arc::new(RwLock::new(Vec::new()));
-    let mut worker_handles = Vec::new();
-
-    for worker_id in 0..config.concurrent_workers {
-        let pool = ctx.pool().clone();
-        let metrics_clone = metrics.clone();
-        let barrier_clone = barrier.clone();
-        let claimed_clone = claimed_items.clone();
-
-        let handle = tokio::spawn(async move {
-            // Synchronize all workers to start simultaneously
-            barrier_clone.wait().await;
-
-            let claim_start = std::time::Instant::now();
-
-            // Try to claim work - this is where collisions will happen
-            let claimed =
-                claim_work_queue_items(&pool, "collision_agent", "test_worker", 100).await?;
-
-            let claim_duration = claim_start.elapsed();
-
-            // Track claim collisions (indicated by longer claim times)
-            if claim_duration > Duration::from_millis(50) {
-                metrics_clone
-                    .worker_claim_collisions
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-
-            // Record what we claimed
-            {
-                let mut all_claimed = claimed_clone.write().await;
-                for item in &claimed {
-                    all_claimed.push((worker_id, item.queue_id, item.queue_id));
-                    // Using queue_id as identifier
-                }
-            }
-
-            // Process claimed work
-            for item in claimed {
-                tokio::time::sleep(Duration::from_millis(config.processing_delay_ms)).await;
-
-                complete_work_queue_item(&pool, item.queue_id).await?;
-
-                metrics_clone.record_event_processed();
-            }
-
-            color_eyre::eyre::Result::<()>::Ok(())
-        });
-
-        worker_handles.push(handle);
-    }
-
-    // Phase 3: Wait for all workers
-    for handle in worker_handles {
-        let _ = handle.await?;
-    }
-
-    // Phase 4: Analyze claim distribution
-    let all_claimed = claimed_items.read().await;
-    let mut claimed_by_worker: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
-    let mut unique_events_claimed = HashSet::new();
-    let mut duplicate_claims = 0;
-
-    for (worker_id, _queue_id, event_id) in all_claimed.iter() {
-        *claimed_by_worker.entry(*worker_id).or_insert(0) += 1;
-
-        if !unique_events_claimed.insert(*event_id) {
-            duplicate_claims += 1;
-            metrics.worker_conflicts.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    println!("Claim distribution by worker: {:?}", claimed_by_worker);
-    println!("Unique events claimed: {}", unique_events_claimed.len());
-    println!("Duplicate claims detected: {}", duplicate_claims);
-    println!(
-        "Worker claim collisions: {}",
-        metrics.worker_claim_collisions.load(Ordering::Relaxed)
-    );
-
-    // Critical verification: No work item should be claimed by multiple workers
-    assert_eq!(
-        duplicate_claims, 0,
-        "SELECT FOR UPDATE SKIP LOCKED failed: {} duplicate claims",
-        duplicate_claims
-    );
-
-    // All work items should be claimed exactly once
-    assert_eq!(
-        unique_events_claimed.len(),
-        config.work_items,
-        "Expected {} work items claimed, got {}",
-        config.work_items,
-        unique_events_claimed.len()
-    );
-
-    // Some collisions are expected with high concurrency
-    let collisions = metrics.worker_claim_collisions.load(Ordering::Relaxed);
-    println!("Handled {} claim collisions successfully", collisions);
-
-    metrics.print_summary().await;
-    Ok(())
-}
-
 // ==================== EVENT ORDERING TESTS ====================
 
 /// Test handling of causally impossible event sequences
 #[sinex_test]
-async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_causality_violation_handling(ctx: TestContext) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
 
     println!("=== Causality Violation Test: Impossible Event Sequences ===");
@@ -777,7 +455,14 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
     // Phase 3: Verify events were stored with correct ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events = ctx.pool.events().get_by_source(&sinex_core::types::domain::EventSource::from_static("fs"), sinex_core::types::Pagination::new(Some(10), None)).await?;
+    let stored_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &sinex_core::types::domain::EventSource::from_static("fs"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
+        .await?;
 
     // Events should be ordered by ingestion time (ULID), not by ts_orig
     for window in stored_events.windows(2) {
@@ -831,7 +516,7 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
 
 /// Test ULID ordering under microsecond timing stress
 #[sinex_test]
-async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
 
     println!("=== ULID Ordering Test: Microsecond Timing Stress ===");
@@ -880,7 +565,7 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
                 all_ids.extend(local_ids);
             }
 
-            color_eyre::eyre::Result::<()>::Ok(())
+            TestResult::<()>::Ok(())
         });
 
         generator_handles.push(handle);
@@ -924,7 +609,14 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
     // Phase 4: Verify database ordering matches ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events = ctx.pool.events().get_by_source(&sinex_core::types::domain::EventSource::from_static("timing_test"), sinex_core::types::Pagination::new(Some(all_ids.len() as i64), None)).await?;
+    let stored_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &sinex_core::types::domain::EventSource::from_static("timing_test"),
+            sinex_core::types::Pagination::new(Some(all_ids.len() as i64), None),
+        )
+        .await?;
 
     // Database should maintain ULID ordering
     for window in stored_events.windows(2) {
@@ -965,11 +657,13 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
 
 /// Comprehensive test combining all temporal chaos scenarios
 #[sinex_test]
-async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_comprehensive_temporal_chaos_scenario(
+    ctx: TestContext,
+) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
 
     println!("=== Comprehensive Temporal Chaos Scenario ===");
-    println!("Testing: Thundering Herd + Worker Idempotency + Ordering Violations + Concurrency");
+    println!("Testing: Thundering Herd + Ordering Violations + Concurrency");
 
     // Phase 1: Simultaneous thundering herd with ordering violations
     let herd_config = ThunderingHerdConfig {
@@ -1024,73 +718,24 @@ async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_e
                 }
             }
 
-            color_eyre::eyre::Result::<()>::Ok(())
+            TestResult::<()>::Ok(())
         });
 
         chaos_handles.push(handle);
     }
 
-    // Phase 2: Concurrent worker chaos with duplicate work items
-    let base_events = ctx.create_and_insert_events("worker_chaos", 100).await?;
-
-    // Create many duplicate work items
-    for event_id in &base_events {
-        for dup_idx in 0..5 {
-            worker_test_utils::create_work_item(
-                ctx.pool(),
-                &format!("chaos_agent_{}", dup_idx % 3),
-                *event_id,
-            )
-            .await?;
-            metrics.duplicate_work_items.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    // Launch competing workers
-    for worker_id in 0..15 {
-        let pool = ctx.pool().clone();
-        let metrics_clone = metrics.clone();
-        let agent_name = format!("chaos_agent_{}", worker_id % 3);
-
-        let handle = tokio::spawn(async move {
-            loop {
-                let claimed =
-                    claim_work_queue_items(&pool, &agent_name, "chaos_worker", 10).await?;
-
-                if claimed.is_empty() {
-                    break;
-                }
-
-                for item in claimed {
-                    // Random processing delay to create timing chaos
-                    let delay = fastrand::u64(1..=50);
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
-
-                    complete_work_queue_item(&pool, item.queue_id).await?;
-
-                    metrics_clone.record_event_processed();
-                }
-            }
-
-            color_eyre::eyre::Result::<()>::Ok(())
-        });
-
-        chaos_handles.push(handle);
-    }
-
-    // Phase 3: Wait for chaos to complete
+    // Phase 2: Wait for chaos to complete
     for handle in chaos_handles {
         let _ = handle.await?;
     }
 
-    // Phase 4: System stability verification
+    // Phase 3: System stability verification
     ctx.wait_for_processing().await?;
 
     let final_event_count = ctx.event_count().await?;
     let events_sent = metrics.events_sent.load(Ordering::Relaxed);
     let events_processed = metrics.events_processed.load(Ordering::Relaxed);
     let events_lost = metrics.events_lost.load(Ordering::Relaxed);
-    let duplicates = metrics.duplicate_work_items.load(Ordering::Relaxed);
     let violations = ordering_violations.load(Ordering::Relaxed);
 
     println!("=== Chaos Test Results ===");
@@ -1098,7 +743,6 @@ async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_e
     println!("Events processed: {}", events_processed);
     println!("Events lost: {}", events_lost);
     println!("Events in DB: {}", final_event_count);
-    println!("Duplicate work items: {}", duplicates);
     println!("Ordering violations: {}", violations);
 
     // System should survive chaos with minimal data loss
@@ -1111,9 +755,6 @@ async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_e
 
     // Database should maintain basic consistency
     assert!(final_event_count > 0, "No events survived chaos test");
-
-    // Work processing should handle duplicates
-    assert!(duplicates > 0, "No duplicate work items were created");
 
     metrics.print_summary().await;
 

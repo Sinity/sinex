@@ -10,7 +10,7 @@ pub mod logging;
 pub mod state_machine;
 
 // Re-export commonly used types
-pub use config::{BatchConfig, CascadeConfig, ReplayConfig};
+pub use config::ReplayConfig;
 pub use dry_run::{execute_dry_run, DryRunExecutor, DryRunOperation, DryRunResult};
 pub use invariants::{InvariantViolation, ViolationSeverity, ViolationType};
 pub use state_machine::{

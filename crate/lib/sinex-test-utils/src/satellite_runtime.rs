@@ -1,8 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
-use sinex_core::{db::models::Event, types::ulid::Ulid, JsonValue};
-use sinex_satellite_sdk::{
+use sinex_core::{
+    db::models::Event,
+    types::{buffers::DEFAULT_EVENT_CHANNEL_SIZE, ulid::Ulid},
+    JsonValue,
+};
+use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
@@ -16,7 +20,7 @@ use crate::{EphemeralNats, TestContext};
 /// Fully wired runtime scaffold for satellite integration tests.
 pub struct TestRuntime {
     pub runtime: ProcessorRuntimeState,
-    pub event_rx: mpsc::UnboundedReceiver<Event<JsonValue>>,
+    pub event_rx: mpsc::Receiver<Event<JsonValue>>,
     pub nats: EphemeralNats,
 }
 
@@ -58,13 +62,23 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
 
         let nats = EphemeralNats::start().await?;
         let nats_client = nats.connect().await?;
-        let publisher = Arc::new(NatsPublisher::new(nats_client));
+        let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
 
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
         let emitter = EventEmitter::new(event_tx, dry_run);
 
+        // Create checkpoint KV store
+        let js = async_nats::jetstream::new(nats_client);
+        let kv = js
+            .create_key_value(async_nats::jetstream::kv::Config {
+                bucket: "sinex_checkpoints".to_string(),
+                history: 1,
+                ..Default::default()
+            })
+            .await?;
+
         let checkpoint_manager = Arc::new(CheckpointManager::new(
-            ctx.pool.clone(),
+            kv,
             service_name.clone(),
             "test".to_string(),
             format!("{}-{}", service_name, Ulid::new()),
@@ -77,10 +91,9 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             EventTransport::Nats(publisher),
             None,
             None,
-            None,
         );
 
-        let work_dir = Utf8PathBuf::from_path_buf(std::env::temp_dir())
+        let work_dir = Utf8PathBuf::from_path_buf(sinex_core::environment().temp_dir())
             .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
 
         let service_info = ServiceInfo::new(
@@ -111,16 +124,16 @@ impl TestRuntime {
         TestRuntimeBuilder::new(ctx, service_name).build().await
     }
 
-    pub fn heartbeat(&self, interval: u64) -> HeartbeatEmitter {
+    pub fn heartbeat(&self, interval: sinex_core::types::Seconds) -> HeartbeatEmitter {
         self.runtime.heartbeat_emitter(interval)
     }
 
     pub fn acquisition_manager(
         &self,
-        rotation_policy: sinex_satellite_sdk::RotationPolicy,
+        rotation_policy: sinex_node_sdk::RotationPolicy,
         source_type: impl Into<String>,
         source_path: impl Into<String>,
-    ) -> sinex_satellite_sdk::SatelliteResult<sinex_satellite_sdk::AcquisitionManager> {
+    ) -> sinex_node_sdk::NodeResult<sinex_node_sdk::AcquisitionManager> {
         self.runtime
             .acquisition_manager(rotation_policy, source_type, source_path)
     }

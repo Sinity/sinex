@@ -13,7 +13,8 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Configuration
-TEST_RESULTS_DIR="${TEST_RESULTS_DIR:-./test-results}"
+DEFAULT_TEST_RESULTS_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sinex/test-results"
+TEST_RESULTS_DIR="${TEST_RESULTS_DIR:-$DEFAULT_TEST_RESULTS_DIR}"
 KEEP_FAILED_VMS="${KEEP_FAILED_VMS:-false}"
 PARALLEL_TESTS="${PARALLEL_TESTS:-false}"
 TEST_TIMEOUT="${TEST_TIMEOUT:-900}" # 15 minutes default (reduced from 30m)
@@ -38,7 +39,7 @@ OPTIONS:
     -h, --help              Show this help message
     -k, --keep-failed       Keep VMs running after test failure for debugging
     -p, --parallel          Run tests in parallel (experimental)
-    -t, --timeout SECONDS   Set test timeout (default: 1800)
+    -t, --timeout SECONDS   Set test timeout (default: 900)
     -c, --category CATEGORY Run all tests in category (smoke|integration|performance|chaos|all)
     -o, --output DIR        Set test results directory (default: ./test-results)
     -v, --verbose           Enable verbose output

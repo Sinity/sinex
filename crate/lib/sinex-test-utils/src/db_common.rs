@@ -779,7 +779,6 @@ pub async fn clear_pg_cache(pool: &DbPool) -> TestResult<()> {
 /// - core.blobs
 /// - core.tags
 /// - core.tagged_items
-/// - core.processor_checkpoints
 /// - core.operations_log
 /// - core.transactional_outbox
 /// - raw.source_material_registry
@@ -817,7 +816,6 @@ pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
         "core.blobs",
         "core.tags",
         "core.tagged_items",
-        "core.processor_checkpoints",
         "core.operations_log",
         "core.transactional_outbox",
         // Raw data tables
@@ -1065,14 +1063,13 @@ mod tests {
     #![allow(unused_imports)]
     use super::*;
     use crate::database_pool::{acquire_test_database, force_event_material_cleanup_for_tests};
-    use crate::sinex_test;
     use crate::test_context::TestContext;
+    use crate::{sinex_serial_test, sinex_test};
     use serde_json::json;
     use sinex_core::{DbPoolExt, EventSource, EventType, HostName, Id};
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_reset_database() -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -1082,8 +1079,8 @@ mod tests {
 
         // Insert some test data
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
-            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
+            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
+            OperationRecord, Provenance, SourceMaterial,
         };
 
         let new_event = Event::<JsonValue>::test_event(
@@ -1108,16 +1105,16 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn force_cleanup_clears_event_and_material_pairs() -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
         let ctx = TestContext::with_name("force_cleanup_fk").await?;
+        let ctx = ctx.with_nats().await?;
         ctx.ensure_clean().await?;
 
         // Seed a couple of events to ensure both event and source material rows exist.
-        ctx.create_test_event("force-clean", "cleanup.test", json!({"n": 1}))
+        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 1}))
             .await?;
-        ctx.create_test_event("force-clean", "cleanup.test", json!({"n": 2}))
+        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 2}))
             .await?;
 
         // Validate force cleanup succeeds and leaves database clean.
@@ -1127,9 +1124,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_verify_clean_state() -> TestResult<()> {
-        let _guard = crate::acquire_pool_test_guard().await;
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
@@ -1150,14 +1146,14 @@ mod tests {
 
         // Add data
         use sinex_core::{
-            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Event,
-            JsonValue, Operation, OperationRecord, Provenance, SourceMaterial,
+            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
+            OperationRecord, Provenance, SourceMaterial,
         };
 
         let material_record = pool
             .source_materials()
             .register_in_flight(
-                sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+                sinex_core::db::repositories::source_materials::material_types::STREAM,
                 Some("test-material"),
                 serde_json::json!({ "test": true }),
             )
@@ -1254,119 +1250,105 @@ mod tests {
 
 #[cfg(all(test, feature = "bench"))]
 mod benches {
-    // All benchmarks commented out - no imports needed
+    use super::*;
+    use crate::bench_context::BenchContext;
+    use crate::{sinex_bench, TestResult};
 
-    // Benchmark database reset operation
-    //
-    // This measures the time to completely clean a database with various
-    // amounts of existing data.
-    // TODO: These benchmarks need async support in sinex_bench macro
-    // #[sinex_bench]
-    // fn bench_reset_empty_database() -> color_eyre::eyre::Result<()> {
-    //     // Database is already empty from reset_and_load
-    //     reset_database(ctx.pool()).await?;
-    //     Ok(())
-    // }
+    /// Benchmark database reset operation
+    ///
+    /// This measures the time to completely clean a database with various
+    /// amounts of existing data.
+    #[sinex_bench]
+    fn bench_reset_empty_database(ctx: &BenchContext) -> TestResult<()> {
+        // Database is already empty from reset_and_load
+        reset_database(ctx.pool()).await?;
+        Ok(())
+    }
 
-    // Benchmark database reset with data
-    //
-    // Measures reset performance when database contains events and related data
-    // #[sinex_bench]
-    // fn bench_reset_populated_database() -> color_eyre::eyre::Result<()> {
-    //     // Setup: Insert some data
-    //     use sinex_core::types::*;
-    //     for i in 0..10 {
-    //         let event = EventQueries::insert_event(
-    //             "bench".to_string(),
-    //             "test".to_string(),
-    //             "test-host".to_string(),
-    //             serde_json::json!({"index": i}),
-    //             None,
-    //             None,
-    //             None,
-    //             None,
-    //         )
-    //         .fetch_one::<sinex_core::types::Event<JsonValue>>(ctx.pool())
-    //         .await?;
+    /// Benchmark database reset with data
+    ///
+    /// Measures reset performance when database contains events and related data
+    #[sinex_bench]
+    fn bench_reset_populated_database(ctx: &BenchContext) -> TestResult<()> {
+        // Setup: Insert some data
+        use sinex_core::types::*;
+        for i in 0..10 {
+            let event = EventQueries::insert_event(
+                "bench".to_string(),
+                "test".to_string(),
+                "test-host".to_string(),
+                serde_json::json!({"index": i}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .fetch_one::<sinex_core::types::Event<JsonValue>>(ctx.pool())
+            .await?;
 
-    //         // Add annotation
-    //         sqlx::query(
-    //             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator)
-    //              VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
-    //         )
-    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
-    //         .bind(event.id.to_uuid())
-    //         .execute(ctx.pool())
-    //         .await?;
-    //     }
+            // Add annotation
+            sqlx::query(
+                "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator)
+                 VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')",
+            )
+            .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
+            .bind(event.id.to_uuid())
+            .execute(ctx.pool())
+            .await?;
+        }
 
-    //     // Perform the reset
-    //     reset_database(ctx.pool()).await?;
-    //     Ok(())
-    // }
+        // Perform the reset
+        reset_database(ctx.pool()).await?;
+        Ok(())
+    }
 
-    // All benchmarks below commented out - they need async support in sinex_bench macro
+    /// Benchmark cache clearing operation
+    #[sinex_bench]
+    fn bench_clear_pg_cache(ctx: &BenchContext) -> TestResult<()> {
+        clear_pg_cache(ctx.pool()).await?;
+        Ok(())
+    }
 
-    // /// Benchmark cache clearing operation
-    // #[sinex_bench]
-    // fn bench_clear_pg_cache() -> color_eyre::eyre::Result<()> {
-    //     clear_pg_cache(ctx.pool()).await?;
-    //     Ok(())
-    // }
+    /// Benchmark row count collection
+    #[sinex_bench]
+    fn bench_get_row_counts(ctx: &BenchContext) -> TestResult<()> {
+        // Setup: Insert varied amounts of data
+        reset_database(ctx.pool()).await?;
 
-    // /// Benchmark row count collection
-    // #[sinex_bench]
-    // fn bench_get_row_counts() -> color_eyre::eyre::Result<()> {
-    //     // Setup: Insert varied amounts of data
-    //     reset_database(ctx.pool()).await?;
+        // Insert some events
+        use sinex_core::types::*;
+        for i in 0..50 {
+            EventQueries::insert_event(
+                format!("source_{}", i % 5),
+                "test".to_string(),
+                "bench".to_string(),
+                serde_json::json!({}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(ctx.pool())
+            .await?;
+        }
 
-    //     // Insert some events
-    //     use sinex_core::types::*;
-    //     for i in 0..50 {
-    //         EventQueries::insert_event(
-    //             format!("source_{}", i % 5),
-    //             "test".to_string(),
-    //             "bench".to_string(),
-    //             serde_json::json!({}),
-    //             None,
-    //             None,
-    //             None,
-    //             None,
-    //         )
-    //         .execute(ctx.pool())
-    //         .await?;
-    //     }
+        // Perform the count
+        let counts = get_row_counts(ctx.pool()).await?;
+        divan::black_box(counts);
+        Ok(())
+    }
 
-    //     // Insert some checkpoints
-    //     for i in 0..10 {
-    //         sqlx::query(
-    //             "INSERT INTO core.processor_checkpoints (processor_name, last_processed_event_id, processed_count, state)
-    //              VALUES ($1, $2, $3, '{}'::jsonb)"
-    //         )
-    //         .bind(format!("satellite_{}", i % 3))
-    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
-    //         .bind(i as i64 * 10)
-    //         .execute(ctx.pool())
-    //         .await?;
-    //     }
+    /// Benchmark database state verification
+    #[sinex_bench]
+    fn bench_verify_clean_state(ctx: &BenchContext) -> TestResult<()> {
+        verify_clean_state(ctx.pool()).await?;
+        Ok(())
+    }
 
-    //     // Perform the count
-    //     let counts = get_row_counts(ctx.pool()).await?;
-    //     divan::black_box(counts);
-    //     Ok(())
-    // }
-
-    // /// Benchmark database state verification
-    // #[sinex_bench]
-    // fn bench_verify_clean_state() -> color_eyre::eyre::Result<()> {
-    //     verify_clean_state(ctx.pool()).await?;
-    //     Ok(())
-    // }
-
-    // /// Benchmark applying test optimizations
-    // #[sinex_bench]
-    // fn bench_apply_optimizations() -> color_eyre::eyre::Result<()> {
-    //     apply_test_optimizations(ctx.pool()).await?;
-    //     Ok(())
-    // }
+    /// Benchmark applying test optimizations
+    #[sinex_bench]
+    fn bench_apply_optimizations(ctx: &BenchContext) -> TestResult<()> {
+        apply_test_optimizations(ctx.pool()).await?;
+        Ok(())
+    }
 }

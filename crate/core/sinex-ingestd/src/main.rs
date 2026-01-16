@@ -1,5 +1,6 @@
 use clap::Parser;
 use color_eyre::eyre::Result;
+use sinex_core::types::Seconds;
 use sinex_ingestd::{IngestService, IngestdConfig};
 use std::io;
 use tracing::{error, info};
@@ -25,6 +26,9 @@ struct Args {
     /// NATS URL for message bus
     #[arg(long, env = "SINEX_NATS_URL", default_value = "nats://localhost:4222")]
     nats_url: String,
+    /// Require TLS for NATS connections (enforces tls:// or wss://)
+    #[arg(long, env = "SINEX_NATS_REQUIRE_TLS")]
+    nats_require_tls: bool,
 
     /// Database connection pool size
     #[arg(long, default_value = "50")]
@@ -36,7 +40,7 @@ struct Args {
 
     /// Batch timeout in seconds
     #[arg(long, default_value = "5")]
-    batch_timeout_secs: u64,
+    batch_timeout_secs: Seconds,
 
     /// Log level
     #[arg(long, default_value = "info")]
@@ -77,6 +81,7 @@ async fn main() -> Result<()> {
     let config = IngestdConfig::from_args(
         args.database_url,
         args.nats_url,
+        args.nats_require_tls,
         args.pool_size,
         args.batch_size,
         args.batch_timeout_secs,

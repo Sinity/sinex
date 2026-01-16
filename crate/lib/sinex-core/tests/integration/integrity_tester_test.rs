@@ -1,6 +1,9 @@
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_core::db::integrity::{CheckpointInconsistencyType, IntegrityTestConfig, IntegrityTester};
+use sinex_core::db::integrity::{
+    CheckpointInconsistencyType, CheckpointKind, CheckpointSnapshot, IntegrityTestConfig,
+    IntegrityTester,
+};
 use sinex_core::repositories::DbPoolExt;
 use sinex_core::types::ulid::Ulid as CoreUlid;
 use sinex_test_utils::{sinex_test, TestContext};
@@ -9,7 +12,7 @@ use sinex_test_utils::{sinex_test, TestContext};
 async fn windowing_limits_event_counts(ctx: TestContext) -> color_eyre::Result<()> {
     let pool = ctx.pool.clone();
 
-    // Seed manifest + checkpoint for the synthetic processor
+    // Seed manifest for the synthetic processor
     sqlx::query!(
         r#"
         INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
@@ -20,32 +23,15 @@ async fn windowing_limits_event_counts(ctx: TestContext) -> color_eyre::Result<(
     .execute(&pool)
     .await?;
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.processor_checkpoints (
-            processor_name,
-            consumer_group,
-            consumer_name,
-            last_processed_id,
-            processed_count,
-            checkpoint_version,
-            checkpoint_data,
-            last_activity
-        ) VALUES (
-            $1,
-            'default',
-            'default',
-            NULL,
-            0,
-            1,
-            NULL,
-            NOW()
-        )
-        "#,
-        "integrity.proc"
-    )
-    .execute(&pool)
-    .await?;
+    let snapshots = vec![CheckpointSnapshot {
+        processor_name: "integrity.proc".to_string(),
+        consumer_group: "default".to_string(),
+        consumer_name: "default".to_string(),
+        checkpoint_kind: CheckpointKind::None,
+        last_processed_id: None,
+        processed_count: 0,
+        last_activity: Utc::now(),
+    }];
 
     // Old event outside the window
     let old_event_id = CoreUlid::from_datetime(Utc::now() - Duration::hours(48));
@@ -128,6 +114,7 @@ async fn windowing_limits_event_counts(ctx: TestContext) -> color_eyre::Result<(
             validate_checkpoints: true,
             validate_ulid_ordering: false,
             validate_schemas: false,
+            checkpoint_snapshots: Some(snapshots),
         })
         .await?;
 

@@ -1,7 +1,7 @@
 # Emergent Insights and Speculative Extensions for Sinex
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
 
 
 *Generated: 2025-01-23*  

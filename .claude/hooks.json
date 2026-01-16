@@ -1,0 +1,26 @@
+{
+  "PreCompact": [{
+    "matcher": "*",
+    "hooks": [{
+      "type": "prompt",
+      "prompt": "CRITICAL: Context compacting. Review $TRANSCRIPT_PATH and extract:\n\n1. CURRENT TASK: Active goal?\n2. ARCHITECTURAL DECISIONS: Design choices?\n3. FAILURES/ERRORS: Tool failures or build errors?\n4. OPEN QUESTIONS: Unresolved issues?\n5. ACTIVE FILES: Files being modified?\n6. PROGRESS STATE: Completed/in-progress/remaining?\n\nFormat as:\n```\n## Pre-Compaction State Snapshot\n\n### Current Task\n[One sentence]\n\n### Key Decisions\n- [Decision 1]\n\n### Recent Errors/Issues\n- [Error 1]\n\n### Open Questions\n- [Question 1]\n\n### Active Files\n- /path/to/file.rs - [why critical]\n\n### Progress Checklist\n- [x] Done\n- [ ] Todo\n```\n\nReturn as systemMessage.",
+      "timeout": 45
+    }]
+  }],
+  "PreToolUse": [{
+    "matcher": "Bash",
+    "hooks": [{
+      "type": "command",
+      "command": "bash /realm/project/sinex/.claude/scripts/check-tool-usage.sh",
+      "timeout": 5
+    }]
+  }],
+  "Stop": [{
+    "matcher": "*",
+    "hooks": [{
+      "type": "prompt",
+      "prompt": "Review $TRANSCRIPT_PATH before stopping. Verify:\n\n1. Code Changes: Were .rs files modified?\n2. Compilation: If code changed, was 'cargo check' or 'cargo build' run?\n3. compilation.log: Was full output saved to compilation.log?\n4. Build Success: Did compilation succeed (no errors)?\n5. Tests: If code changed, were tests run?\n\nBLOCK if:\n- Code modified but compilation.log not created\n- Build attempted but failed\n- Code modified but no compilation attempt\n- Tests exist but not run after code changes\n\nAPPROVE if:\n- No code changes (read-only)\n- Code compiled + tests passed\n- Changes are docs/comments only\n\nReturn 'approve' or 'block' with reason.",
+      "timeout": 60
+    }]
+  }]
+}

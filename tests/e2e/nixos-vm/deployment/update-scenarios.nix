@@ -205,7 +205,7 @@
         time.sleep(5)
         sinex.succeed(
             "sudo -u postgres psql -d sinex -c "
-            "'SELECT COUNT(*) FROM sinex_schemas.promotion_queue'"
+            "'SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL ''5 minutes'''"
         )
     
     # Test update failure recovery

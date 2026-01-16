@@ -12,11 +12,6 @@
 // - **Network Issues**: Distributed system edge cases
 // - **State Violations**: Invalid state transitions
 
-use color_eyre::eyre::Result;
-use serde_json::json;
-use sinex_core::types::events::RawEvent;
-
-#[allow(dead_code)]
 // Boundary tests for system limits
 pub mod boundary_test;
 
